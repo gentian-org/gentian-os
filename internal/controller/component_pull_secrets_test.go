@@ -249,7 +249,7 @@ func TestTheReleaseNamesTheChartsPullSecretInItsOwnNamespace(t *testing.T) {
 	chartOf := func(tenantNS string, pull pullSecrets) map[string]interface{} {
 		comp := &gentianov1alpha1.Component{}
 		comp.Name, comp.Namespace = "vendor-app", tenantNS
-		if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, pull); err != nil {
+		if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pull); err != nil {
 			t.Fatal(err)
 		}
 		release := &unstructured.Unstructured{}

@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -55,6 +56,41 @@ type sensitiveValues struct {
 	// set are the release's set entries, each a chart value taken from a
 	// key of the Secret.
 	set []interface{}
+	// documents are keys of the Secret templated from the others, each a
+	// values document of its own; valuesFrom are the release's optional
+	// reads of them.
+	documents  map[string]interface{}
+	valuesFrom []interface{}
+}
+
+// optional adds a value the chart may go without: written into the Secret
+// as a values document of its own when it is not empty, and read by the
+// release as optional valuesFrom. An empty value -- mail on a cluster
+// without the relay's credentials -- is then simply not set, where a set
+// entry naming it would keep the whole release from installing. raw writes
+// the value as it is (a port) rather than as a JSON string.
+func (v *sensitiveValues) optional(comp *gentianov1alpha1.Component, valuePath, secretKey string, raw bool) {
+	if valuePath == "" {
+		return
+	}
+	head, tail := "", ""
+	for _, part := range splitDots(valuePath) {
+		quoted, _ := json.Marshal(part)
+		head += "{" + string(quoted) + ":"
+		tail += "}"
+	}
+	value := " . | toJson "
+	if raw {
+		value = " . "
+	}
+	doc := "values-" + secretKey
+	if v.documents == nil {
+		v.documents = map[string]interface{}{}
+	}
+	v.documents[doc] = fmt.Sprintf("{{ with index . %q }}%s{{%s}}%s{{ end }}", secretKey, head, value, tail)
+	v.valuesFrom = append(v.valuesFrom, map[string]interface{}{"secretKeyRef": map[string]interface{}{
+		"name": sensitiveValuesName(comp), "namespace": comp.Namespace, "key": doc, "optional": true,
+	}})
 }
 
 func (v *sensitiveValues) add(comp *gentianov1alpha1.Component, valueKey, secretKey, path, property string) {
@@ -140,6 +176,46 @@ func componentSensitiveValues(comp *gentianov1alpha1.Component, profile *gentian
 		out.tell(comp, db.ReadUserKey, "db-user")
 		out.add(comp, db.PasswordKey, "db-password", path, "password")
 	}
+	// Object storage, the cache and mail, each read where the tenant's
+	// stores wrote it for this app.
+	if s3 := m.S3; s3 != nil {
+		path := secrets.CategoryPath(tenant, comp.Name, "s3")
+		out.add(comp, s3.EndpointKey, "s3-endpoint", path, "endpoint")
+		out.add(comp, s3.BucketKey, "s3-bucket", path, "bucket")
+		out.add(comp, s3.AccessKeyKey, "s3-access-key", path, "access-key")
+		out.add(comp, s3.SecretKeyKey, "s3-secret-key", path, "secret-key")
+		out.add(comp, s3.RegionKey, "s3-region", path, "region")
+	}
+	if cache := m.Cache; cache != nil {
+		path := secrets.CategoryPath(tenant, comp.Name, "cache")
+		out.add(comp, cache.HostKey, "cache-host", path, "host")
+		out.add(comp, cache.PortKey, "cache-port", path, "port")
+		out.add(comp, cache.UserKey, "cache-user", path, "user")
+		out.add(comp, cache.PasswordKey, "cache-password", path, "password")
+	}
+	if smtp := m.SMTP; smtp != nil {
+		path := secrets.CategoryPath(tenant, comp.Name, "smtp")
+		for _, k := range []struct {
+			valuePath, key, property string
+			raw                      bool
+		}{
+			{smtp.HostKey, "smtp-host", "host", false},
+			{smtp.PortKey, "smtp-port", "port", true},
+			{smtp.UserKey, "smtp-user", "user", false},
+			{smtp.PasswordKey, "smtp-password", "password", false},
+		} {
+			if k.valuePath == "" {
+				continue
+			}
+			out.read(k.key, path, k.property)
+			out.optional(comp, k.valuePath, k.key, k.raw)
+		}
+	}
+	if imap := m.IMAP; imap != nil {
+		path := secrets.CategoryPath(tenant, comp.Name, "imap")
+		out.add(comp, imap.HostKey, "imap-host", path, "host")
+		out.add(comp, imap.PortKey, "imap-port", path, "port")
+	}
 	contracts := make([]string, 0, len(m.Integrations))
 	for contract := range m.Integrations {
 		contracts = append(contracts, contract)
@@ -182,6 +258,13 @@ func (r *ComponentReconciler) ensureSensitiveValues(ctx context.Context, comp *g
 		},
 		"data": v.data,
 	}
+	if len(v.documents) > 0 {
+		spec["target"].(map[string]interface{})["template"] = map[string]interface{}{
+			"engineVersion": "v2",
+			"mergePolicy":   "Merge",
+			"data":          v.documents,
+		}
+	}
 	if errors.IsNotFound(err) {
 		desired := &unstructured.Unstructured{}
 		desired.SetGroupVersionKind(externalSecretGVK)
@@ -207,10 +290,16 @@ func (r *ComponentReconciler) ensureSensitiveValues(ctx context.Context, comp *g
 	// Only what is written here is compared: the API server fills in the
 	// schema's defaults (remoteRef's strategies and policies), and a
 	// comparison of the whole spec would find drift on every pass.
-	if !covers(existing.Object["spec"], spec) {
+	// A template the profile no longer asks for goes too: covers reads only
+	// what is written here, and would leave it.
+	_, hasTemplate, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", "target", "template")
+	if !covers(existing.Object["spec"], spec) || (hasTemplate && len(v.documents) == 0) {
 		patch := client.MergeFrom(existing.DeepCopy())
 		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
 			return false, err
+		}
+		if len(v.documents) == 0 {
+			unstructured.RemoveNestedField(existing.Object, "spec", "target", "template")
 		}
 		if err := r.Patch(ctx, existing, patch); err != nil {
 			return false, err

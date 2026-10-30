@@ -43,8 +43,8 @@ spec:
       platform:
         issuerKey: customerRealm.issuer
         tenantKey: tenant
-      smtp:
-        hostKey: mail.host
+      oidc:
+        clientIdKey: auth.clientId
   secrets:
     generated:
       - name: credential_key

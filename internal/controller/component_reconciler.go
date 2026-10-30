@@ -691,11 +691,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				"waiting for the values the profile maps from the tenant's store ("+sensitiveValuesName(comp)+")", componentRequeue)
 		}
 		valuesWithPullSecrets(values, profile, pull.images)
-		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values, sensitive.set, pull)
+		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values, sensitive.set, sensitive.valuesFrom, pull)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if releaseReady && len(sensitive.set) == 0 {
+		if releaseReady && len(sensitive.set) == 0 && len(sensitive.valuesFrom) == 0 {
 			if err := r.dropSensitiveValues(ctx, comp); err != nil {
 				return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
 			}
@@ -1233,7 +1233,7 @@ func (r *ComponentReconciler) zoneReady(ctx context.Context, zone edgeZone) (boo
 }
 
 // ensureRelease keeps the provider-helm Release the profile's chart becomes.
-func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}, set []interface{}, pull pullSecrets) (bool, string, error) {
+func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}, set, valuesFrom []interface{}, pull pullSecrets) (bool, string, error) {
 	chart := profile.Spec.Package.Chart
 	chartSpec := map[string]interface{}{
 		"repository": chart.Repository,
@@ -1283,6 +1283,9 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 	// (component_integrations.go), each by its key.
 	if len(set) > 0 {
 		spec["forProvider"].(map[string]interface{})["set"] = set
+	}
+	if len(valuesFrom) > 0 {
+		spec["forProvider"].(map[string]interface{})["valuesFrom"] = valuesFrom
 	}
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(helmReleaseGVK)

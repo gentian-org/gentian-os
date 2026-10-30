@@ -514,6 +514,18 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 		"generated secrets": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
 		}),
+		"a mail account": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Mail: &gentianov1alpha1.MailRequirement{}}}
+		}),
+		"object storage, a cache and mail mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+				S3:    &gentianov1alpha1.S3ValueMapping{EndpointKey: "s3.endpoint"},
+				Cache: &gentianov1alpha1.CacheValueMapping{HostKey: "cache.host"},
+				SMTP:  &gentianov1alpha1.SMTPValueMapping{HostKey: "mail.host"},
+				IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "imap.host"},
+			}
+		}),
 		"a contract's values": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
 				"desktop-api": {EndpointKey: "desktop.url"}}}
@@ -527,10 +539,6 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 	composed := map[string]*gentianov1alpha1.ComponentProfile{
 		"a client of its own at the identity provider": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{OIDC: &gentianov1alpha1.OIDCValueMapping{}}
-		}),
-		"a mail account": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
-				Mail: &gentianov1alpha1.MailRequirement{}}}
 		}),
 	}
 	for name, p := range composed {

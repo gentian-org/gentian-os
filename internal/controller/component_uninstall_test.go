@@ -151,7 +151,7 @@ func TestADirectlyDeliveredChartKeepsItsVolumesOnUninstall(t *testing.T) {
 	comp.Name, comp.Namespace, comp.UID = "desktop", "tenant-acme", "uid-desktop"
 
 	profile := chartProfileFixture("oci://registry.vendor.example/acme/charts")
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, pullSecrets{}); err != nil {
+	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pullSecrets{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,7 +188,7 @@ func TestADirectlyDeliveredChartKeepsItsVolumesOnUninstall(t *testing.T) {
 
 	// A second pass changes nothing and finds nothing to correct.
 	before := release.GetResourceVersion()
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, pullSecrets{}); err != nil {
+	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pullSecrets{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: "tenant-acme-desktop"}, release); err != nil {

@@ -94,7 +94,9 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	}
 	if req := spec.Requires; req != nil && req.Services != nil {
 		s := req.Services
-		if s.Identity != nil || s.Storage != nil || s.Cache != nil || s.Mail != nil || s.MCP != nil {
+		// Storage, a cache and mail are not among them: the tenant's stores
+		// provide them and their values are rendered here.
+		if s.Identity != nil || s.MCP != nil {
 			return true
 		}
 		// The model gateway is the Composition's for an app a tenant
@@ -107,7 +109,7 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	if m := spec.Package.ValueMapping; m != nil {
 		// A database is rendered here, by the Secret's name or key by key
 		// (component_integrations.go).
-		if m.OIDC != nil || m.Cache != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil {
+		if m.OIDC != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.Volumes != nil {
 			return true
 		}
 	}
