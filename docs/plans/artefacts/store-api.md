@@ -37,6 +37,9 @@ Whoever keeps a copy of these files: this is what moved, newest first.
    waiting for `approval`; an owner or administrator of the organization
    the tenant belongs to, or the store's operator, approves or declines it,
    outside this API (§4).
+2. **A store takes no company from an account.** Removed: `PUT
+   /v1/account/company`. `GET` stays; the store's operator records the
+   company, outside this API.
 
 **2026-10-29** (1.14, additive: a 1.13 client is answered as before)
 
@@ -192,7 +195,7 @@ Whoever keeps a copy of these files: this is what moved, newest first.
    `companySize` and `industry` to narrow both the list and the summary.
    The summary adds `recommend` and the mean of each score.
 3. **An account has a company.** `GET` and `PUT /v1/account/company`
-   (scope `store.account`): a name, a size (`CompanySize`, the EU size
+   (scope `store.account`; `PUT` removed in 1.15): a name, a size (`CompanySize`, the EU size
    classes with large split at 1000) and an industry (`Industry`, the NACE
    sections, as Odoo lists them). A review is refused (`409`,
    `company-missing`) until there is one.
@@ -876,12 +879,12 @@ Refused with `409 company-missing` while the account names no company, with
 one, and with `400` for `support` or `value` on an entry that is not `ee`.
 `GET` answers one's own review or `404`; `DELETE` withdraws it.
 
-### GET and PUT /v1/account/company
+### GET /v1/account/company
 
 The company the person is with: `{"name": "Acme AG", "size": "10-49",
-"industry": "information-communication"}`.
-The App Store app asks once, at the first sign-in that finds none. The
-sizes and industries, with their names, are in `GET /v1/meta`.
+"industry": "information-communication"}`, or `404` while there is none.
+The store's operator records it, outside this API. The sizes and
+industries, with their names, are in `GET /v1/meta`.
 
 ### GET /v1/apps/{catalogue}/{app}/reports
 
