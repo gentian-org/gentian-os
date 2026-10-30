@@ -63,11 +63,18 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheBouncer(t *testing.T) {
 	if oidc["refreshToken"] != true {
 		t.Fatalf("refreshToken = %v", oidc["refreshToken"])
 	}
+	// A background request gets 401 and nothing else does: a navigation must
+	// still be sent to sign in.
+	deny := oidc["denyRedirect"].(map[string]interface{})["headers"].([]interface{})
+	if len(deny) != 1 || deny[0].(map[string]interface{})["name"] != "Sec-Fetch-Dest" ||
+		deny[0].(map[string]interface{})["value"] != "empty" {
+		t.Fatalf("denyRedirect = %v", oidc["denyRedirect"])
+	}
 	// What must not be there. Each of these lets a request past the session
 	// filter without a session, or hands the token cookies to whoever can
 	// read a request; the bouncer refuses what they would let through, and
 	// the policy must not ask for it in the first place.
-	for _, field := range []string{"passThroughAuthHeader", "denyRedirect", "disableTokenEncryption", "cookieDomain"} {
+	for _, field := range []string{"passThroughAuthHeader", "disableTokenEncryption", "cookieDomain"} {
 		if v, has := oidc[field]; has {
 			t.Fatalf("%s = %v must not be set on a zone policy", field, v)
 		}

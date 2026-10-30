@@ -132,7 +132,8 @@ func keptApproval(entry string, expires *metav1.Time) gentianov1alpha1.ExposureE
 // translator, internal/xds/translator/oidc.go) reads to decide whether a
 // request may pass its OAuth2 filter without the session's cookies:
 // passThroughAuthHeader is the one setting that builds a pass-through
-// matcher, and denyRedirect the one that answers instead of signing in.
+// matcher. denyRedirect answers 401 instead of signing in and passes nothing;
+// the one form allowed names a request a page makes in the background.
 // Leaving the client's header alone (forwardAccessToken false) is
 // preserve_authorization_header on the filter, which keeps a header and
 // admits nobody. Behind the filter the bouncer fails closed.
@@ -142,9 +143,15 @@ func requiresTheSession(t *testing.T, what string, spec map[string]interface{}) 
 	if !ok {
 		t.Fatalf("%s: the policy has no session at all: %v", what, spec)
 	}
-	for _, never := range []string{"passThroughAuthHeader", "denyRedirect"} {
-		if v, set := oidc[never]; set {
-			t.Fatalf("%s: oidc.%s = %v: a request could pass the session on what it carries", what, never, v)
+	if v, set := oidc["passThroughAuthHeader"]; set {
+		t.Fatalf("%s: oidc.passThroughAuthHeader = %v: a request could pass the session on what it carries", what, v)
+	}
+	if v, set := oidc["denyRedirect"]; set {
+		want := map[string]interface{}{"headers": []interface{}{
+			map[string]interface{}{"name": "Sec-Fetch-Dest", "type": "Exact", "value": "empty"},
+		}}
+		if !reflect.DeepEqual(v, want) {
+			t.Fatalf("%s: oidc.denyRedirect = %v, want only background requests", what, v)
 		}
 	}
 	if _, set := spec["jwt"]; set {

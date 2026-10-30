@@ -475,8 +475,10 @@ With the OAuth2 filter first, per request on a session route:
 The bouncer refuses any request on a session route that reaches it without a
 token it can verify, whatever its path. Nothing in the operator's policies
 lets a request past the OAuth2 filter without a session — no
-`passThroughAuthHeader`, no `denyRedirect`, no CORS or health path — and if
-something did, the answer would be `401`. The one path of an app that takes no
+`passThroughAuthHeader`, no CORS or health path — and if something did, the
+answer would be `401`. `denyRedirect` passes nothing: a request a page makes in
+the background (`Sec-Fetch-Dest: empty`) stops at the filter with `401` rather
+than a redirect it cannot follow. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
