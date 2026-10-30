@@ -630,6 +630,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, fmt.Errorf("sign-in sidecar: %w", err)
 		}
 	}
+	if err := r.ensureImagePins(ctx, comp, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("image pins: %w", err)
+	}
 	switch {
 	case profile.Spec.Package.Chart != nil && appComposition(comp, profile) != "":
 		// A profile that brings its own Composition is rendered by it, and

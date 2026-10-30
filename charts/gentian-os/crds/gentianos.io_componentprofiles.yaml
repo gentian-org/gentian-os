@@ -2493,6 +2493,32 @@ spec:
                     description: ExtraValues are static chart values.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
+                  images:
+                    description: |-
+                      Images are the private images the component runs, each at the one
+                      build it may run. Admission refuses a pod in the component's namespace
+                      that names one of these repositories at any other build, whoever asks.
+                    items:
+                      description: PinnedImage is one image repository and the build
+                        of it a component runs.
+                      properties:
+                        digest:
+                          description: Digest is the build.
+                          pattern: ^sha256:[a-f0-9]{64}$
+                          type: string
+                        repository:
+                          description: Repository is the image's address without a
+                            tag.
+                          pattern: ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$
+                          type: string
+                      required:
+                      - digest
+                      - repository
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - repository
+                    x-kubernetes-list-type: map
                   valueMapping:
                     description: ValueMapping places what the platform granted into
                       the chart's values.
@@ -2929,10 +2955,12 @@ spec:
                     description: |-
                       While names the condition the placement lasts for; absent, it lasts
                       for the life of each tenant. A conditional placement is also taken
-                      away, so a profile placed under one must own no data.
+                      away, so a profile placed under one must own no data; credentialSet,
+                      which never takes it away, is the exception.
                     enum:
                     - storeOffered
                     - llm
+                    - credentialSet
                     type: string
                 required:
                 - tenants
@@ -4401,6 +4429,12 @@ spec:
             - message: 'placement is for class app: a service and a shared-app have
                 one instance'
               rule: '!has(self.placement) || !has(self.classes) || (''app'' in self.classes)'
+            - message: placement while credentialSet is for the platform tenant, at
+                trustTier platform, with package.images naming what may be pulled
+              rule: '!has(self.placement) || !has(self.placement.while) || self.placement.while
+                != ''credentialSet'' || (self.placement.tenants == ''platform'' &&
+                self.trustTier == ''platform'' && has(self.__package__.images) &&
+                self.__package__.images.size() > 0)'
             - message: 'a component the platform places on tenants declares requires.services.llm
                 only at trustTier platform: it is given a key at the model gateway
                 without a tenant having installed it'

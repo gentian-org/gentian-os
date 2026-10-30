@@ -626,6 +626,29 @@ policies select the app's pods by, so such a chart has to put `podLabels` on eve
 placed chart is told only what it declares: no `podLabels` (its pods are selected by their Helm
 release), no trust anchor, and pull secrets only where the tenant declared a repository.
 
+A profile of platform trust whose chart and images are private is placed in the platform tenant
+once that tenant holds a set credential for it, and stays when the credential goes, so it may own
+data:
+
+```yaml
+spec:
+  trustTier: platform
+  placement:
+    tenants: platform
+    while: credentialSet
+  package:
+    images:
+      - repository: registry.example/acme/gentian-thing-api
+        digest: sha256:…
+```
+
+The credential belongs to a repository declared for that profile alone (`app` on
+`PUT /v1/tenants/{t}/repositories/{name}`): only that component is told of it, and it is told of no
+other. `package.images` is required. Admission refuses a pod in the namespace that names one of
+those repositories at another digest (a Kyverno `Policy`, `image-pins-<component>`, in Enforce). The
+chart stays pinned by its version: the Helm provider has no digest to pull one by, so publish
+versions that are never reused.
+
 `defaultForTenants`, `defaultForPlatform`, `defaultWhereStoreOffered` and the
 `gentianos.io/requires-capability` annotation are what catalogs said before `placement`; they are
 read as the placement they meant for one more release, and are then removed.

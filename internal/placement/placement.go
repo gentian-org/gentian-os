@@ -97,6 +97,9 @@ type Facts struct {
 	// StoreOffered is whether the cluster offers an App Store; nil when
 	// that could not be read.
 	StoreOffered *bool
+	// Credentialed are the profiles the platform tenant holds a set
+	// credential for (PlacementWhileCredentialSet).
+	Credentialed map[string]bool
 	// Gone are the profiles whose catalog entry has left the cluster's
 	// catalog directory: still objects, placed no more.
 	Gone map[string]bool
@@ -126,6 +129,12 @@ func Decide(f Facts) Answer {
 			if !*f.StoreOffered {
 				continue
 			}
+		}
+		// Without its credential such a profile is undecided and not
+		// withdrawn: nothing of it is placed, and what is placed stays.
+		if p.While == gentianov1alpha1.PlacementWhileCredentialSet && !f.Credentialed[profile.Name] {
+			out.Platform.Undecided = append(out.Platform.Undecided, profile.Name)
+			continue
 		}
 		switch p.Tenants {
 		case gentianov1alpha1.PlacementEvery:

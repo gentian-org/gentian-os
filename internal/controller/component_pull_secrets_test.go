@@ -332,3 +332,29 @@ func TestAFailedChartPullNamesTheRepository(t *testing.T) {
 		t.Fatalf("plain = %q", plain)
 	}
 }
+
+// A repository bound to an app is that app's alone: it is the only one the
+// app is told about, no other component is told about it, and it does not
+// make the chart's address ambiguous beside the tenant's own repository.
+func TestABoundRepositoryGoesToItsAppAlone(t *testing.T) {
+	const address = "oci://registry.vendor.example/acme/charts"
+	tenant := pullRepository{name: "tenant-wide", host: "registry.vendor.example", path: []string{"acme"}}
+	bound := pullRepository{name: "evidence", host: "registry.vendor.example", path: []string{"acme"}, app: "vault"}
+
+	own := chartProfileFixture(address)
+	own.Name = "vault"
+	got, refusal := resolvePullSecrets(own, []pullRepository{tenant, bound})
+	if refusal != "" || len(got.images) != 1 || got.images[0] != bound.secretName() {
+		t.Fatalf("the app: %+v, refusal %q", got, refusal)
+	}
+	if c := got.chart(address); c == nil || c.secretName != bound.secretName() {
+		t.Fatalf("the app's chart: %+v", c)
+	}
+
+	other := chartProfileFixture(address)
+	other.Name = "other"
+	got, refusal = resolvePullSecrets(other, []pullRepository{tenant, bound})
+	if refusal != "" || len(got.images) != 1 || got.images[0] != tenant.secretName() {
+		t.Fatalf("another component: %+v, refusal %q", got, refusal)
+	}
+}

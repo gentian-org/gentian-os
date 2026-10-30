@@ -93,6 +93,13 @@ spec:
                     one. That is what happened to the cluster's own deployments
                     repository, which sat labelled apps and was protected as an
                     optional app source.
+                app:
+                  type: string
+                  description: >
+                    The one profile this repository's credential is bound to.
+                    Its pull Secret is named on that component alone, and that
+                    component is told of no other repository. Empty, the
+                    repository is the whole tenant's.
                 tenant:
                   type: string
                   description: >

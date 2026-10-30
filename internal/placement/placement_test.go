@@ -191,3 +191,23 @@ func TestThePlatformPreApprovesContractsBetweenItsOwnComponents(t *testing.T) {
 		t.Errorf("grants = %+v, want %+v", got, want)
 	}
 }
+
+// A component placed on a credential is placed once the platform tenant holds
+// it, and is never withdrawn for lacking it: what it keeps outlives the
+// credential.
+func TestACredentialPlacesAComponentOneWay(t *testing.T) {
+	profiles := []gentianov1alpha1.ComponentProfile{
+		profile("vault", placed(gentianov1alpha1.PlacementPlatform, gentianov1alpha1.PlacementWhileCredentialSet)),
+	}
+	set := placement.Decide(placement.Facts{Profiles: profiles, Credentialed: map[string]bool{"vault": true}}).For(true)
+	if !set.Has("vault") || !set.Decided("vault") {
+		t.Fatalf("with its credential: %+v", set)
+	}
+	set = placement.Decide(placement.Facts{Profiles: profiles}).For(true)
+	if set.Has("vault") || set.Decided("vault") {
+		t.Fatalf("without it the component is neither placed nor withdrawn: %+v", set)
+	}
+	if users := placement.Decide(placement.Facts{Profiles: profiles, Credentialed: map[string]bool{"vault": true}}).For(false); users.Has("vault") {
+		t.Fatalf("a user tenant was given it: %+v", users)
+	}
+}

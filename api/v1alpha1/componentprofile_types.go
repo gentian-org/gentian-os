@@ -91,7 +91,7 @@ const (
 
 // PlacementCondition is what a placement lasts for.
 //
-// +kubebuilder:validation:Enum=storeOffered;llm
+// +kubebuilder:validation:Enum=storeOffered;llm;credentialSet
 type PlacementCondition string
 
 const (
@@ -103,7 +103,26 @@ const (
 	// (spec.llm.enabled). The catalog's index repeats it as placedWith: llm,
 	// which is how the platform finds the entry before it is on the cluster.
 	PlacementWhileLLM PlacementCondition = "llm"
+	// PlacementWhileCredentialSet is from the moment the platform tenant
+	// holds a set credential of a repository declared for this component
+	// (the Repository's spec.app). It is one way: a component placed under
+	// it stays when the credential goes, as what it keeps may not be taken
+	// away by a credential lapsing.
+	PlacementWhileCredentialSet PlacementCondition = "credentialSet"
 )
+
+// PinnedImage is one image repository and the build of it a component runs.
+type PinnedImage struct {
+	// Repository is the image's address without a tag.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$`
+	Repository string `json:"repository"`
+
+	// Digest is the build.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest"`
+}
 
 // ComponentPlacement is where the platform places a component.
 type ComponentPlacement struct {
@@ -112,7 +131,8 @@ type ComponentPlacement struct {
 
 	// While names the condition the placement lasts for; absent, it lasts
 	// for the life of each tenant. A conditional placement is also taken
-	// away, so a profile placed under one must own no data.
+	// away, so a profile placed under one must own no data; credentialSet,
+	// which never takes it away, is the exception.
 	// +optional
 	While PlacementCondition `json:"while,omitempty"`
 }
@@ -201,6 +221,7 @@ type ComponentPlacement struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.classes) || ('app' in self.classes)",message="placement is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.placement.while) || self.placement.while != 'credentialSet' || (self.placement.tenants == 'platform' && self.trustTier == 'platform' && has(self.__package__.images) && self.__package__.images.size() > 0)",message="placement while credentialSet is for the platform tenant, at trustTier platform, with package.images naming what may be pulled"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !has(self.placement) || (has(self.placement.while) && self.placement.while == 'llm') || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
 type ComponentProfileSpec struct {
 	// Classes lists the modes this component may be deployed under. It is a
@@ -346,6 +367,14 @@ type PackageSpec struct {
 	// Chart is the Helm chart or OCI artifact. Delivery: workload.
 	// +optional
 	Chart *ChartRef `json:"chart,omitempty"`
+
+	// Images are the private images the component runs, each at the one
+	// build it may run. Admission refuses a pod in the component's namespace
+	// that names one of these repositories at any other build, whoever asks.
+	// +optional
+	// +listType=map
+	// +listMapKey=repository
+	Images []PinnedImage `json:"images,omitempty"`
 
 	// Composition names a Crossplane composition, for a component that is not
 	// a single chart. Used only when the install is pinned to a bundle that

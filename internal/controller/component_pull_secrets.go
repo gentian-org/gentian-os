@@ -62,6 +62,9 @@ type pullRepository struct {
 	name string
 	host string
 	path []string
+	// app is the one profile this repository's credential is bound to;
+	// empty for a repository of the whole tenant.
+	app string
 }
 
 // secretName is the Secret the repository's Composition makes in the tenant's
@@ -221,7 +224,8 @@ func (r *ComponentReconciler) tenantPullRepositories(ctx context.Context, tenant
 		if host == "" {
 			continue
 		}
-		out = append(out, pullRepository{name: list.Items[i].GetName(), host: host, path: path})
+		app, _ := spec["app"].(string)
+		out = append(out, pullRepository{name: list.Items[i].GetName(), host: host, path: path, app: app})
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].name < out[b].name })
 	return out, nil
@@ -252,6 +256,7 @@ func profileChartRepositories(profile *gentianov1alpha1.ComponentProfile) []stri
 // administrator can act on, and nothing is rolled out while there is one.
 func resolvePullSecrets(profile *gentianov1alpha1.ComponentProfile, repos []pullRepository) (pullSecrets, string) {
 	var out pullSecrets
+	repos = repositoriesOf(profile, repos)
 	for _, repo := range repos {
 		out.images = append(out.images, repo.secretName())
 	}
@@ -276,6 +281,25 @@ func resolvePullSecrets(profile *gentianov1alpha1.ComponentProfile, repos []pull
 		}
 	}
 	return out, ""
+}
+
+// repositoriesOf are the repositories a profile may be told about. One bound
+// to the profile is its own, and then the only one; one bound to another
+// profile is never named on this one's pods.
+func repositoriesOf(profile *gentianov1alpha1.ComponentProfile, repos []pullRepository) []pullRepository {
+	var own, tenant []pullRepository
+	for _, repo := range repos {
+		switch repo.app {
+		case profile.Name:
+			own = append(own, repo)
+		case "":
+			tenant = append(tenant, repo)
+		}
+	}
+	if len(own) > 0 {
+		return own
+	}
+	return tenant
 }
 
 // appClaimPullSecrets is pullSecrets as the App claim carries it.
