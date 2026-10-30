@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -155,26 +156,50 @@ func TestAProfileThatNamesTheRegistrarIsToldWhereItIsAndMayReachIt(t *testing.T)
 	}
 }
 
-// The database Secret's name lands as a string where the profile asks for the
-// name, and as a structured reference where it asks for a host. A chart that
-// consumes the Secret with envFrom needs the first; handing it the second
-// names a map and nothing mounts, which is how the desktop would have lost its
-// database the moment its profile mapped the wrong key.
+// The database Secret's name lands as a string where the profile asks for
+// the name: a chart that consumes the Secret with envFrom needs exactly that.
+// The keys one by one are not release values at all: they are set entries
+// reading the component's sensitive Secret, the database the tenant made for
+// this app, as the app Composition delivers them.
 func TestTheDatabaseSecretNameIsAStringWhereAskedFor(t *testing.T) {
 	profile := &gentianov1alpha1.ComponentProfile{}
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
 		Database: &gentianov1alpha1.DatabaseValueMapping{
 			SecretNameKey: "existingSecret.name",
 			HostKey:       "database.host",
+			ReadNameKey:   "replica.name",
+			PasswordKey:   "database.password",
 		},
 	}
-	v := databaseValues(profile, "desktop-database")
-	if got := v["existingSecret"].(map[string]interface{})["name"]; got != "desktop-database" {
+	v := databaseValues(profile, "store-database")
+	if got := v["existingSecret"].(map[string]interface{})["name"]; got != "store-database" {
 		t.Fatalf("existingSecret.name = %#v, want the plain name", got)
 	}
-	host := v["database"].(map[string]interface{})["host"].(map[string]interface{})
-	if host["valueFrom"] != "desktop-database" {
-		t.Fatalf("database.host = %#v, want a valueFrom reference", host)
+	if _, ok := v["database"]; ok {
+		t.Fatalf("database.host is a release value: %#v", v["database"])
+	}
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "store", "tenant-acme"
+	sv := componentSensitiveValues(comp, profile, "acme")
+	var keys, names []string
+	for _, d := range sv.data {
+		e := d.(map[string]interface{})
+		keys = append(keys, e["secretKey"].(string)+"<-"+e["remoteRef"].(map[string]interface{})["key"].(string))
+	}
+	for _, e := range sv.set {
+		names = append(names, e.(map[string]interface{})["name"].(string))
+	}
+	path := "gentian-os/tenants/acme/apps/store/database"
+	if want := []string{"db-host<-" + path, "db-name<-" + path, "db-password<-" + path}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("read = %v, want %v", keys, want)
+	}
+	if want := []string{"database.host", "replica.name", "database.password"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("set = %v, want %v", names, want)
+	}
+	// The desktop's database is the one made for it, by the Secret's name.
+	profile.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
+	if sv := componentSensitiveValues(comp, profile, "acme"); len(sv.data) != 0 {
+		t.Errorf("a placed component's database is read key by key: %v", sv.data)
 	}
 }
 
@@ -483,6 +508,13 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{}}}
 		}),
+		"a database mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "db.host"}}
+		}),
+		"a contract's values": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
+				"desktop-api": {EndpointKey: "desktop.url"}}}
+		}),
 	}
 	for name, p := range direct {
 		if composedDelivery(p) {
@@ -492,9 +524,6 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 	composed := map[string]*gentianov1alpha1.ComponentProfile{
 		"a client of its own at the identity provider": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{OIDC: &gentianov1alpha1.OIDCValueMapping{}}
-		}),
-		"a database mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "db.host"}}
 		}),
 		"generated secrets": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}

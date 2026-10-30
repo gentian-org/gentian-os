@@ -83,16 +83,10 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 		}
 	}
 	if m := spec.Package.ValueMapping; m != nil {
+		// A database is rendered here, by the Secret's name or key by key
+		// (component_integrations.go).
 		if m.OIDC != nil || m.Cache != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil {
 			return true
-		}
-		// A database handed over as a Secret's name is rendered here. One
-		// mapped key by key is the Composition's.
-		if db := m.Database; db != nil {
-			only := gentianov1alpha1.DatabaseValueMapping{SecretNameKey: db.SecretNameKey}
-			if *db != only {
-				return true
-			}
 		}
 	}
 	return false

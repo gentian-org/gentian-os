@@ -30,8 +30,9 @@ import (
 
 // The values a chart is told without their being release values.
 //
-// What a profile maps from a vault path -- a contract's endpoint, user and
-// password (valueMapping.integrations) -- reaches its chart through one
+// What a profile maps from a vault path -- its database key by key
+// (valueMapping.database), a contract's endpoint, user and password
+// (valueMapping.integrations) -- reaches its chart through one
 // ExternalSecret of the component, <component>-sensitive-values, read from
 // the tenant's own store, and the release names each key it needs with a
 // set entry that takes its value from that Secret. The value is in the
@@ -60,10 +61,28 @@ func (v *sensitiveValues) add(comp *gentianov1alpha1.Component, valueKey, secret
 	if valueKey == "" {
 		return
 	}
+	v.read(secretKey, path, property)
+	v.tell(comp, valueKey, secretKey)
+}
+
+// read adds a key of the Secret, once, and where its value is.
+func (v *sensitiveValues) read(secretKey, path, property string) {
+	for _, d := range v.data {
+		if d.(map[string]interface{})["secretKey"] == secretKey {
+			return
+		}
+	}
 	v.data = append(v.data, map[string]interface{}{
 		"secretKey": secretKey,
 		"remoteRef": map[string]interface{}{"key": path, "property": property},
 	})
+}
+
+// tell adds a set entry: the chart value valueKey from a key of the Secret.
+func (v *sensitiveValues) tell(comp *gentianov1alpha1.Component, valueKey, secretKey string) {
+	if valueKey == "" {
+		return
+	}
 	v.set = append(v.set, map[string]interface{}{
 		"name": valueKey,
 		"valueFrom": map[string]interface{}{"secretKeyRef": map[string]interface{}{
@@ -73,12 +92,32 @@ func (v *sensitiveValues) add(comp *gentianov1alpha1.Component, valueKey, secret
 }
 
 // componentSensitiveValues is what a profile maps from the tenant's store,
-// in a fixed order: by contract, then endpoint, user, password.
+// in a fixed order: the database, then each contract by name.
 func componentSensitiveValues(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant string) sensitiveValues {
 	var out sensitiveValues
 	m := profile.Spec.Package.ValueMapping
 	if m == nil {
 		return out
+	}
+	// The database the tenant provisioned for this app, key by key -- for a
+	// chart that reads host, port and the rest as values rather than a
+	// Secret by name. A read replica is the same database here: the names
+	// are the ones the app Composition gives them.
+	if db := m.Database; db != nil && !operatorPlaced(profile) {
+		path := secrets.CategoryPath(tenant, comp.Name, "database")
+		out.add(comp, db.HostKey, "db-host", path, "host")
+		out.add(comp, db.PortKey, "db-port", path, "port")
+		if db.NameKey != "" || db.ReadNameKey != "" {
+			out.read("db-name", path, "name")
+		}
+		out.tell(comp, db.NameKey, "db-name")
+		out.tell(comp, db.ReadNameKey, "db-name")
+		if db.UserKey != "" || db.ReadUserKey != "" {
+			out.read("db-user", path, "user")
+		}
+		out.tell(comp, db.UserKey, "db-user")
+		out.tell(comp, db.ReadUserKey, "db-user")
+		out.add(comp, db.PasswordKey, "db-password", path, "password")
 	}
 	contracts := make([]string, 0, len(m.Integrations))
 	for contract := range m.Integrations {

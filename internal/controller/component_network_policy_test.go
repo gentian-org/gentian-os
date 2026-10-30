@@ -34,6 +34,7 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 	tenant.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
 	profile := &gentianov1alpha1.ComponentProfile{}
 	profile.Name = DesktopProfileName
+	profile.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
 	// What the shipped desktop profile declares: it asks where the director
 	// is, and that request is what opens its egress to the control namespace.
 	// Nothing about the name "desktop" does.

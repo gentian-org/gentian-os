@@ -37,6 +37,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/locales"
@@ -203,22 +204,19 @@ func platformMapping(profile *gentianov1alpha1.ComponentProfile) *gentianov1alph
 }
 
 // databaseValues maps the fulfilled database requirement onto the chart the
-// profile's valueMapping names. The credential Secret carries every key
-// (host, port, database, username, password, DATABASE_URL); a chart that
-// reads them by key names the keys, a chart that takes a Secret takes the
-// Secret -- the desktop does the latter through existingSecret.
+// profile's valueMapping names, for a chart that takes the credential Secret
+// by its name -- the desktop does, through existingSecret. The Secret
+// carries every key (host, port, database, username, password,
+// DATABASE_URL).
 func databaseValues(profile *gentianov1alpha1.ComponentProfile, secretName string) map[string]interface{} {
 	out := map[string]interface{}{}
 	if profile.Spec.Package.ValueMapping == nil || profile.Spec.Package.ValueMapping.Database == nil {
 		return out
 	}
 	m := profile.Spec.Package.ValueMapping.Database
-	if m.HostKey != "" {
-		setPath(out, m.HostKey, map[string]interface{}{"valueFrom": secretName})
-	}
-	// The plain name, for a chart that consumes the Secret whole. Not the
-	// structured reference above: a chart that wants existingSecret.name gets
-	// a string there, or its envFrom names a map and nothing mounts.
+	// The plain name, for a chart that consumes the Secret whole. The keys
+	// one by one (hostKey and the rest) are set entries reading the
+	// component's sensitive Secret (component_integrations.go).
 	if m.SecretNameKey != "" {
 		setPath(out, m.SecretNameKey, secretName)
 	}
@@ -255,11 +253,19 @@ func splitDots(s string) []string {
 	return append(out, cur)
 }
 
-// componentDatabaseNamespace is where a tenant's component databases live,
-// and so where its pods must be allowed to go: the kernel's data plane for
-// the platform tenant, the tenant postgres of the system tier for every
-// other (namespace-cleanup.md §2).
-func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha1.Tenant) string {
+// componentDatabaseNamespace is where a component's database lives, and so
+// where its pods must be allowed to go. An app the tenant installed has its
+// database on the shared store of its engine, made by the tenant's stores.
+// The desktop's is on the kernel's data plane for the platform tenant, and
+// on the tenant postgres of the system tier for every other
+// (namespace-cleanup.md §2).
+func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile) string {
+	if !operatorPlaced(profile) {
+		if provisioner.DatabaseEngineOf(profile) == gentianov1alpha1.DatabaseEngineMariaDB {
+			return mariadbNamespace
+		}
+		return postgresNamespace
+	}
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
 		return layout.Namespace(layout.Data)
 	}
@@ -280,13 +286,32 @@ func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha
 // drops it. The name is the one exports and restores already address.
 //
 // Either way the credential reaches the component as an ExternalSecret.
-func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
+func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
 	var target map[string]interface{}
 	var data []interface{}
 	// The tenant's own store and the tenant's own path, for every tenant:
 	// nothing of the kernel's is read into a tenant's namespace.
 	store := secrets.TenantStore(tenant.Name)
 	path := secrets.CategoryPath(tenant.Name, portalShellAppName, "database")
+	// An app the tenant installed has its database made by the tenant's
+	// stores, under its own name (kernel_requirement.go), as an app the
+	// Composition delivers has: the credential is read from its own path,
+	// and the Secret arrives once the record is there. Only a component the
+	// platform places itself -- the desktop -- has the one made here.
+	if !operatorPlaced(profile) {
+		own := secrets.CategoryPath(tenant.Name, comp.Name, "database")
+		target = databaseSecretTemplate("{{ .host }}", "{{ .port }}", "{{ .name }}", "{{ .user }}", "{{ .password }}")
+		if provisioner.DatabaseEngineOf(profile) == gentianov1alpha1.DatabaseEngineMariaDB {
+			target["DATABASE_URL"] = "mysql://{{ .user }}:{{ .password }}@{{ .host }}:{{ .port }}/{{ .name }}"
+		}
+		for _, p := range []string{"host", "port", "name", "user", "password"} {
+			data = append(data, map[string]interface{}{
+				"secretKey": p,
+				"remoteRef": map[string]interface{}{"key": own, "property": p},
+			})
+		}
+		return r.ensureDatabaseSecret(ctx, comp, store, target, data)
+	}
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
 		// The names the kernel's chart declares, which a backup of this
 		// tenant captures by too (backup/desktop.go). Only the password is
@@ -494,7 +519,9 @@ func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *ge
 	if err != nil {
 		return false, "", "", err
 	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+	// Only what is written here is compared: the API server fills in the
+	// schema's defaults, which would read as drift on every pass.
+	if !covers(existing.Object["spec"], desired.Object["spec"]) {
 		patch := client.MergeFrom(existing.DeepCopy())
 		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
 			return false, "", "", err

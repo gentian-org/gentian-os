@@ -77,6 +77,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 	}
 	acme := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
 	desktopProfile := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
+		Placement: &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery},
 		Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 			Database: &gentianov1alpha1.DatabaseRequirement{}}},
 	}}
@@ -183,10 +184,10 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 	// adopts the kernel realm and for no other: the rule admits tenant
 	// namespaces because that tenant is found by its realm, and what keeps
 	// every other tenant out is that nothing opens the way for it.
-	if got := r.componentDatabaseNamespace(platform); got != layout.Namespace(layout.Data) {
+	if got := r.componentDatabaseNamespace(platform, desktopProfile); got != layout.Namespace(layout.Data) {
 		t.Errorf("the desktop of the tenant that adopts the kernel realm keeps its database in %s", got)
 	}
-	if got := r.componentDatabaseNamespace(acme); got == layout.Namespace(layout.Data) {
+	if got := r.componentDatabaseNamespace(acme, desktopProfile); got == layout.Namespace(layout.Data) {
 		t.Error("a tenant with a realm of its own keeps its desktop's database on the kernel's server")
 	}
 	for _, ns := range r.componentEgressNamespaces(desktopProfile, acme) {
