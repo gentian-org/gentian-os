@@ -13,12 +13,12 @@ package controller
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -167,31 +167,75 @@ func TestARequestParameterIsHeldToWhatTheRealmCanBind(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// The Composition holds the names the operator does, list for list, and
-// every kernel service is among the reserved audiences.
-func TestTheCompositionHoldsTheSameNames(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "compositions", "app-default.yaml"))
-	if err != nil {
-		t.Fatal(err)
+// What a chart is rendered with holds the names the operator does: every
+// name the operator reserves is refused as an audience by the renderer too,
+// and so is every protocol parameter as a request parameter and every
+// reserved claim as its claim. A list the renderer held shorter would
+// register a client the operator meant to hold. And every kernel service is
+// among the reserved audiences.
+func TestTheRendererHoldsTheSameNames(t *testing.T) {
+	// audienceRendered renders the audience fixture for a profile of the
+	// given name declaring one audience, and says whether the client is
+	// given it.
+	audienceRendered := func(profile, aud string) bool {
+		in := apprenderFixtureInput(t, "app-oidc-audiences")
+		in.ProfileName = profile
+		in.Profile.Requires.Services.Identity.OIDC.Audiences = []gentianov1alpha1.TokenAudience{gentianov1alpha1.TokenAudience(aud)}
+		for _, m := range renderedOfKind(renderApp(t, in), "ProtocolMapper") {
+			if v, _, _ := unstructured.NestedString(m.Object, "spec", "forProvider", "config", "included.custom.audience"); v == aud {
+				return true
+			}
+		}
+		return false
 	}
-	for variable, want := range map[string][]string{
-		"reservedAudiences":  reservedAudiences,
-		"protocolParameters": protocolParameters,
-		"reservedClaims":     reservedClaims,
-	} {
-		line := regexp.MustCompile(`\$` + variable + ` := list ([^}]*)\}\}`).FindStringSubmatch(string(raw))
-		if line == nil {
-			t.Errorf("app-default.yaml has no $%s", variable)
+	if !audienceRendered("demo-app", "demo-app-api") {
+		t.Fatal("the fixture's own audience is not rendered; the checks below would prove nothing")
+	}
+	for _, aud := range reservedAudiences {
+		// A reserved name is refused for the profile it would otherwise
+		// belong to: the part before its last dash.
+		i := strings.LastIndex(aud, "-")
+		if i <= 0 {
 			continue
 		}
-		var got []string
-		for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(line[1], -1) {
-			got = append(got, q[1])
-		}
-		if !slices.Equal(got, want) {
-			t.Errorf("app-default.yaml $%s = %v, the operator's = %v", variable, got, want)
+		if audienceRendered(aud[:i], aud) {
+			t.Errorf("the renderer gives profile %s the reserved audience %s", aud[:i], aud)
 		}
 	}
+	if audienceRendered("gentian", "gentian-api") {
+		t.Error("the renderer gives an audience beginning with gentian")
+	}
+	if audienceRendered("demo-app", "other-api") {
+		t.Error("the renderer gives an audience of another profile's name")
+	}
+
+	// requestBound renders the request-parameter fixture with its parameter
+	// or claim changed, and says whether the parameter is bound.
+	requestBound := func(edit func(*gentianov1alpha1.OIDCRequestParameterSpec)) bool {
+		in := apprenderFixtureInput(t, "app-oidc-request-parameter")
+		rp := in.Profile.Requires.Services.Identity.OIDC.RequestParameter
+		edit(rp)
+		for _, m := range renderedOfKind(renderApp(t, in), "ProtocolMapper") {
+			if v, _, _ := unstructured.NestedString(m.Object, "spec", "forProvider", "protocolMapper"); v == "gentian-request-parameter-mapper" {
+				return true
+			}
+		}
+		return false
+	}
+	if !requestBound(func(*gentianov1alpha1.OIDCRequestParameterSpec) {}) {
+		t.Fatal("the fixture's own request parameter is not bound; the checks below would prove nothing")
+	}
+	for _, name := range protocolParameters {
+		if requestBound(func(rp *gentianov1alpha1.OIDCRequestParameterSpec) { rp.Name = name }) {
+			t.Errorf("the renderer binds the protocol parameter %s", name)
+		}
+	}
+	for _, claim := range reservedClaims {
+		if requestBound(func(rp *gentianov1alpha1.OIDCRequestParameterSpec) { rp.Claim = claim }) {
+			t.Errorf("the renderer puts a request parameter in the reserved claim %s", claim)
+		}
+	}
+
 	entries, err := os.ReadDir(filepath.Join("..", "..", "kernel", "services"))
 	if err != nil {
 		t.Fatal(err)
@@ -199,11 +243,6 @@ func TestTheCompositionHoldsTheSameNames(t *testing.T) {
 	for _, e := range entries {
 		if e.IsDir() && !strings.HasPrefix(e.Name(), "_") && !slices.Contains(reservedAudiences, e.Name()) {
 			t.Errorf("kernel service %s is not among the reserved audiences", e.Name())
-		}
-	}
-	for _, must := range []string{`not (hasPrefix "gentian" $aud)`, `(hasPrefix (printf "%s-" $profileName) $aud)`} {
-		if !strings.Contains(string(raw), must) {
-			t.Errorf("app-default.yaml does not hold %s", must)
 		}
 	}
 }

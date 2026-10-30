@@ -58,7 +58,8 @@ import (
 //
 // A Composition decides what exists for an app, so the right to delete one
 // is narrowed in code: only one that composes the platform's app, is named
-// "app-<profile>", is not "app-default" and is on the list (removeResidue).
+// "app-<profile>", is not "app-default" (the platform's own of earlier
+// releases) and is on the list (removeResidue).
 //
 // +kubebuilder:rbac:groups=apiextensions.crossplane.io,resources=compositions,verbs=get;list;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=oidcpackcatalogs,verbs=get;list;delete
@@ -95,9 +96,9 @@ const (
 )
 
 // oidcRule is the rule ResidueOIDC applies, said once for whoever reads the
-// answer. It is oidc.ResolvePack's, and the app Composition's.
+// answer. It is oidc.ResolvePack's, which the component reconciler reads by.
 const oidcRule = "A client is configured from the OIDCPackCatalog that carries its profile's label, an extension's " +
-	"from its parent profile's; the app's Composition and the identity Job read that one catalog and no other. " +
+	"from its parent profile's; the operator and the identity Job read that one catalog and no other. " +
 	"So a pack catalog on this list is still in effect (yes) when it is the only one labeled for a profile that " +
 	"is installed; contested when another catalog carries the same label, and the profile's clients are then " +
 	"refused until one of the two is removed; and no otherwise."
@@ -468,7 +469,7 @@ func created(obj client.Object) string {
 }
 
 // effective says, for each pack catalog on the list, whether it is still
-// read, by the rule of oidc.ResolvePack and of the app Composition.
+// read, by the rule of oidc.ResolvePack.
 func (v *residueView) effective(ctx context.Context, reader client.Reader, packs []found) error {
 	// How many pack catalogs carry each profile's label: a client is
 	// configured from the one that carries its profile's.

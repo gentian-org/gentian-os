@@ -26,17 +26,17 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // A ComponentProfile is one object per name for the whole cluster, and it is
 // the newest build any tenant installed. A tenant pinned to another build
 // runs it from here: the operator reads its profile out of the bundle this
-// object carries, verified against the digest, and the app Composition reads
-// the same spec from profileSpec. So two tenants on two builds of one app
-// share nothing, and a tenant moved back to a build it ran before finds it
-// without fetching anything.
+// object carries, verified against the digest, and a profile's own
+// Composition reads the same spec from profileSpec. So two tenants on two
+// builds of one app share nothing, and a tenant moved back to a build it ran
+// before finds it without fetching anything.
 //
 // Written by the director beside the profile, into the catalog directory of
 // the deployments repository, and applied from there by Argo CD; the
 // installer writes the same file for the profile it places. Nothing edits
 // it: a build is its digest. The operator reads the bundle, holds it to the
 // digest and to what a bundle may hold, and writes the profile's spec it
-// found onto the status, which is what the Composition reads.
+// found onto the status, which is what a profile's own Composition reads.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -83,7 +83,7 @@ type ProfileBuildSpec struct {
 type ProfileBuildStatus struct {
 	// ProfileSpec is the bundle's profile spec, with the defaults the API
 	// server gives a ComponentProfile, written once the bundle verified.
-	// What the app Composition reads for a tenant on this build. Absent
+	// What a profile's own Composition reads for a tenant on this build. Absent
 	// until the operator has read the build, and taken off one that does
 	// not verify.
 	// +optional

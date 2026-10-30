@@ -278,69 +278,6 @@ func resolvePullSecrets(profile *gentianov1alpha1.ComponentProfile, repos []pull
 	return out, ""
 }
 
-// valuesWithPullSecrets names the tenant's pull Secrets in a chart's values,
-// the way the app Composition names the cluster's: under imagePullSecrets and
-// global.imagePullSecrets, after whatever the profile already lists there or
-// registry-credentials when it lists nothing. A tenant that declared no
-// registry repository leaves the values exactly as they were.
-func valuesWithPullSecrets(values map[string]interface{}, profile *gentianov1alpha1.ComponentProfile, images []string) {
-	if len(images) == 0 {
-		return
-	}
-	var names []string
-	seen := map[string]bool{}
-	add := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			names = append(names, name)
-		}
-	}
-	if listed, ok := values["imagePullSecrets"].([]interface{}); ok {
-		for _, entry := range listed {
-			switch e := entry.(type) {
-			case string:
-				add(e)
-			case map[string]interface{}:
-				name, _ := e["name"].(string)
-				add(name)
-			}
-		}
-	}
-	if len(names) == 0 {
-		add(defaultPullSecretName)
-	}
-	for _, name := range images {
-		add(name)
-	}
-	// Charts disagree about the shape, and the profile says which its chart
-	// takes -- the same annotation the app Composition reads.
-	standard := profile.Annotations[standardPullSecretsAnnotation] == "true"
-	rendered := make([]interface{}, 0, len(names))
-	for _, name := range names {
-		if standard {
-			rendered = append(rendered, map[string]interface{}{"name": name})
-		} else {
-			rendered = append(rendered, name)
-		}
-	}
-	values["imagePullSecrets"] = rendered
-	global, _ := values["global"].(map[string]interface{})
-	if global == nil {
-		global = map[string]interface{}{}
-	}
-	global["imagePullSecrets"] = append([]interface{}{}, rendered...)
-	values["global"] = global
-}
-
-const (
-	// defaultPullSecretName is the cluster's own pull credential, replicated
-	// into every tenant namespace.
-	defaultPullSecretName = "registry-credentials"
-	// standardPullSecretsAnnotation marks a profile whose chart takes
-	// imagePullSecrets as a list of {name}, rather than of names.
-	standardPullSecretsAnnotation = "gentianos.io/standard-image-pull-secrets"
-)
-
 // appClaimPullSecrets is pullSecrets as the App claim carries it.
 func appClaimPullSecrets(p pullSecrets) map[string]interface{} {
 	out := map[string]interface{}{}
@@ -361,8 +298,8 @@ func appClaimPullSecrets(p pullSecrets) map[string]interface{} {
 	return out
 }
 
-// composedReleaseMessage says why the release the app Composition made for a
-// component is not ready, in the provider's own words: a chart that could not
+// composedReleaseMessage says why the release a profile's own Composition
+// made for a component is not ready, in the provider's own words: a chart that could not
 // be pulled says so there and nowhere a tenant administrator would look.
 // Empty when there is nothing to say yet.
 func (r *ComponentReconciler) composedReleaseMessage(ctx context.Context, claim *unstructured.Unstructured) string {

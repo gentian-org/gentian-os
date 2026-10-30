@@ -97,8 +97,8 @@ PRESENTATION = ["displayName", "description", "family", "edition", "author", "li
                 "categories", "keywords", "tile"]
 # portalTiles is deliberately NOT presentation: see the module docstring.
 # compositionRef is NOT carried over. The composition that renders an app is
-# chosen by the claim, never by the profile -- app-default reads the profile
-# and no code anywhere reads compositionRef, which is why the migration table
+# never chosen by compositionRef -- the operator renders an app from its
+# profile and no code anywhere reads compositionRef, which is why the migration table
 # records it as "nothing, unused".
 PACKAGE_RENAME = {"chart": "chart", "apiIntegration": "api",
                   "valueMapping": "valueMapping", "extraValues": "extraValues"}
@@ -335,8 +335,8 @@ def convert(doc, review, bases):
 
     # It names the Composition that renders this app, and the tenant reads it
     # to set the App claim's compositionRef -- without it the three apps that
-    # have their own Composition render through app-default instead, losing the
-    # bridge, sidecar or alias that Composition exists to emit.
+    # have their own Composition are rendered by the operator instead, losing
+    # the bridge, sidecar or alias that Composition exists to emit.
     #
     # package.composition beside package.chart: the chart is WHAT is installed
     # and the Composition is WHAT ELSE is created beside it. The union admits

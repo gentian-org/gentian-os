@@ -83,8 +83,8 @@ halves to the same arithmetic.
 registration serves many places, each with its own callback address computed
 from a parameter of the authorization request
 (`requires.services.identity.oidc.requestParameter`; docs/app-customization.md).
-Both read the binding from the client's attributes, which the app Composition
-writes, and from nowhere else (`RequestBinding`):
+Both read the binding from the client's attributes, which the operator
+writes when it renders the app, and from nowhere else (`RequestBinding`):
 
 | Attribute | |
 |---|---|

@@ -42,8 +42,9 @@ clients the platform's administrators enter other tenants with
 | For a tenant that lets the platform's administrators enter (`spec.kernelBroker`, from `Tenant.spec.platformAccess.adminsEnter`): the identity provider `kernel` and its mapper into the admins group | |
 | For the platform tenant (`spec.kernelEnter`): per entering tenant the client `broker-to-<t>` in the kernel realm | |
 
-An app without a pack gets its OIDC client from its own app Composition, not
-from a Job; the operator only seeds the client's secret.
+An app without a pack gets its OIDC client rendered with its release by the
+operator (`internal/apprender`), not from a Job; the tenant reconciler only
+seeds the client's secret.
 
 The kernel identity provider in a tenant realm is composed only where the
 tenant switched it on, and it maps one thing: the platform's administrators
@@ -51,9 +52,8 @@ into the tenant's admins group ([iam.md §1.1c](iam.md)).
 
 ## Composition ordering
 
-`tenant-default` runs `function-sequencer`: objects that need the realm, and
-App claims that emit Keycloak clients, are held back until what they depend
-on is Ready.
+`tenant-default` runs `function-sequencer`: objects that need the realm are
+held back until what they depend on is Ready.
 
 Job order, as the operator waits for it: realm → groups → tenant
 administrator → OIDC and SAML client Jobs → mail server.

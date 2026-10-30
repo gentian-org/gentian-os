@@ -11,7 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 // Package credentialprobe says which credentials a person has to supply for
 // an app are not set yet, by the probe each one's CredentialRequirement has.
 //
-// The app Composition emits, for each entry of a profile's
+// The operator renders, for each entry of a profile's
 // spec.secrets.supplied, a CredentialRequirement and a probe: an
 // ExternalSecret credreq-<requirement> in the control namespace that creates
 // nothing and is Ready once every field is in the vault. The app's release

@@ -348,7 +348,10 @@ type PackageSpec struct {
 	Chart *ChartRef `json:"chart,omitempty"`
 
 	// Composition names a Crossplane composition, for a component that is not
-	// a single chart. Delivery: workload.
+	// a single chart. Used only when the install is pinned to a bundle that
+	// brings it as app-<profile>, and only for a profile of trustTier
+	// platform: below that the component is held. Otherwise the operator
+	// renders the chart. Delivery: workload.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	Composition string `json:"composition,omitempty"`

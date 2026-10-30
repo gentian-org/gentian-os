@@ -51,7 +51,8 @@ const RegistrarPort = int32(9445)
 //
 // The pods are selected by what each app's delivery puts on them, which the
 // caller knows and this package does not (selectors); an app it names nothing
-// for is selected by the app label, which is the app Composition's.
+// for is selected by the app label, which the operator renders every chart
+// it does not place with (podLabels).
 func ContractNetworkPolicies(
 	tenantName string,
 	binding *gentianov1alpha1.IntegrationBinding,

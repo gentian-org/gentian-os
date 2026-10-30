@@ -197,77 +197,51 @@ func TestPullSecretsAreResolvedForAProfile(t *testing.T) {
 	}
 }
 
-// The tenant's Secrets follow the profile's own, or the cluster's when the
-// profile names none, in the shape the profile says its chart takes. A
-// tenant with no registry repository leaves the values untouched.
-func TestPullSecretsAreNamedInTheChartsValues(t *testing.T) {
-	profile := chartProfileFixture("oci://registry.vendor.example/acme/charts")
-
-	untouched := map[string]interface{}{"replicas": int64(1)}
-	valuesWithPullSecrets(untouched, profile, nil)
-	if !reflect.DeepEqual(untouched, map[string]interface{}{"replicas": int64(1)}) {
-		t.Fatalf("values changed with nothing declared: %v", untouched)
-	}
-
-	values := map[string]interface{}{"global": map[string]interface{}{"storageClass": "fast"}}
-	valuesWithPullSecrets(values, profile, []string{"repository-vendor-apps-pull"})
-	want := []interface{}{"registry-credentials", "repository-vendor-apps-pull"}
-	if !reflect.DeepEqual(values["imagePullSecrets"], want) {
-		t.Fatalf("imagePullSecrets = %v", values["imagePullSecrets"])
-	}
-	global := values["global"].(map[string]interface{})
-	if !reflect.DeepEqual(global["imagePullSecrets"], want) || global["storageClass"] != "fast" {
-		t.Fatalf("global = %v", global)
-	}
-
-	profile.Annotations = map[string]string{standardPullSecretsAnnotation: "true"}
-	values = map[string]interface{}{"imagePullSecrets": []interface{}{map[string]interface{}{"name": "own"}}}
-	valuesWithPullSecrets(values, profile, []string{"repository-vendor-apps-pull"})
-	wantMaps := []interface{}{
-		map[string]interface{}{"name": "own"},
-		map[string]interface{}{"name": "repository-vendor-apps-pull"},
-	}
-	if !reflect.DeepEqual(values["imagePullSecrets"], wantMaps) {
-		t.Fatalf("imagePullSecrets = %v", values["imagePullSecrets"])
-	}
-}
-
-// A chart delivered directly is pulled with the Secret in the component's
-// own namespace; one in no declared repository names none.
+// A chart is pulled with the Secret in the component's own namespace; one in
+// no declared repository names none. How the tenant's Secrets are named in
+// the chart's values is the renderer's (apprender's app-pull-secrets
+// fixture).
 func TestTheReleaseNamesTheChartsPullSecretInItsOwnNamespace(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-
 	profile := chartProfileFixture("oci://registry.vendor.example/acme/charts")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(profile).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
+
 	pull := pullSecrets{charts: []chartPull{{
 		repository: "oci://registry.vendor.example/acme/charts", secretName: "repository-vendor-apps-pull", declared: "vendor-apps",
 	}}}
-	chartOf := func(tenantNS string, pull pullSecrets) map[string]interface{} {
-		comp := &gentianov1alpha1.Component{}
-		comp.Name, comp.Namespace = "vendor-app", tenantNS
-		if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pull); err != nil {
+	chartOf := func(tenantName string, pull pullSecrets) map[string]interface{} {
+		t.Helper()
+		tenant := acmeTenantFixture()
+		tenant.Name = tenantName
+		comp := componentFor("vendor-app", tenantNamespaceName(tenant))
+		comp.Spec.ProfileRef.Name = profile.Name
+		in, err := r.renderInput(ctx, comp, profile, tenant, r.zoneOf(tenant), pull, false, nil, nil)
+		if err != nil {
 			t.Fatal(err)
 		}
-		release := &unstructured.Unstructured{}
-		release.SetGroupVersionKind(helmReleaseGVK)
-		if err := c.Get(ctx, types.NamespacedName{Name: releaseName(comp)}, release); err != nil {
+		rendered, err := r.render(ctx, in)
+		if err != nil {
 			t.Fatal(err)
+		}
+		release := renderedNamed(rendered.Objects, "Release", releaseName(comp))
+		if release == nil {
+			t.Fatalf("no release %s rendered", releaseName(comp))
 		}
 		chart, _, _ := unstructured.NestedMap(release.Object, "spec", "forProvider", "chart")
 		return chart
 	}
 
-	acme := chartOf("tenant-acme", pull)
+	acme := chartOf("acme", pull)
 	ref, _ := acme["pullSecretRef"].(map[string]interface{})
 	if ref["name"] != "repository-vendor-apps-pull" || ref["namespace"] != "tenant-acme" {
 		t.Fatalf("acme's chart is pulled with %v", acme["pullSecretRef"])
 	}
 	// The same profile in a tenant that declared no repository.
-	if globex := chartOf("tenant-globex", pullSecrets{}); globex["pullSecretRef"] != nil {
+	if globex := chartOf("globex", pullSecrets{}); globex["pullSecretRef"] != nil {
 		t.Fatalf("globex's chart is pulled with %v", globex["pullSecretRef"])
 	}
 }

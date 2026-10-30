@@ -94,8 +94,10 @@ const (
 type DeploymentMethod string
 
 const (
-	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
-	// App Composition that emits an ExternalSecret and a provider-helm Release.
+	// DeploymentMethodCrossplane marks a component that runs workload pods:
+	// the operator renders its provider-helm Release and what the release
+	// needs, or, for a profile that brings its own Composition, an App claim
+	// has that Composition render them.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
 	// DeploymentMethodAPI marks an ApiProfile: a catalog entry that runs no
 	// workload pods. The orchestrator provisions no Helm release or App claim;

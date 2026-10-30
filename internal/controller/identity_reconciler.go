@@ -971,7 +971,7 @@ func (r *TenantReconciler) ensureAdoptedRealmIdentity(ctx context.Context, tenan
 	}
 	var pending []string
 	for _, cfg := range oidcConfigs {
-		// No Job is built for a client the app Composition composes
+		// No Job is built for a client rendered with the app's release
 		// (buildIdentityProvisioningJobs), so none is waited for here
 		// either: its secret is seeded, as for any other tenant.
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)

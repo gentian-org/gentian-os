@@ -186,9 +186,8 @@ func TestOnlyAVerifiedBundlesOwnCompositionRendersAnApp(t *testing.T) {
 	}
 }
 
-// The claim says which Composition, every time: the profile's own when it
-// was given one, the platform's otherwise -- also for a claim that named the
-// profile's own before a newer build stopped bringing it.
+// The claim names the Composition the profile brings, every time. A profile
+// that brings none is rendered by the reconciler and has no claim at all.
 func TestTheAppClaimNamesItsComposition(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
@@ -212,8 +211,7 @@ func TestTheAppClaimNamesItsComposition(t *testing.T) {
 	}
 	for _, step := range []struct{ given, want string }{
 		{"app-shop", "app-shop"},
-		{"", "app-default"},
-		{"app-shop", "app-shop"},
+		{"app-shop-v2", "app-shop-v2"},
 	} {
 		if _, _, err := r.ensureAppClaim(context.Background(), comp, tenant, zone, pullSecrets{}, step.given, "", false, nil, nil); err != nil {
 			t.Fatal(err)

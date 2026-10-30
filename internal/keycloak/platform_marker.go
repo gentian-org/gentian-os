@@ -35,7 +35,7 @@ const (
 //     broker-to-<name> (tenant-default);
 //   - gentian-dovecot: tenant-default, cluster-default and the Dovecot OIDC Job;
 //   - openbao: cluster-default's client, under its default name;
-//   - https://<host>/sso: app-default's sign-in sidecar client;
+//   - https://<host>/sso: the operator's sign-in sidecar client (apprender);
 //   - gentian-registrar-admin, gentian-director-admin (retired): the
 //     operator's administrative clients;
 //   - gentian-argocd, headlamp, grafana, gentian-cli, litellm-dashboard: the

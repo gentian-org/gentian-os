@@ -64,10 +64,9 @@ import (
 //     Composition because it already may: the provider that applies a
 //     Composition's objects is not allowed to create a Deployment or a
 //     NetworkPolicy anywhere, and is not made able to for this.
-//   - The app Composition (app-default.yaml) registers the sidecar at the
-//     tenant's realm, from where the app answers, which this file puts on the
-//     App claim. The claim alone composes nothing, and neither does the
-//     profile's declaration alone.
+//   - The operator registers the sidecar at the tenant's realm (apprender),
+//     from where the app answers, which this file hands the render. The
+//     profile's declaration alone registers nothing.
 //   - The sidecar checks the answer (gentian-apps,
 //     images/gentian-sidecar-sso-saml).
 //
@@ -167,7 +166,8 @@ type signInSidecar struct {
 	// logoutURL is where the realm tells the sidecar that a person signed
 	// out: the sidecar's own Service inside the cluster.
 	logoutURL string
-	// claim is what the App claim carries for the Composition.
+	// claim is what the render is given, and what an App claim carries
+	// for a profile's own Composition.
 	claim map[string]interface{}
 }
 
@@ -179,8 +179,8 @@ func signInSidecarService(component string) string { return component + "-sign-i
 // signed out: the sidecar's Service, by its full name inside the cluster.
 //
 // The sidecar is given this string and the realm is registered with the same
-// one, built by the Composition from the same parts (app-default.yaml: the
-// claim's name, its namespace and the port the claim carries). The two have
+// one, built by apprender from the same parts (the component's name, its
+// namespace and the port it is handed). The two have
 // to agree to the letter -- the sidecar refuses a request addressed anywhere
 // else -- and TestTheSidecarAndTheRealmAgreeOnTheSignOutAddress holds them
 // to it.
@@ -373,7 +373,7 @@ func (r *ComponentReconciler) signInSidecarFor(
 		//
 		// And the port of the sidecar's Service on which it is told of a
 		// sign-out. The Composition builds the rest of that address itself,
-		// from the claim's own name and namespace, so the realm can be told
+		// from the component's own name and namespace, so the realm can be told
 		// to call nothing but this app's sidecar.
 		claim: map[string]interface{}{"host": host, "logoutPort": int64(signInSidecarPort)},
 	}

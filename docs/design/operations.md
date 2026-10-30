@@ -83,9 +83,9 @@ kubectl get tenants
 NAME   STATUS   APPS   READY   ADMIN               AGE
 demo   Ready    2      2       admin@example.com   30d
 
-# What is installed for a tenant (Component → App claim → helm Release)
-kubectl get components,apps -n tenant-demo
-kubectl get releases.helm.crossplane.io -n tenant-demo
+# What is installed for a tenant (Component → helm Release, cluster-scoped)
+kubectl get components -n tenant-demo
+kubectl get releases.helm.crossplane.io -l gentianos.io/tenant=demo
 
 # The tenant's composite (namespace, quota, policy)
 kubectl get xtenant demo
@@ -97,8 +97,9 @@ kubectl get integrationbindings -n tenant-demo
 kubectl get applications -n kernel-gitops
 ```
 
-A tenant's apps are observed through the **`Component`**, its **`App` claim**
-and the **helm `Release`** in `tenant-{name}`. Argo CD Applications cover the
+A tenant's apps are observed through the **`Component`** in `tenant-{name}`
+and its **helm `Release`** (an `App` claim beside it for a profile that
+brings its own Composition). Argo CD Applications cover the
 kernel's services, the claims and the deployments repository's tenant and
 catalog directories, not each tenant app install.
 
@@ -488,15 +489,15 @@ In provisioning order.
 | Kind | Made by | Detail |
 | --- | --- | --- |
 | Provisioning records | every provisioning Job, and the operator's labeled Secrets, from the first step on | Jobs, their pods and labeled Secrets; found by the tenant's and the app's labels. A teardown's own Jobs are records too, which is why they go last. |
-| Stored credentials | the tenant reconciler's seeder before each store; the app Composition for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
+| Stored credentials | the tenant reconciler's seeders, before each store and for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
 | Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
-| Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own, and with it the app's client if one is left: the identity Job makes the client before the App claim, so an install that never reached the claim leaves one its uninstall does not remove. |
+| Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own, and with it the app's client if one is left: the identity Job makes the client before the release is rendered, so an install that never got that far leaves one its uninstall does not remove. |
 | Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name here when that is not the one in the bundle -- the tenant's database prefix differs between where the bundle was taken and here (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
 | Object storage | the bucket Job | A restore makes the bucket, its user and its policy with the code install uses, then writes the objects, removing objects the bundle does not hold. |
 | Cache user | the ACL Job | A restored cache is stale, so none is carried. |
 | Model key | the tenant reconciler, at the model gateway, where the cluster serves models | A credential, registered again at install. A tenant's deletion removes the keys, then the tenant's team. |
-| Sign-in client | the app Composition, or the identity Job | With its client role, its default-scope assignments and the group's mapping to the role. Keycloak removes what is part of the client with it. |
-| Workloads | the Helm release the app Composition or the component reconciler writes | The manifest records the chart version, the digest and the releases; a restore checks the installed build against them (§9.4). A Release or Object a gone composite left composed (an install cut short leaves one on an unfinished create, which its provider never deletes) is unblocked and deleted by the uninstall's tenant reconcile and by a purge, which waits for it; an install creates no App claim beside one (`internal/composed`). |
+| Sign-in client | the component reconciler, or the identity Job | With its client role, its default-scope assignments and the group's mapping to the role. Keycloak removes what is part of the client with it. |
+| Workloads | the Helm release the component reconciler writes | The manifest records the chart version, the digest and the releases; a restore checks the installed build against them (§9.4). A Release or Object a gone composite left composed (an install cut short leaves one on an unfinished create, which its provider never deletes) is unblocked and deleted by the uninstall's tenant reconcile and by a purge, which waits for it; an install renders nothing beside one (`internal/composed`). |
 | Files | the app's chart, as volume claims of its release | An archive per claim that is the app's (`AppVolumes`), unpacked onto the claim of the same name. At a tenant's deletion they go with the namespace. |
 | Materialized profile | committed by the director under `clusters/<cluster>/catalogue/` at the digest the install named, applied by Argo CD | Kept by every act: a purge of the app reads it to know what the app owns. |
 | Bundle companions | applied with the profile, from the same file | The Composition, OIDC pack catalog, ConfigMaps and customization records a profile's bundle brings. Kept by every act. |
@@ -871,8 +872,8 @@ The gaps that matter to a person running the platform are in
 - **`spec.isolation.namespace`.** Export, restore, purge and the retained read
   take a tenant's namespace from the Tenant, as provisioning does. The rest of
   the platform does not: an export or a restore finds its tenant by stripping
-  `tenant-` from its namespace, the app Composition derives the tenant's name
-  the same way, and the director never sets the field. A tenant placed in a
+  `tenant-` from its namespace, the app renderer (`internal/apprender`) derives
+  the tenant's name the same way, and the director never sets the field. A tenant placed in a
   namespace of another name is not supported end to end; an export or restore
   created for one is refused.
 - **MariaDB databases an app creates for itself** are the app's by their name

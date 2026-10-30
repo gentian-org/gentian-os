@@ -52,11 +52,8 @@ const ProvisioningJobActiveDeadlineSeconds int64 = 3600
 // InitJobResources caps CPU/memory for operator-owned provisioning Jobs in
 // platform-kernel.
 //
-// The values are fixed here. This used to say tenant-scoped init Jobs read
-// tenant.initJob.* from gentian-cluster-config via the app-default composition,
-// which was not true of any composition: app-default reads one key from that
-// ConfigMap and it is not this one. The claim fields those keys came from have
-// been removed, so the only sizing is the one below.
+// The values are fixed here: nothing reads a sizing for them from
+// gentian-cluster-config.
 func InitJobResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{

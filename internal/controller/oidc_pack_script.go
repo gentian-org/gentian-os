@@ -97,42 +97,40 @@ else
   echo "client ${CLIENT_ID} created"
 fi
 %s
-# The client is NOT configured here. app-default composes it, and this Job
-# writing the same object is what made it the last one with two writers — the
-# shape that let the kernel IdP spend two minutes of every reconcile on the
-# wrong first-broker-login flow before anyone noticed.
+# The client is NOT configured here. The operator renders it with the app's
+# release, and this Job writing the same object would give it two writers --
+# the shape that let the kernel IdP spend two minutes of every reconcile on
+# the wrong first-broker-login flow before anyone noticed.
 #
 # The create above stays. It is a bootstrap, not ownership: something has to
-# make the client before the client role below can hang off it, and this Job is
-# waited on in the DataPlane stage while the App claim that composes the client
-# is created in AppsAndEdge, the stage after. Whichever gets there first decides
-# the initial state and the Composition converges it from then on.
+# make the client before the client role below can hang off it, and this Job
+# runs before the app's release is rendered. Whichever gets there first
+# decides the initial state and the rendered client converges it from then on.
 #
 # Same division as the realm script and the kernel IdP: create if absent, never
 # restate.
 
 # --- Client role ---
-# Neither created nor read here. app-default composes a Role, which adopted the
-# existing one by its Keycloak id rather than making a second -- verified on
-# corp, where the role kept its id -- and maps the entitlement group to it.
+# Neither created nor read here. The operator renders a Role with the app's
+# release, which adopts the existing one by its Keycloak id rather than making
+# a second, and maps the entitlement group to it.
 #
-# The read that stayed behind for that mapping outlived it, and it deadlocked:
-# this Job is waited on before the App claim that composes the role is created,
-# so wherever the client was there and the role was not -- a reinstall after a
-# purge, any first install -- the Job failed on a 404 for ever and the claim
-# never came. Nothing in this Job needs the role.
+# A read of the role here would deadlock: this Job is waited on before the
+# release that brings the role is rendered, so wherever the client was there
+# and the role was not -- a reinstall after a purge, any first install -- the
+# Job would fail on a 404 for ever. Nothing in this Job needs the role.
 
-# The entitlement group is NOT mapped to the client role here. app-default
-# composes a group Roles for it, with exhaustive false so it grants that one
+# The entitlement group is NOT mapped to the client role here. The operator
+# renders a group Roles for it, with exhaustive false so it grants that one
 # role and leaves anything else on the group alone.
 #
 # This POST swallowed its own failure, so a mapping that never happened looked
 # exactly like one that did — the same silence the default-client-scopes loop had.
 
-# The default client scopes are NOT attached here. app-default composes a
+# The default client scopes are NOT attached here. The operator renders a
 # ClientDefaultScopes for exactly the same six — profile, email, roles,
 # web-origins, acr and the pack's own scope — and it reports them all attached.
-# This loop was the second place this Job wrote an object the Composition owns.
+# This loop was the second place this Job wrote an object the render owns.
 #
 # It also swallowed its own failures, so a scope that never attached looked
 # identical to one that did.
@@ -233,10 +231,10 @@ for _kj_mid in $(printf '%%s' "${MAPPERS}" | jq -r '.[] | select(.name=="oidc-us
   echo "removed corrupt mapper id=${_kj_mid} from scope ${SCOPE_NAME}"
 done
 `)
-	// No mapper POSTs. app-default composes a ProtocolMapper per entry in
-	// pack.Mappers, resolved through the catalog's mapperTemplates, and those
-	// adopted the live mappers by their Keycloak ids rather than creating new
-	// ones — verified on corp, where all three kept their ids and their config.
+	// No mapper POSTs. The operator renders a ProtocolMapper per entry in
+	// pack.Mappers, resolved through the catalog's mapperTemplates, which
+	// adopt the live mappers by their Keycloak ids rather than creating new
+	// ones.
 	//
 	// The corrupt-mapper cleanup above stays. It deletes mappers whose *name* is
 	// literally "oidc-usermodel-attribute-mapper", left by a much older failed

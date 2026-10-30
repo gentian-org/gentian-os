@@ -19,22 +19,16 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/apprender"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
-
-// sensitiveComponent is a Component of tenant acme with a UID, which is what
-// the ExternalSecret's controller reference is compared by.
-func sensitiveComponent(name string) *gentianov1alpha1.Component {
-	comp := componentFor(name, "tenant-acme")
-	comp.UID = types.UID("uid-" + name)
-	return comp
-}
 
 // mappingProfile is a chart profile that maps the given contracts' values.
 func mappingProfile(m map[string]gentianov1alpha1.IntegrationValueMapping) *gentianov1alpha1.ComponentProfile {
@@ -71,6 +65,26 @@ func markReady(t *testing.T, c client.Client, es *unstructured.Unstructured) {
 	}
 }
 
+// sensitiveOf answers what a render reads into the component's sensitive
+// Secret -- each key and where it is read from, "<path>#<property>" -- and
+// the set entries its release names, in order.
+func sensitiveOf(t *testing.T, objs []*unstructured.Unstructured, app string) (data []map[string]interface{}, set []map[string]interface{}) {
+	t.Helper()
+	if es := renderedNamed(objs, "ExternalSecret", app+"-sensitive-values"); es != nil {
+		entries, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+		for _, e := range entries {
+			data = append(data, e.(map[string]interface{}))
+		}
+	}
+	for _, release := range renderedOfKind(objs, "Release") {
+		entries, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
+		for _, e := range entries {
+			set = append(set, e.(map[string]interface{}))
+		}
+	}
+	return data, set
+}
+
 // The values a profile maps come out in one order -- by contract, then
 // endpoint, user, password -- with each Secret key named after its contract
 // and read from that contract's path in the tenant's store, and each set
@@ -79,12 +93,11 @@ func markReady(t *testing.T, c client.Client, es *unstructured.Unstructured) {
 // compared with what is desired on every pass, and a map's order would
 // rewrite both for nothing.
 func TestTheMappedValuesAreReadByContractInAFixedOrder(t *testing.T) {
-	comp := sensitiveComponent("store")
 	profile := mappingProfile(map[string]gentianov1alpha1.IntegrationValueMapping{
 		"orders":      {EndpointKey: "orders.url", PasswordKey: "orders.token"},
 		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL", UserKey: "api.env.DESKTOP_API_USER"},
 	})
-	got := componentSensitiveValues(comp, profile, "acme")
+	data, set := sensitiveOf(t, renderApp(t, chartRenderInput("store", profile)), "store")
 
 	want := []struct{ secretKey, path, property, valueKey string }{
 		{"integration-desktop-api-endpoint", secrets.ContractPath("acme", "desktop-api"), "endpoint", "api.env.DESKTOP_API_URL"},
@@ -92,91 +105,91 @@ func TestTheMappedValuesAreReadByContractInAFixedOrder(t *testing.T) {
 		{"integration-orders-endpoint", secrets.ContractPath("acme", "orders"), "endpoint", "orders.url"},
 		{"integration-orders-password", secrets.ContractPath("acme", "orders"), "password", "orders.token"},
 	}
-	if len(got.data) != len(want) || len(got.set) != len(want) {
-		t.Fatalf("data = %d, set = %d entries, want %d each", len(got.data), len(got.set), len(want))
+	if len(data) != len(want) || len(set) != len(want) {
+		t.Fatalf("data = %v, set = %v, want %d entries each", data, set, len(want))
 	}
 	for i, w := range want {
-		d := got.data[i].(map[string]interface{})
+		d := data[i]
 		ref := d["remoteRef"].(map[string]interface{})
 		if d["secretKey"] != w.secretKey || ref["key"] != w.path || ref["property"] != w.property {
 			t.Fatalf("data[%d] = %v, want %s from %s#%s", i, d, w.secretKey, w.path, w.property)
 		}
-		s := got.set[i].(map[string]interface{})
+		s := set[i]
 		from := s["valueFrom"].(map[string]interface{})["secretKeyRef"].(map[string]interface{})
 		if s["name"] != w.valueKey || from["name"] != "store-sensitive-values" || from["namespace"] != "tenant-acme" || from["key"] != w.secretKey {
 			t.Fatalf("set[%d] = %v, want %s from store-sensitive-values/%s", i, s, w.valueKey, w.secretKey)
 		}
 	}
 
-	if v := componentSensitiveValues(comp, chartProfileFixture("oci://x"), "acme"); len(v.data) != 0 || len(v.set) != 0 {
-		t.Fatalf("a profile that maps nothing asks for %+v", v)
+	if data, set := sensitiveOf(t, renderApp(t, chartRenderInput("store", chartProfileFixture("oci://x"))), "store"); len(data) != 0 || len(set) != 0 {
+		t.Fatalf("a profile that maps nothing asks for data %v, set %v", data, set)
 	}
 }
 
+// mappedWikiHarness is the wiki of tenant acme with its profile mapping the
+// desktop's contract endpoint.
+func mappedWikiHarness(t *testing.T) *digestHarness {
+	t.Helper()
+	profile := materialised(t, wikiBundle)
+	profile.Annotations = nil
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
+		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
+	}}
+	return startDigestHarness(t, profile, "")
+}
+
 // The component's ExternalSecret is created from the tenant's own store,
-// controlled by the component, and the component waits until ESO says its
+// controlled by the component, and the release waits until ESO says its
 // Secret is there: a set entry naming a Secret that does not exist yet fails
-// the release instead of waiting. Drift is put back, and the put-back pass
-// waits again rather than trusting a condition about the old spec.
+// the release instead of waiting. Drift is put back.
 func TestTheSensitiveValuesWaitForTheirSecretAndAreKeptAsMapped(t *testing.T) {
 	ctx := context.Background()
-	scheme := uninstallScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	comp := sensitiveComponent("store")
-	v := componentSensitiveValues(comp, mappingProfile(map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
-	}), "acme")
+	h := mappedWikiHarness(t)
 
-	ready, err := r.ensureSensitiveValues(ctx, comp, "acme", v)
-	if err != nil || ready {
-		t.Fatalf("first pass: ready %v, err %v; want created and waiting", ready, err)
+	got := h.reconcile()
+	if ready := componentReadyCondition(got); ready == nil || ready.Reason != "ValuesPending" {
+		t.Fatalf("condition = %+v, want ValuesPending", ready)
 	}
-	es, ok := getSensitiveValues(t, c, comp)
+	es, ok := getSensitiveValues(t, h.c, h.comp)
 	if !ok {
 		t.Fatal("no ExternalSecret was created")
 	}
 	if store, _, _ := unstructured.NestedString(es.Object, "spec", "secretStoreRef", "name"); store != secrets.TenantStore("acme") {
 		t.Fatalf("store = %q, want the tenant's own", store)
 	}
-	if target, _, _ := unstructured.NestedString(es.Object, "spec", "target", "name"); target != "store-sensitive-values" {
+	if target, _, _ := unstructured.NestedString(es.Object, "spec", "target", "name"); target != "wiki-sensitive-values" {
 		t.Fatalf("target = %q", target)
 	}
-	if !metav1.IsControlledBy(es, comp) {
+	if !metav1.IsControlledBy(es, got) {
 		t.Fatalf("not controlled by the component: %v", es.GetOwnerReferences())
 	}
 
 	// No verdict from ESO yet.
-	if ready, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err != nil || ready {
-		t.Fatalf("before ESO wrote the Secret: ready %v, err %v", ready, err)
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "ValuesPending" {
+		t.Fatalf("before ESO wrote the Secret: %+v", ready)
 	}
-	markReady(t, c, es)
-	if ready, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err != nil || !ready {
-		t.Fatalf("after ESO wrote the Secret: ready %v, err %v", ready, err)
+	markReady(t, h.c, es)
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason == "ValuesPending" {
+		t.Fatalf("after ESO wrote the Secret: %+v", ready)
 	}
 
 	// Somebody changed where a value is read from.
-	es, _ = getSensitiveValues(t, c, comp)
+	es, _ = getSensitiveValues(t, h.c, h.comp)
 	if err := unstructured.SetNestedSlice(es.Object, []interface{}{map[string]interface{}{
 		"secretKey": "integration-desktop-api-endpoint",
 		"remoteRef": map[string]interface{}{"key": "gentian-os/tenants/other/contracts/desktop-api", "property": "endpoint"},
 	}}, "spec", "data"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Update(ctx, es); err != nil {
+	if err := h.c.Update(ctx, es); err != nil {
 		t.Fatal(err)
 	}
-	if ready, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err != nil || ready {
-		t.Fatalf("the pass that corrects drift: ready %v, err %v; want corrected and waiting", ready, err)
-	}
-	es, _ = getSensitiveValues(t, c, comp)
+	h.reconcile()
+	es, _ = getSensitiveValues(t, h.c, h.comp)
 	data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
 	key := data[0].(map[string]interface{})["remoteRef"].(map[string]interface{})["key"]
 	if len(data) != 1 || key != secrets.ContractPath("acme", "desktop-api") {
 		t.Fatalf("drift not corrected: data = %v", data)
-	}
-	if ready, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err != nil || !ready {
-		t.Fatalf("the pass after: ready %v, err %v", ready, err)
 	}
 }
 
@@ -184,22 +197,14 @@ func TestTheSensitiveValuesWaitForTheirSecretAndAreKeptAsMapped(t *testing.T) {
 // filled in (remoteRef.conversionStrategy, decodingStrategy, metadataPolicy:
 // the operator chart's own ExternalSecrets spell them out for that reason).
 // The component's spec is the one it wrote plus those defaults, and that is
-// no drift: if it were, every pass would patch and report not ready, and the
-// component would wait for its values for ever on a real cluster.
+// no drift: if it were, every pass would patch and the release wait again,
+// and the component would wait for its values for ever on a real cluster.
 func TestTheSensitiveValuesAreReadyDespiteTheSchemasDefaults(t *testing.T) {
 	ctx := context.Background()
-	scheme := uninstallScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	comp := sensitiveComponent("store")
-	v := componentSensitiveValues(comp, mappingProfile(map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
-	}), "acme")
-	if _, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err != nil {
-		t.Fatal(err)
-	}
+	h := mappedWikiHarness(t)
+	h.reconcile()
 	// As the API server defaults it.
-	es, _ := getSensitiveValues(t, c, comp)
+	es, _ := getSensitiveValues(t, h.c, h.comp)
 	data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
 	for _, d := range data {
 		ref := d.(map[string]interface{})["remoteRef"].(map[string]interface{})
@@ -209,169 +214,129 @@ func TestTheSensitiveValuesAreReadyDespiteTheSchemasDefaults(t *testing.T) {
 	if err := unstructured.SetNestedSlice(es.Object, data, "spec", "data"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Update(ctx, es); err != nil {
+	if err := h.c.Update(ctx, es); err != nil {
 		t.Fatal(err)
 	}
-	markReady(t, c, es)
+	markReady(t, h.c, es)
+	es, _ = getSensitiveValues(t, h.c, h.comp)
+	before := es.GetResourceVersion()
 
 	for pass := 1; pass <= 2; pass++ {
-		ready, err := r.ensureSensitiveValues(ctx, comp, "acme", v)
-		if err != nil {
-			t.Fatal(err)
+		if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason == "ValuesPending" {
+			t.Fatalf("pass %d: %+v although ESO wrote the Secret: the schema's defaults read as drift", pass, ready)
 		}
-		if !ready {
-			t.Fatalf("pass %d: not ready although ESO wrote the Secret: the schema's defaults read as drift", pass)
-		}
+	}
+	if es, _ = getSensitiveValues(t, h.c, h.comp); es.GetResourceVersion() != before {
+		t.Fatal("the ExternalSecret was rewritten for the schema's defaults")
 	}
 }
 
-// With nothing mapped any more, the ExternalSecret the component made goes;
-// one somebody else controls -- the app Composition's, for an app it
-// delivered -- is neither removed nor written over, and is reported rather
-// than fought over on every pass.
+// With nothing mapped any more, the ExternalSecret the component made goes.
+// One of the same name the component did not make -- another controller's,
+// or one nobody owns -- is neither taken over nor written over.
 func TestTheSensitiveValuesAreRemovedWhenUnmappedAndForeignOnesLeftAlone(t *testing.T) {
 	ctx := context.Background()
-	scheme := uninstallScheme(t)
-	comp := sensitiveComponent("store")
-	v := componentSensitiveValues(comp, mappingProfile(map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
-	}), "acme")
-
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	if _, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err != nil {
-		t.Fatal(err)
+	h := mappedWikiHarness(t)
+	h.reconcileInstalled()
+	if _, ok := getSensitiveValues(t, h.c, h.comp); !ok {
+		t.Fatal("no ExternalSecret was created")
 	}
-	if ready, err := r.ensureSensitiveValues(ctx, comp, "acme", sensitiveValues{}); err != nil || !ready {
-		t.Fatalf("nothing mapped: ready %v, err %v; want nothing to wait for", ready, err)
-	}
-	// Kept while the release may still read it.
-	if _, ok := getSensitiveValues(t, c, comp); !ok {
-		t.Fatal("the ExternalSecret went before the release stopped reading it")
-	}
-	if err := r.dropSensitiveValues(ctx, comp); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := getSensitiveValues(t, c, comp); ok {
-		t.Fatal("the ExternalSecret stayed after the release stopped reading it")
+	h.editProfile(func(p *gentianov1alpha1.ComponentProfile) { p.Spec.Package.ValueMapping = nil })
+	h.reconcile()
+	if _, ok := getSensitiveValues(t, h.c, h.comp); ok {
+		t.Fatal("the ExternalSecret stayed after nothing was mapped any more")
 	}
 
-	foreign := &unstructured.Unstructured{}
-	foreign.SetGroupVersionKind(externalSecretGVK)
-	foreign.SetName(sensitiveValuesName(comp))
-	foreign.SetNamespace(comp.Namespace)
 	controller := true
-	foreign.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "apiextensions.crossplane.io/v1", Kind: "XApp", Name: "store-xapp", UID: "uid-xapp", Controller: &controller,
-	}})
-	_ = unstructured.SetNestedField(foreign.Object, "composed", "spec", "refreshInterval")
-	c = fake.NewClientBuilder().WithScheme(scheme).WithObjects(foreign).Build()
-	r = &ComponentReconciler{Client: c, Scheme: scheme}
-
-	_, err := r.ensureSensitiveValues(ctx, comp, "acme", v)
-	if err == nil {
-		t.Fatal("another controller's ExternalSecret was taken over")
-	}
-	es, _ := getSensitiveValues(t, c, comp)
-	if got, _, _ := unstructured.NestedString(es.Object, "spec", "refreshInterval"); got != "composed" {
-		t.Fatalf("another controller's ExternalSecret was written over: %v", es.Object["spec"])
-	}
-	if err := r.dropSensitiveValues(ctx, comp); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := getSensitiveValues(t, c, comp); !ok {
-		t.Fatal("another controller's ExternalSecret was deleted")
-	}
-
-	// One with no owner at all -- what the app Composition writes through
-	// an object of its own -- is not taken over either.
-	unowned := &unstructured.Unstructured{}
-	unowned.SetGroupVersionKind(externalSecretGVK)
-	unowned.SetName(sensitiveValuesName(comp))
-	unowned.SetNamespace(comp.Namespace)
-	_ = unstructured.SetNestedField(unowned.Object, "composed", "spec", "refreshInterval")
-	c = fake.NewClientBuilder().WithScheme(scheme).WithObjects(unowned).Build()
-	r = &ComponentReconciler{Client: c, Scheme: scheme}
-	if _, err := r.ensureSensitiveValues(ctx, comp, "acme", v); err == nil {
-		t.Fatal("an ExternalSecret this component did not make was taken over")
-	}
-	es, _ = getSensitiveValues(t, c, comp)
-	if got, _, _ := unstructured.NestedString(es.Object, "spec", "refreshInterval"); got != "composed" || len(es.GetOwnerReferences()) != 0 {
-		t.Fatalf("an unowned ExternalSecret was written over: %v", es.Object)
+	for name, owners := range map[string][]metav1.OwnerReference{
+		"another controller's": {{APIVersion: "gentianos.io/v1alpha1", Kind: "XApp", Name: "wiki-xapp", UID: "uid-xapp", Controller: &controller}},
+		"nobody's":             nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := mappedWikiHarness(t)
+			foreign := &unstructured.Unstructured{}
+			foreign.SetGroupVersionKind(externalSecretGVK)
+			foreign.SetName(sensitiveValuesName(h.comp))
+			foreign.SetNamespace(h.comp.Namespace)
+			foreign.SetOwnerReferences(owners)
+			_ = unstructured.SetNestedField(foreign.Object, "composed", "spec", "refreshInterval")
+			if err := h.c.Create(ctx, foreign); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(h.comp)}); err == nil {
+				t.Fatal("an ExternalSecret this component did not make was taken over")
+			}
+			es, _ := getSensitiveValues(t, h.c, h.comp)
+			if got, _, _ := unstructured.NestedString(es.Object, "spec", "refreshInterval"); got != "composed" || len(es.GetOwnerReferences()) != len(owners) {
+				t.Fatalf("an ExternalSecret this component did not make was written over: %v", es.Object)
+			}
+		})
 	}
 }
 
 // The Release names each mapped value with a set entry reading the
-// component's Secret, and carries no set at all when nothing is mapped --
-// also once it had one, so a value no longer mapped is not left behind.
+// component's Secret.
 func TestTheReleaseIsToldTheMappedValuesBySetEntries(t *testing.T) {
 	ctx := context.Background()
-	scheme := uninstallScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	comp := sensitiveComponent("store")
-	profile := mappingProfile(map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
-	})
-	v := componentSensitiveValues(comp, profile, "acme")
+	h := mappedWikiHarness(t)
 	releaseSet := func() ([]interface{}, bool) {
 		t.Helper()
 		release := &unstructured.Unstructured{}
 		release.SetGroupVersionKind(helmReleaseGVK)
-		if err := c.Get(ctx, types.NamespacedName{Name: releaseName(comp)}, release); err != nil {
+		if err := h.c.Get(ctx, types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
 			t.Fatal(err)
 		}
 		set, found, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
 		return set, found
 	}
 
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, v.set, nil, pullSecrets{}); err != nil {
-		t.Fatal(err)
-	}
+	h.reconcileInstalled()
 	set, _ := releaseSet()
 	if len(set) != 1 {
 		t.Fatalf("set = %v, want the one mapped value", set)
 	}
 	entry := set[0].(map[string]interface{})
 	ref, _, _ := unstructured.NestedStringMap(entry, "valueFrom", "secretKeyRef")
-	if entry["name"] != "api.env.DESKTOP_API_URL" || ref["name"] != "store-sensitive-values" ||
+	if entry["name"] != "api.env.DESKTOP_API_URL" || ref["name"] != "wiki-sensitive-values" ||
 		ref["namespace"] != "tenant-acme" || ref["key"] != "integration-desktop-api-endpoint" {
 		t.Fatalf("set entry = %v", entry)
 	}
 
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pullSecrets{}); err != nil {
+}
+
+// What the render no longer says is taken off the live object, not only what
+// it says differently: a set entry no longer mapped, and a value the
+// profile's extraValues no longer carry. A set entry left behind reads a key
+// of a Secret that is removed in the same pass, and the release fails.
+func TestWhatTheRenderNoLongerSaysIsTakenOffTheRelease(t *testing.T) {
+	ctx := context.Background()
+	h := mappedWikiHarness(t)
+	h.editProfile(func(p *gentianov1alpha1.ComponentProfile) {
+		p.Spec.Package.ExtraValues = &runtime.RawExtension{Raw: []byte(`{"feature":{"old":true}}`)}
+	})
+	h.reconcileInstalled()
+	h.editProfile(func(p *gentianov1alpha1.ComponentProfile) {
+		p.Spec.Package.ValueMapping = nil
+		p.Spec.Package.ExtraValues = nil
+	})
+	h.reconcile()
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	if err := h.c.Get(ctx, types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
 		t.Fatal(err)
 	}
-	if set, found := releaseSet(); found {
-		t.Fatalf("set = %v after nothing is mapped any more", set)
+	if set, found, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); found && len(set) > 0 {
+		t.Errorf("set = %v after nothing is mapped any more", set)
+	}
+	if old, found, _ := unstructured.NestedFieldNoCopy(release.Object, "spec", "forProvider", "values", "feature"); found {
+		t.Errorf("values.feature = %v after the profile stopped carrying it", old)
 	}
 }
 
-// A chart profile whose only extras are integrations is delivered by the
-// operator: the contract's values are rendered here and the bindings are the
-// tenant's, so neither needs the app Composition. Anything else the
-// Composition still renders -- an identity requirement -- keeps the profile
-// there.
-func TestIntegrationsAloneDoNotSendAChartToTheComposition(t *testing.T) {
-	p := mappingProfile(map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
-	})
-	p.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "desktop-api", Provider: "desktop", Capabilities: []string{"tiles"}}}
-	if composedDelivery(p) {
-		t.Fatal("integrations alone sent the chart to the app Composition")
-	}
-	p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
-		Identity: &gentianov1alpha1.IdentityRequirement{},
-	}}
-	if !composedDelivery(p) {
-		t.Fatal("an identity requirement beside the integrations is the Composition's")
-	}
-}
-
-// A directly delivered component that maps a contract's values waits for its
-// Secret with ValuesPending and has no Release meanwhile; once ESO has
-// written it, the Release is made with the set entry that reads it.
-func TestADirectComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
+// A component that maps a contract's values waits for its Secret with
+// ValuesPending and has no Release meanwhile; once ESO has written it, the
+// Release is made with the set entry that reads it.
+func TestAComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
 	profile := materialised(t, wikiBundle)
 	profile.Annotations = nil
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
@@ -417,10 +382,11 @@ func TestADirectComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
 // reconciler that does it on a cluster, run in turn on one fake client: the
 // grant becomes an AppGrant, the binding carries the provider's endpoint, the
 // contract's two policies select the desktop by its release's instance label
-// (it is delivered directly) on port 8000, the binding's reconciler writes
-// the address at the contract's path, and the store's ExternalSecret reads it
-// from that same path. Withdrawn, the grant takes the policies and the
-// address with it.
+// (it is placed) and the store by its app label on port 8000, the binding's
+// reconciler writes the address at the contract's path, and the store's
+// render -- applied as the component reconciler applies it -- reads it from
+// that same path into its ExternalSecret and tells its release. Withdrawn,
+// the grant takes the policies and the address with it.
 func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTheEndpoint(t *testing.T) {
 	ctx := context.Background()
 	scheme := appStoreScheme(t)
@@ -438,8 +404,8 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 	})
 	store.Name = "store"
 	store.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "desktop-api", Provider: "desktop", Capabilities: []string{"tiles"}}}
-	if composedDelivery(desktop) || composedDelivery(store) {
-		t.Fatal("the fixture is meant to be two directly delivered charts")
+	if !operatorPlaced(desktop) || operatorPlaced(store) {
+		t.Fatal("the fixture is meant to be a placed desktop and an installed store")
 	}
 
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme", UID: "uid-acme"}}
@@ -483,7 +449,7 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 		t.Fatal(err)
 	}
 	desktopPods := map[string]string{componentInstanceLabel: ns + "-desktop"}
-	storePods := map[string]string{componentInstanceLabel: ns + "-store"}
+	storePods := map[string]string{appLabel: "store"}
 	out := &networkingv1.NetworkPolicy{}
 	if err := c.Get(ctx, types.NamespacedName{Name: "contract-" + binding.Name, Namespace: ns}, out); err != nil {
 		t.Fatalf("no way out for the consumer: %v", err)
@@ -519,10 +485,16 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 	// The consumer's chart reads it from there.
 	consumer := componentFor("store", ns)
 	consumer.UID = "uid-store"
-	cr := &ComponentReconciler{Client: c, Scheme: scheme}
-	sensitive := componentSensitiveValues(consumer, store, tenant.Name)
-	if _, err := cr.ensureSensitiveValues(ctx, consumer, tenant.Name, sensitive); err != nil {
+	if err := c.Create(ctx, consumer); err != nil {
 		t.Fatal(err)
+	}
+	cr := &ComponentReconciler{Client: c, Scheme: scheme}
+	rendered, err := cr.render(ctx, mustRenderInput(t, cr, consumer, store, tenant))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, reason, _, err := cr.applyRendered(ctx, consumer, rendered); err != nil || reason != "ValuesPending" {
+		t.Fatalf("reason %q, err %v; want the release to wait for the endpoint's Secret", reason, err)
 	}
 	es, ok := getSensitiveValues(t, c, consumer)
 	if !ok {
@@ -537,8 +509,17 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 	if d["secretKey"] != "integration-desktop-api-endpoint" || ref["key"] != path || ref["property"] != "endpoint" {
 		t.Fatalf("the consumer reads %v, not the endpoint at %s", d, path)
 	}
-	if s := sensitive.set; len(s) != 1 || s[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_URL" {
-		t.Fatalf("set = %v", s)
+	markReady(t, c, es)
+	if _, reason, _, err := cr.applyRendered(ctx, consumer, rendered); err != nil || reason == "ValuesPending" {
+		t.Fatalf("reason %q, err %v; want the release written once the Secret is there", reason, err)
+	}
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	if err := c.Get(ctx, types.NamespacedName{Name: releaseName(consumer)}, release); err != nil {
+		t.Fatalf("no release for the consumer: %v", err)
+	}
+	if set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); len(set) != 1 || set[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_URL" {
+		t.Fatalf("set = %v", set)
 	}
 
 	// Withdrawn: no way between the two, and no address.
@@ -609,25 +590,38 @@ func TestASensitiveSecretIsSyncedOnlyFromItsCurrentGeneration(t *testing.T) {
 	}
 }
 
+// mustRenderInput gathers what a component is rendered from, as Reconcile
+// does for one with no pull secrets, sign-in sidecar or operator values.
+func mustRenderInput(t *testing.T, r *ComponentReconciler, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) *apprender.Input {
+	t.Helper()
+	in, err := r.renderInput(context.Background(), comp, profile, tenant, r.zoneOf(tenant), pullSecrets{}, false, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Placed = operatorPlaced(profile)
+	in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
+	return in
+}
+
 // Object storage, the cache and mail reach the chart as the app Composition
-// gives them: each read from where the tenant's stores wrote it for the app,
+// gave them: each read from where the tenant's stores wrote it for the app,
 // and mail -- optional, empty on a cluster without the relay's credentials --
 // as a values document of its own that the release reads only when it is
-// there. The documents are the Composition's, byte for byte, as its render
-// fixture (crossplane/tests/unit/render/app-optional-smtp) has them.
+// there.
 func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
-	comp := sensitiveComponent("app")
-	profile := &gentianov1alpha1.ComponentProfile{}
+	profile := chartProfileFixture("oci://x")
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
 		S3:    &gentianov1alpha1.S3ValueMapping{EndpointKey: "s3.endpoint", BucketKey: "s3.bucket"},
 		Cache: &gentianov1alpha1.CacheValueMapping{HostKey: "cache.host", PasswordKey: "cache.password"},
 		SMTP:  &gentianov1alpha1.SMTPValueMapping{HostKey: "mail.smtp.host", PortKey: "mail.smtp.port", PasswordKey: "mail.smtp.password"},
 		IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "mail.imap.host"},
 	}
-	v := componentSensitiveValues(comp, profile, "demo")
+	in := chartRenderInput("app", profile)
+	in.Namespace = "tenant-demo"
+	objs := renderApp(t, in)
+	data, setEntries := sensitiveOf(t, objs, "app")
 	read := map[string]string{}
-	for _, d := range v.data {
-		e := d.(map[string]interface{})
+	for _, e := range data {
 		ref := e["remoteRef"].(map[string]interface{})
 		read[e["secretKey"].(string)] = ref["key"].(string) + "#" + ref["property"].(string)
 	}
@@ -643,25 +637,31 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 		}
 	}
 	var set []string
-	for _, e := range v.set {
-		set = append(set, e.(map[string]interface{})["name"].(string))
+	for _, e := range setEntries {
+		set = append(set, e["name"].(string))
 	}
 	if want := []string{"s3.endpoint", "s3.bucket", "cache.host", "cache.password", "mail.imap.host"}; !reflect.DeepEqual(set, want) {
 		t.Errorf("set = %v, want %v: mail is no set entry", set, want)
 	}
+	es := renderedNamed(objs, "ExternalSecret", "app-sensitive-values")
+	documents, _, _ := unstructured.NestedStringMap(es.Object, "spec", "target", "template", "data")
 	for doc, want := range map[string]string{
 		"values-smtp-host":     `{{ with index . "smtp-host" }}{"mail":{"smtp":{"host":{{ . | toJson }}}}}{{ end }}`,
 		"values-smtp-password": `{{ with index . "smtp-password" }}{"mail":{"smtp":{"password":{{ . | toJson }}}}}{{ end }}`,
 		"values-smtp-port":     `{{ with index . "smtp-port" }}{"mail":{"smtp":{"port":{{ . }}}}}{{ end }}`,
 	} {
-		if v.documents[doc] != want {
-			t.Errorf("%s = %q, want %q", doc, v.documents[doc], want)
+		if documents[doc] != want {
+			t.Errorf("%s = %q, want %q", doc, documents[doc], want)
 		}
 	}
-	if len(v.valuesFrom) != 3 {
-		t.Fatalf("valuesFrom = %v, want one optional read per mail value", v.valuesFrom)
+	var valuesFrom []interface{}
+	for _, release := range renderedOfKind(objs, "Release") {
+		valuesFrom, _, _ = unstructured.NestedSlice(release.Object, "spec", "forProvider", "valuesFrom")
 	}
-	for _, f := range v.valuesFrom {
+	if len(valuesFrom) != 3 {
+		t.Fatalf("valuesFrom = %v, want one optional read per mail value", valuesFrom)
+	}
+	for _, f := range valuesFrom {
 		ref := f.(map[string]interface{})["secretKeyRef"].(map[string]interface{})
 		if ref["name"] != "app-sensitive-values" || ref["optional"] != true {
 			t.Errorf("valuesFrom %v, want an optional read of the sensitive Secret", ref)

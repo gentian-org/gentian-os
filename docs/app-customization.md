@@ -162,7 +162,7 @@ Every public client (`accessType: PUBLIC`, the default) must use PKCE with
 
 **An extension's client.** An extension that signs people in itself declares
 its client the same way, under `extensions[].kernelRequirements.identity.oidc`,
-and the app Composition composes it beside the app's own: redirect addresses
+and the operator renders it beside the app's own: redirect addresses
 (or the profile's `gentianos.io/oidc-default-redirect-uris`) with
 `${TENANT_DOMAIN}` filled in, PKCE for a public one, and for a confidential one
 the secret the operator seeds at the extension's own key,
@@ -176,10 +176,9 @@ from the app's.
 
 **Which catalog.** A client's pack is looked up in one place only: the
 `OIDCPackCatalog` labeled `gentianos.io/profile-name: <profile>`, the one
-the profile's bundle brings; an extension's in its parent's. The app
-Composition and the operator read that one, so a pack any other catalog
-holds does not make a client the pack Job's. A profile two catalogs are
-labeled for has its clients refused.
+the profile's bundle brings; an extension's in its parent's. The operator
+reads that one, so a pack any other catalog holds does not make a client the
+pack Job's. A profile two catalogs are labeled for has its clients refused.
 
 **One client for many places.** A client whose sign-ins come from many places
 -- an issuer that every cluster's App Store app signs in at, each with its own
@@ -207,8 +206,8 @@ both fail closed: without them no token carries the claim. The pattern uses
 the syntax Go and Java share (`(?<name>...)`, no back-references); the
 parameter and the claim may not be ones OAuth, OpenID Connect or JWT already
 define. Such a client declares no `redirectUris`. Only an app's own client
-can be one: the app Composition binds the parameter on it alone, and an API
-entry has no Composition.
+can be one: the operator binds the parameter on it alone, and an API entry
+has no release to render the client with.
 
 A client that cannot be made as declared -- one with neither `redirectUris`
 nor a request parameter, or a request-bound one of an extension or an API
@@ -441,7 +440,7 @@ file, a locale bundle, an `xml`/`yaml` snippet, a logo, a config fragment. The a
 its own config files are untouched.
 
 **Mechanism:** the app's profile declares its drop-in directories (§4), and the app's chart mounts
-a ConfigMap or Secret at each declared path. The platform's app Composition generates no mount:
+a ConfigMap or Secret at each declared path. The platform generates no mount:
 the declaration is what the platform checks tenant content against (§2.2.1), and the chart's
 values name what is mounted.
 
@@ -593,13 +592,13 @@ The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle
 
 | | By | |
 |---|---|---|
-| Registers the sidecar at the tenant's realm | the app Composition | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
-| Has the realm say who administers the app | the app Composition | one role at that client, `gentian-app-admin`, granted to the tenant's group `gentian:tenant:<tenant>:app-admins`, and a mapper that lists a person's roles at that client in the signed assertion. No other role is in the client's scope, and no group is named |
+| Registers the sidecar at the tenant's realm | the operator | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
+| Has the realm say who administers the app | the operator | one role at that client, `gentian-app-admin`, granted to the tenant's group `gentian:tenant:<tenant>:app-admins`, and a mapper that lists a person's roles at that client in the signed assertion. No other role is in the client's scope, and no group is named |
 | Runs the sidecar beside the app | the operator | one pod, with the handler from the bundle, told where the realm is. No service-account token, read-only, not root |
 | Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
 | Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](design/routing.md)) |
 | Sends the entry paths to `/sso/login` | the operator | for a page load (GET) only |
-| Has the realm tell the sidecar of a sign-out | the app Composition and the operator | the client's single-logout address is the sidecar's own Service, `http://<app>-sign-in.<namespace>.svc.cluster.local:8081/sso/logout`; the sidecar is told the same address and answers `/sso/logout` under that name only. Not routed: nothing outside the cluster reaches it |
+| Has the realm tell the sidecar of a sign-out | the operator | the client's single-logout address is the sidecar's own Service, `http://<app>-sign-in.<namespace>.svc.cluster.local:8081/sso/logout`; the sidecar is told the same address and answers `/sso/logout` under that name only. Not routed: nothing outside the cluster reaches it |
 | Opens the sidecar's network paths | the operator | the realm's certificate; the app's database server; the app's own pods on `appPort`. One port each, and nothing else: the sidecar is not one of the app's pods |
 
 A profile states no address, no client name and no Secret. They follow from where the app answers
@@ -610,9 +609,8 @@ An entry path cannot also be under `denyPaths`. The bouncer refuses a denied pat
 Gateway redirects, and for every method, so the person would never reach the sign-in. Where an
 app's own form posts to the address of its page -- OpenProject's `/login` -- the page is the entry
 path, and what is posted there is the app's to refuse: its password sign-in is switched off in the
-app. A profile that declares the sidecar is rendered by the platform's Composition, which is the
-one that registers it at the realm; a bundle that brings a Composition of its own would have to
-compose the client itself.
+app. The operator registers the sidecar at the realm when it renders the app; a bundle that
+brings a Composition of its own would have to compose the client itself.
 
 **Which handler runs.** A handler is handed the app's signing key and its database: it can become
 anybody in the app. So it runs only where it is known to be the reviewed file:
@@ -757,6 +755,11 @@ sidecar injection, or a Kustomize post-render over an upstream chart.
 
 This is where most Gentian upstream apps already sit (`charts/odoo`, `charts/gentian-sidecar-*`,
 per-profile `composition.yaml`).
+
+The operator renders every app's chart. A profile brings a `composition.yaml` of its own only at
+`trustTier: platform`, from a catalog of the whole cluster, pinned to a digest
+([custom-catalogues.md](custom-catalogues.md) §2); any other profile whose bundle brings one is
+held (`CompositionRefused`).
 
 A `composition.yaml` may compose only the Crossplane provider resource types a cluster creates:
 those in gentian-os's `crossplane/providers/activation.yaml`. One of another type renders and
@@ -1072,8 +1075,8 @@ for a session it does not have.
   is refused, and the message names this field. It let a catalog entry make
   the identity provider post to any address, and every profile that used it
   named an address the notice could not reach.
-- It is served for the component's own client, by the platform's Composition.
-  An extension's client may not declare it, and a profile that brings a
+- It is served for the component's own client, by the operator. An
+  extension's client may not declare it, and a profile that brings a
   Composition of its own has to build the address the same way itself.
 
 The app sees its Service's name in the `Host` header. One that refuses a
@@ -1637,10 +1640,13 @@ versioning policy.
 * `extraObjects`, `extraEnv`, `extraVolumeMounts`, `podAnnotations` — the standard L4-lite hooks, so
   packaging changes rarely need a chart fork.
 * A declared `conf.d` mount wired to a ConfigMap the composition can populate — L1 with no chart edit.
-* Volumes need nothing from the chart to survive an uninstall. The platform installs an app as the
-  Helm release `<profile>-release` in the tenant's namespace — the same name on every install — and
-  marks every PersistentVolumeClaim the chart renders `helm.sh/resource-policy: keep`. Uninstalling
-  leaves the claims in place and the next install of the app in that tenant takes them over; only a
+* `podLabels` — the platform sets `gentianos.io/app` and `gentianos.io/tenant` in it for every chart
+  it does not place on tenants itself, and the tenant's network policies select the app's pods by
+  them. A chart without the key publishes them as pod annotations instead
+  (`kernel/security/kyverno/policies/gentian-app-labels.yaml` copies them onto labels).
+* Volumes need nothing from the chart to survive an uninstall. The platform installs an app as a
+  Helm release in the tenant's namespace and marks every PersistentVolumeClaim the chart renders
+  `helm.sh/resource-policy: keep`. Uninstalling leaves the claims in place and the next install of the app in that tenant takes them over; only a
   purge deletes them. So: do not set the annotation yourself to mean something else, do not delete
   claims from a hook, and keep a claim's immutable fields (storage class, access modes) stable
   across chart versions, because a reinstall updates the kept claim rather than creating one.

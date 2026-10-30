@@ -63,29 +63,22 @@ var appClaimGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
-// reconcileTenantApps reports whether a tenant's apps are up, and writes the two
-// things the Composition cannot write for itself.
+// reconcileTenantApps reports whether a tenant's apps are up, and writes what
+// a component's release reads before it can be rendered.
 //
-// It does NOT deploy anything, despite what it was called for a long time. App
-// claims are created by the tenant-default Composition, each claim drives the
-// app Composition, and that emits the ExternalSecret and the provider-helm
-// Release. The operator once created a per-app Argo CD Application here; that
-// path is gone, and the name outlived it.
+// It does NOT deploy anything. Every installed app is a Component
+// (ensureAppComponents), and the component reconciler renders and applies
+// what its chart is installed with (component_render.go).
 //
-// What is left splits in two, and they are kept visibly apart because only one
-// of them is meant to stay:
+// What is left splits in two, and they are kept visibly apart:
 //
-//   - seedAppPrerequisites and ensureModelAccess — the operator's remaining
-//     WRITES: OpenBao app secrets, and the model gateway key of an app that
-//     declared the gateway. Both exist because a Composition cannot mint a
-//     credential and store it; both belong in the Composition, or behind a
-//     Managed Resource, once there is a mechanism for it. Until then the
-//     claim's ExternalSecret has nothing to resolve unless this runs first.
-//   - the loop below — pure status AGGREGATION. Claim readiness, then workload
-//     health, then one condition on the Tenant.
-//
-// When the writes move, what remains is the aggregation, and this becomes a
-// read-only reconciler.
+//   - seedAppPrerequisites and ensureModelAccess — WRITES: the app's OpenBao
+//     secrets, the generated ones included, and the model gateway key of an
+//     app that declared the gateway. The release's sensitive values are read
+//     from the vault through an ExternalSecret, which has nothing to resolve
+//     unless this runs first.
+//   - the loop below — pure status AGGREGATION. Component readiness, then
+//     workload health, then one condition on the Tenant.
 func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if err := r.cleanupOrphanedAppWorkload(ctx, tenant); err != nil {
 		return ctrl.Result{}, fmt.Errorf("cleanup orphaned app workload: %w", err)
@@ -197,9 +190,9 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 	return ctrl.Result{}, nil
 }
 
-// seedAppPrerequisites writes what the app Composition needs to already exist:
-// the OpenBao entries the claim's ExternalSecret resolves. A Composition
-// cannot mint a credential, so this is still the operator's.
+// seedAppPrerequisites writes what an app's release needs to already exist:
+// the OpenBao entries its ExternalSecret resolves, the secrets the profile
+// has the platform generate included (seedAppSecrets).
 //
 // The key an app calls models with used to be written here too, for every
 // app. It is a declared requirement now with a reconciler of its own

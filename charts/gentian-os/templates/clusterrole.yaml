@@ -208,6 +208,18 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - client.keycloak.crossplane.io
+    resources:
+    - protocolmappers
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
     - coordination.k8s.io
     resources:
     - leases
@@ -370,7 +382,6 @@ rules:
     - repositories
     - resourceplans
     - tenantdomains
-    - xapps
     - xclusters
     verbs:
     - get
@@ -409,6 +420,29 @@ rules:
     - create
     - delete
   - apiGroups:
+    - gentianos.io
+    resources:
+    - xapps
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+  - apiGroups:
+    - group.keycloak.crossplane.io
+    resources:
+    - groups
+    - roles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
     - helm.crossplane.io
     resources:
     - releases
@@ -428,6 +462,18 @@ rules:
     - get
     - list
     - watch
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - kv.vault.upbound.io
+    resources:
+    - secretv2s
+    verbs:
+    - get
+    - list
+    - watch
+    - update
     - patch
     - delete
   - apiGroups:
@@ -453,11 +499,18 @@ rules:
   - apiGroups:
     - openidclient.keycloak.crossplane.io
     resources:
+    - clientdefaultscopes
+    - clientoptionalscopes
     - clients
+    - clientscopes
     verbs:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
+    - delete
   - apiGroups:
     - postgresql.cnpg.io
     resources:
@@ -509,3 +562,35 @@ rules:
     - create
     - update
     - patch
+  - apiGroups:
+    - realm.keycloak.crossplane.io
+    resources:
+    - clientpolicyprofilepolicies
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - role.keycloak.crossplane.io
+    resources:
+    - roles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - samlclient.keycloak.crossplane.io
+    resources:
+    - clients
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete

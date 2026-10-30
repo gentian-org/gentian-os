@@ -18,9 +18,9 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// BuildLabel is the label a ProfileBuild carries with its own name, so the
-// app Composition can select the build a claim names by label, which is the
-// one way it selects anything.
+// BuildLabel is the label a ProfileBuild carries with its own name, so a
+// profile's own Composition can select the build a claim names by label,
+// which is the one way it selects anything.
 const BuildLabel = "gentianos.io/profile-build"
 
 // BuildName is the name of the ProfileBuild of one build of a profile: the

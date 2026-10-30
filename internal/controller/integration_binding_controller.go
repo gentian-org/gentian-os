@@ -182,7 +182,7 @@ func (r *IntegrationBindingReconciler) seedContract(ctx context.Context, ib *gen
 
 	if endpoint != "" {
 		// The path the binding names, which is the one the tenant's
-		// reconciler seeded the password at and the app Composition reads:
+		// reconciler seeded the password at and the app's release reads:
 		// it is the tenant's, not the namespace's, and the two names differ.
 		path := ""
 		if ib.Spec.Auth != nil {

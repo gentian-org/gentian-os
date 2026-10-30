@@ -30,7 +30,7 @@ import (
 // gives a ComponentProfile, when the bundle is the digest it claims and
 // holds what a bundle may; nothing, and why, when it is not.
 //
-// The status is what the app Composition reads for a tenant on that build,
+// The status is what a profile's own Composition reads for a tenant on that build,
 // because a Composition can select an object and read its fields and can do
 // nothing else: it cannot decode a bundle or apply a schema's defaults. The
 // operator can, and does it once per build rather than once per render.

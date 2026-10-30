@@ -24,14 +24,14 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// A partner app the Composition installs -- the store on Aluvian: it accepts
-// partners and declares secrets, so its chart is the Composition's -- gets
-// the component policy every other component gets, selecting its pods by the
-// release the Composition names. Without it the app reached none of what
-// this reconciler wires, the realm first: its token request timed out.
-// Granted rules are in the same policy, the policy that once held them alone
-// goes, and the database stays the Composition's to open.
-func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
+// An installed partner app -- the store on Aluvian -- gets the component
+// policy every other component gets, selecting its pods by the app label
+// every installed chart's pods are rendered with. Without it the app reached
+// none of what this reconciler wires, the realm first: its token request
+// timed out. Granted rules are in the same policy, the policy that once held
+// them alone goes, and the database stays the tenant's to open
+// (kernel-access-<app>, on its port only).
+func TestAnInstalledAppGetsItsComponentPolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
@@ -42,8 +42,8 @@ func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
 		Partners: &gentianov1alpha1.PartnersRequirement{Accept: true},
 		Database: &gentianov1alpha1.DatabaseRequirement{},
 	}
-	if !composedDelivery(profile) || !wantsPartners(profile) {
-		t.Fatal("the fixture is meant to be a partner app the Composition installs")
+	if operatorPlaced(profile) || !wantsPartners(profile) {
+		t.Fatal("the fixture is meant to be an installed partner app")
 	}
 	comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "tenant-acme"}}
 	legacy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "granted-egress-shop", Namespace: "tenant-acme"}}
@@ -60,10 +60,10 @@ func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
 	}
 	np := &networkingv1.NetworkPolicy{}
 	if err := c.Get(ctx, types.NamespacedName{Name: "component-shop", Namespace: "tenant-acme"}, np); err != nil {
-		t.Fatalf("no component policy for a composed app: %v", err)
+		t.Fatalf("no component policy for an installed app: %v", err)
 	}
-	// By the app label the Composition puts on every pod of the app: not
-	// every chart sets the release label, and Odoo's does not.
+	// By the app label every pod of the app is rendered with: not every
+	// chart sets the release label, and Odoo's does not.
 	if got := np.Spec.PodSelector.MatchLabels; len(got) != 1 || got[appLabel] != "shop" {
 		t.Fatalf("the policy selects %v, want the app's pods by %s", got, appLabel)
 	}
@@ -75,7 +75,7 @@ func TestAComposedAppGetsItsComponentPolicy(t *testing.T) {
 				case layout.Namespace(layout.Authentication):
 					realm = true
 				case r.componentDatabaseNamespace(tenant, profile):
-					t.Fatal("the database is the Composition's to open, on its port only")
+					t.Fatal("the database is the tenant's to open, on its port only")
 				}
 			}
 			if to.IPBlock != nil && to.IPBlock.CIDR == "203.0.113.0/24" {

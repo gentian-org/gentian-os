@@ -591,8 +591,8 @@ func operatorPlaced(profile *gentianov1alpha1.ComponentProfile) bool {
 }
 
 // placedModelAccess reports whether a profile declares the model gateway for
-// a component the platform places. Such a component is rendered by the
-// Component reconciler, not by the app Composition (composedDelivery).
+// a component the platform places, whose release values the Component
+// reconciler writes inline rather than reading them from the vault.
 func placedModelAccess(profile *gentianov1alpha1.ComponentProfile) bool {
 	return operatorPlaced(profile) && provisioner.MatchModelAccessProfile(profile) && !profile.IsAPI()
 }

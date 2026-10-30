@@ -87,10 +87,10 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.8 Cryptographic Entropy for App Secret Seeds (*)
 * **Target Domain**: Platform Security & Secrets Management
-* **Context**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`. Every input is a name, not a secret, so the first value of every generated app secret (database passwords and the like) can be computed by anyone who knows the tenant and app names; unless the app rotates it after install, it is effectively public. provider-vault writes the seed to OpenBao once and never overwrites it, so the predictable value is the lasting one. Affected: `crossplane/compositions/app-default.yaml` (app secrets and sidecar secrets) and gentian-apps' own app compositions (`app-element`, `app-openproject`, `app-odoo`), which copy the same pattern.
+* **Context**: App-internal seeds are generated deterministically as `sha256(xrName:app:secretName)`. Every input is a name, not a secret, so the first value of every generated app secret (database passwords and the like) can be computed by anyone who knows the tenant and app names; unless the app rotates it after install, it is effectively public. provider-vault writes the seed to OpenBao once and never overwrites it, so the predictable value is the lasting one. Affected: gentian-apps' own app compositions (`app-element`, `app-openproject`, `app-odoo`). The apps the operator renders are seeded by the tenant reconciler (`seedAppSecrets`), with a keyed derivation or random bytes.
 * **Proposed Solution**: Seed from a source an attacker cannot reproduce: cryptographically random bytes generated once per secret (`crypto/rand`, e.g. a Password object or the operator), or a keyed derivation (HKDF/HMAC-SHA256) whose key is a cluster secret held in OpenBao. HKDF over the same public names alone would remain predictable. Write-once must survive the change, so a reinstall still observes the existing value.
 * **Backlog Items**:
-  - `[ ]` Replace the `sha256sum` seed in `app-default.yaml` (both seed blocks) with a random or secret-keyed value, keeping the Observe+Create, Orphan-delete SecretV2 semantics.
+  - `[x]` Replace the `sha256sum` seed for the apps the platform renders with a random or secret-keyed value, write-once. *(The tenant reconciler seeds every generated secret, an extension's included, through `Seeder.SeedAppSecret`.)*
   - `[ ]` Apply the same change to the gentian-apps app compositions (`app-element`, `app-openproject`, `app-odoo`).
   - `[ ]` Decide what happens to secrets already seeded with the predictable value: rotate them, or document that installs before the fix must rotate.
   - `[ ]` A render test or lint that refuses a seed computed only from names.
@@ -474,8 +474,8 @@ mappers and flow, nor the broker client is made any more
 
 ### 1.29 Retire the OIDC Pack Job's Bootstraps (*)
 * **Target Domain**: Identity
-* **Done**: the Job writes nothing the Composition owns. app-default composes the
-  client, its default scopes, the client scope, one `ProtocolMapper` per entry in
+* **Done**: the Job writes nothing the operator's render owns. The operator
+  renders (`internal/apprender`) the client, its default scopes, the client scope, one `ProtocolMapper` per entry in
   `pack.mappers`, the client `Role`, and the entitlement group's grant of that
   role as a group `Roles` with `exhaustive: false`. tenant-default composes the
   groups themselves. The Job's log is four lines, all "already exists".
@@ -492,17 +492,17 @@ mappers and flow, nor the broker client is made any more
   Observe-only, so its mappers take its observed id instead of a ref.
 * **What is left**: the Job creates the client scope and the client when absent,
   and deletes mappers left corrupt by a much older failed run. The creates are
-  bootstraps — the Job runs in the DataPlane stage while the App claim that
-  composes them is created in AppsAndEdge, the stage after. Moving that ordering
+  bootstraps — the Job runs before the app's release, which renders them, is
+  applied. Moving that ordering
   is what retires the Job; the cleanup has no declarative form and would move to
   a repair path or go.
 * **Backlog Items**:
   - `[x]` Stop the Job configuring the client and attaching its default scopes.
   - `[x]` Compose the client scope, the mappers, the client role and the
     group-to-role mapping; stop the Job making any of them.
-  - `[ ]` Create the client and its scope from the Composition, so the Job's
-    bootstraps can go — which means the App claim existing before the identity
-    stage waits on the Job.
+  - `[ ]` Create the client and its scope from the operator's render, so the
+    Job's bootstraps can go — which means the render applied before the
+    identity stage waits on the Job.
   - `[ ]` Decide where the corrupt-mapper cleanup belongs.
 ### 1.30 Trim the Realm Script to What a Realm Cannot Express (*)
 * **Target Domain**: Identity
@@ -597,17 +597,16 @@ mappers and flow, nor the broker client is made any more
 * **Target Domain**: Identity
 * **Done**: the tenant's entitlement groups are composed. tenant-default declares
   the three that belong to the tenant — members, admins, app-admins — and
-  app-default declares one per app, carrying that profile's
-  `gentianos.io/keycloak-group-attributes`. All five adopted on a live cluster
-  with their Keycloak ids unchanged, and app-default also composes the group's
-  grant of the app's client role.
+  the operator renders one per app (`internal/apprender`), carrying that
+  profile's `gentianos.io/keycloak-group-attributes`, and the group's grant of
+  the app's client role.
 
-  The per-app group is app-default's because nine of the catalog's thirty-one
-  profiles carry those attributes — the Odoo ones name the modules and roles the
-  app provisions from — and only app-default fetches the profile. It sits
-  above the OIDC conditional because an entitlement group is per app, not per
-  OIDC client: app-store-me declares no oidc block, and a group rendered inside
-  that conditional skipped it silently.
+  The per-app group is rendered with the app because nine of the catalog's
+  thirty-one profiles carry those attributes — the Odoo ones name the modules
+  and roles the app provisions from — and tenant-default cannot read the
+  profile. It is rendered whether or not the app has an OIDC client, because an
+  entitlement group is per app, not per OIDC client: app-store-me declares no
+  oidc block.
 * **What is left**: the Job still creates the same groups, so they have two
   writers that happen to agree. Two things block removing it:
 
@@ -1342,7 +1341,7 @@ mappers and flow, nor the broker client is made any more
 * **Proposed Solution**: The ConfigMap is mounted at the path the profile declares for the drop-in, after the profile's own files, and the app picks a change up.
 * **Backlog Items**:
   - `[ ]` Decide where the mount is made: by the platform from `spec.customization.dropIns`, or by each chart from a value the platform passes.
-  - `[ ]` Mount it, for a chart the operator installs and for a composed app.
+  - `[ ]` Mount it, for a chart the operator renders and for one a profile's own Composition renders.
   - `[ ]` A change of the content reaches the running app: a rollout, or a reload where the app has one.
   - `[ ]` A test that a tenant's file is read by the app and wins over the profile's by its prefix.
 
@@ -1516,7 +1515,7 @@ mappers and flow, nor the broker client is made any more
 * **Context**: There is no platform-wide mechanism for LLMs or agents to query app APIs.
 * **Proposed Solution**: Build an MCP (Model Context Protocol) server registry, act on the `mcp` requirement of a `ComponentProfile` (`spec.requires.services.mcp` is in the schema; nothing registers an endpoint from it), and deliver 2-3 reference integrations (Nextcloud, OpenProject, Element) exposing read-scope API tools.
 * **Backlog Items**:
-  - `[x]` Define the `mcp:` block schema in the `ComponentProfile` CRD. *(`spec.requires.services.mcp` exists: `enabled`, `endpoint`, `auth` (`MCPRequirement`, `api/v1alpha1/profile_parts.go`). It is a declaration only: its one effect is that a chart component declaring it is installed through the app Composition. No registry and no connector is built.)*
+  - `[x]` Define the `mcp:` block schema in the `ComponentProfile` CRD. *(`spec.requires.services.mcp` exists: `enabled`, `endpoint`, `auth` (`MCPRequirement`, `api/v1alpha1/profile_parts.go`). It is a declaration only, with no effect. No registry and no connector is built.)*
   - `[ ]` Build a central MCP registry server within the platform kernel.
   - `[ ]` Implement read-only MCP connectors for Nextcloud, OpenProject, and Element.
 
@@ -1641,7 +1640,7 @@ line each. Tick an item when its fix has merged, and name the PR beside it.
   - `[ ]` gentian-os: version pins outside `versions.yaml` (OpenBao, Kyverno, external-dns, Reloader, CNPG in the bootstrap chart templates; `XP_VERSION` in CI).
   - `[ ]` gentian-os: the render fixtures hold 61 full copies of the Compositions (153k lines), and the fixture lint silently skips a fixture whose Composition is gone; reference the Composition by name and fail on an unknown one.
   - `[ ]` gentian-os: `publish-infra-charts.sh` does not package the patched OpenFGA chart; mariadb vendors `common` twice; `init-openbao-transit.sh` copies the `common.sh` logging helpers.
-  - `[ ]` gentian-apps: the odoo-base-ce and element-ce Compositions are forks of app-default (837 of 1236 and 400 of 687 lines shared); move the app-specific steps into profile fields or one extra step on app-default.
+  - `[ ]` gentian-apps: the odoo-base-ce and element-ce Compositions are forks of the platform's former app Composition, whose rendering is now the operator's (`internal/apprender`); move the app-specific steps into profile fields the operator renders.
   - `[ ]` gentian-apps: chart discovery is duplicated in `validate-chart-refs.py` and `validate-image-tags.py`, and the profile-loading loop is copied in six scripts.
   - `[ ]` gentian-apps: the git-sync block is copy-pasted four times, and the odoo chart hard-codes its image twice; one `gitSync.image` value.
   - `[ ]` gentian-ui: the desktop and admin-console CI workflows have drifted (the desktop runs no ruff and no frontend tests, the admin console has no `v*` tag trigger, neither pushes its chart on a tag); one reusable workflow.

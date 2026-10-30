@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/composed"
 )
 
 // generatedKindsWritten is the Crossplane kinds each reconciler writes.
@@ -39,8 +40,9 @@ var generatedKindsWritten = map[string][]string{
 	// setting its definition does not know never reaches the Composition.
 	"tenant": {xTenantGVK.Kind},
 	// The App claim: its pull secrets and addons are lost to a definition
-	// that does not know them.
-	"component": {appClaimGVK.Kind},
+	// that does not know them. And its composite, which the handoff pauses
+	// and lets go (component_handoff.go).
+	"component": {appClaimGVK.Kind, composed.XAppGVK.Kind},
 }
 
 // guarded is the tenant reconciler behind the definitions check.

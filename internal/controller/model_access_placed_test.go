@@ -75,7 +75,7 @@ func (w *modelAccessWorld) verdict(t *testing.T, name string) modelAccessVerdict
 
 // The profile the chart ships declares the gateway as the desktop's chart
 // reads it: optional, of platform trust, the Secret by name and never the
-// key, and rendered by the Component reconciler rather than the Composition.
+// key, and placed by the operator, so its chart keeps its own values.
 func TestTheDesktopProfileDeclaresTheModelGatewayOptionally(t *testing.T) {
 	p := shippedDesktopProfile(t)
 	if placed := p.PlacementOf(); p.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform || p.Spec.Placement == nil ||
@@ -90,8 +90,8 @@ func TestTheDesktopProfileDeclaresTheModelGatewayOptionally(t *testing.T) {
 	if m == nil || m.AvailableKey != "llm.available" || m.BaseURLKey != "llm.baseUrl" || m.SecretNameKey != "llm.apiKeySecretName" || m.APIKeyKey != "" {
 		t.Fatalf("valueMapping.llm = %+v", m)
 	}
-	if composedDelivery(p) {
-		t.Error("the desktop is handed to the app Composition")
+	if !operatorPlaced(p) {
+		t.Error("the desktop is not placed by the operator, which is what keeps its own values")
 	}
 	if refusal := placedModelAccessRefusal(p); refusal != "" {
 		t.Errorf("refused: %s", refusal)

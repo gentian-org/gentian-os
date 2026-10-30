@@ -51,8 +51,8 @@ const externalCreatePending = "crossplane.io/external-create-pending"
 // +kubebuilder:rbac:groups=kubernetes.crossplane.io,resources=objects,verbs=get;list;watch;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=xapps,verbs=get;list;watch
 
-// Kinds are the composed kinds looked at. Each is a kind the app Composition
-// composes under a name the app's next install composes again or that
+// Kinds are the composed kinds looked at. Each is a kind an app Composition
+// composed under a name the app's next install composes again or that
 // manages something under the app's own name -- a Helm release, an object in
 // the tenant's namespace -- and the operator holds the RBAC to list, patch
 // and delete it (the markers above). Adding a kind needs its marker.

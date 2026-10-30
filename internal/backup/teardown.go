@@ -154,7 +154,7 @@ var AppKinds = []KindRule{
 		FoundBy: "the tenant's and the app's labels on each object",
 	},
 	{
-		Kind: KindCredentials, MadeBy: "the tenant reconciler's seeder, and the app Composition for generated secrets",
+		Kind: KindCredentials, MadeBy: "the tenant reconciler's seeders, generated secrets included",
 		Export: Carries, ExportNote: "of the credentials, the app's own secrets only -- the ones its profile has the platform generate, which its data is written with -- encrypted by the operator itself, and set again by a restore at the app's own place in the tenant restored into; every other credential is not carried: the tenant restored into has its own, seeded when it was provisioned, and a restore changes none; what a person entered has to be entered again",
 		Artefacts: []string{bundle.ArtefactSecrets},
 		Uninstall: Keeps, AppPurge: Destroys, TenantDelete: Destroys,
@@ -220,18 +220,19 @@ var AppKinds = []KindRule{
 		FoundBy:          "the arbiter's record of the stores it made",
 	},
 	{
-		Kind: KindSignInClient, MadeBy: "the app Composition, or the tenant's identity Job",
+		Kind: KindSignInClient, MadeBy: "the component reconciler, or the tenant's identity Job",
 		Export: Carries, ExportNote: "inside the realm export",
 		// The client role, the client's default-scope assignments and the
-		// group's mapping to the role are composed with an Orphan policy, so
+		// group's mapping to the role are rendered with an Orphan policy, so
 		// Crossplane deletes none of them itself. Each is part of the client
 		// in the identity provider and goes when the client is deleted, which
-		// the Composition does (deletionPolicy: Delete on the Client).
+		// the component reconciler does (deletionPolicy: Delete on the
+		// Client).
 		Uninstall: Removes, AppPurge: Gone, TenantDelete: Destroys,
 		TenantDeleteNote: "with the realm",
 	},
 	{
-		Kind: KindWorkloads, MadeBy: "the Helm release the app Composition or the component reconciler writes",
+		Kind: KindWorkloads, MadeBy: "the Helm release the component reconciler writes",
 		Export: Omits, ExportNote: "re-made from the app's profile; the manifest records the chart version, the digest and the releases, and a restore checks the installed build against them",
 		Uninstall: Removes, AppPurge: Gone, TenantDelete: Removes,
 	},

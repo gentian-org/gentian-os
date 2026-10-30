@@ -10,8 +10,6 @@ spec:
   claimNames:
     kind: App
     plural: apps
-  defaultCompositionRef:
-    name: app-default
   versions:
     - name: v1alpha1
       served: true
@@ -186,7 +184,7 @@ spec:
 # rule without patching the auto-generated role directly.
 #
 # This names componentprofiles because AD-4 left one catalog kind and
-# app-default fetches it. The grant HAS to move in the same commit as the
+# an app Composition fetches it. The grant HAS to move in the same commit as the
 # fetch: the failure below is what a missing half looks like, and it does not
 # mention RBAC anywhere.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -205,7 +203,7 @@ rules:
       - list
       - watch
 ---
-# The same grant for ProfileBuild: app-default reads a tenant's build from it
+# The same grant for ProfileBuild: an app Composition reads a tenant's build from it
 # when the tenant runs a build that is not the ComponentProfile's current one.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -223,7 +221,7 @@ rules:
       - list
       - watch
 ---
-# Same grant for OIDCPackCatalog: the app-default composition fetches BOTH
+# Same grant for OIDCPackCatalog: an app Composition fetches BOTH
 # the profile and OIDCPackCatalog in its fetch-extra-resources step, but only
 # the former was ever granted.
 #

@@ -304,12 +304,13 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 	return makeClientJob(tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs, clientSecret != ""), clientSecret, nil
 }
 
-// crossplaneOwnsOIDCClient reports whether the app Composition already emits a
-// provider-keycloak Client MR, so the operator pack/client Job can be skipped.
-// That is every client without an OIDC pack of an app that has a Composition:
-// the app's own (requires.services.identity.oidc) and each extension's
-// (extensions[].kernelRequirements.identity.oidc), which app-default composes
-// beside it. A client with a pack is the pack Job's; an extension's
+// crossplaneOwnsOIDCClient reports whether the app's release already comes
+// with a provider-keycloak Client MR, rendered by the operator (apprender) or
+// by a profile's own Composition, so the operator pack/client Job can be
+// skipped. That is every client without an OIDC pack of an app that installs
+// a chart: the app's own (requires.services.identity.oidc) and each
+// extension's (extensions[].kernelRequirements.identity.oidc), which is
+// rendered beside it. A client with a pack is the pack Job's; an extension's
 // request-bound client is refused before it gets here
 // (resolveSidecarOIDCAppConfig).
 func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oidcAppConfig) bool {
@@ -323,9 +324,8 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oi
 	if profile.IsAPI() {
 		return false
 	}
-	// An extension's client is declared on the parent profile, and the
-	// parent's Composition composes it. Not only where the parent names
-	// package.composition: app-default renders an app that names none.
+	// An extension's client is declared on the parent profile, and is
+	// rendered with the parent's release, whoever renders it.
 	if cfg.parentProfile != "" {
 		return true
 	}

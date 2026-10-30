@@ -113,8 +113,8 @@ The profile:
 - **Exactly one `ComponentProfile`, and it is first.**
 - **`metadata.name` equals the file name** without `.yaml`. `profiles/acme-notes.yaml` holds the
   profile named `acme-notes`. The name is a DNS label: lower-case letters, digits and hyphens.
-- **It carries the label `gentianos.io/profile-name: <name>`**, its own name: the app Composition
-  selects the profile by that label, and a bundle whose profile lacks it is refused.
+- **It carries the label `gentianos.io/profile-name: <name>`**, its own name: a profile's own
+  Composition selects the profile by that label, and a bundle whose profile lacks it is refused.
 - It must not carry the annotations `gentianos.io/profile-bundle` or `gentianos.io/catalogue-origin`
   (the platform writes those), any label or annotation beginning `argocd.argoproj.io/`, or the label
   `gentianos.io/profile-name` with another profile's name.
@@ -134,9 +134,9 @@ operator before anything is rolled out.
 
 | Kind | Its name | What else is checked | Applied | Read by |
 |---|---|---|---|---|
-| `Composition` (`apiextensions.crossplane.io/v1`) | `app-<profile>`; at most one | composes `XApp` (`gentianos.io/v1alpha1`) and nothing else; is the one the profile names in `spec.package.composition`; never `app-default` | cluster-wide | Crossplane, to render the app |
-| `OIDCPackCatalog` (`gentianos.io/v1alpha1`) | `<profile>-oidc`; at most one | every pack is for a `clientId` (or `oidcPackRef`) the profile itself states; no `serviceClient` pack | cluster-wide | the operator and the app's Composition, to configure the app's client in a tenant's realm |
-| `ConfigMap` (`v1`) | `<profile>.<asset>` | carries the label `gentianos.io/asset: <asset>`; `data` only, text only | the catalog's namespace | the app's Composition, which finds it by its two labels; a sign-in handler (§4.1a) is read by the operator, from the bundle itself |
+| `Composition` (`apiextensions.crossplane.io/v1`) | `app-<profile>`; at most one | composes `XApp` (`gentianos.io/v1alpha1`) and nothing else; is the one the profile names in `spec.package.composition`; never `app-default`, the platform's own on clusters installed by earlier releases | cluster-wide | Crossplane, to render the app |
+| `OIDCPackCatalog` (`gentianos.io/v1alpha1`) | `<profile>-oidc`; at most one | every pack is for a `clientId` (or `oidcPackRef`) the profile itself states; no `serviceClient` pack | cluster-wide | the operator, to configure the app's client in a tenant's realm |
+| `ConfigMap` (`v1`) | `<profile>.<asset>` | carries the label `gentianos.io/asset: <asset>`; `data` only, text only | the catalog's namespace | the profile's own Composition, which finds it by its two labels; a sign-in handler (§4.1a) is read by the operator, from the bundle itself |
 | `Customization` (`gentianos.io/v1alpha1`) | `<profile>.<record>` | `spec.target.profile` is this profile; `spec.scope` is `profile` | the catalog's namespace | the operator, for the customization-debt report |
 
 For every companion:
@@ -168,7 +168,9 @@ administrators (§5) never extends to this.
 
 A profile's Composition renders the app only when it arrived this way: the install is pinned to a
 digest and the bundle of that digest brings `app-<profile>`. `spec.package.composition` by itself
-selects nothing — an app whose bundle brings no Composition is rendered by `app-default`.
+selects nothing — an app whose bundle brings no Composition is rendered by the operator. And only a
+profile of `trustTier: platform` may bring one: any other profile whose pinned bundle brings a
+Composition is held, its Component `Ready=False` with reason `CompositionRefused`.
 
 **A Composition composes only resource types the cluster has.** A cluster creates the Crossplane
 provider types listed in gentian-os's `crossplane/providers/activation.yaml` and no others, so a
@@ -618,6 +620,12 @@ cluster, and is installed into every user tenant for everyone at the build the i
 ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who
 asks to uninstall it.
 
+The operator renders every chart. Into the values of one it does not place it writes `podLabels`
+with `gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`, which the tenant's network
+policies select the app's pods by, so such a chart has to put `podLabels` on every pod template. A
+placed chart is told only what it declares: no `podLabels` (its pods are selected by their Helm
+release), no trust anchor, and pull secrets only where the tenant declared a repository.
+
 `defaultForTenants`, `defaultForPlatform`, `defaultWhereStoreOffered` and the
 `gentianos.io/requires-capability` annotation are what catalogs said before `placement`; they are
 read as the placement they meant for one more release, and are then removed.
@@ -951,7 +959,7 @@ created (the cluster does not record when a piece stopped being owned):
 |---|---|
 | `dropped` | An object of a companion kind that names a profile on the cluster — by its label `gentianos.io/profile-name`, or by a name only that profile's companion has — and that the bundle now materialized for the profile does not bring. |
 | `orphaned` | One that carries the label of a profile that is not on the cluster. |
-| `unowned` | One that no bundle owns and that names no profile with a bundle: what installations from before bundles left. A `Composition` that composes an app and is not `app-default`, any `OIDCPackCatalog`, and a `ConfigMap` or `Customization` carrying the asset or the profile label. |
+| `unowned` | One that no bundle owns and that names no profile with a bundle: what installations from before bundles left. A `Composition` that composes an app and is not `app-default` (the platform's own on clusters installed by earlier releases), any `OIDCPackCatalog`, and a `ConfigMap` or `Customization` carrying the asset or the profile label. |
 | `unused profile` | A materialized profile that no tenant has installed or switched on as an add-on, and for which no tenant retains data. |
 
 Never listed: `app-default`; anything a chart ships (the platform's profiles, its own pack catalog);
@@ -1047,8 +1055,8 @@ artifact was read with a credential earns its bytes nothing.
   create objects of its own anywhere in the cluster, a secret store included, and can read a
   Kubernetes Secret directly, so a chart is trusted like the platform itself, and so is whoever can
   add the catalog it comes from. A Composition of your own that writes an `ExternalSecret` into
-  the tenant's namespace names the tenant's store, as `app-default` does; one that names `openbao`
-  there gets no Secret.
+  the tenant's namespace names the tenant's store, as the operator's own do; one that names
+  `openbao` there gets no Secret.
 - **The address is checked**, when the catalog is added and again on every fetch: https only,
   port 443, no user name or password, and a host that resolves to public addresses only. Loopback,
   private and link-local ranges, carrier-grade NAT, metadata addresses, and names inside a cluster

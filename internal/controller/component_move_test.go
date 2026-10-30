@@ -56,7 +56,7 @@ func startMove(t *testing.T, old, newer string) (*digestHarness, string, string)
 	h.markReleaseReady()
 	got := h.reconcile()
 	if ro := got.Status.Rollout; ro == nil || ro.Digest != oldDigest || ro.Phase != gentianov1alpha1.RolloutDone {
-		t.Fatalf("after the first rollout: %+v", got.Status.Rollout)
+		t.Fatalf("after the first rollout: %+v %+v", got.Status.Rollout, componentReadyCondition(got))
 	}
 	h.events()
 	// Another tenant moved the profile; this tenant's build is kept.
@@ -99,6 +99,7 @@ func (h *digestHarness) markReleaseReady() {
 	if err := h.c.Update(context.Background(), release); err != nil {
 		h.t.Fatal(err)
 	}
+	markRenderedReady(h.t, h.c, h.comp)
 }
 
 // markReleaseNotReady is the Release during an upgrade: not ready yet.

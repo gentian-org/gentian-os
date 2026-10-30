@@ -199,9 +199,11 @@ func IsPlatformStore(name string) bool {
 }
 
 // AppRelease is the Helm release an app is installed as in its tenant's
-// namespace: one name for as long as the app is the tenant's, whichever
-// install of it this is. The app Composition sets it as the release's
-// external name. Being stable is what lets a volume claim kept by one
+// namespace when a Composition installed it: a profile's own, or the
+// platform's app Composition of earlier releases, whose apps the operator
+// took over under the same name. One name for as long as the app is the
+// tenant's, whichever install of it this is; the Composition sets it as the
+// release's external name. Being stable is what lets a volume claim kept by one
 // uninstall be found, and taken over, by the next install.
 func AppRelease(app string) string {
 	return app + "-release"
@@ -213,7 +215,7 @@ func ExtensionRelease(app, extension string) string {
 }
 
 // DirectRelease is the Helm release of a chart the component reconciler
-// delivers itself, without the app Composition. The Release object is
+// installed from the first: one no Composition installed before. The Release object is
 // cluster-scoped and carries the namespace in its name; the Helm release
 // takes the same name.
 func DirectRelease(namespace, app string) string {
@@ -346,7 +348,7 @@ func TenantApps(tenant *gentianov1alpha1.Tenant) map[string]bool {
 }
 
 // OwnedKeys are the names an app's stores are kept under: its own, and one
-// per extension, which the app Composition keys "{app}-{extension}". An
+// per extension, which the operator keys "{app}-{extension}". An
 // extension's vault path, its access group and its Helm release are all named
 // from its key, exactly as the app's own are from the app's name.
 //
@@ -406,8 +408,8 @@ func OwnsRelease(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 // the sibling's.
 //
 // So a claim that names a release is the app's only if the release is: the
-// app's own, one of its declared extensions', or the one a chart delivered
-// without the app Composition is installed as. Those names are exact
+// app's own, one of its declared extensions', or the one a chart the
+// component reconciler installed from the first is installed as. Those names are exact
 // (AppRelease and its neighbors), which is also how a claim an uninstall
 // kept is known to be this app's: it still carries its release. When the
 // profile is gone the extensions are not known, and any release shaped like

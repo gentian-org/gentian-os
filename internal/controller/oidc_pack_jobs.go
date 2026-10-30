@@ -168,13 +168,13 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	// A request-bound client is the app Composition's to compose, with the
+	// A request-bound client is rendered with the app's release, with the
 	// rule that narrows its https://* (OIDCRequestParameterSpec). A profile
-	// that has no Composition has its client made by a Job, which holds no
+	// that installs no chart has its client made by a Job, which holds no
 	// such rule and would register a client the parameter binds nothing on.
 	if oidcSpec.RequestParameter != nil && profile.IsAPI() {
 		return oidcAppConfig{}, refuseOIDCClient(
-			"ComponentProfile %s: requires.services.identity.oidc.requestParameter needs the app Composition, which an API entry does not have", profileName)
+			"ComponentProfile %s: requires.services.identity.oidc.requestParameter needs a release the client is rendered with, which an API entry does not have", profileName)
 	}
 	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs, oidcSpec.RequestParameter != nil)
 	if err != nil {
@@ -197,9 +197,9 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 }
 
 // resolveOIDCPack puts the pack the profile's own catalog holds under
-// packKey on cfg, where the app Composition looks for it (oidc.ResolvePack).
-// A profile two catalogs are labeled for is refused: which one the
-// Composition reads is not defined, so neither writer can be told the client
+// packKey on cfg, where the component reconciler looks for it
+// (oidc.ResolvePack). A profile two catalogs are labeled for is refused:
+// which one the renderer reads is not defined, so neither writer can be told the client
 // is its own.
 func (r *TenantReconciler) resolveOIDCPack(ctx context.Context, cfg *oidcAppConfig, profileName, packKey string) error {
 	pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, profileName, packKey)
@@ -227,13 +227,13 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	// The app Composition holds the rule that narrows a request-bound
-	// client's https://* for the app's own client alone; an extension's it
-	// composes without one, so nothing would hold its request parameter
+	// The renderer holds the rule that narrows a request-bound client's
+	// https://* for the app's own client alone; an extension's it renders
+	// without one, so nothing would hold its request parameter
 	// (see resolveOIDCAppConfig).
 	if oidcSpec.RequestParameter != nil {
 		return oidcAppConfig{}, refuseOIDCClient(
-			"ComponentProfile %s: extension %s declares requestParameter, which only the app's own client can: the app Composition binds no request parameter on an extension's client", parentProfile, sidecar.Name)
+			"ComponentProfile %s: extension %s declares requestParameter, which only the app's own client can: the operator binds no request parameter on an extension's client", parentProfile, sidecar.Name)
 	}
 	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs, false)
 	if err != nil {
@@ -252,7 +252,7 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 		redirectURIs:  redirects,
 	}
 	// The parent's catalogue: the extension's client is declared on it, and
-	// the app Composition looks for its pack there.
+	// the renderer looks for its pack there.
 	if err := r.resolveOIDCPack(ctx, &cfg, parentProfile, packKey); err != nil {
 		return oidcAppConfig{}, err
 	}

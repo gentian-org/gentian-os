@@ -119,7 +119,7 @@ func deploysPods(profile *gentianov1alpha1.ComponentProfile) bool {
 }
 
 // podsOf selects the pods of one install: by the labels its release carries
-// where the operator installs it, by the app label otherwise.
+// where the platform places it, by the app label otherwise.
 func (in BuildInput) podsOf(app string) metav1.LabelSelector {
 	if s := in.PodSelectors[app]; len(s) > 0 {
 		return metav1.LabelSelector{MatchLabels: s}
