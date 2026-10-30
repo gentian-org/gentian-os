@@ -54,7 +54,7 @@ type cluster
     define service_admin: [user]              # a person of the platform tenant
     define shared_apps_admin: [user]          # a person of the platform tenant
     define perimeter_approver: [user]         # a person of the platform tenant; approves for every tenant
-    define break_glass: [group#member]        # gentian:platform:break-glass — no standing membership
+    define break_glass: [user, group#member]  # gentian:platform:break-glass, no standing membership; or a person, with a reason, until a time
 
     # permissions — the director's cluster-level verbs
     define can_configure: admin               # Cluster claim, plans, ceilings, network intent

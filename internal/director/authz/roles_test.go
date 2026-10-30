@@ -34,12 +34,13 @@ func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
 
 	// Every relation a group or a holder holds is one ReconcileClusterRoles
 	// accepts, and every one it accepts is held one way or the other, never
-	// both: the lists cannot drift apart.
+	// both, but for break_glass, which a person also holds for a stated time:
+	// the lists cannot drift apart.
 	for field, rel := range ClaimRoles {
 		if !knownClusterRole(rel) {
 			t.Errorf("ClaimRoles[%q] = %q, which is not a cluster relation", field, rel)
 		}
-		if _, both := HolderRoles[field]; both {
+		if _, both := HolderRoles[field]; both && field != "breakGlass" {
 			t.Errorf("%s is held by a group and by name", field)
 		}
 	}
@@ -59,7 +60,7 @@ func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
 		if byName[rel] {
 			found++
 		}
-		if found != 1 {
+		if found != 1 && rel != "break_glass" {
 			t.Errorf("relation %q is held %d ways", rel, found)
 		}
 	}
@@ -94,7 +95,7 @@ func TestARoleHolderIsKeyedByTheRealmThatHoldsTheAccount(t *testing.T) {
 			t.Errorf("%q is not a cluster relation", rel)
 		}
 	}
-	for _, never := range []string{"admin", "breakGlass"} {
+	for _, never := range []string{"admin"} {
 		if _, ok := HolderRoles[never]; ok {
 			t.Errorf("%s must not be a role held by name", never)
 		}
