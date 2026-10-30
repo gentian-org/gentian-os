@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -324,7 +325,7 @@ func TestTheReleaseIsToldTheMappedValuesBySetEntries(t *testing.T) {
 		return set, found
 	}
 
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, v.set, pullSecrets{}); err != nil {
+	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, v.set, nil, pullSecrets{}); err != nil {
 		t.Fatal(err)
 	}
 	set, _ := releaseSet()
@@ -338,7 +339,7 @@ func TestTheReleaseIsToldTheMappedValuesBySetEntries(t *testing.T) {
 		t.Fatalf("set entry = %v", entry)
 	}
 
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, pullSecrets{}); err != nil {
+	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pullSecrets{}); err != nil {
 		t.Fatal(err)
 	}
 	if set, found := releaseSet(); found {
@@ -605,5 +606,65 @@ func TestASensitiveSecretIsSyncedOnlyFromItsCurrentGeneration(t *testing.T) {
 	_ = unstructured.SetNestedField(es.Object, "2-def", "status", "syncedResourceVersion")
 	if !externalSecretSynced(es) {
 		t.Error("Ready from the current generation: want synced")
+	}
+}
+
+// Object storage, the cache and mail reach the chart as the app Composition
+// gives them: each read from where the tenant's stores wrote it for the app,
+// and mail -- optional, empty on a cluster without the relay's credentials --
+// as a values document of its own that the release reads only when it is
+// there. The documents are the Composition's, byte for byte, as its render
+// fixture (crossplane/tests/unit/render/app-optional-smtp) has them.
+func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
+	comp := sensitiveComponent("app")
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		S3:    &gentianov1alpha1.S3ValueMapping{EndpointKey: "s3.endpoint", BucketKey: "s3.bucket"},
+		Cache: &gentianov1alpha1.CacheValueMapping{HostKey: "cache.host", PasswordKey: "cache.password"},
+		SMTP:  &gentianov1alpha1.SMTPValueMapping{HostKey: "mail.smtp.host", PortKey: "mail.smtp.port", PasswordKey: "mail.smtp.password"},
+		IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "mail.imap.host"},
+	}
+	v := componentSensitiveValues(comp, profile, "demo")
+	read := map[string]string{}
+	for _, d := range v.data {
+		e := d.(map[string]interface{})
+		ref := e["remoteRef"].(map[string]interface{})
+		read[e["secretKey"].(string)] = ref["key"].(string) + "#" + ref["property"].(string)
+	}
+	apps := "gentian-os/tenants/demo/apps/app/"
+	for key, want := range map[string]string{
+		"s3-endpoint": apps + "s3#endpoint", "s3-bucket": apps + "s3#bucket",
+		"cache-host": apps + "cache#host", "cache-password": apps + "cache#password",
+		"smtp-host": apps + "smtp#host", "smtp-port": apps + "smtp#port", "smtp-password": apps + "smtp#password",
+		"imap-host": apps + "imap#host",
+	} {
+		if read[key] != want {
+			t.Errorf("%s reads %q, want %q", key, read[key], want)
+		}
+	}
+	var set []string
+	for _, e := range v.set {
+		set = append(set, e.(map[string]interface{})["name"].(string))
+	}
+	if want := []string{"s3.endpoint", "s3.bucket", "cache.host", "cache.password", "mail.imap.host"}; !reflect.DeepEqual(set, want) {
+		t.Errorf("set = %v, want %v: mail is no set entry", set, want)
+	}
+	for doc, want := range map[string]string{
+		"values-smtp-host":     `{{ with index . "smtp-host" }}{"mail":{"smtp":{"host":{{ . | toJson }}}}}{{ end }}`,
+		"values-smtp-password": `{{ with index . "smtp-password" }}{"mail":{"smtp":{"password":{{ . | toJson }}}}}{{ end }}`,
+		"values-smtp-port":     `{{ with index . "smtp-port" }}{"mail":{"smtp":{"port":{{ . }}}}}{{ end }}`,
+	} {
+		if v.documents[doc] != want {
+			t.Errorf("%s = %q, want %q", doc, v.documents[doc], want)
+		}
+	}
+	if len(v.valuesFrom) != 3 {
+		t.Fatalf("valuesFrom = %v, want one optional read per mail value", v.valuesFrom)
+	}
+	for _, f := range v.valuesFrom {
+		ref := f.(map[string]interface{})["secretKeyRef"].(map[string]interface{})
+		if ref["name"] != "app-sensitive-values" || ref["optional"] != true {
+			t.Errorf("valuesFrom %v, want an optional read of the sensitive Secret", ref)
+		}
 	}
 }
