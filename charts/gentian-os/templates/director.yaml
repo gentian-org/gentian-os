@@ -72,7 +72,7 @@ spec:
     - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
       remoteRef:
         key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
-        property: {{ .Values.director.openfgaTokenSecretRef.property }}
+        property: director_key
 ---
 {{- end }}
 {{- if .Values.director.signingKeySecret }}

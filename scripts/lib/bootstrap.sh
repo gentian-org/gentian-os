@@ -389,7 +389,13 @@ create_crossplane_secrets() {
     _kv_secret "gentian-os-kernel-authz-openfga" \
         "$(jq -nc \
             --arg a "$(_derive openfga preshared_key)" \
-            '{preshared_key:$a}')"
+            --arg director "$(_derive openfga director_key)" \
+            --arg bouncer "$(_derive openfga bouncer_key)" \
+            --arg usher "$(_derive openfga usher_key)" \
+            --arg registrar "$(_derive openfga registrar_key)" \
+            --arg custodian "$(_derive openfga custodian_key)" \
+            '{preshared_key:$a,director_key:$director,bouncer_key:$bouncer,usher_key:$usher,registrar_key:$registrar,custodian_key:$custodian}')" \
+        "gentian-os/kernel/authz/openfga"
 
     # ── mail/postfix (HMAC-derived fields + operator-supplied relay credentials) ─
     # relay_username and relay_password are omitted when unset rather than written
