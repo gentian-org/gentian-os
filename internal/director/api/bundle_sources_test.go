@@ -174,6 +174,27 @@ func TestSourcesAreReachedUnderTheRelationOfTheirLevel(t *testing.T) {
 	}
 }
 
+// A backup holds the tenant's people and data, so a member, who reads the
+// tenant, does not get it: only whoever may take one.
+func TestABackupIsDownloadedOnlyByTheTenantsAdministrator(t *testing.T) {
+	op := &sourcingOperator{}
+	h := startWith(t, op)
+	path := "/v1/tenants/demo/backups/nightly/download"
+
+	if code, _ := h.do(t, "GET", path, h.token(t, "tenant-demo", "mia"), ""); code != http.StatusForbidden {
+		t.Errorf("a member's download = %d", code)
+	}
+	if strings.Contains(op.seen(), "STREAM") {
+		t.Errorf("the operator was asked for the bundle: %s", op.seen())
+	}
+	if code, _ := h.do(t, "GET", path, h.token(t, "tenant-demo", "tom"), ""); code != http.StatusOK {
+		t.Errorf("the administrator's download = %d", code)
+	}
+	if !strings.Contains(op.seen(), "STREAM") {
+		t.Errorf("the operator was not asked for the bundle: %s", op.seen())
+	}
+}
+
 // An import may name a bundle at a declared source; it goes on with the
 // bundle the operator resolved, and restores that one.
 func TestAnImportFromADeclaredSourceRestoresTheBundleItResolvedTo(t *testing.T) {
