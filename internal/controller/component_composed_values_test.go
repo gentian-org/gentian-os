@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -51,16 +52,10 @@ spec:
         valuePath: secrets.credentialKey
 `
 
-// A chart the Composition delivers is told what its profile asked the
-// platform for, just as one the operator installs itself: the values travel
-// on the claim the Composition renders the release from, over the
-// component's own, which cannot override them. Before, they were computed and
-// dropped, and a chart that needs its issuer could not start.
-func TestAComposedChartIsToldWhatItsProfileAskedThePlatformFor(t *testing.T) {
+// A chart is told what its profile asked the platform for, over the
+// component's own values, which cannot override them.
+func TestAChartIsToldWhatItsProfileAskedThePlatformFor(t *testing.T) {
 	profile := materialised(t, shopBundle)
-	if !composedDelivery(profile) {
-		t.Fatal("the fixture is meant to be an app the Composition installs")
-	}
 	h := startDigestHarness(t, profile, "")
 	ctx := context.Background()
 	stored := h.reconcile()
@@ -70,13 +65,16 @@ func TestAComposedChartIsToldWhatItsProfileAskedThePlatformFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.reconcile()
+	// The release waits for the Secret its values read.
+	markSynced(t, h.c, h.comp.Namespace, h.comp.Name+"-sensitive-values")
+	h.reconcile()
 
-	claim := &unstructured.Unstructured{}
-	claim.SetGroupVersionKind(appClaimGVK)
-	if err := h.c.Get(ctx, types.NamespacedName{Name: h.comp.Name, Namespace: h.comp.Namespace}, claim); err != nil {
-		t.Fatalf("no claim: %v", err)
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	if err := h.c.Get(ctx, types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
+		t.Fatalf("no release: %v", err)
 	}
-	values, _, _ := unstructured.NestedMap(claim.Object, "spec", "config", "extraValues")
+	values, _, _ := unstructured.NestedMap(release.Object, "spec", "forProvider", "values")
 	issuer, _, _ := unstructured.NestedString(values, "customerRealm", "issuer")
 	if issuer != "https://id.k.example/auth/realms/acme" {
 		t.Fatalf("customerRealm.issuer = %q, want the tenant realm's issuer (values %v)", issuer, values)
@@ -89,12 +87,30 @@ func TestAComposedChartIsToldWhatItsProfileAskedThePlatformFor(t *testing.T) {
 	}
 
 	// A second pass finds nothing to change.
-	before := claim.GetResourceVersion()
+	before := release.GetResourceVersion()
 	h.reconcile()
-	if err := h.c.Get(ctx, types.NamespacedName{Name: h.comp.Name, Namespace: h.comp.Namespace}, claim); err != nil {
+	if err := h.c.Get(ctx, types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
 		t.Fatal(err)
 	}
-	if claim.GetResourceVersion() != before {
-		t.Fatal("the claim is patched on every pass")
+	if release.GetResourceVersion() != before {
+		t.Fatal("the release is patched on every pass")
+	}
+}
+
+// markSynced makes an ExternalSecret report its Secret synced from its
+// current generation, as External Secrets does.
+func markSynced(t *testing.T, c client.Client, namespace, name string) {
+	t.Helper()
+	es := &unstructured.Unstructured{}
+	es.SetAPIVersion("external-secrets.io/v1")
+	es.SetKind("ExternalSecret")
+	if err := c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: namespace}, es); err != nil {
+		t.Fatalf("no ExternalSecret %s: %v", name, err)
+	}
+	_ = unstructured.SetNestedSlice(es.Object, []interface{}{
+		map[string]interface{}{"type": "Ready", "status": "True"},
+	}, "status", "conditions")
+	if err := c.Update(context.Background(), es); err != nil {
+		t.Fatal(err)
 	}
 }

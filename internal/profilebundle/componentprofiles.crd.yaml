@@ -1729,8 +1729,8 @@ spec:
 
                                 Honored for a component the platform places on tenants itself. For an
                                 app a tenant installs the requirement holds the release as if this
-                                were not set: its chart is rendered by the app Composition, which
-                                reads the key from where it is kept and cannot render without it.
+                                were not set: its chart's values read the key from where it is kept,
+                                and its release cannot be rendered without it.
                               type: boolean
                           type: object
                         logDestination:
@@ -1789,9 +1789,7 @@ spec:
                           description: |-
                             MCP declares that the component exposes a Model Context Protocol
                             endpoint. It is a declaration only: there is no MCP registry, and the
-                            platform registers nothing and wires no authentication for it. Its one
-                            effect today is that a chart component declaring it is installed
-                            through the app Composition.
+                            platform registers nothing and wires no authentication for it.
                           properties:
                             auth:
                               default: oidc
@@ -2485,7 +2483,10 @@ spec:
                   composition:
                     description: |-
                       Composition names a Crossplane composition, for a component that is not
-                      a single chart. Delivery: workload.
+                      a single chart. Used only when the install is pinned to a bundle that
+                      brings it as app-<profile>, and only for a profile of trustTier
+                      platform: below that the component is held. Otherwise the operator
+                      renders the chart. Delivery: workload.
                     maxLength: 253
                     type: string
                   extraValues:
@@ -2608,11 +2609,11 @@ spec:
                           apiKeyKey:
                             description: |-
                               APIKeyKey is the Helm value key for the key the component presents.
-                              For an app a tenant installs, where the app Composition sets it from
-                              the vault. A component the platform places on tenants itself is
-                              rendered by the operator, whose release values are not a place for a
-                              key: such a profile names SecretNameKey instead, and is refused if it
-                              names this.
+                              For an app a tenant installs, which is given the key from the vault
+                              through the Secret its sensitive values are read from. A component the
+                              platform places on tenants itself is given its values inline in the
+                              release, which is not a place for a key: such a profile names
+                              SecretNameKey instead, and is refused if it names this.
                             type: string
                           availableKey:
                             description: |-
@@ -3806,8 +3807,8 @@ spec:
 
                               Honored for a component the platform places on tenants itself. For an
                               app a tenant installs the requirement holds the release as if this
-                              were not set: its chart is rendered by the app Composition, which
-                              reads the key from where it is kept and cannot render without it.
+                              were not set: its chart's values read the key from where it is kept,
+                              and its release cannot be rendered without it.
                             type: boolean
                         type: object
                       logDestination:
@@ -3866,9 +3867,7 @@ spec:
                         description: |-
                           MCP declares that the component exposes a Model Context Protocol
                           endpoint. It is a declaration only: there is no MCP registry, and the
-                          platform registers nothing and wires no authentication for it. Its one
-                          effect today is that a chart component declaring it is installed
-                          through the app Composition.
+                          platform registers nothing and wires no authentication for it.
                         properties:
                           auth:
                             default: oidc

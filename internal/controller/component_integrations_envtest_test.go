@@ -27,7 +27,8 @@ import (
 // the CRD's validation, the placed provider's binding carries its endpoint,
 // and the grant from the Tenant opens both contract policies -- selecting
 // the provider's pods by the instance label of the release the operator
-// installs, on the contract's port only. Withdrawing the grant from the
+// installs and the installed consumer's by the app label it is rendered with,
+// on the contract's port only. Withdrawing the grant from the
 // Tenant closes them again. The vault and ExternalSecret halves are in the
 // fake-client test of the same name (component_integrations_test.go): this
 // suite runs without a vault.
@@ -80,21 +81,23 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathOnTheAPIServe
 		t.Fatalf("binding endpoint = %+v", ib.Spec.Endpoint)
 	}
 
-	instance := "app.kubernetes.io/instance"
+	// The placed desk is selected by its release, the installed store by
+	// the app label its pods are rendered with.
+	instance, app := "app.kubernetes.io/instance", "gentianos.io/app"
 	desk := ns + "-placed-desk"
-	store := ns + "-placed-store"
+	store := "placed-store"
 	out, in := &networkingv1.NetworkPolicy{}, &networkingv1.NetworkPolicy{}
 	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(ctx, types.NamespacedName{Name: "contract-" + bindingName, Namespace: ns}, out) == nil &&
 			testClient.Get(ctx, types.NamespacedName{Name: "contract-in-" + bindingName, Namespace: ns}, in) == nil
 	})
-	if out.Spec.PodSelector.MatchLabels[instance] != store || len(out.Spec.Egress) != 1 ||
+	if out.Spec.PodSelector.MatchLabels[app] != store || len(out.Spec.Egress) != 1 ||
 		out.Spec.Egress[0].To[0].PodSelector.MatchLabels[instance] != desk ||
 		len(out.Spec.Egress[0].Ports) != 1 || out.Spec.Egress[0].Ports[0].Port.IntVal != 8000 {
 		t.Fatalf("consumer policy = %+v", out.Spec)
 	}
 	if in.Spec.PodSelector.MatchLabels[instance] != desk || len(in.Spec.Ingress) != 1 ||
-		in.Spec.Ingress[0].From[0].PodSelector.MatchLabels[instance] != store ||
+		in.Spec.Ingress[0].From[0].PodSelector.MatchLabels[app] != store ||
 		len(in.Spec.Ingress[0].Ports) != 1 || in.Spec.Ingress[0].Ports[0].Port.IntVal != 8000 {
 		t.Fatalf("provider policy = %+v", in.Spec)
 	}

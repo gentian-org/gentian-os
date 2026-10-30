@@ -97,6 +97,9 @@ func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Services: &gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}
+	// Placed, as the shipped desktop is: a placed component's database is
+	// the operator's to open. An installed app's way there is the tenant's.
+	profile.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
 	got := r.componentEgressNamespaces(nil, profile, tenant)
 	if len(got) != 2 || got[0] != postgresNamespace || got[1] != layout.Namespace(layout.Control) {
 		t.Fatalf("egress namespaces = %v", got)

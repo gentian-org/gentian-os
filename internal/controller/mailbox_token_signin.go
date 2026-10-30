@@ -31,7 +31,7 @@ import (
 //     that adds gentian-dovecot to an access token's audience
 //     (tenant-default.yaml, beside the gentian-dovecot client);
 //   - that scope as an OPTIONAL scope of the declaring app's own sign-in
-//     client (app-default.yaml), from the fact this file puts on the claim;
+//     client (apprender), from the fact this file puts on the render;
 //   - "scope = mailbox" in the mail server's check of each realm
 //     (dovecotRealmAuthFiles), so the audience alone is not enough.
 //
@@ -73,7 +73,8 @@ func tenantHasTokenMailboxes(tenant *gentianov1alpha1.Tenant, clusterMailMode, k
 	return !tenantAdoptsKernelRealm(tenant, kernelRealm)
 }
 
-// mailboxTokenSignIn is the fact the App claim carries: this app declared it,
+// mailboxTokenSignIn is the fact the render is given (and an App claim
+// carries, for a profile's own Composition): this app declared it,
 // and this tenant on this cluster can serve it. Where it cannot be served the
 // declaration is accepted and does nothing, as requires.services.mail itself
 // does on a cluster without the mail function.

@@ -155,7 +155,7 @@ func TestTheSidecarsAnswerRouteIsLimited(t *testing.T) {
 	t.Setenv("NETWORK_MODE", "static-ip")
 	h := signInHarness(t)
 	ctx := context.Background()
-	h.reconcile()
+	h.reconcileInstalled()
 
 	name := signInACSRouteName("notes", "web")
 	policy := &unstructured.Unstructured{}

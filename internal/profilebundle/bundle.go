@@ -83,11 +83,12 @@ const (
 	// appComposite is the kind the platform composes an app from. A
 	// Composition of any other kind creates something that is not an app.
 	appComposite = "XApp"
-	// defaultComposition renders every app that names no other. Nothing in
-	// a bundle is ever it.
+	// defaultComposition rendered every app before the operator rendered
+	// them itself, and a cluster installed then still holds it. Nothing in a
+	// bundle is ever it.
 	defaultComposition = "app-default"
 	// compositionPrefix is what the name of every app Composition begins
-	// with, the platform's own included.
+	// with.
 	compositionPrefix = "app-"
 	// oidcSuffix ends the name of a profile's OIDC packs.
 	oidcSuffix = "-oidc"
@@ -205,10 +206,10 @@ func Check(body []byte, name, origin string) (*Bundle, error) {
 // checkProfile holds the profile document to what a Composition needs of it
 // and to what no catalog states.
 //
-// The app Composition selects the profile by the label ProfileLabel with
-// the profile's own name (crossplane/compositions/app-default.yaml,
-// fetch-extra-resources): a profile without it is never found, and one
-// carrying another's name would be found in that one's place. And nothing
+// A profile's own Composition selects the profile by the label ProfileLabel
+// with the profile's own name (fetch-extra-resources): a profile without it
+// is never found, and one carrying another's name would be found in that
+// one's place. And nothing
 // addressed to Argo CD, which applies this document and would take a sync
 // option or a hook from it.
 func checkProfile(b *Bundle) error {
@@ -225,7 +226,7 @@ func checkProfile(b *Bundle) error {
 		}
 	}
 	if labels, _ := meta["labels"].(map[string]any); labels[ProfileLabel] != b.Name {
-		return fmt.Errorf("%w: the profile %s must carry the label %s: %s; the app Composition selects it by that label",
+		return fmt.Errorf("%w: the profile %s must carry the label %s: %s; a profile's own Composition selects it by that label",
 			ErrRefused, b.Name, ProfileLabel, b.Name)
 	}
 	// An authorization model that does not compile is a failed install, here,
@@ -339,7 +340,9 @@ func wrongLabels(c *Companion, labels map[string]string) error {
 // A Composition decides which objects exist for an app, and they are made
 // with the providers' rights, which are the cluster's. So it is the app's
 // own -- app-<profile>, named by the profile's spec.package.composition --
-// it composes an app and nothing else, and it is never app-default.
+// it composes an app and nothing else, and it is never app-default, the
+// platform's own of earlier releases, which a cluster installed then still
+// holds.
 func checkComposition(b *Bundle, c *Companion, r rule) error {
 	if c.Name == defaultComposition {
 		return fmt.Errorf("%w: it holds the Composition %s, which is the platform's and is replaced by nothing", ErrRefused, c.Name)

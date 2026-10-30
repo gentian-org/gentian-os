@@ -18,7 +18,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -33,111 +32,29 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// How a chart package is delivered.
-//
-// A Component is the instance of every app a tenant has, and this reconciler
-// is what installs it. For a chart it has two ways of doing that, and which
-// one is decided by what the profile asks for, never by which profile it is.
-//
-// DIRECTLY, as a Helm release this reconciler writes, when the chart needs
-// only what is rendered here: the profile's own values, the facts of the
-// cluster (valueMapping.platform), and a database handed over as the name of
-// a Secret. That is the desktop and the consoles.
-//
-// THROUGH THE APP COMPOSITION when it needs anything else: an identity
-// provider client of its own, generated or derived secrets, a database, cache,
-// object store, mail account or model gateway mapped into chart values key by
-// key, a post-install job, a sidecar release. Rendering those is the app
-// Composition's, and it is a great deal of rendering. The Component writes
-// the App claim that Composition answers, owns it, and is Ready when it is.
-// The claim used to be emitted by the tenant's Composition straight from the
-// list of apps, which is why an installed app was a list entry and a claim
-// and never a Component.
-//
-// The second way shrinks as this reconciler learns to render what it now
-// hands over, and is gone when composedDelivery can no longer be true. Until
-// then nothing is installed twice and nothing is half-installed: a profile is
-// delivered wholly one way or wholly the other.
+// A profile that brings its own Composition (the bundle's app-<profile>,
+// digest-verified: appComposition) is rendered by it, and only a profile of
+// the platform's trust may bring one. The Component writes the App claim that
+// Composition answers, owns it, and is Ready when it is. Every other chart is
+// rendered by apprender and applied by this reconciler (component_render.go).
 
-// deliveredByAnnotation marks a Component the app Composition delivers. An
-// app the Composition installed stays with it while this is there, whatever
-// its profile needs now: moving it to this reconciler would install it again
-// under another release name, beside or over what runs. Set the first time a
-// Component is found delivered that way -- its App claim there and no
-// release of this reconciler's beside it -- and taken off only by a move
-// that keeps the release.
-const (
-	deliveredByAnnotation  = "gentianos.io/delivered-by"
-	deliveredByComposition = "composition"
-)
-
-// deliveredComposed reports whether a component's chart is the app
-// Composition's: because its profile needs what only the Composition
-// renders, or because the Composition installed it (deliveredByAnnotation).
-func deliveredComposed(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) bool {
-	return composedDelivery(profile) || (comp != nil && comp.Annotations[deliveredByAnnotation] == deliveredByComposition)
-}
-
-// composedDelivery reports whether a chart package needs the app Composition.
-func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
-	spec := &profile.Spec
-	if spec.Package.Chart == nil {
-		return false
-	}
-	// Integrations are not among them: a contract's values are rendered here
-	// (component_integrations.go), and spec.integrations asks for nothing
-	// of the chart at all -- its bindings are the tenant's.
-	// Nor are generated and supplied secrets: their values are rendered here
-	// too, and derived ones are the tenant's (tenant_app_secrets.go).
-	if spec.Hooks != nil || len(spec.Extensions) > 0 {
-		return true
-	}
-	if req := spec.Requires; req != nil && req.Services != nil {
-		s := req.Services
-		// Storage, a cache and mail are not among them: the tenant's stores
-		// provide them and their values are rendered here.
-		if s.Identity != nil || s.MCP != nil {
-			return true
-		}
-		// The model gateway is the Composition's for an app a tenant
-		// installs. For a component the platform places it is rendered here
-		// (model_access_reconciler.go): the Secret's name, never the key.
-		if s.LLM != nil && !operatorPlaced(profile) {
-			return true
-		}
-	}
-	if m := spec.Package.ValueMapping; m != nil {
-		// A database is rendered here, by the Secret's name or key by key
-		// (component_integrations.go).
-		if m.OIDC != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.Volumes != nil {
-			return true
-		}
-	}
-	return false
-}
-
-// composedReleaseSuffix is what the app Composition appends to an app's name
-// to name its Helm release (crossplane/compositions/app-default.yaml,
-// $release): one name for as long as the app is the tenant's.
+// composedReleaseSuffix is what an app Composition appends to an app's name
+// to name its Helm release: a profile's own, and the platform's of earlier
+// releases, whose apps keep that name once taken over. One name for as long
+// as the app is the tenant's.
 const composedReleaseSuffix = "-release"
 
 // helmReleaseOf is the Helm release a component's pods belong to, which is
 // what a chart labels them with (componentInstanceLabel) and so what a
-// policy selects them by. The operator names the release it installs itself
-// after the namespace and the component; the app Composition names the one
-// it installs after the app. A policy written with the first name for an
-// app delivered the second way selects no pod at all, and what it was meant
-// to let through is refused with nothing to show for it.
+// policy selects a placed chart's pods by. A profile's own Composition names
+// it after the app; one rendered here is named by renderNames.
 func helmReleaseOf(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) string {
-	if deliveredComposed(comp, profile) {
+	if appComposition(comp, profile) != "" {
 		return comp.Name + composedReleaseSuffix
 	}
-	return releaseName(comp)
+	_, helm, _, _ := renderNames(comp)
+	return helm
 }
-
-// defaultAppComposition renders every app whose bundle brings no Composition
-// of its own (crossplane/compositions/app-default.yaml).
-const defaultAppComposition = "app-default"
 
 // appComposition answers which Composition renders a component: the one its
 // profile's bundle brings, or "" for the platform's.
@@ -192,8 +109,8 @@ func (r *ComponentReconciler) addonIDs(ctx context.Context, comp *gentianov1alph
 	return customization.AddonIDs(resolved), nil
 }
 
-// ensureAppClaim keeps the App claim the app Composition renders this
-// component from, and reports whether what it rendered is ready.
+// ensureAppClaim keeps the App claim a profile's own Composition renders
+// this component from, and reports whether what it rendered is ready.
 //
 // Named after the component, in its namespace, and owned by it: removing the
 // Component removes the claim, and with it everything the Composition made.
@@ -201,9 +118,6 @@ func (r *ComponentReconciler) ensureAppClaim(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
 	composition, build string, mailboxTokenSignIn bool, signIn *signInSidecar, operatorValues map[string]interface{},
 ) (bool, string, error) {
-	if composition == "" {
-		composition = defaultAppComposition
-	}
 	// The profile by name, and the build when this tenant runs one that is
 	// not the profile's current: the Composition then reads the build's spec
 	// and keeps the profile's identity.
@@ -417,109 +331,4 @@ func ownedBy(obj client.Object, owner client.Object) bool {
 		}
 	}
 	return false
-}
-
-// deliversComposed answers whether this reconcile delivers the component
-// through the app Composition, and marks a component the Composition
-// installed (deliveredByAnnotation) the first time it is found so: its App
-// claim is there and no release of this reconciler's is. The mark is what
-// keeps the answer when the profile no longer needs the Composition, which
-// is what a part of the Composition learning to be rendered here does to a
-// profile.
-func (r *ComponentReconciler) deliversComposed(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) (bool, error) {
-	if profile.Spec.Package.Chart == nil {
-		return false, nil
-	}
-	if deliveredComposed(comp, profile) && comp.Annotations[deliveredByAnnotation] == deliveredByComposition {
-		return true, nil
-	}
-	installed, err := r.composedInstall(ctx, comp)
-	if err != nil {
-		return false, err
-	}
-	if !installed && !composedDelivery(profile) {
-		return false, nil
-	}
-	if !installed {
-		// A first install through the Composition: marked once its claim
-		// exists, on a later pass.
-		return true, nil
-	}
-	// On a copy: the patch's answer would replace what this pass has
-	// already worked out of the status with the stored one.
-	marked := comp.DeepCopy()
-	patch := client.MergeFrom(marked.DeepCopy())
-	if marked.Annotations == nil {
-		marked.Annotations = map[string]string{}
-	}
-	marked.Annotations[deliveredByAnnotation] = deliveredByComposition
-	if err := r.Patch(ctx, marked, patch); err != nil {
-		return false, fmt.Errorf("mark the component as delivered by the app Composition: %w", err)
-	}
-	if comp.Annotations == nil {
-		comp.Annotations = map[string]string{}
-	}
-	comp.Annotations[deliveredByAnnotation] = deliveredByComposition
-	comp.ResourceVersion = marked.ResourceVersion
-	return true, nil
-}
-
-// composedInstall reports whether the app Composition installed the
-// component: its App claim, controlled by it, exists and this reconciler has
-// no release of it.
-func (r *ComponentReconciler) composedInstall(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
-	return composedInstallOf(ctx, r.Client, comp)
-}
-
-// composedInstallOf is composedInstall for any reader.
-func composedInstallOf(ctx context.Context, c client.Reader, comp *gentianov1alpha1.Component) (bool, error) {
-	claim := &unstructured.Unstructured{}
-	claim.SetGroupVersionKind(appClaimGVK)
-	err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim)
-	if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	// The component's own claim (ensureAppClaim makes it the controller):
-	// one nobody controls, or something else does, is no install of this
-	// component's.
-	if claim.GetDeletionTimestamp() != nil {
-		return false, nil
-	}
-	if owner := metav1.GetControllerOf(claim); owner == nil || owner.Kind != "Component" || owner.UID != comp.UID {
-		return false, nil
-	}
-	release := &unstructured.Unstructured{}
-	release.SetGroupVersionKind(helmReleaseGVK)
-	err = c.Get(ctx, types.NamespacedName{Name: releaseName(comp)}, release)
-	if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
-		return true, nil
-	}
-	return false, err
-}
-
-// foreignClaim answers the App claim of the component's name that is not the
-// component's own -- nobody controls it, or something else does -- or ""
-// when there is none. A chart is not installed here beside one: its
-// composite names the same app, and the two releases would serve it at once.
-func foreignClaim(ctx context.Context, c client.Reader, comp *gentianov1alpha1.Component) (string, error) {
-	claim := &unstructured.Unstructured{}
-	claim.SetGroupVersionKind(appClaimGVK)
-	err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim)
-	if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	owner := metav1.GetControllerOf(claim)
-	if owner != nil && owner.Kind == "Component" && owner.UID == comp.UID {
-		return "", nil
-	}
-	if owner == nil {
-		return "the App claim " + comp.Name + ", which nothing controls", nil
-	}
-	return fmt.Sprintf("the App claim %s, controlled by %s %s", comp.Name, owner.Kind, owner.Name), nil
 }

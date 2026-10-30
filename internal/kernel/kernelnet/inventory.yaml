@@ -423,7 +423,7 @@ namespaces:
       the internet. And it tells tenants' apps of a sign-out, inside the
       cluster: a logout token to an app's own Service, on that entry's backend
       port and the path its profile declares
-      (crossplane/compositions/app-default.yaml, backchannelLogoutUrl), and a
+      (internal/apprender, backchannelLogoutUrl), and a
       SAML logout request to an app's sign-in sidecar on port 8081
       (internal/controller/signin_sidecar.go, signInLogoutURL). The tenant's
       baseline admits this namespace to its pods

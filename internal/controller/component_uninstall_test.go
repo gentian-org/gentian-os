@@ -139,25 +139,18 @@ func TestUninstallingADirectlyDeliveredChartRemovesItsRelease(t *testing.T) {
 	}
 }
 
-// Uninstalling keeps the app's files: the release a component is delivered as
-// is rendered with a rule that marks every claim the chart templates for Helm
-// to leave in place, and it cannot be installed without that rule.
-func TestADirectlyDeliveredChartKeepsItsVolumesOnUninstall(t *testing.T) {
+// Uninstalling keeps the app's files: the release a component is installed
+// as is rendered with a rule that marks every claim the chart templates for
+// Helm to leave in place, and it cannot be installed without that rule.
+func TestAnInstalledChartKeepsItsVolumesOnUninstall(t *testing.T) {
 	ctx := context.Background()
-	scheme := uninstallScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
-	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	comp := &gentianov1alpha1.Component{}
-	comp.Name, comp.Namespace, comp.UID = "desktop", "tenant-acme", "uid-desktop"
-
-	profile := chartProfileFixture("oci://registry.vendor.example/acme/charts")
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pullSecrets{}); err != nil {
-		t.Fatal(err)
-	}
+	profile := materialised(t, wikiBundle)
+	h := startDigestHarness(t, profile, "")
+	h.reconcileInstalled()
 
 	release := &unstructured.Unstructured{}
 	release.SetGroupVersionKind(helmReleaseGVK)
-	if err := c.Get(ctx, types.NamespacedName{Name: "tenant-acme-desktop"}, release); err != nil {
+	if err := h.c.Get(ctx, types.NamespacedName{Name: "tenant-acme-wiki"}, release); err != nil {
 		t.Fatalf("the release is not named after the tenant and the component: %v", err)
 	}
 	patches, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "patchesFrom")
@@ -165,12 +158,12 @@ func TestADirectlyDeliveredChartKeepsItsVolumesOnUninstall(t *testing.T) {
 		t.Fatalf("patchesFrom = %v", patches)
 	}
 	ref, _, _ := unstructured.NestedMap(patches[0].(map[string]interface{}), "configMapKeyRef")
-	if ref["name"] != "desktop-keep-volumes" || ref["namespace"] != "tenant-acme" || ref["key"] != "patch.yaml" || ref["optional"] != false {
+	if ref["name"] != "wiki-keep-volumes" || ref["namespace"] != "tenant-acme" || ref["key"] != "patch.yaml" || ref["optional"] != false {
 		t.Fatalf("the release reads its keep rule from %v", ref)
 	}
 
 	rule := &corev1.ConfigMap{}
-	if err := c.Get(ctx, types.NamespacedName{Name: "desktop-keep-volumes", Namespace: "tenant-acme"}, rule); err != nil {
+	if err := h.c.Get(ctx, types.NamespacedName{Name: "wiki-keep-volumes", Namespace: "tenant-acme"}, rule); err != nil {
 		t.Fatalf("the rule the release names does not exist: %v", err)
 	}
 	text := rule.Data["patch.yaml"]
@@ -179,19 +172,17 @@ func TestADirectlyDeliveredChartKeepsItsVolumesOnUninstall(t *testing.T) {
 			t.Fatalf("the rule does not say %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "name: desktop") {
+	if strings.Contains(text, "name: wiki") {
 		t.Fatalf("the rule names one claim; it has to match every claim the chart renders:\n%s", text)
 	}
-	if !ownedBy(rule, comp) {
+	if !ownedBy(rule, getComponent(t, h.c, h.comp)) {
 		t.Fatal("the rule is not the component's, and would outlive it")
 	}
 
 	// A second pass changes nothing and finds nothing to correct.
 	before := release.GetResourceVersion()
-	if _, _, err := r.ensureRelease(ctx, comp, profile, map[string]interface{}{}, nil, nil, pullSecrets{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Get(ctx, types.NamespacedName{Name: "tenant-acme-desktop"}, release); err != nil {
+	h.reconcile()
+	if err := h.c.Get(ctx, types.NamespacedName{Name: "tenant-acme-wiki"}, release); err != nil {
 		t.Fatal(err)
 	}
 	if release.GetResourceVersion() != before {

@@ -271,16 +271,15 @@ func TestAProfileWithAnOddNameBringsNoCompanions(t *testing.T) {
 }
 
 // The names a companion may have are safe because of what the platform's own
-// objects are called. This holds the platform to that: the only Composition
-// of its own beginning app- is the one nothing replaces, and its own OIDC
-// packs do not end the way a profile's do.
+// objects are called. This holds the platform to that: no Composition of its
+// own begins app- (the one that did, app-default, is refused by name), and its
+// own OIDC packs do not end the way a profile's do.
 func TestThePlatformsOwnObjectsHaveNoCompanionsName(t *testing.T) {
 	root := filepath.Join("..", "..")
 	files, err := filepath.Glob(filepath.Join(root, "crossplane", "compositions", "*.yaml"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no compositions found: %v", err)
 	}
-	found := false
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		if err != nil {
@@ -295,19 +294,11 @@ func TestThePlatformsOwnObjectsHaveNoCompanionsName(t *testing.T) {
 			t.Fatalf("%s: %v", file, err)
 		}
 		name := doc.Metadata.Name
-		if name == defaultComposition {
-			found = true
-			continue
-		}
 		if strings.HasPrefix(name, compositionPrefix) {
 			t.Errorf("%s: the platform's Composition %s has the name a profile called %q would give its own; "+
 				"refuse it by name in checkComposition", file, name, strings.TrimPrefix(name, compositionPrefix))
 		}
 	}
-	if !found {
-		t.Errorf("no %s among the platform's compositions: the name checkComposition protects is not one", defaultComposition)
-	}
-
 	packs, err := os.ReadFile(filepath.Join(root, "charts", "gentian-os", "templates", "oidcpackcatalog-kernel.yaml"))
 	if err != nil {
 		t.Fatal(err)

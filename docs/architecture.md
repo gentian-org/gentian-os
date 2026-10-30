@@ -63,7 +63,7 @@ graph TD
     GIT[Git<br/>gentian-os · the deployments repository]
     AC[Argo CD<br/>applies git · drift · rollback]
     OP[Operator<br/>reconciles Tenant, Component, …]
-    XP[Crossplane<br/>XCluster · XTenant · App claims → managed resources]
+    XP[Crossplane<br/>XCluster · XTenant · rendered apps → managed resources]
     OB[OpenBao + ESO<br/>secrets]
     UP[Keycloak · CloudNativePG · SeaweedFS · Helm releases]
 
@@ -82,8 +82,8 @@ graph TD
 |---|---|---|
 | **Argo CD** (`kernel-gitops`) | Pulls git and applies it: the kernel's charts from `gentian-os`, and from the deployments repository the cluster's claims, its materialized catalog and its tenants. Syncs only commits signed by the director or the break-glass key. | Provisions nothing itself. |
 | **Director** (`kernel-control`) | The API people's requests go to. It verifies the caller's token, asks OpenFGA whether that person may make the change, and commits it to the deployments repository as that person. | Holds the git push credential and no cluster credential. |
-| **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite and each app's claim, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
-| **Crossplane** (`kernel-provisioning`) | Composes `XCluster`, `XTenant` and per-app `App` claims into managed resources: namespaces, vault policies, Jobs, `ExternalSecret`s, Helm `Release`s. | Owns what can be written down before it happens (below). |
+| **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite, renders and applies what each app's chart is installed with, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
+| **Crossplane** (`kernel-provisioning`) | Composes `XCluster` and `XTenant` into managed resources (namespaces, vault policies, Jobs, `ExternalSecret`s), and an `App` claim for a profile that brings its own Composition. Its providers reconcile the managed resources the operator renders for an app, Helm `Release`s among them. | Owns what can be written down before it happens (below). |
 | **OpenBao + ESO** (`kernel-secrets`) | The one secret store, synced into Kubernetes Secrets that charts read. | Secrets never touch git or a resource's spec. |
 | **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people and groups at Keycloak. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
 | **Bouncer** (`kernel-edge`, beside the Gateways) | Asks OpenFGA, per request, whether the signed-in person may reach the host. | Decides nothing else ([design/routing.md §4.1](design/routing.md)). |
@@ -98,7 +98,7 @@ flowchart TD
     op1["Operator<br/>seed OpenBao · write provisioning manifests · write XTenant"]
     xp1["Crossplane tenant-default<br/>namespaces · vault policy · Jobs"]
     op2["Operator<br/>one Component per app and per default component"]
-    xp2["Crossplane app-default (App claim)<br/>ExternalSecret · helm Release"]
+    xp2["Crossplane providers<br/>ExternalSecret · helm Release · realm client"]
     op3["Operator<br/>routes · policies · Tenant.status"]
 
     req --> dir --> ac --> op1 --> xp1 --> op2
@@ -110,8 +110,8 @@ flowchart TD
 |---|---|---|
 | **Director** | Decide whether the caller may; commit the tenant's manifest, an app's entry in it, a materialized profile | Touch the cluster |
 | **Argo CD** | Apply the kernel's charts, the claims, the catalog directory and each tenant's directory | Run provisioning logic; create a Helm release per tenant app |
-| **Operator** | Seed secrets; write `XTenant`; create a `Component` per installed app; write each Component's Helm release or `App` claim; routes, network policies, status | Create what a Composition creates |
-| **Crossplane** | Reconcile `XTenant` and `App` claims into managed resources (Jobs, Objects, ESO, `provider-helm` Releases) | Sync git |
+| **Operator** | Seed secrets; write `XTenant`; create a `Component` per installed app; render and apply each Component's Helm release and what it reads (an `App` claim instead for a profile that brings its own Composition); routes, network policies, status | Create what a Composition creates |
+| **Crossplane** | Reconcile `XTenant`, the managed resources the operator renders and any `App` claim into Jobs, Objects, ESO, `provider-helm` Releases | Sync git |
 
 **How soon Argo CD sees a commit.** Argo CD reads the deployments repository
 every few minutes. So that a change does not wait for that, the director
@@ -151,11 +151,13 @@ operator being a controller.
 
 This is a boundary, not a description of how far a migration got. Where the two disagree, the
 boundary is right and the code has not caught up — a Job that survives is only correct if one of
-the four reasons above names it. Two places where the code is behind are stated in the code
+the four reasons above names it. One place where the code is behind is stated in the code
 itself: the operator still seeds an app's secrets and its model-gateway key before the app's
-claim can resolve them (`internal/controller/app_reconciler.go`), and it installs the desktop
-and the consoles as Helm releases it writes directly rather than through the app Composition
-(`internal/controller/component_composition.go`).
+release can resolve them (`internal/controller/app_reconciler.go`).
+
+An app's managed resources are written down too, by the operator rather than by a Composition: it
+renders them from the profile (`internal/apprender`) and applies them
+(`internal/controller/component_render.go`), and the providers reconcile them like any other.
 
 **The same rule applies to installer steps.** `scripts/steps/*` is the same question asked at
 bootstrap time instead of tenant-onboarding time: a step that only applies a manifest belongs in an
@@ -210,10 +212,10 @@ install`, the App Store app). The director fetches the profile's bundle from a
 catalog — an https address serving an index and one bundle per app — checks
 it against the digest the install names, and commits two things: the bundle
 under `clusters/<cluster>/catalogue/` and the app's entry in the tenant's
-`spec.apps`. Argo CD applies both; the operator creates the `Component`; the
-Component either writes the Helm release itself or writes the `App` claim that
-the `app-default` Composition answers with an `ExternalSecret` and a
-`provider-helm` `Release`. Nothing copies a catalog into a cluster ahead of
+`spec.apps`. Argo CD applies both; the operator creates the `Component`, and
+the component reconciler renders and applies the app's `provider-helm`
+`Release` with the `ExternalSecret` its values read, its client at the
+tenant's realm and its post-install Job. Nothing copies a catalog into a cluster ahead of
 an install. See [custom-catalogues.md](custom-catalogues.md) and
 [design/store-contract.md](design/store-contract.md).
 
@@ -221,9 +223,10 @@ an install. See [custom-catalogues.md](custom-catalogues.md) and
 [design/iam.md](design/iam.md) §1.8–1.9 and
 [design/tenant-identity-composition.md](design/tenant-identity-composition.md).
 
-The platform ships `app-default` in `crossplane/compositions/`. A profile
-whose app needs more than it renders brings a Composition of its own in its
-bundle and names it in `spec.package.composition`.
+A profile whose app needs more than the operator renders brings a Composition
+of its own in its bundle and names it in `spec.package.composition`; the
+Component then writes an `App` claim that Composition answers. Only a profile
+of `trustTier: platform` may.
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
 documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
@@ -291,8 +294,9 @@ custom domain is a `TenantDomain` beside the tenant, not a Tenant field.
 
 One per installed app and per component the platform places, in the tenant's
 namespace, created by the operator. It names its profile (and the digest the
-install pinned), and it is what installs the app: directly as a Helm release,
-or through a Crossplane **`App` claim** that the app Composition answers. Its
+install pinned), and it is what installs the app: the operator renders its
+Helm release and what the release reads, or, for a profile that brings its
+own Composition, writes a Crossplane **`App` claim** that Composition answers. Its
 conditions say whether the app is ready and what it is waiting for (an
 unapproved privilege, a reserved address, a cluster without a model gateway).
 The `App` claim is an implementation detail of delivery; nobody writes one by
@@ -660,7 +664,8 @@ the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
 ## 14. Why This Architecture Scales
 
 - **Adding an app to a catalog = one profile bundle.** No code and no
-  Composition change for a typical app; `app-default` reads the profile.
+  Composition change for a typical app; the operator renders it from the
+  profile.
 - **Installing an app for a tenant = one request to the director**, which
   becomes one entry in `Tenant.spec.apps`. Tenant administrators do this
   themselves.

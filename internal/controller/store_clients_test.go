@@ -164,9 +164,11 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 			LLM: &gentianov1alpha1.LLMRequirement{}}, "llm", provisioner.ModelGatewayPort),
 		"tenant-component-database": func(t *testing.T) builtClient {
 			comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenant.NamespaceName()}}
+			// A placed component, whose database the operator opens.
 			profile := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
 				Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 					Database: &gentianov1alpha1.DatabaseRequirement{}}},
+				Placement: &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery},
 			}}
 			r := &ComponentReconciler{KernelRealm: "kernel"}
 			np := buildComponentNetworkPolicy(comp, releasePods(releaseName(comp)), r.componentEgressNamespaces(nil, profile, tenant), nil)

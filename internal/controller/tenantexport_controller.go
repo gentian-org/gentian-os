@@ -1722,8 +1722,8 @@ func (r *TenantExportReconciler) exportAppSet(
 // appClaimProfile returns the profile an App claim installs.
 //
 // spec.profileRef.name is what the Compositions set; spec.profile is the older
-// spelling, and the claim's own name is the last resort, since app-default
-// names each claim after its profile.
+// spelling, and the claim's own name is the last resort, since each claim is
+// named after its profile.
 func appClaimProfile(claim *unstructured.Unstructured) string {
 	if name, ok, _ := unstructured.NestedString(claim.Object, "spec", "profileRef", "name"); ok && name != "" {
 		return name

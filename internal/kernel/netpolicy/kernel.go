@@ -148,7 +148,7 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 		// Not for an app whose people are signed in by the platform's
 		// sidecar: that app never talks to the identity provider. The
 		// sidecar does, and its own policy opens that one path for it
-		// (app-default.yaml).
+		// (internal/apprender).
 		if id := kr.Identity; id != nil && (id.OIDC != nil || id.SAML != nil || id.Sidecar == nil) {
 			add(cfg.ServicesNamespace)
 			add(layout.Namespace(layout.Authentication))

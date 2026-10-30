@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,9 +171,21 @@ func TestTheClaimCarriesMailboxTokenSignIn(t *testing.T) {
 	}
 }
 
-// renderedObjects reads the objects a render fixture expects.
+// renderedObjects are the objects a render fixture renders: a tenant's as
+// the tenant Composition's fixture expects them, an app's as apprender
+// renders them from its fixture, which is what the reconciler applies.
 func renderedObjects(t *testing.T, fixture string) []map[string]interface{} {
 	t.Helper()
+	if strings.HasPrefix(fixture, "app-") {
+		var out []map[string]interface{}
+		for _, obj := range renderFixture(t, fixture) {
+			out = append(out, obj.Object)
+		}
+		if len(out) == 0 {
+			t.Fatalf("%s renders nothing", fixture)
+		}
+		return out
+	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "tests", "unit", "render", fixture, "expected.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -352,17 +365,20 @@ scope = mailbox
 // One name in three places: what Dovecot requires, what the tenant's realm
 // is given, and what the app's client is given.
 func TestMailboxScopeHasOneName(t *testing.T) {
-	for file, must := range map[string]string{
-		"tenant-default.yaml": "                name: " + mailboxScopeName + "\n",
-		"app-default.yaml":    "                  - " + mailboxScopeName + "\n",
-	} {
-		raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "compositions", file))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(raw), must) {
-			t.Errorf("%s does not name the scope %q that the mail server requires", file, mailboxScopeName)
-		}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "compositions", "tenant-default.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "                name: "+mailboxScopeName+"\n") {
+		t.Errorf("tenant-default.yaml does not name the scope %q that the mail server requires", mailboxScopeName)
+	}
+	lists := renderedOfKind(renderFixture(t, "app-mailbox-token"), "ClientOptionalScopes")
+	if len(lists) != 1 {
+		t.Fatalf("%d ClientOptionalScopes rendered for an app that declares the scope, want 1", len(lists))
+	}
+	scopes, _, _ := unstructured.NestedStringSlice(lists[0].Object, "spec", "forProvider", "optionalScopes")
+	if !slices.Contains(scopes, mailboxScopeName) {
+		t.Errorf("the app's client is given %v, not the scope %q that the mail server requires", scopes, mailboxScopeName)
 	}
 }
 

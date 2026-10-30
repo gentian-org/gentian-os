@@ -230,27 +230,23 @@ func TestTheTenantAppsNamesMatchTheProviderManifests(t *testing.T) {
 	}
 }
 
-// Every Release the app Composition renders names the tenant ProviderConfig
-// and does not create its namespace.
-func TestTheAppCompositionInstallsAsTheTenantAppsAccount(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "compositions", "app-default.yaml"))
-	if err != nil {
-		t.Fatal(err)
+// Every Release a chart is rendered with names the tenant ProviderConfig
+// and does not create its namespace: every render fixture, the main chart's
+// release and every extension's.
+func TestEveryRenderedReleaseInstallsAsTheTenantAppsAccount(t *testing.T) {
+	releases := 0
+	for _, fixture := range apprenderFixtureNames(t) {
+		for i, release := range renderedOfKind(renderFixture(t, fixture), "Release") {
+			releases++
+			if name, _, _ := unstructured.NestedString(release.Object, "spec", "providerConfigRef", "name"); name != TenantAppsProviderConfig {
+				t.Errorf("%s: Release %d names the ProviderConfig %q", fixture, i, name)
+			}
+			if skip, _, _ := unstructured.NestedBool(release.Object, "spec", "forProvider", "skipCreateNamespace"); !skip {
+				t.Errorf("%s: Release %d creates its namespace", fixture, i)
+			}
+		}
 	}
-	blocks := strings.Split(string(raw), "kind: Release\n")[1:]
-	if len(blocks) == 0 {
-		t.Fatal("the app Composition renders no Release")
-	}
-	for i, block := range blocks {
-		end := strings.Index(block, "providerConfigRef:")
-		if end < 0 {
-			t.Fatalf("Release %d names no ProviderConfig", i)
-		}
-		if !strings.HasPrefix(strings.TrimSpace(block[end+len("providerConfigRef:"):]), "name: "+TenantAppsProviderConfig) {
-			t.Errorf("Release %d names another ProviderConfig", i)
-		}
-		if !strings.Contains(block[:end], "skipCreateNamespace: true") {
-			t.Errorf("Release %d creates its namespace", i)
-		}
+	if releases == 0 {
+		t.Fatal("no fixture renders a Release")
 	}
 }

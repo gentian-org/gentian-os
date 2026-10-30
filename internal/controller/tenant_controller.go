@@ -1381,7 +1381,7 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 			if profile.IsAPI() {
 				continue
 			}
-			// Which Composition renders this app, if it is not app-default.
+			// Which Composition renders this app, for a profile that brings one.
 			// package.composition beside package.chart: the chart is what is
 			// installed and the Composition is what else is created beside it.
 			if variant := strings.TrimSpace(profile.Spec.Package.Composition); variant != "" {

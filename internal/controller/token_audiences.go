@@ -23,10 +23,10 @@ import (
 
 // What an app's own sign-in client puts in its tokens beyond what Keycloak
 // does: requires.services.identity.oidc.audiences and .requestParameter, and
-// the audiences of an extension's client. The app Composition composes them
-// onto the clients; this is the operator's half of the rules they are held
-// to, the half that needs to know more than the one profile. The Composition holds the rest itself, and
-// TestTheCompositionHoldsTheSameNames keeps the two lists below equal.
+// the audiences of an extension's client. apprender renders them onto the
+// clients and holds the rest of the rules itself (identity_rules.go); this is
+// the half that needs to know more than the one profile. Its lists have to
+// stay equal to the two below.
 //
 // An audience is a grant. A service that checks its name in aud accepts every
 // token that carries it, whichever client it was issued to, so a name given to

@@ -124,9 +124,12 @@ const (
 	// reasonClassMismatch is a Component whose class is not one its profile
 	// is certified for.
 	reasonClassMismatch = "ClassMismatch"
-	componentFinalizer  = "gentianos.io/component-cleanup"
-	componentLabel      = "gentianos.io/component"
-	componentRequeue    = 15 * time.Second
+	// reasonCompositionRefused is a profile below the platform's trust that
+	// brings its own Composition.
+	reasonCompositionRefused = "CompositionRefused"
+	componentFinalizer       = "gentianos.io/component-cleanup"
+	componentLabel           = "gentianos.io/component"
+	componentRequeue         = 15 * time.Second
 	// modelAccessRecheck is how often a Ready component the platform placed,
 	// whose profile declares the model gateway, is reconciled again.
 	modelAccessRecheck = 5 * time.Minute
@@ -186,11 +189,26 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// "the component is gone" is what a purge waits for before it
 			// drops a database, and it must not be true while the chart's
 			// pods are still running.
+			// What was rendered outside the component's namespace, where no
+			// owner reference reaches: its releases, its registration at the
+			// realm, its supplied credentials' declarations. Then a release
+			// written before there was an inventory.
+			// A handoff begun and not finished is finished first, so that
+			// what was taken over from the composite is in the inventory.
+			if done, err := r.handOffOnDelete(ctx, comp); err != nil {
+				return ctrl.Result{}, err
+			} else if !done {
+				return ctrl.Result{RequeueAfter: componentRequeue}, nil
+			}
+			rendered, err := r.deleteRendered(ctx, comp)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 			gone, err := r.deleteDirectRelease(ctx, comp)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			if !gone {
+			if !rendered || !gone {
 				return ctrl.Result{RequeueAfter: componentRequeue}, nil
 			}
 			if err := r.deleteZoneGrant(ctx, comp); err != nil {
@@ -202,17 +220,6 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// The log destination's certificate lives in the observability
 			// namespace, where no owner reference of this component reaches.
 			if err := r.deleteLogDestinationCertificate(ctx, comp); err != nil {
-				return ctrl.Result{}, err
-			}
-			// Its supplied credentials' declarations are cluster-wide and in
-			// the kernel's namespace, where no owner reference reaches. The
-			// values stay where the custodian stored them, as an uninstalled
-			// app's data does.
-			tenantName := comp.Labels[tenantLabel]
-			if tenantName == "" {
-				tenantName = strings.TrimPrefix(comp.Namespace, "tenant-")
-			}
-			if err := r.dropSuppliedRequirements(ctx, comp, tenantName, nil); err != nil {
 				return ctrl.Result{}, err
 			}
 			controllerutil.RemoveFinalizer(comp, componentFinalizer)
@@ -482,22 +489,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonSignInClientRefused, noSignInClient, 0)
 	}
-	values := map[string]interface{}{}
 	if profile.Spec.Package.ExtraValues != nil && len(profile.Spec.Package.ExtraValues.Raw) > 0 {
-		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &values); err != nil {
+		if err := decodeJSONObject(profile.Spec.Package.ExtraValues.Raw, &map[string]interface{}{}); err != nil {
 			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", "package.extraValues is not an object", 0)
 		}
 	}
-
-	// A chart that needs what the app Composition renders is delivered
-	// through it, whole: its requirements, its values and its release are
-	// the Composition's, and nothing of them is written here as well. So is
-	// one the Composition installed, whatever its profile needs now
-	// (deliveredByAnnotation).
-	composed, err := r.deliversComposed(ctx, comp, profile)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	// What the operator itself tells the chart -- the platform's facts, the
+	// component's placement, a placed component's database and model
+	// gateway -- laid over the profile's values and the component's own.
+	operatorValues := map[string]interface{}{}
 
 	// An authorization model that does not compile holds the install before
 	// anything is written: the store would be decided against something the
@@ -529,8 +529,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Requirements first: a chart whose database does not exist yet is not
-	// installed, it is waited for.
-	if !composed && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
+	// installed, it is waited for. A placed component's database is in the
+	// platform's own schema, and the operator provides it; an installed
+	// app's is the tenant's store's, read by its sensitive values.
+	if operatorPlaced(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, profile, tenant)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -538,7 +540,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if !ready {
 			return r.status(ctx, comp, metav1.ConditionFalse, reason, message, componentRequeue)
 		}
-		mergeValues(values, databaseValues(profile, comp.Name+componentDatabaseSecretSuffix))
+		mergeValues(operatorValues, databaseValues(profile, comp.Name+componentDatabaseSecretSuffix))
 	}
 	// The model gateway, for a component that declares it: nothing is
 	// installed while the cluster has none, or before the component's key is
@@ -553,12 +555,6 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if models.reason != "" {
 		return r.status(ctx, comp, metav1.ConditionFalse, models.reason, models.message, componentRequeue)
 	}
-	// What the operator itself tells the chart -- the model gateway, the
-	// platform's facts, the component's placement -- kept apart from the
-	// profile's own values: a chart the app Composition delivers gets the
-	// profile's from the Composition and these from the claim, and a chart
-	// installed here gets both merged below.
-	operatorValues := map[string]interface{}{}
 	if models.placed {
 		mergeValues(operatorValues, modelAccessValues(comp, profile, models.delivered))
 	}
@@ -590,7 +586,6 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	mergeValues(operatorValues, placed)
-	mergeValues(values, operatorValues)
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
@@ -636,16 +631,18 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 	switch {
-	case composed:
-		// What this reconciler declared or delivered while the chart was its
-		// own goes: the Composition makes the same names.
-		if profile.Spec.Package.Chart != nil {
-			if err := r.dropSuppliedRequirements(ctx, comp, tenant.Name, nil); err != nil {
-				return ctrl.Result{}, fmt.Errorf("supplied credentials: %w", err)
+	case profile.Spec.Package.Chart != nil && appComposition(comp, profile) != "":
+		// A profile that brings its own Composition is rendered by it, and
+		// only a profile of the platform's trust may: what a Composition
+		// renders is anything at all, and a tenant's app rendering arbitrary
+		// objects is not something the platform has assessed.
+		if profile.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform {
+			message := fmt.Sprintf("the profile brings its own Composition %s, which only a profile of the platform's trust may; "+
+				"nothing is rendered from it", appComposition(comp, profile))
+			if r.Recorder != nil && !componentReports(comp, reasonCompositionRefused, message) {
+				r.Recorder.Event(comp, corev1.EventTypeWarning, reasonCompositionRefused, message)
 			}
-			if err := r.dropSensitiveValues(ctx, comp); err != nil {
-				return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
-			}
+			return r.status(ctx, comp, metav1.ConditionFalse, reasonCompositionRefused, message, 0)
 		}
 		var err error
 		releaseReady, releaseMessage, err = r.ensureAppClaim(ctx, comp, tenant, zone, pull, appComposition(comp, profile), build,
@@ -653,8 +650,6 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		// A partner app the Composition installs reads the same Secret the
-		// same way, and its pods roll on it the same way (partner_rollout.go).
 		if releaseReady && wantsPartners(profile) {
 			if err := r.rollOnPartnersSecret(ctx, comp, profile); err != nil {
 				return ctrl.Result{}, err
@@ -665,41 +660,38 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 	case profile.Spec.Package.Chart != nil:
-		// Not beside an App claim of the same name that is not this
-		// component's: what it composed names the same app.
-		if foreign, err := foreignClaim(ctx, r.Client, comp); err != nil {
+		// An app the platform's former app Composition installed is taken
+		// over from it first, in place (component_handoff.go).
+		if waiting, err := r.handOff(ctx, comp); err != nil {
+			return ctrl.Result{}, fmt.Errorf("handoff: %w", err)
+		} else if waiting != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "Installing", waiting, componentRequeue)
+		}
+		// Not beside what an earlier install left composed: its Release
+		// names the same Helm release and the two would fight over it.
+		if waiting, err := r.composedLeftovers(ctx, comp, comp.Annotations[compositeAnnotation]); err != nil {
 			return ctrl.Result{}, err
-		} else if foreign != "" {
-			return r.status(ctx, comp, metav1.ConditionFalse, "Installing",
-				"waiting for "+foreign+" to go before the chart is installed here", componentRequeue)
+		} else if waiting != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "Installing", waiting, componentRequeue)
 		}
-		// What a person has to supply, declared where the tenant's Admin
-		// Console asks for it, before the Secret that waits for it. Then
-		// what the profile maps from the tenant's store, before the release
-		// that reads it: a set entry naming a Secret that is not there yet
-		// fails the release rather than waiting for it.
-		if err := r.ensureSuppliedRequirements(ctx, comp, profile, tenant.Name); err != nil {
-			return ctrl.Result{}, fmt.Errorf("supplied credentials: %w", err)
-		}
-		sensitive := componentSensitiveValues(comp, profile, tenant.Name)
-		arrived, err := r.ensureSensitiveValues(ctx, comp, tenant.Name, sensitive)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
-		}
-		if !arrived {
-			return r.status(ctx, comp, metav1.ConditionFalse, "ValuesPending",
-				"waiting for the values the profile maps from the tenant's store ("+sensitiveValuesName(comp)+")", componentRequeue)
-		}
-		valuesWithPullSecrets(values, profile, pull.images)
-		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values, sensitive.set, sensitive.valuesFrom, pull)
+		in, err := r.renderInput(ctx, comp, profile, tenant, zone, pull, r.mailboxTokenSignIn(ctx, tenant, profile), signIn, operatorValues)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if releaseReady && len(sensitive.set) == 0 && len(sensitive.valuesFrom) == 0 {
-			if err := r.dropSensitiveValues(ctx, comp); err != nil {
-				return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
-			}
+		in.Placed = operatorPlaced(profile)
+		in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
+		rendered, err := r.render(ctx, in)
+		if err != nil {
+			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", err.Error(), 0)
 		}
+		ready, reason, message, err := r.applyRendered(ctx, comp, rendered)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if reason == "ValuesPending" {
+			return r.status(ctx, comp, metav1.ConditionFalse, reason, message, componentRequeue)
+		}
+		releaseReady, releaseMessage = ready, message
 		if releaseReady && wantsPartners(profile) {
 			if err := r.rollOnPartnersSecret(ctx, comp, profile); err != nil {
 				return ctrl.Result{}, err
@@ -1232,172 +1224,17 @@ func (r *ComponentReconciler) zoneReady(ctx context.Context, zone edgeZone) (boo
 	return len(secret.Data["client-secret"]) > 0, nil
 }
 
-// ensureRelease keeps the provider-helm Release the profile's chart becomes.
-func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}, set, valuesFrom []interface{}, pull pullSecrets) (bool, string, error) {
-	chart := profile.Spec.Package.Chart
-	chartSpec := map[string]interface{}{
-		"repository": chart.Repository,
-		"name":       chart.Name,
-		"version":    chart.Version,
-	}
-	// A chart inside a repository the tenant declared is pulled with that
-	// repository's credential, read by the provider from the component's own
-	// namespace and from nowhere else.
-	if c := pull.chart(chart.Repository); c != nil {
-		chartSpec["pullSecretRef"] = map[string]interface{}{"name": c.secretName, "namespace": comp.Namespace}
-	}
-	// Uninstalling keeps the files: the rule the release is rendered with,
-	// before the release that names it.
-	if err := r.ensureKeepVolumes(ctx, comp); err != nil {
-		return false, "", err
-	}
-	spec := map[string]interface{}{
-		"rollbackLimit": int64(3),
-		"forProvider": map[string]interface{}{
-			"chart":       chartSpec,
-			"namespace":   comp.Namespace,
-			"wait":        true,
-			"waitTimeout": "10m",
-			"skipCRDs":    true,
-			// The tenant's namespace exists, and the account the release is
-			// installed as may not create one.
-			"skipCreateNamespace": true,
-			"values":              values,
-			"patchesFrom": []interface{}{map[string]interface{}{
-				"configMapKeyRef": map[string]interface{}{
-					"name":      keepVolumesName(comp),
-					"namespace": comp.Namespace,
-					"key":       keepVolumesKey,
-					// Not optional: a release that could not read the rule
-					// would be installed without it, and uninstalling it
-					// would delete files.
-					"optional": false,
-				},
-			}},
-		},
-		// A tenant's chart is installed as the narrow account, not as the
-		// kernel's cluster-admin one (tenant_apps_helm.go).
-		"providerConfigRef": map[string]interface{}{"name": TenantAppsProviderConfig},
-	}
-	// The values read from the component's sensitive Secret
-	// (component_integrations.go), each by its key.
-	if len(set) > 0 {
-		spec["forProvider"].(map[string]interface{})["set"] = set
-	}
-	if len(valuesFrom) > 0 {
-		spec["forProvider"].(map[string]interface{})["valuesFrom"] = valuesFrom
-	}
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(helmReleaseGVK)
-	desired.SetName(releaseName(comp))
-	desired.SetLabels(componentLabels(comp))
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return false, "", err
-	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(helmReleaseGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: desired.GetName()}, existing)
-	if errors.IsNotFound(err) {
-		return false, "release created; waiting for the chart to deploy", r.Create(ctx, desired)
-	}
-	if err != nil {
-		return false, "", err
-	}
-	// Only what this reconciler writes is compared: the provider fills the
-	// rest of the spec (deletionPolicy, managementPolicies, rollbackLimit)
-	// with defaults, and comparing the whole spec against a desired one
-	// without them found drift on every pass and never let the component
-	// be Ready.
-	existingFor, _, _ := unstructured.NestedMap(existing.Object, "spec", "forProvider")
-	existingRef, _, _ := unstructured.NestedMap(existing.Object, "spec", "providerConfigRef")
-	if !equality.Semantic.DeepEqual(existingFor, spec["forProvider"]) || !equality.Semantic.DeepEqual(existingRef, spec["providerConfigRef"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec["forProvider"], "spec", "forProvider"); err != nil {
-			return false, "", err
-		}
-		if err := unstructured.SetNestedField(existing.Object, spec["providerConfigRef"], "spec", "providerConfigRef"); err != nil {
-			return false, "", err
-		}
-		if err := r.Patch(ctx, existing, patch); err != nil {
-			return false, "", err
-		}
-		return false, "release updated; waiting for the chart to deploy", nil
-	}
-	if crossplaneObjectReady(existing) {
-		return true, "", nil
-	}
-	return false, releaseMessageOf(existing), nil
-}
-
 // releaseName is deterministic per component and namespace: a Release is
 // cluster-scoped, so it carries both.
 func releaseName(comp *gentianov1alpha1.Component) string {
 	return comp.Namespace + "-" + comp.Name
 }
 
-// keepVolumesPatch marks every PersistentVolumeClaim a release renders for
-// Helm to leave in place when the release is uninstalled.
-//
-// Uninstalling an app takes its workloads away and keeps its data; destroying
-// the data is a purge, a separate act. A chart that templates a claim has it
-// deleted by `helm uninstall` with everything else unless the claim carries
-// helm.sh/resource-policy: keep, and no chart can be relied on to. So the
-// provider applies this to what the chart rendered (forProvider.patchesFrom,
-// a Kustomize patch run as Helm's post-renderer): the annotation is then in
-// the manifest Helm records, which is what an uninstall reads.
-//
-// The target names no object and so matches every claim; the name inside the
-// patch is required by the format and is not applied. The app Composition
-// carries the same text for the releases it renders.
-const keepVolumesPatch = `patches:
-  - target:
-      version: v1
-      kind: PersistentVolumeClaim
-    patch: |-
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: every-claim-of-the-release
-        annotations:
-          helm.sh/resource-policy: keep
-`
-
-const keepVolumesKey = "patch.yaml"
-
+// keepVolumesName is the ConfigMap a component's release reads its keep
+// rule from: every claim the chart renders is left in place by an uninstall
+// (apprender renders it).
 func keepVolumesName(comp *gentianov1alpha1.Component) string {
 	return comp.Name + "-keep-volumes"
-}
-
-// ensureKeepVolumes keeps the ConfigMap a component's release reads the keep
-// rule from: in the component's namespace, owned by it.
-func (r *ComponentReconciler) ensureKeepVolumes(ctx context.Context, comp *gentianov1alpha1.Component) error {
-	desired := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      keepVolumesName(comp),
-			Namespace: comp.Namespace,
-			Labels:    componentLabels(comp),
-		},
-		Data: map[string]string{keepVolumesKey: keepVolumesPatch},
-	}
-	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
-		return err
-	}
-	existing := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Data, desired.Data) && ownedBy(existing, comp) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	existing.OwnerReferences = desired.OwnerReferences
-	return r.Patch(ctx, existing, patch)
 }
 
 // deleteDirectRelease removes the Release this reconciler wrote for a
@@ -1406,9 +1243,9 @@ func (r *ComponentReconciler) ensureKeepVolumes(ctx context.Context, comp *genti
 // A Release is cluster-scoped, so nothing deletes it with the component's
 // namespace and it cannot be owned by a namespaced Component: left alone it
 // outlived the component, and provider-helm kept the chart's workloads
-// running in a tenant that had uninstalled them. A component delivered
-// through the app Composition has no Release of this name; its claim is
-// owned by the component and takes its own Release with it.
+// running in a tenant that had uninstalled them. A component rendered by a
+// profile's own Composition has no Release of this name; its claim is owned
+// by the component and takes its own Release with it.
 //
 // Workloads only. What the release leaves behind is decided by the keep rule
 // it was rendered with, and nothing here touches a volume, a database or a

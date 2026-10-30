@@ -318,15 +318,32 @@ func (h *digestHarness) route(name string) *gatewayv1.HTTPRoute {
 	return route
 }
 
-func (h *digestHarness) claimSignIn() map[string]interface{} {
+// signInClient is the client id the sidecar is registered at the realm
+// under, "" while it is not.
+func (h *digestHarness) signInClient() string {
 	h.t.Helper()
-	claim := &unstructured.Unstructured{}
-	claim.SetGroupVersionKind(appClaimGVK)
-	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), claim); err != nil {
-		h.t.Fatal(err)
+	client := &unstructured.Unstructured{}
+	client.SetAPIVersion("samlclient.keycloak.crossplane.io/v1alpha1")
+	client.SetKind("Client")
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: "acme-notes-sign-in-client"}, client); err != nil {
+		return ""
 	}
-	got, _, _ := unstructured.NestedMap(claim.Object, "spec", "signInSidecar")
-	return got
+	id, _, _ := unstructured.NestedString(client.Object, "spec", "forProvider", "clientId")
+	return id
+}
+
+// reconcileInstalled reconciles until what the release waits for has
+// arrived: the Secret its values read, synced as External Secrets does.
+func (h *digestHarness) reconcileInstalled() *gentianov1alpha1.Component {
+	h.t.Helper()
+	h.reconcile()
+	es := &unstructured.Unstructured{}
+	es.SetAPIVersion("external-secrets.io/v1")
+	es.SetKind("ExternalSecret")
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: h.comp.Name + "-sensitive-values", Namespace: h.comp.Namespace}, es); err == nil {
+		markSynced(h.t, h.c, h.comp.Namespace, h.comp.Name+"-sensitive-values")
+	}
+	return h.reconcile()
 }
 
 func ruleFor(route *gatewayv1.HTTPRoute, path string) *gatewayv1.HTTPRouteRule {
@@ -353,11 +370,11 @@ func ruleFor(route *gatewayv1.HTTPRoute, path string) *gatewayv1.HTTPRouteRule {
 func TestTheSidecarsTwoPathsAreRoutedApart(t *testing.T) {
 	h := signInHarness(t)
 	ctx := context.Background()
-	h.reconcile()
+	h.reconcileInstalled()
 
 	// The claim carries the sidecar for the Composition.
-	if got := h.claimSignIn(); !reflect.DeepEqual(got, map[string]interface{}{"host": "notes.acme.k.example", "logoutPort": int64(signInSidecarPort)}) {
-		t.Fatalf("the App claim's signInSidecar = %v, want where the app answers and the sign-out port", got)
+	if got := h.signInClient(); got != "https://notes.acme.k.example/sso" {
+		t.Fatalf("the sidecar is registered at the realm as %q, want where the app answers", got)
 	}
 
 	app := h.route("notes-web")
@@ -476,8 +493,8 @@ func TestTheSidecarsTwoPathsAreRoutedApart(t *testing.T) {
 func TestASidecarNoLongerDeclaredIsTakenAway(t *testing.T) {
 	h := signInHarness(t)
 	ctx := context.Background()
-	h.reconcile()
-	if h.route(signInACSRouteName("notes", "web")) == nil || h.claimSignIn() == nil || len(h.sidecarObjects()) != 6 {
+	h.reconcileInstalled()
+	if h.route(signInACSRouteName("notes", "web")) == nil || h.signInClient() == "" || len(h.sidecarObjects()) != 6 {
 		t.Fatalf("the sidecar was not there to begin with: %v", h.sidecarObjects())
 	}
 
@@ -512,7 +529,7 @@ func TestASidecarNoLongerDeclaredIsTakenAway(t *testing.T) {
 	}
 	h.reconcile()
 
-	if got := h.claimSignIn(); got != nil {
+	if got := h.signInClient(); got != "" {
 		t.Fatalf("the claim still carries the sidecar: %v", got)
 	}
 	if h.route(signInACSRouteName("notes", "web")) != nil {
@@ -562,25 +579,33 @@ func TestAProfileThatMayNotHaveASidecarIsNotInstalled(t *testing.T) {
 	}
 }
 
-// The reconciler and the Composition name the same client: the sidecar is
-// told its own name and address by one, and registered at the realm under
-// them by the other. A name that differed would be a sign-in the realm
-// answers with "unknown client".
-func TestTheSignInSidecarHasOneName(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "compositions", "app-default.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	composition := string(raw)
-	for _, want := range []string{
-		`$signInEntity := printf "https://%s/sso" $signIn.host`,
-		`$signInACS := printf "https://%s` + signInACSPath + `" $signIn.host`,
-		"clientId: {{ $signInEntity | quote }}",
-		"assertionConsumerPostUrl: {{ $signInACS | quote }}",
-	} {
-		if !strings.Contains(composition, want) {
-			t.Errorf("app-default.yaml does not say %q, which the reconciler relies on", want)
+// samlSignInClient is the sidecar's client at the realm, as a fixture
+// renders it; nil when none is rendered.
+func samlSignInClient(objs []*unstructured.Unstructured) *unstructured.Unstructured {
+	for _, o := range renderedOfKind(objs, "Client") {
+		if strings.HasPrefix(o.GetAPIVersion(), "samlclient.keycloak.crossplane.io/") {
+			return o
 		}
+	}
+	return nil
+}
+
+// The reconciler and the renderer name the same client: the sidecar is told
+// its own name and address by one, and registered at the realm under them by
+// the other. A name that differed would be a sign-in the realm answers with
+// "unknown client".
+func TestTheSignInSidecarHasOneName(t *testing.T) {
+	in := apprenderFixtureInput(t, "app-sign-in-sidecar")
+	host, _ := in.SignInSidecar["host"].(string)
+	saml := samlSignInClient(renderApp(t, in))
+	if saml == nil {
+		t.Fatal("no sign-in client rendered for the sidecar")
+	}
+	if id, _, _ := unstructured.NestedString(saml.Object, "spec", "forProvider", "clientId"); id != "https://"+host+"/sso" {
+		t.Errorf("the sidecar is registered as %q, want https://%s/sso", id, host)
+	}
+	if acs, _, _ := unstructured.NestedString(saml.Object, "spec", "forProvider", "assertionConsumerPostUrl"); acs != "https://"+host+signInACSPath {
+		t.Errorf("the sidecar's assertions are posted to %q, want https://%s%s", acs, host, signInACSPath)
 	}
 	tenant := acmeTenantFixture()
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
@@ -617,47 +642,37 @@ func TestTheSignInSidecarImageIsOneBuild(t *testing.T) {
 
 // The sidecar refuses a sign-out request that is not addressed to exactly
 // the address it was told, and the realm addresses its request to exactly
-// the address the Composition registered. One is written here and the other
-// in app-default.yaml, from the same parts: the app's name, its namespace and
-// the sidecar's port. This holds the two to the same string, by rendering
-// the Composition (its golden file) for the app the fixture names.
+// the address the renderer registered. One is written here and the other in
+// apprender, from the same parts: the app's name, its namespace and the
+// sidecar's port. This holds the two to the same string, by rendering the
+// fixture's app.
 func TestTheSidecarAndTheRealmAgreeOnTheSignOutAddress(t *testing.T) {
-	dir := filepath.Join("..", "..", "crossplane", "tests", "unit", "render", "app-sign-in-sidecar")
-	xr, err := os.ReadFile(filepath.Join(dir, "xr.yaml"))
-	if err != nil {
-		t.Fatal(err)
+	in := apprenderFixtureInput(t, "app-sign-in-sidecar")
+	// What the operator tells the renderer of the sidecar.
+	if port := fmt.Sprint(in.SignInSidecar["logoutPort"]); port != fmt.Sprint(signInSidecarPort) {
+		t.Fatalf("the fixture's sidecar has sign-out port %s, the operator writes %d", port, signInSidecarPort)
 	}
-	// What the operator puts on the claim.
-	if want := fmt.Sprintf("logoutPort: %d", signInSidecarPort); !strings.Contains(string(xr), want) {
-		t.Fatalf("the fixture's claim does not carry %q, which is what the operator writes", want)
+	saml := samlSignInClient(renderApp(t, in))
+	if saml == nil {
+		t.Fatal("no sign-in client rendered for the sidecar")
 	}
-	rendered, err := os.ReadFile(filepath.Join(dir, "expected.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The fixture's app is demo-app in tenant-demo.
-	want := "logoutServicePostBindingUrl: " + signInLogoutURL("demo-app", "tenant-demo")
-	if !strings.Contains(string(rendered), want) {
-		t.Fatalf("the Composition does not register %q with the realm", want)
-	}
-	if got := strings.Count(string(rendered), "logoutServicePostBindingUrl:"); got != 1 {
-		t.Fatalf("%d sign-out addresses are registered, want the one", got)
+	want := signInLogoutURL(in.App, in.Namespace)
+	if got, _, _ := unstructured.NestedString(saml.Object, "spec", "forProvider", "logoutServicePostBindingUrl"); got != want {
+		t.Fatalf("the realm is told to sign out at %q, the sidecar answers at %q", got, want)
 	}
 	// And asks the browser for nothing at sign-out: the realm calls the
 	// sidecar itself.
-	if !strings.Contains(string(rendered), "frontChannelLogout: false") {
+	if front, found, _ := unstructured.NestedBool(saml.Object, "spec", "forProvider", "frontChannelLogout"); !found || front {
 		t.Fatal("the sidecar's client is not told to be signed out server to server")
 	}
 
-	// An app whose claim carries no port -- an operator that runs a sidecar
-	// with no sign-out path -- has no address registered at all.
+	// A sidecar with no sign-out port -- an operator that runs one with no
+	// sign-out path -- or none at all has no address registered.
 	for _, other := range []string{"app-sign-in-sidecar-not-served", "app-sign-in-sidecar-undeclared", "app-sign-in-sidecar-withdrawn"} {
-		out, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "tests", "unit", "render", other, "expected.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(out), "logoutServicePostBindingUrl") {
-			t.Fatalf("%s: a sign-out address is registered for a sidecar that is not there", other)
+		for _, o := range renderFixture(t, other) {
+			if _, found, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "logoutServicePostBindingUrl"); found {
+				t.Fatalf("%s: a sign-out address is registered for a sidecar that is not there", other)
+			}
 		}
 	}
 }

@@ -59,6 +59,7 @@ Implementation, split by concern rather than by kind:
 |---|---|
 | `controller/` | The operator's reconcilers. `tenant_controller.go` and `tenant_reconcile_stages.go` are the tenant loop; `component_reconciler.go` installs each app; the rest are per-concern (identity, gateway and edge, database, storage, cache, mail, customization, backup and restore, authorization projection, tiles, …). |
 | `controller/provisioner/` | Service-requirement provisioning helpers shared across reconcilers. |
+| `apprender/` | What a tenant component's chart is installed with — the Helm `Release`, the Secrets and requirements its values read, its client at the tenant's realm, its post-install Job, its extensions — rendered from the profile; `controller/component_render.go` applies it. |
 | `director/` | The director's API (`api/`), token verification (`authn/`), the questions it asks OpenFGA (`authz/`), catalog fetching and materializing (`catalogue/`), and its git writes (`gitops/`). |
 | `usher/`, `custodian/`, `registrar/`, `bouncer/` | The four other services. |
 | `applifecycle/` | The operator's listener: the live state and the actions the director and the usher ask it for. |
@@ -116,7 +117,7 @@ License-header templates used by `controller-gen` and `golangci-lint`
 | Path | Purpose |
 |---|---|
 | `xrds/` | Composite definitions: `Cluster`, `Tenant`, `App`, `Repository`. These generate the `apps.gentianos.io` / `xtenants.gentianos.io` CRDs on-cluster — which is exactly why the chart must *not* ship them. |
-| `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `app-default`, `repository-default`. A catalog entry may bring a Composition of its own in its bundle and name it in `spec.package.composition`. |
+| `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `repository-default`. Apps are rendered by the operator (`internal/apprender`); a catalog entry of `trustTier: platform` may bring a Composition of its own in its bundle and name it in `spec.package.composition`. |
 | `providers/` | `Provider` and `Function` packages, their `ProviderConfig`s, the RBAC they need, and `activation.yaml` — the provider resource types a cluster creates. |
 | `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **copy** of the deployed Composition + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. A copy, not a symlink, so `check-render-fixtures.sh` has something to compare — a stale copy keeps a golden test green against a Composition nobody runs. |
 | `tests/unit/schema/` | `valid/` fixtures that must pass and `invalid/` fixtures that must be rejected by `crossplane beta validate` against `xrds/`. |

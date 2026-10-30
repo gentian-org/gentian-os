@@ -96,7 +96,9 @@ KIND = re.compile(r"""^(\s*(?:-\s+)?)["']?kind["']?:\s*["']?([^\s"'#]+)""")
 DIRECTIVE_ONLY = re.compile(r"^\s*\{\{.*\}\}\s*$")
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*\.[a-z]{2,}")
 GO_GROUP = re.compile(r"""Group:\s*"([a-z0-9.-]+)\"""")
-GO_KIND = re.compile(r"""(?:Kind:\s*|"kind":\s*)"([A-Za-z0-9]+)\"""")
+# A kind as a field, as SetKind's argument, or as the argument after an
+# apiVersion literal (an object built from the two).
+GO_KIND = re.compile(r"""(?:Kind:\s*|"kind":\s*|SetKind\(|"[a-z0-9.-]+/v[a-z0-9]+",\s*)"([A-Za-z0-9]+)\"""")
 GO_API_VERSION = re.compile(r""""([a-z0-9.-]+)/v[a-z0-9]+\"""")
 GO_MARKER = re.compile(r"\+kubebuilder:rbac:.*?groups=([^,\s]+),resources=([^,\s]+)")
 

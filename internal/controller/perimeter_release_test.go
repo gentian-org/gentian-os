@@ -12,12 +12,12 @@ package controller
 
 import (
 	"context"
-	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -25,14 +25,15 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// perimeterPolicySelectors publishes the shares entry of profile and returns
-// the pods its two policies name: those the proxy may reach, and those that
-// take the proxy's traffic.
-func perimeterPolicySelectors(t *testing.T, profile *gentianov1alpha1.ComponentProfile) (egress, ingress string) {
+// perimeterPolicySelectors publishes the shares entry of profile for a
+// component with the given annotations and returns the pods its two policies
+// name: those the proxy may reach, and those that take the proxy's traffic.
+func perimeterPolicySelectors(t *testing.T, profile *gentianov1alpha1.ComponentProfile, annotations map[string]string) (egress, ingress string) {
 	t.Helper()
 	scheme := perimeterScheme()
 	tenant := acmeTenantFixture()
 	comp := componentFor(profile.Name, tenantNamespaceName(tenant))
+	comp.Annotations = annotations
 	comp.Spec.Exposures = enabledShares(time.Now().Add(720 * time.Hour))
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), profile, comp).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
@@ -55,43 +56,57 @@ func perimeterPolicySelectors(t *testing.T, profile *gentianov1alpha1.ComponentP
 
 // The proxy of a published surface reaches the pods of the app behind it, and
 // the pods of an app are those of its Helm release. An app the operator
-// installs itself has one release name and an app the Composition installs
-// another; a policy written with the wrong one selects no pod, and the
-// surface answers 504 with its route, its listener and its proxy all in
-// place.
+// installed has one release name, and an app the Composition installed and
+// the operator took over keeps the other; a policy written with the wrong
+// one selects no pod, and the surface answers 504 with its route, its
+// listener and its proxy all in place.
 func TestThePerimeterReachesThePodsOfTheAppsOwnRelease(t *testing.T) {
-	direct := nextcloudWithPerimeter()
-	if composedDelivery(direct) {
-		t.Fatal("the fixture is meant to be an app the operator installs itself")
-	}
-	egress, ingress := perimeterPolicySelectors(t, direct)
-	if want := "tenant-acme-" + direct.Name; egress != want || ingress != want {
-		t.Fatalf("an app the operator installs: egress to %q, ingress on %q, want %q", egress, ingress, want)
+	profile := nextcloudWithPerimeter()
+	egress, ingress := perimeterPolicySelectors(t, profile, nil)
+	if want := "tenant-acme-" + profile.Name; egress != want || ingress != want {
+		t.Fatalf("an app the operator installed: egress to %q, ingress on %q, want %q", egress, ingress, want)
 	}
 
-	// The same app asking for something only the Composition provides: a
-	// sign-in client of its own.
-	composed := nextcloudWithPerimeter()
-	composed.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
-		OIDC: &gentianov1alpha1.OIDCValueMapping{IssuerKey: "oidc.issuer"},
-	}
-	if !composedDelivery(composed) {
-		t.Fatal("the fixture is meant to be an app the Composition installs")
-	}
-	egress, ingress = perimeterPolicySelectors(t, composed)
-	if want := composed.Name + "-release"; egress != want || ingress != want {
-		t.Fatalf("an app the Composition installs: egress to %q, ingress on %q, want %q", egress, ingress, want)
+	// The same app taken over from the composite the Composition installed
+	// it as.
+	egress, ingress = perimeterPolicySelectors(t, nextcloudWithPerimeter(), map[string]string{compositeAnnotation: "tenant-acme-nextcloud-x1"})
+	if want := profile.Name + composedReleaseSuffix; egress != want || ingress != want {
+		t.Fatalf("an app taken over from the Composition: egress to %q, ingress on %q, want %q", egress, ingress, want)
 	}
 }
 
-// The name is the Composition's to choose and is written there, not here. If
-// it is changed there, this is where it has to follow.
-func TestTheComposedReleaseNameIsTheCompositions(t *testing.T) {
-	raw, err := os.ReadFile("../../crossplane/compositions/app-default.yaml")
-	if err != nil {
-		t.Fatal(err)
+// An app taken over from its composite keeps every name the Composition gave
+// it: the Release object, the Helm release it installs, and the keep rule it
+// reads. Those are what renderNames gives the renderer, and the Composition's
+// own render (its fixture) is what they have to match; a release under
+// another name would be a second install beside the first.
+func TestATakenOverAppKeepsTheCompositionsReleaseNames(t *testing.T) {
+	var release *unstructured.Unstructured
+	for _, obj := range yamlDocs(t, filepath.Join(apprenderFixtureRoot, "app-default", "expected.yaml")) {
+		if obj.GetKind() == "Release" {
+			release = obj
+		}
 	}
-	if want := `{{- $release := printf "%s` + composedReleaseSuffix + `" $app }}`; !strings.Contains(string(raw), want) {
-		t.Fatalf("the app Composition no longer names its release <app>%s; helmReleaseOf has to name what it does", composedReleaseSuffix)
+	if release == nil {
+		t.Fatal("the fixture renders no Release")
+	}
+	xr := yamlDocs(t, filepath.Join(apprenderFixtureRoot, "app-default", "xr.yaml"))[0]
+	app, _, _ := unstructured.NestedString(xr.Object, "spec", "claimRef", "name")
+	comp := componentFor(app, "tenant-demo")
+	comp.Annotations = map[string]string{compositeAnnotation: xr.GetName()}
+
+	object, helm, keep, composite := renderNames(comp)
+	if object != release.GetName() || composite != xr.GetName() {
+		t.Errorf("Release object %q of composite %q, the Composition's %q of %q", object, composite, release.GetName(), xr.GetName())
+	}
+	if ext := release.GetAnnotations()["crossplane.io/external-name"]; helm != ext || helmReleaseOf(comp, chartProfileFixture("oci://x")) != ext {
+		t.Errorf("Helm release %q, the Composition's %q", helm, ext)
+	}
+	patches, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "patchesFrom")
+	if len(patches) != 1 {
+		t.Fatalf("patchesFrom = %v", patches)
+	}
+	if name, _, _ := unstructured.NestedString(patches[0].(map[string]interface{}), "configMapKeyRef", "name"); name != keep {
+		t.Errorf("keep rule %q, the Composition's %q", keep, name)
 	}
 }

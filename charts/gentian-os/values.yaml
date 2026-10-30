@@ -338,9 +338,10 @@ usher:
     limits:
       memory: 128Mi
 
-# kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
-# compositions. Published as a `gentian-kernel-services` ConfigMap in kernel-control
-# and fetched by app-default.yaml via function-extra-resources.
+# kernelServices exposes cluster-wide infrastructure endpoints to the operator
+# and to Crossplane compositions. Published as a `gentian-kernel-services`
+# ConfigMap in kernel-control and read by the component reconciler when it
+# renders an app (internal/apprender).
 # No endpoint is substituted into a profile's extraValues any more. ${S3_ENDPOINT},
 # ${MYSQL_HOST}, ${REDIS_HOST}, ${SMTP_HOST} and ${TURN_*} were, and each handed
 # an app a hostname with nothing to authenticate with — an app declares

@@ -68,10 +68,10 @@ func (r *ComponentReconciler) componentEgressNamespaces(comp *gentianov1alpha1.C
 		seen[ns] = struct{}{}
 		out = append(out, ns)
 	}
-	// The database, where this reconciler fulfilled it. For a chart the app
-	// Composition delivers, the Composition fulfils it and writes the way
-	// there itself (kernel-access-<app>), on the database's port only.
-	if !deliveredComposed(comp, profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
+	// The database, where this reconciler fulfilled it: a placed
+	// component's. An installed app's way there is the tenant's
+	// (kernel-access-<app>), on the database's port only.
+	if operatorPlaced(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		add(r.componentDatabaseNamespace(tenant, profile))
 	}
 	for i := range profile.Spec.Expose {
@@ -109,21 +109,20 @@ func releasePods(release string) map[string]string {
 	return map[string]string{componentInstanceLabel: release}
 }
 
-// componentPods selects a component's pods. A chart this reconciler installs
-// is selected by its release. One the app Composition delivers is selected by
-// the app label the Composition puts on every pod of the app, as its own
-// policies (kernel-access-<app>, app-internal-<app>) are: not every chart sets
-// the release label, and a policy selecting by it held the privileges granted
-// on such an app for no pod at all.
+// componentPods selects a component's pods. A chart the platform places is
+// selected by its release. Any other chart is selected by the app label it is
+// rendered with on every pod (apprender), as the tenant's policies for it
+// (kernel-access-<app>, app-internal-<app>) are: not every chart sets the
+// release label.
 func componentPods(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) map[string]string {
-	if deliveredComposed(comp, profile) {
-		return map[string]string{appLabel: comp.Name}
+	if operatorPlaced(profile) {
+		return releasePods(helmReleaseOf(comp, profile))
 	}
-	return releasePods(releaseName(comp))
+	return map[string]string{appLabel: comp.Name}
 }
 
 // buildComponentNetworkPolicy is the policy for one component: its pods
-// (componentPods, which differs by who installs the chart) may leave for the
+// (componentPods, which differs for a chart the platform places) may leave for the
 // namespaces given. Ports are the peer namespace's business; what is granted
 // is the function, as the baseline grants the edge.
 func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, pods map[string]string, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
@@ -169,11 +168,11 @@ func legacyGrantedEgressPolicyName(comp *gentianov1alpha1.Component) string {
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
 //
-// Whoever delivers the chart: the app Composition writes an app's policies
-// from the requirements it fulfils (app-internal-<app>, kernel-access-<app>)
-// and knows nothing of what this reconciler wires -- the realm for a partner
-// app, the control namespace, the rights check, granted privileges -- so a
-// composed app without this policy reached none of them.
+// Whoever renders the chart: the tenant's policies for an app
+// (app-internal-<app>, kernel-access-<app>) follow from the requirements it
+// declares and know nothing of what this reconciler wires -- the realm for a
+// partner app, the control namespace, the rights check, granted privileges --
+// so an app without this policy reached none of them.
 //
 // modelGateway says the component's key at the model gateway is delivered
 // (modelAccessFor): only then is the gateway's port opened to it.

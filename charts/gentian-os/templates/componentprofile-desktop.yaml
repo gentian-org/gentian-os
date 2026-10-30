@@ -15,7 +15,7 @@ metadata:
   name: desktop
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
-    # The app Composition selects the profile by this label.
+    # Every catalog profile carries its own name in this label.
     gentianos.io/profile-name: desktop
 spec:
   classes: [app]

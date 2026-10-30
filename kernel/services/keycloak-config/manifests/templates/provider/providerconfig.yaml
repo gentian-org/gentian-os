@@ -2,7 +2,7 @@
 # ProviderConfig for provider-keycloak (dev environment).
 #
 # Credentials come from keycloak-provider-creds (ExternalSecret in this directory).
-# Tenant app Client MRs (app-default composition) reference this ProviderConfig.
+# The tenant app Client MRs the operator renders reference this ProviderConfig.
 apiVersion: keycloak.crossplane.io/v1beta1
 kind: ProviderConfig
 metadata:

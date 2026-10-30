@@ -1093,8 +1093,8 @@ List pack keys and confirm a profile's `clientId` is present:
 kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.packs}{"\n"}{end}'
 ```
 
-An app whose client the `app-default` Composition creates directly (Odoo, for
-one) needs no pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
+An app whose client the operator renders with its release (Odoo, for one)
+needs no pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 

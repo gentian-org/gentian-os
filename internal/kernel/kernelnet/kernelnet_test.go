@@ -394,6 +394,11 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/tenantrestore_retained.go": {},
 	// The proxy's upstream is a tenant's Service.
 	"internal/controller/component_perimeter.go": {},
+	// The addresses the realm calls back on when a person signs out: the
+	// app's own Service and its sign-in sidecar's, in the tenant's
+	// namespace, not a kernel service.
+	"internal/apprender/identity_rules.go":  {},
+	"internal/apprender/identity_signin.go": {},
 	// The addresses a component is handed: director, usher, custodian, registrar.
 	"internal/controller/component_reconciler.go": {{"kernel-control", 8080}, {"kernel-control", 9444}, {"kernel-control", 9445}},
 	// The tunnel's origin: the Gateway's own Service.

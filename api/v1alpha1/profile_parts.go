@@ -212,9 +212,7 @@ type ServiceRequirements struct {
 
 	// MCP declares that the component exposes a Model Context Protocol
 	// endpoint. It is a declaration only: there is no MCP registry, and the
-	// platform registers nothing and wires no authentication for it. Its one
-	// effect today is that a chart component declaring it is installed
-	// through the app Composition.
+	// platform registers nothing and wires no authentication for it.
 	// +optional
 	MCP *MCPRequirement `json:"mcp,omitempty"`
 
@@ -535,8 +533,8 @@ type LLMRequirement struct {
 	//
 	// Honored for a component the platform places on tenants itself. For an
 	// app a tenant installs the requirement holds the release as if this
-	// were not set: its chart is rendered by the app Composition, which
-	// reads the key from where it is kept and cannot render without it.
+	// were not set: its chart's values read the key from where it is kept,
+	// and its release cannot be rendered without it.
 	// +optional
 	Optional bool `json:"optional,omitempty"`
 }
@@ -1500,11 +1498,11 @@ type LLMValueMapping struct {
 	// +optional
 	BaseURLKey string `json:"baseUrlKey,omitempty"`
 	// APIKeyKey is the Helm value key for the key the component presents.
-	// For an app a tenant installs, where the app Composition sets it from
-	// the vault. A component the platform places on tenants itself is
-	// rendered by the operator, whose release values are not a place for a
-	// key: such a profile names SecretNameKey instead, and is refused if it
-	// names this.
+	// For an app a tenant installs, which is given the key from the vault
+	// through the Secret its sensitive values are read from. A component the
+	// platform places on tenants itself is given its values inline in the
+	// release, which is not a place for a key: such a profile names
+	// SecretNameKey instead, and is refused if it names this.
 	// +optional
 	APIKeyKey string `json:"apiKeyKey,omitempty"`
 	// SecretNameKey receives the NAME of the Secret the component's model
@@ -1846,11 +1844,11 @@ func (b *BackupSpec) IsDomainBound() bool {
 	return b != nil && b.Restore != nil && b.Restore.DomainBound
 }
 
-// AppPostInstallJob configures a Kubernetes Job the app-default composition
-// runs in the tenant namespace to bootstrap app-specific state (typically via
-// the app's own admin API) that Helm values alone can't express. Kept
+// AppPostInstallJob configures a Kubernetes Job the operator runs in the
+// tenant namespace to bootstrap app-specific state (typically via the app's
+// own admin API) that Helm values alone can't express. Kept
 // deliberately narrow — not a general PodSpec pass-through — so this stays a
-// safe, generic composition feature rather than an arbitrary-workload escape
+// safe, generic platform feature rather than an arbitrary-workload escape
 // hatch. See app-profile-guide.md's "Post-install bootstrap jobs" section.
 type AppPostInstallJob struct {
 	// Image is the container image the Job runs.

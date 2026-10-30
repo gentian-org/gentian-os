@@ -108,30 +108,20 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		profiles[app.Profile] = profile
 	}
 
-	// An app whose chart the operator installs itself carries the labels
-	// its chart gives a release, not the app label the Composition puts on
-	// the pods it renders. A contract selects each side by what it carries.
+	// A chart the platform places carries the labels its chart gives a
+	// release, not the app label every other chart is rendered with. A
+	// contract selects each side by what it carries.
 	selectors := map[string]map[string]string{}
 	for name, profile := range profiles {
-		// The Composition's too where it installed the app, as the
-		// component says (deliveredByAnnotation) or, before the component
-		// has been reconciled once, its claim does.
+		if !operatorPlaced(profile) {
+			continue
+		}
 		comp := &gentianov1alpha1.Component{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, comp); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
 		comp.Name, comp.Namespace = name, nsName
-		composed := deliveredComposed(comp, profile)
-		if !composed {
-			installed, err := composedInstallOf(ctx, r.Client, comp)
-			if err != nil {
-				return err
-			}
-			composed = installed
-		}
-		if !composed {
-			selectors[name] = map[string]string{componentInstanceLabel: nsName + "-" + name}
-		}
+		selectors[name] = releasePods(helmReleaseOf(comp, profile))
 	}
 
 	// The per-app policies (kernel access, in-app traffic, granted egress,

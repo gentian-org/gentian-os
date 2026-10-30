@@ -25,19 +25,20 @@ import (
 )
 
 // ErrCatalogAmbiguous is returned by ResolvePack when more than one
-// OIDCPackCatalog carries a profile's label: the app Composition reads one of
-// them, and which is not defined.
+// OIDCPackCatalog carries a profile's label: a reader takes one of them, and
+// which is not defined.
 var ErrCatalogAmbiguous = errors.New("more than one OIDCPackCatalog carries the profile's label")
 
 // ResolvePack returns the OIDC pack for clientID from the OIDCPackCatalog
 // labeled with profileName (gentianos.io/profile-name), the catalog the
 // profile's bundle brings.
 //
-// The rule is the app Composition's: it reads that one catalog, and
-// composes the client itself where the catalog holds no pack for it. Looked
-// up anywhere else, a pack in some other catalog would make the client a
-// pack Job's as well as the Composition's. An extension's client is looked up
-// in its parent profile's catalog, where the Composition looks for it.
+// The rule is the component reconciler's: it reads that one catalog for the
+// client it renders (apprender), and renders the client itself where the
+// catalog holds no pack for it. Looked up anywhere else, a pack in some other
+// catalog would make the client a pack Job's as well as the renderer's. An
+// extension's client is looked up in its parent profile's catalog, where the
+// renderer looks for it.
 func ResolvePack(ctx context.Context, c client.Reader, profileName, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
 	if clientID == "" || profileName == "" {
 		return Pack{}, nil, false, nil

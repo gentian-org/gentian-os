@@ -33,7 +33,8 @@ import (
 // together: the Compositions, the operator, the installer's copy of the
 // kernel's store, and the names in this package. These tests read what the
 // Compositions render (the golden files of crossplane/tests/unit/render) and
-// hold all of it to one rule:
+// what the operator renders for an app (internal/apprender's, which its own
+// test holds it to) and hold all of it to one rule:
 //
 //   - an ExternalSecret in a tenant's namespace names that tenant's store,
 //   - an ExternalSecret in a kernel or system namespace names the kernel's,
@@ -54,7 +55,9 @@ type object = map[string]interface{}
 func rendered(t *testing.T) map[string][]object {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(repoRoot, "crossplane/tests/unit/render/*/expected.yaml"))
-	if err != nil || len(files) == 0 {
+	apps, appErr := filepath.Glob(filepath.Join(repoRoot, "internal/apprender/testdata/render/*/expected.yaml"))
+	files = append(files, apps...)
+	if err != nil || appErr != nil || len(files) == 0 {
 		t.Fatalf("no golden files: %v", err)
 	}
 	out := map[string][]object{}

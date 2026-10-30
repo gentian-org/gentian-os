@@ -18,7 +18,7 @@ flowchart TD
     Tenant["Tenant (cluster-scoped), spec.apps[]"]
     Operator["gentian-os operator"]
     Component["Component (tenant-{name})"]
-    Claim["App claim → app Composition<br>(app-default, or the bundle's own)"]
+    Render["operator renders the release<br>(or an App claim → the bundle's own Composition)"]
     Release["ExternalSecret + helm.crossplane.io Release"]
     Routes["routes and policies in the tenant's zone, the tile"]
 
@@ -27,7 +27,7 @@ flowchart TD
     Git -->|"Argo CD"| Profile & Tenant
     Profile & Tenant --> Operator
     Operator --> Component
-    Component --> Claim --> Release
+    Component --> Render --> Release
     Component --> Routes
 ```
 
@@ -181,7 +181,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 | **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `secrets`, a gateway entry in `expose` with a tile | At install |
 | **Needs an approval on the tenant** | `requires.privileges` (pod-security waivers, egress, cluster roles); an `expose` entry for the internet; `clientAuthorization: app` | Only once approved; until then the Component waits or the entry is an ordinary one ([security.md §2.14](security.md)) |
 | **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching` | Refused by the schema otherwise |
-| **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition), `identity.sidecar` | Otherwise `app-default` renders the app, or the Component is held |
+| **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition, which also needs `trustTier: platform`), `identity.sidecar` | Otherwise the operator renders the app, or the Component is held |
 
 ---
 
@@ -229,8 +229,8 @@ The platform's sign-in sidecar is neither: a profile declares
 5. **Git**: every install, approval and catalog is a commit by the director,
    authored as the person.
 
-CI in a catalog's own repository (rendering against `app-default`, schema
-validation) is the publisher's.
+CI in a catalog's own repository (schema validation, rendering its own
+Compositions) is the publisher's.
 
 ---
 
@@ -321,8 +321,8 @@ sequenceDiagram
     D->>Git: commit profile bundle + entry in Tenant.spec.apps
     AC->>OP: sync ComponentProfile and Tenant
     OP->>OP: Component; database, storage, identity, secrets
-    OP->>XP: App claim
-    XP->>XP: Composition → ExternalSecret + helm Release
+    OP->>XP: rendered ExternalSecret + helm Release + realm client
+    XP->>XP: providers reconcile them
     OP->>OP: routes, tile
     XP->>XP: IntegrationBindings where a contract has both sides
     OP-->>U: Component Ready

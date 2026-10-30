@@ -160,7 +160,7 @@ func TestAProfileThatNamesTheRegistrarIsToldWhereItIsAndMayReachIt(t *testing.T)
 // the name: a chart that consumes the Secret with envFrom needs exactly that.
 // The keys one by one are not release values at all: they are set entries
 // reading the component's sensitive Secret, the database the tenant made for
-// this app, as the app Composition delivers them.
+// this app, as it is rendered for every installed chart.
 func TestTheDatabaseSecretNameIsAStringWhereAskedFor(t *testing.T) {
 	profile := &gentianov1alpha1.ComponentProfile{}
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
@@ -178,16 +178,24 @@ func TestTheDatabaseSecretNameIsAStringWhereAskedFor(t *testing.T) {
 	if _, ok := v["database"]; ok {
 		t.Fatalf("database.host is a release value: %#v", v["database"])
 	}
-	comp := &gentianov1alpha1.Component{}
-	comp.Name, comp.Namespace = "store", "tenant-acme"
-	sv := componentSensitiveValues(comp, profile, "acme")
+	// What the chart is rendered with: the keys read from the tenant's
+	// store into the component's sensitive Secret, and a set entry each.
+	profile.Name = "store"
+	profile.Spec.Package.Chart = &gentianov1alpha1.ChartRef{Repository: "oci://x", Name: "store", Version: "1.0.0"}
+	objs := renderApp(t, chartRenderInput("store", profile))
 	var keys, names []string
-	for _, d := range sv.data {
-		e := d.(map[string]interface{})
-		keys = append(keys, e["secretKey"].(string)+"<-"+e["remoteRef"].(map[string]interface{})["key"].(string))
+	if es := renderedNamed(objs, "ExternalSecret", "store-sensitive-values"); es != nil {
+		data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+		for _, d := range data {
+			e := d.(map[string]interface{})
+			keys = append(keys, e["secretKey"].(string)+"<-"+e["remoteRef"].(map[string]interface{})["key"].(string))
+		}
 	}
-	for _, e := range sv.set {
-		names = append(names, e.(map[string]interface{})["name"].(string))
+	for _, release := range renderedOfKind(objs, "Release") {
+		set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
+		for _, e := range set {
+			names = append(names, e.(map[string]interface{})["name"].(string))
+		}
 	}
 	path := "gentian-os/tenants/acme/apps/store/database"
 	if want := []string{"db-host<-" + path, "db-name<-" + path, "db-password<-" + path}; !reflect.DeepEqual(keys, want) {
@@ -198,8 +206,30 @@ func TestTheDatabaseSecretNameIsAStringWhereAskedFor(t *testing.T) {
 	}
 	// The desktop's database is the one made for it, by the Secret's name.
 	profile.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
-	if sv := componentSensitiveValues(comp, profile, "acme"); len(sv.data) != 0 {
-		t.Errorf("a placed component's database is read key by key: %v", sv.data)
+	if es := renderedNamed(renderApp(t, chartRenderInput("store", profile)), "ExternalSecret", "store-sensitive-values"); es != nil {
+		t.Errorf("a placed component's database is read key by key: %v", es.Object["spec"])
+	}
+}
+
+// Every set entry a release is rendered with reads a key the component's
+// sensitive Secret is rendered to hold: one that reads a key ESO never
+// writes fails the release. A database's read-replica name is told from
+// db-name, so db-name has to be read whenever it is told.
+func TestEverySetEntryReadsAKeyTheSensitiveSecretHolds(t *testing.T) {
+	profile := chartProfileFixture("oci://x")
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "database.host", ReadNameKey: "replica.name"},
+	}
+	data, set := sensitiveOf(t, renderApp(t, chartRenderInput("store", profile)), "store")
+	held := map[string]bool{}
+	for _, d := range data {
+		held[d["secretKey"].(string)] = true
+	}
+	for _, e := range set {
+		key, _, _ := unstructured.NestedString(e, "valueFrom", "secretKeyRef", "key")
+		if !held[key] {
+			t.Errorf("set entry %v reads %s, which the Secret does not hold (%v)", e["name"], key, held)
+		}
 	}
 }
 
@@ -483,75 +513,6 @@ func TestAClusterHeldTileIsAskedOnTheClusterAtTheRouteToo(t *testing.T) {
 	}
 	if obj := tileObject(console.Spec.Expose[1].Tile, "platform", "operations-console", "c1"); obj != "cluster:c1" {
 		t.Fatalf("a cluster-held tile is asked on %s", obj)
-	}
-}
-
-// Which way a chart is delivered follows from what it needs, never from which
-// profile it is: what this reconciler renders itself it releases itself, and
-// anything more is the app Composition's, whole.
-func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
-	chart := func(mutate func(*gentianov1alpha1.ComponentProfile)) *gentianov1alpha1.ComponentProfile {
-		p := &gentianov1alpha1.ComponentProfile{}
-		p.Spec.Package.Chart = &gentianov1alpha1.ChartRef{Name: "x"}
-		if mutate != nil {
-			mutate(p)
-		}
-		return p
-	}
-	direct := map[string]*gentianov1alpha1.ComponentProfile{
-		"a bare chart": chart(nil),
-		"the desktop: platform facts and a database by Secret name": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
-				Platform: &gentianov1alpha1.PlatformValueMapping{TenantKey: "tenant"},
-				Database: &gentianov1alpha1.DatabaseValueMapping{SecretNameKey: "existingSecret.name"},
-			}
-			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
-				Database: &gentianov1alpha1.DatabaseRequirement{}}}
-		}),
-		"a database mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "db.host"}}
-		}),
-		"generated secrets": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
-		}),
-		"a mail account": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
-				Mail: &gentianov1alpha1.MailRequirement{}}}
-		}),
-		"object storage, a cache and mail mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
-				S3:    &gentianov1alpha1.S3ValueMapping{EndpointKey: "s3.endpoint"},
-				Cache: &gentianov1alpha1.CacheValueMapping{HostKey: "cache.host"},
-				SMTP:  &gentianov1alpha1.SMTPValueMapping{HostKey: "mail.host"},
-				IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "imap.host"},
-			}
-		}),
-		"a contract's values": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
-				"desktop-api": {EndpointKey: "desktop.url"}}}
-		}),
-	}
-	for name, p := range direct {
-		if composedDelivery(p) {
-			t.Errorf("%s is handed to the Composition", name)
-		}
-	}
-	composed := map[string]*gentianov1alpha1.ComponentProfile{
-		"a client of its own at the identity provider": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{OIDC: &gentianov1alpha1.OIDCValueMapping{}}
-		}),
-	}
-	for name, p := range composed {
-		if !composedDelivery(p) {
-			t.Errorf("%s is released without the Composition that renders it", name)
-		}
-	}
-	// Not a chart, not a question.
-	addon := &gentianov1alpha1.ComponentProfile{}
-	addon.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{}
-	addon.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
-	if composedDelivery(addon) {
-		t.Error("an addon was handed to the Composition")
 	}
 }
 

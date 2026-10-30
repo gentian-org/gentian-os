@@ -601,7 +601,7 @@ identity provider send a POST to any address at all, inside the cluster or outsi
 is now refused.
 
 **Now.** A profile states a path and which of its own entries serves it
-(`requires.services.identity.oidc.backchannelLogout`). The platform's Composition builds
+(`requires.services.identity.oidc.backchannelLogout`). The operator builds
 `http://<backend.service>.<namespace>.svc.cluster.local:<backend.port><path>` and registers it.
 
 **(a) What the app must verify, and what happens if it does not.** A logout token is a JWT the
@@ -695,7 +695,7 @@ told it is the only thing there is.
 
 | Control | State |
 |---|---|
-| The address the realm posts to is built from the profile's own entry, in the install's namespace; a profile names none | Built (`app-default.yaml`); render fixtures for an accepted declaration and two refused ones |
+| The address the realm posts to is built from the profile's own entry, in the install's namespace; a profile names none | Built (`internal/apprender`); render fixtures for an accepted declaration and two refused ones (`internal/apprender/testdata`) |
 | The free-form address is refused, with a message naming the field that replaces it | Built (the definition's rules; a test holds each) |
 | The catalog's own profiles are admitted by those rules | Built; a test reads the published bundles |
 | The notice arrives at the Service's address and ends the session; a token of another key, an unsigned one and a repeated one end nothing | Shown for Nextcloud (`nextcloud-base-ce`) and XWiki against their images and Keycloak 26.8.0 (gentian-apps, `e2e/oidc-sign-out`) |
@@ -758,7 +758,7 @@ the code does.
 | `AppGrant` → tuples | **Not built** | A grant opens the network path of a contract and gives the consumer a key (§3.4). It does not reach the rights store: `app_grant_reconciler.go` records the object and writes no tuple, the model's `contract` type has no writer, and nothing asks about it |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
-| Sign-out reaching the apps | **Implemented where an app can be told; otherwise bounded by the app** | Sign-out ends the realm session and the edge's cookies. The realm then tells an app inside the cluster: an app with its own OIDC client at the path its profile declares (`backchannelLogout`), at an address the platform builds from the entry's own Service (`app-default.yaml`); an app behind the sign-in sidecar through the sidecar's `/sso/logout` (`signin_sidecar.go`). Shown end to end for Nextcloud (`nextcloud-base-ce`), XWiki, Docmost and OpenProject. Not told, or told to no effect: Activepieces (an hour at most), Open WebUI, Element, Mathesar, Odoo, and `nextcloud-base-od` until it is shown — their sessions last as long as the app keeps them, though the front door refuses the person's next request. The realm tells once and not when a session only runs out (§2.15, [iam.md §1.12](iam.md)) |
+| Sign-out reaching the apps | **Implemented where an app can be told; otherwise bounded by the app** | Sign-out ends the realm session and the edge's cookies. The realm then tells an app inside the cluster: an app with its own OIDC client at the path its profile declares (`backchannelLogout`), at an address the platform builds from the entry's own Service (`internal/apprender`); an app behind the sign-in sidecar through the sidecar's `/sso/logout` (`signin_sidecar.go`). Shown end to end for Nextcloud (`nextcloud-base-ce`), XWiki, Docmost and OpenProject. Not told, or told to no effect: Activepieces (an hour at most), Open WebUI, Element, Mathesar, Odoo, and `nextcloud-base-od` until it is shown — their sessions last as long as the app keeps them, though the front door refuses the person's next request. The realm tells once and not when a session only runs out (§2.15, [iam.md §1.12](iam.md)) |
 | Identity headers to a backend, signed | **Target** | `x-gentian-*` are plain headers. What makes them the bouncer's word is that only the Gateway's Envoy pods reach the backend: a NetworkPolicy, and for the kernel side one that is off by default (§2.13). The same holds for a sign-in sidecar's `/sso/login` (§2.12) |
 | An app's own bearer token through the front door | Implemented, **on approval** | An entry that declares `clientAuthorization: app` keeps the header once the tenant's perimeter approver approved it; the session and the bouncer's check stay required and no platform token reaches the app (`approvedClientAuthorization`, `internal/bouncer`; [routing.md §4.1](routing.md)). Every other session route still drops it, but for two kernel consoles that keep theirs by the kernel's own rule: Keycloak's administration console, and the model gateway's where the claim switches it on (§2.9). A client with no browser session cannot use a session route at all: it needs a public entry of `authMode: app` |
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
@@ -782,7 +782,7 @@ the code does.
 | The rights check for a component (`requires.services.rights`) | Implemented | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Implemented; proven in local containers, not on a cluster | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
 | A tenant's backup and deletion | Implemented | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artifacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](data-lifecycle.md)) |
-| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today. The granted rules are in the component's policy, `component-<name>`, whichever way its chart is delivered; for an app the app Composition installs it selects the Composition's release, and the Composition's own policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
+| Approval path for profile-declared egress | Implemented | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster today. The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Implemented; shown with the Kyverno CLI, not on a cluster | Kernel and system namespaces only (§12.4) |
 | The internal CA's key | Implemented; shown against a local OpenBao, not on a cluster | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
@@ -796,7 +796,7 @@ the code does.
 | Human-identified secret writes (token exchange, no service token) | Implemented | `internal/custodian/` |
 | Human-identified configuration writes | **Target** | the director verifies the person and commits; the operator's lifecycle API admits only the director's ServiceAccount to its commands and still trusts the `X-Gentian-Actor` name it passes |
 | OpenBao policy per tenant | Implemented | `tenant-default.yaml` |
-| OpenBao policy per (tenant, app) | **Target** | `app-default.yaml` composes none |
+| OpenBao policy per (tenant, app) | **Target** | The operator renders none (`internal/apprender`) |
 | Record of administrative changes | **Partial** | A change to declared state is a commit the director writes, naming the person, the relation and the object that allowed it; the administration console lists them (`/admin/changes`). A change to a person is recorded by the registrar with who asked and what allowed it (`internal/registrar/record`). A sign-in, a refused request and a secret read are recorded nowhere |
 | Decision log, request-id correlation | **Target** | — |
 | Commit signing and verification | Implemented, where the deployments repository names the keys | The director signs every commit (`internal/director/gitops/signing.go`); the installer signs its own with the break-glass key, found by its recorded id (`scripts/lib/signing.sh`). Argo CD verifies through the AppProject's `sourceIntegrity` and its keyring (step `B-10`). A repository without key ids renders no policy, and the director then commits unsigned and says so |
@@ -1416,7 +1416,7 @@ and `B-08-seed-secrets`), and to the Secret `gentian-os-master-password` in
 password and the salt once at start and derives the one credential a
 requirement needs — HKDF-SHA256 with the credential's own OpenBao path as
 salt (`internal/kernel/secrets`, `Deriver`, `Seeder`) — and writes it to that
-app's path. An install Job of the platform's Compositions receives its
+app's path. An install Job of the platform's receives its
 credential through its own `ExternalSecret` and never sees the master
 password. An app uninstalled and installed again gets the same credentials.
 
@@ -1535,7 +1535,7 @@ data with them, so they travel with the data (§6.4).
 
 **A credential a person supplies for an app** (`spec.secrets.supplied`,
 stored at `…/apps/<app>/supplied/<name>`, one property per field) is under
-neither mode: the app Composition declares it as a `CredentialRequirement`
+neither mode: the operator renders it as a `CredentialRequirement`
 of the tenant, the tenant's administrator sets it in the Admin Console, the
 custodian writes it, and the app's credentials Secret reads it from there.
 Purged with the app's other credentials; not in a bundle (§6.4).
@@ -1734,7 +1734,7 @@ Both begin with an `ExternalSecret` that ESO turns into a Kubernetes Secret.
 | Pattern | Mechanism | Used by |
 |---|---|---|
 | **A** | The chart is told the Secret's name (`existingSecret` or its equivalent) and reads it itself | Kernel services whose charts support it |
-| **B** | provider-helm reads single keys of the Secret into chart values (`set[].valueFrom.secretKeyRef`) | Every app installed from a profile: `app-default` writes the Secret `<app>-sensitive-values` and maps its keys to the value names in the profile's `package.valueMapping` |
+| **B** | provider-helm reads single keys of the Secret into chart values (`set[].valueFrom.secretKeyRef`) | Every app installed from a profile: the operator renders the Secret `<app>-sensitive-values` and maps its keys to the value names in the profile's `package.valueMapping` |
 
 Both keep secrets out of Git and CR specs. With B the value ends up in the
 Helm release's own stored values, which is a Secret in the app's namespace.
@@ -1753,7 +1753,7 @@ Reloader** rolls a workload annotated with `reloader.stakater.com/auto: "true"`
 whose Secret changed.
 
 The operator Deployment and a few kernel services carry the annotation.
-`app-default` adds it to no tenant Release, so an app is rolled only where its
+The operator adds it to no tenant Release, so an app is rolled only where its
 profile sets the annotation in its own chart values; otherwise it needs a
 manual roll (target: annotate every Release). The service the credential
 belongs to — a database role, a Keycloak client — has to be given the new
@@ -1851,7 +1851,7 @@ cluster whose issuer is `self-signed` or `private-ca`.
 | Secret `gentian-trust-anchor-tls`, key `ca.crt` | Mozilla's CA bundle plus the issuer chain of the kernel wildcard. The operator builds it in `kernel-edge` and copies it into each tenant namespace (`internal/kernel/trustanchor`) | For clients that honor `SSL_CERT_FILE` or `--cacert` |
 | Same Secret, key `node-extra-ca.crt` | The issuer chain only, for Node.js through `NODE_EXTRA_CA_CERTS` | The platform does not set that variable: a profile that needs it sets it in its own chart values. Do not point it at `ca.crt` (duplicate Mozilla CAs break verification) |
 | Same Secret, key `truststore.jks` | A Java truststore of the same bundle | Its password is a fixed default |
-| `app-default` | Where `ACME_STAGING` is `true` or the cluster names a trust anchor, mounts the Secret at `/opt/gentian-trust-anchor` in every app installed from a profile, sets `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and `DENO_CERT` (as `extraEnvVars` and in `values.environment`), and appends `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares an OIDC client or already has `javaOpts` | A chart that takes none of these values is not reached |
+| The operator's render (`internal/apprender`) | Where `ACME_STAGING` is `true` or the cluster names a trust anchor, mounts the Secret at `/opt/gentian-trust-anchor` in every app installed from a profile that the platform does not place, sets `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and `DENO_CERT` (as `extraEnvVars` and in `values.environment`), and appends `javax.net.ssl.trustStore*` to `javaOpts` when the profile declares an OIDC client or already has `javaOpts` | A chart that takes none of these values is not reached |
 
 An app whose runtime honors none of these needs its own answer, in its own
 profile. The catalog's Element profile is one: its Composition sets
@@ -1878,7 +1878,7 @@ publicly trusted CA at both ingress and origin). Concretely:
 2. Check that `gentian-kernel-services` in `kernel-control` has
    `ACME_STAGING: "false"`.
 3. **Do not** rely on `gentian-trust-anchor-tls` or on an insecure client flag:
-   `app-default` mounts the bundle only where the cluster is on staging or
+   the operator mounts the bundle only where the cluster is on staging or
    names a trust anchor of its own.
 4. Verify `https://id.<cluster domain>/auth/realms/<tenant>/.well-known/openid-configuration`
    presents a chain trusted by standard clients before rolling apps that sign
@@ -1987,8 +1987,8 @@ pre-flight's 1.33 covers. Shown against an API server
 
 A tenant's chart is installed as an account that holds rights in tenant
 namespaces only. provider-helm stays cluster-admin for the kernel's charts,
-some of which ship ClusterRoles. A tenant's Releases (`app-default`, and the
-operator's for a chart it installs itself) name the ProviderConfig
+some of which ship ClusterRoles. A tenant's Releases (the operator's, and those a
+profile's own Composition renders) name the ProviderConfig
 `tenant-apps` instead, whose kubeconfig (written by `B-05`, no credential in
 it) makes provider-helm act as the ServiceAccount `provider-helm-tenant-apps`.
 That account is bound to `gentian-tenant-apps-helm` by a RoleBinding the

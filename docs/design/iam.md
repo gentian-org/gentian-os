@@ -453,7 +453,7 @@ identity provisioning runs a Job that creates the client, the scope and its
 mappers in the **tenant realm** and maps the pack's `entitlementGroup` (the
 app's group, §1.6) to its `clientRole`, so that the app's tokens carry the
 role for people who were given the app. An app without a pack gets its client
-from its app Composition.
+rendered with its release by the operator.
 
 A pack with `serviceClient: true` registers a confidential client for a
 service that only validates tokens (`gentian-dovecot`); it has no scope, role
@@ -613,9 +613,9 @@ A profile says which, under `requires.services.identity`, and states exactly one
 
 | | The profile declares | Who speaks to the realm | What the platform registers | Holds the app's keys |
 |---|---|---|---|---|
-| **OIDC** | `identity.oidc` | the app | an OIDC client of the app's own (app Composition) | nobody but the app |
+| **OIDC** | `identity.oidc` | the app | an OIDC client of the app's own (the operator, with the release) | nobody but the app |
 | **SAML** | `identity.saml` | the app | a SAML client with the address the app states (the tenant's identity Job) | nobody but the app |
-| **Sidecar** | `identity.sidecar` | the platform's sign-in sidecar, beside the app | a SAML client for the sidecar, at an address the platform derives (app Composition) | the sidecar: what the profile declared for its handler |
+| **Sidecar** | `identity.sidecar` | the platform's sign-in sidecar, beside the app | a SAML client for the sidecar, at an address the platform derives (the operator, with the release) | the sidecar: what the profile declared for its handler |
 
 Take them in that order. OIDC wherever the edition installed offers it; SAML for an app that
 offers that and no OIDC; the sidecar only for an app that can do neither, because it is the one
