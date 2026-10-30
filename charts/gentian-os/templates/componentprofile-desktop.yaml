@@ -102,6 +102,16 @@ spec:
       # models the desktop comes up without the assistant.
       llm:
         optional: true
+  # The desktop's API, for a component of the same tenant that stores what a
+  # person chose on their desktop -- the App Store app storing a tile. It is
+  # called with the person's own token. A consumer the platform places as
+  # well is granted it by the platform; any other by an administrator.
+  provides:
+    - name: desktop-api
+      protocol: http
+      endpoint:
+        service: desktop-gentian-portal-api
+        port: 8000
   expose:
     # The BFF: the same-origin relay the shell talks to. It relays to the
     # director with the user's own token, which is why this entry -- and

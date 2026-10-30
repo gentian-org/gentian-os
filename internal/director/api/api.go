@@ -144,6 +144,7 @@ type Repository interface {
 	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
+	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
