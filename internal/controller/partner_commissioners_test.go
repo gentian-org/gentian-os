@@ -133,10 +133,10 @@ func TestDirectorListHoldsAComponentOnlyForTheTenantsThatNameIt(t *testing.T) {
 func TestACommissionerReachesTheDirector(t *testing.T) {
 	r := &ComponentReconciler{}
 	control := layout.Namespace(layout.Control)
-	if got := r.componentEgressNamespaces(partnerCommissionProfile("shop"), nil); !slices.Contains(got, control) {
+	if got := r.componentEgressNamespaces(nil, partnerCommissionProfile("shop"), nil); !slices.Contains(got, control) {
 		t.Fatalf("a commissioner's namespaces: %v", got)
 	}
-	if got := r.componentEgressNamespaces(rightsProfile("plain", false), nil); slices.Contains(got, control) {
+	if got := r.componentEgressNamespaces(nil, rightsProfile("plain", false), nil); slices.Contains(got, control) {
 		t.Fatalf("a plain component's namespaces: %v", got)
 	}
 }

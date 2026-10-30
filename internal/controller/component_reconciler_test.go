@@ -144,7 +144,7 @@ func TestAProfileThatNamesTheRegistrarIsToldWhereItIsAndMayReachIt(t *testing.T)
 	if _, present := v["director"]; present {
 		t.Fatal("the director's address was set without being asked for")
 	}
-	egress := r.componentEgressNamespaces(profile, tenant)
+	egress := r.componentEgressNamespaces(nil, profile, tenant)
 	if len(egress) != 1 || egress[0] != "kernel-control" {
 		t.Fatalf("egress namespaces = %v, want the control namespace", egress)
 	}
@@ -511,6 +511,9 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 		"a database mapped key by key": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "db.host"}}
 		}),
+		"generated secrets": chart(func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
+		}),
 		"a contract's values": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
 				"desktop-api": {EndpointKey: "desktop.url"}}}
@@ -524,9 +527,6 @@ func TestAChartIsDeliveredByWhatItNeeds(t *testing.T) {
 	composed := map[string]*gentianov1alpha1.ComponentProfile{
 		"a client of its own at the identity provider": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{OIDC: &gentianov1alpha1.OIDCValueMapping{}}
-		}),
-		"generated secrets": chart(func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{}
 		}),
 		"a mail account": chart(func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{

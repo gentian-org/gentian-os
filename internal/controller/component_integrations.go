@@ -92,9 +92,30 @@ func (v *sensitiveValues) tell(comp *gentianov1alpha1.Component, valueKey, secre
 }
 
 // componentSensitiveValues is what a profile maps from the tenant's store,
-// in a fixed order: the database, then each contract by name.
+// in a fixed order: the app's own secrets, its database, then each contract
+// by name.
 func componentSensitiveValues(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant string) sensitiveValues {
 	var out sensitiveValues
+	// The app's own secrets: each generated one the tenant seeded
+	// (seedAppPrerequisites), and each field of a credential a person
+	// supplies, which the Secret does not have until every field is there
+	// -- so the release waits for the person.
+	if s := profile.Spec.Secrets; s != nil {
+		for _, g := range s.Generated {
+			if g.Name == "" || g.ValuePath == "" {
+				continue
+			}
+			out.add(comp, g.ValuePath, "internal-"+g.Name, secrets.CategoryPath(tenant, comp.Name, "internal/"+g.Name), "value")
+		}
+		for _, sc := range s.Supplied {
+			for _, f := range sc.Fields {
+				if f.Key == "" || f.ValuePath == "" {
+					continue
+				}
+				out.add(comp, f.ValuePath, "supplied-"+sc.Name+"-"+f.Key, suppliedPath(tenant, comp.Name, sc.Name), f.Key)
+			}
+		}
+	}
 	m := profile.Spec.Package.ValueMapping
 	if m == nil {
 		return out

@@ -49,7 +49,7 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 	comp.Name = "desktop"
 	comp.Namespace = "tenant-platform"
 
-	got := r.componentEgressNamespaces(profile, tenant)
+	got := r.componentEgressNamespaces(nil, profile, tenant)
 	// Its database, the edge it verifies forwarded tokens through, the director.
 	want := []string{layout.Namespace(layout.Data), layout.Namespace(layout.Edge), layout.Namespace(layout.Control)}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
@@ -97,7 +97,7 @@ func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Services: &gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}
-	got := r.componentEgressNamespaces(profile, tenant)
+	got := r.componentEgressNamespaces(nil, profile, tenant)
 	if len(got) != 2 || got[0] != postgresNamespace || got[1] != layout.Namespace(layout.Control) {
 		t.Fatalf("egress namespaces = %v", got)
 	}
@@ -116,7 +116,7 @@ func TestAskingForTheUsherOpensTheControlNamespace(t *testing.T) {
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
 		Platform: &gentianov1alpha1.PlatformValueMapping{UsherURLKey: "usher.url"},
 	}
-	got := r.componentEgressNamespaces(profile, tenant)
+	got := r.componentEgressNamespaces(nil, profile, tenant)
 	if len(got) != 1 || got[0] != "kernel-control" {
 		t.Fatalf("egress namespaces = %v, want only the control namespace", got)
 	}

@@ -113,7 +113,23 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	// the pods it renders. A contract selects each side by what it carries.
 	selectors := map[string]map[string]string{}
 	for name, profile := range profiles {
-		if !composedDelivery(profile) {
+		// The Composition's too where it installed the app, as the
+		// component says (deliveredByAnnotation) or, before the component
+		// has been reconciled once, its claim does.
+		comp := &gentianov1alpha1.Component{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, comp); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+		comp.Name, comp.Namespace = name, nsName
+		composed := deliveredComposed(comp, profile)
+		if !composed {
+			installed, err := composedInstallOf(ctx, r.Client, comp)
+			if err != nil {
+				return err
+			}
+			composed = installed
+		}
+		if !composed {
 			selectors[name] = map[string]string{componentInstanceLabel: nsName + "-" + name}
 		}
 	}

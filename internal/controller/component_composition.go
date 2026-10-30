@@ -18,6 +18,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -58,6 +59,25 @@ import (
 // then nothing is installed twice and nothing is half-installed: a profile is
 // delivered wholly one way or wholly the other.
 
+// deliveredByAnnotation marks a Component the app Composition delivers. An
+// app the Composition installed stays with it while this is there, whatever
+// its profile needs now: moving it to this reconciler would install it again
+// under another release name, beside or over what runs. Set the first time a
+// Component is found delivered that way -- its App claim there and no
+// release of this reconciler's beside it -- and taken off only by a move
+// that keeps the release.
+const (
+	deliveredByAnnotation  = "gentianos.io/delivered-by"
+	deliveredByComposition = "composition"
+)
+
+// deliveredComposed reports whether a component's chart is the app
+// Composition's: because its profile needs what only the Composition
+// renders, or because the Composition installed it (deliveredByAnnotation).
+func deliveredComposed(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) bool {
+	return composedDelivery(profile) || (comp != nil && comp.Annotations[deliveredByAnnotation] == deliveredByComposition)
+}
+
 // composedDelivery reports whether a chart package needs the app Composition.
 func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	spec := &profile.Spec
@@ -67,7 +87,9 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	// Integrations are not among them: a contract's values are rendered here
 	// (component_integrations.go), and spec.integrations asks for nothing
 	// of the chart at all -- its bindings are the tenant's.
-	if spec.Secrets != nil || spec.Hooks != nil || len(spec.Extensions) > 0 {
+	// Nor are generated and supplied secrets: their values are rendered here
+	// too, and derived ones are the tenant's (tenant_app_secrets.go).
+	if spec.Hooks != nil || len(spec.Extensions) > 0 {
 		return true
 	}
 	if req := spec.Requires; req != nil && req.Services != nil {
@@ -105,7 +127,7 @@ const composedReleaseSuffix = "-release"
 // app delivered the second way selects no pod at all, and what it was meant
 // to let through is refused with nothing to show for it.
 func helmReleaseOf(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) string {
-	if composedDelivery(profile) {
+	if deliveredComposed(comp, profile) {
 		return comp.Name + composedReleaseSuffix
 	}
 	return releaseName(comp)
@@ -393,4 +415,109 @@ func ownedBy(obj client.Object, owner client.Object) bool {
 		}
 	}
 	return false
+}
+
+// deliversComposed answers whether this reconcile delivers the component
+// through the app Composition, and marks a component the Composition
+// installed (deliveredByAnnotation) the first time it is found so: its App
+// claim is there and no release of this reconciler's is. The mark is what
+// keeps the answer when the profile no longer needs the Composition, which
+// is what a part of the Composition learning to be rendered here does to a
+// profile.
+func (r *ComponentReconciler) deliversComposed(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) (bool, error) {
+	if profile.Spec.Package.Chart == nil {
+		return false, nil
+	}
+	if deliveredComposed(comp, profile) && comp.Annotations[deliveredByAnnotation] == deliveredByComposition {
+		return true, nil
+	}
+	installed, err := r.composedInstall(ctx, comp)
+	if err != nil {
+		return false, err
+	}
+	if !installed && !composedDelivery(profile) {
+		return false, nil
+	}
+	if !installed {
+		// A first install through the Composition: marked once its claim
+		// exists, on a later pass.
+		return true, nil
+	}
+	// On a copy: the patch's answer would replace what this pass has
+	// already worked out of the status with the stored one.
+	marked := comp.DeepCopy()
+	patch := client.MergeFrom(marked.DeepCopy())
+	if marked.Annotations == nil {
+		marked.Annotations = map[string]string{}
+	}
+	marked.Annotations[deliveredByAnnotation] = deliveredByComposition
+	if err := r.Patch(ctx, marked, patch); err != nil {
+		return false, fmt.Errorf("mark the component as delivered by the app Composition: %w", err)
+	}
+	if comp.Annotations == nil {
+		comp.Annotations = map[string]string{}
+	}
+	comp.Annotations[deliveredByAnnotation] = deliveredByComposition
+	comp.ResourceVersion = marked.ResourceVersion
+	return true, nil
+}
+
+// composedInstall reports whether the app Composition installed the
+// component: its App claim, controlled by it, exists and this reconciler has
+// no release of it.
+func (r *ComponentReconciler) composedInstall(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+	return composedInstallOf(ctx, r.Client, comp)
+}
+
+// composedInstallOf is composedInstall for any reader.
+func composedInstallOf(ctx context.Context, c client.Reader, comp *gentianov1alpha1.Component) (bool, error) {
+	claim := &unstructured.Unstructured{}
+	claim.SetGroupVersionKind(appClaimGVK)
+	err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim)
+	if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// The component's own claim (ensureAppClaim makes it the controller):
+	// one nobody controls, or something else does, is no install of this
+	// component's.
+	if claim.GetDeletionTimestamp() != nil {
+		return false, nil
+	}
+	if owner := metav1.GetControllerOf(claim); owner == nil || owner.Kind != "Component" || owner.UID != comp.UID {
+		return false, nil
+	}
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	err = c.Get(ctx, types.NamespacedName{Name: releaseName(comp)}, release)
+	if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return true, nil
+	}
+	return false, err
+}
+
+// foreignClaim answers the App claim of the component's name that is not the
+// component's own -- nobody controls it, or something else does -- or ""
+// when there is none. A chart is not installed here beside one: its
+// composite names the same app, and the two releases would serve it at once.
+func foreignClaim(ctx context.Context, c client.Reader, comp *gentianov1alpha1.Component) (string, error) {
+	claim := &unstructured.Unstructured{}
+	claim.SetGroupVersionKind(appClaimGVK)
+	err := c.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim)
+	if errors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	owner := metav1.GetControllerOf(claim)
+	if owner != nil && owner.Kind == "Component" && owner.UID == comp.UID {
+		return "", nil
+	}
+	if owner == nil {
+		return "the App claim " + comp.Name + ", which nothing controls", nil
+	}
+	return fmt.Sprintf("the App claim %s, controlled by %s %s", comp.Name, owner.Kind, owner.Name), nil
 }
