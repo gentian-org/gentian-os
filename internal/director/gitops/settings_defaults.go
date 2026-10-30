@@ -23,6 +23,7 @@ var clusterSettingDefaults = map[string]string{
 	"certificates.issuerMode":                        "acme-dns01",
 	"llm.enabled":                                    "false",
 	"llm.gpuAcceleration":                            "false",
+	"monitoring.enabled":                             "false",
 	"mail.serviceMode":                               "external",
 	"mail.port":                                      "587",
 	"mail.starttls":                                  "true",

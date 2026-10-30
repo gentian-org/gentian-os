@@ -88,11 +88,6 @@ spec:
         # The switch for the kernel's network rules, compared as a string
         # the way it is passed (--set-string): only "true" is on.
         kernelNetworkPolicies: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
-        # The operator's ServiceMonitor, with the platform's monitoring:
-        # a ServiceMonitor without Prometheus is a CRD that does not exist.
-        metrics:
-          serviceMonitor:
-            enabled: {{ eq (toString .Values.monitoring.enabled) "true" }}
         # Where Argo CD runs. The operator chart's default is "argocd", which
         # is v4's name -- it reaches only a ConfigMap key nothing reads today,
         # but a stale namespace waiting in a ConfigMap for its first reader is

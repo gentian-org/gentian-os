@@ -532,10 +532,9 @@ spec:
                   type: object
                   description: >
                     The platform's own metrics and alerts
-                    (docs/design/audit-events.md §5). Read by the installer
-                    (B-01), which renders kube-prometheus-stack into the
-                    observability namespace when enabled; no Composition
-                    consumes it.
+                    (docs/design/audit-events.md §5). The Cluster Composition
+                    composes kube-prometheus-stack into the observability
+                    namespace while enabled, and removes it when not.
                   properties:
                     enabled:
                       type: boolean

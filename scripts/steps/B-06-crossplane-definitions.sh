@@ -4,7 +4,7 @@
 # requires: B-05-crossplane-providers
 # provides: the XRDs and Compositions of crossplane/, established, from this checkout
 # mutates: CompositeResourceDefinitions and Compositions (cluster-scoped)
-# pins: logForwarding
+# pins: logForwarding monitoring
 
 # Applied from the checkout, before Argo CD owns them: C-01 needs the Cluster
 # XRD established to apply the claim at all, and Argo CD is not yet syncing

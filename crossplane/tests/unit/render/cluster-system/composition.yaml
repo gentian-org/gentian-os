@@ -2118,6 +2118,252 @@ spec:
               providerConfigRef:
                 name: kubernetes
             {{- end }}
+            {{- /* ── The platform's metrics and alerts (docs/design/audit-events.md §5) ──
+                 kube-prometheus-stack in the observability namespace, while
+                 the claim's monitoring.enabled says so, and gone when it does
+                 not: a cluster that does not ask for it carries none of it.
+                 Composed here so that a setting through the director is
+                 enough; the installer does not read it.
+
+                 Grafana serves the dashboards at monitoring.<kernelDomain>,
+                 behind the edge's session and can_audit
+                 (kernel_gateway_routes.go), and asks for its own sign-in
+                 against the kernel realm as the second step. Its client and
+                 the Secret it reads are the installer's, made on every
+                 cluster (D-03, scripts/lib/portal-login-bootstrap.sh).
+
+                 The chart's version is versions.yaml's monitoring pin,
+                 written out because a Composition reads no file;
+                 test-log-forwarding.sh holds the two equal. */}}
+            {{- if eq (toString (dig "monitoring" "enabled" false $spec)) "true" }}
+            {{- $monRealm   := default "kernel" (dig "oidc" "realm" "" $spec) }}
+            {{- $monOidc    := printf "https://id.%s/auth/realms/%s/protocol/openid-connect" $spec.kernelDomain $monRealm }}
+            {{- $monWebhook := dig "monitoring" "alerts" "webhook" "" $spec }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: monitoring-application
+              name: {{ $name }}-monitoring
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: Application
+                  metadata:
+                    name: monitoring
+                    namespace: {{ $argoNs }}
+                    # Switched off on the claim, the Application goes, and this has Argo CD
+                    # delete what it installed first. Its volume stays, as a deleted
+                    # StatefulSet's claims do.
+                    finalizers:
+                    - resources-finalizer.argocd.argoproj.io
+                  spec:
+                    project: gentian
+                    source:
+                      repoURL: https://prometheus-community.github.io/helm-charts
+                      chart: kube-prometheus-stack
+                      targetRevision: "92.3.0"
+                      helm:
+                        valuesObject:
+                          # The release's name is the prefix of every object; a short one
+                          # keeps the Services and the rules readable.
+                          fullnameOverride: monitoring
+                          grafana:
+                            enabled: true
+                            # The admin password the chart generates is never used: the login
+                            # form is off and every person signs in at the kernel realm.
+                            envValueFrom:
+                              GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+                                secretKeyRef:
+                                  name: grafana-oidc
+                                  key: client_secret
+                            grafana.ini:
+                              server:
+                                root_url: {{ printf "https://monitoring.%s" $spec.kernelDomain | quote }}
+                              auth:
+                                disable_login_form: true
+                                # Signing out at Grafana ends the realm session too.
+                                signout_redirect_url: {{ printf "%s/logout?client_id=grafana&post_logout_redirect_uri=https://monitoring.%s/" $monOidc $spec.kernelDomain | quote }}
+                              auth.basic:
+                                enabled: false
+                              auth.anonymous:
+                                enabled: false
+                              auth.generic_oauth:
+                                enabled: true
+                                name: {{ $monRealm | quote }}
+                                client_id: grafana
+                                scopes: openid profile email groups
+                                auth_url: {{ printf "%s/auth" $monOidc | quote }}
+                                token_url: {{ printf "%s/token" $monOidc | quote }}
+                                api_url: {{ printf "%s/userinfo" $monOidc | quote }}
+                                use_pkce: true
+                                auto_login: true
+                                allow_sign_up: true
+                                login_attribute_path: preferred_username
+                                # The platform administrator administers Grafana; everyone else
+                                # the edge lets through (can_audit) reads. The groups claim
+                                # carries full paths.
+                                role_attribute_path: "contains(groups[*], '/gentian:platform:admin') && 'Admin' || 'Viewer'"
+                                role_attribute_strict: false
+                                allow_assign_grafana_admin: false
+                              users:
+                                allow_sign_up: false
+                              analytics:
+                                reporting_enabled: false
+                                check_for_updates: false
+                                check_for_plugin_updates: false
+                            resources:
+                              requests: { cpu: 50m, memory: 128Mi }
+                              limits: { memory: 256Mi }
+                          # Which control-plane parts can be scraped depends on who runs the
+                          # control plane. On a managed one -- the target -- none of these is
+                          # reachable, and their alerts would fire for ever about targets that
+                          # are not missing but not ours.
+                          kubeEtcd:
+                            enabled: false
+                          kubeControllerManager:
+                            enabled: false
+                          kubeScheduler:
+                            enabled: false
+                          kubeProxy:
+                            enabled: false
+                          defaultRules:
+                            create: true
+                            rules:
+                              etcd: false
+                              kubeControllerManager: false
+                              kubeSchedulerAlerting: false
+                              kubeSchedulerRecording: false
+                              kubeProxy: false
+                          prometheus:
+                            # The operator's metrics, with the Prometheus that reads them.
+                            additionalServiceMonitors:
+                              - name: gentian-os
+                                namespaceSelector:
+                                  matchNames:
+                                    - {{ $controlNs }}
+                                selector:
+                                  matchLabels:
+                                    app.kubernetes.io/name: gentian-os
+                                endpoints:
+                                  - port: metrics
+                                    interval: 30s
+                                    scrapeTimeout: 10s
+                                    path: /metrics
+                            prometheusSpec:
+                              # Every ServiceMonitor, PodMonitor and rule in the cluster, not
+                              # only this release's: the operator's chart, the vendored Redis
+                              # and SeaweedFS charts and a destination's own rules each bring
+                              # theirs.
+                              serviceMonitorSelectorNilUsesHelmValues: false
+                              podMonitorSelectorNilUsesHelmValues: false
+                              probeSelectorNilUsesHelmValues: false
+                              ruleSelectorNilUsesHelmValues: false
+                              retention: "15d"
+                              retentionSize: "18GB"
+                              resources:
+                                requests: { cpu: 200m, memory: 1Gi }
+                                limits: { memory: 2Gi }
+                              storageSpec:
+                                volumeClaimTemplate:
+                                  spec:
+                                    accessModes: [ReadWriteOnce]
+                                    resources:
+                                      requests:
+                                        storage: "20Gi"
+                          alertmanager:
+                            alertmanagerSpec:
+                              resources:
+                                requests: { cpu: 20m, memory: 64Mi }
+                                limits: { memory: 128Mi }
+                            {{- with $monWebhook }}
+                            # Where alerts go: one webhook the claim names. Without one,
+                            # Alertmanager holds them, and its API and the console show them.
+                            config:
+                              route:
+                                receiver: claim-webhook
+                                group_by: [alertname, namespace]
+                                routes:
+                                  # The chart's own always-firing heartbeat goes nowhere: a
+                                  # receiver paged by it every few minutes learns to ignore
+                                  # the receiver.
+                                  - receiver: "null"
+                                    matchers: ['alertname = "Watchdog"']
+                              receivers:
+                                - name: "null"
+                                - name: claim-webhook
+                                  webhook_configs:
+                                    - url: {{ . | quote }}
+                                      send_resolved: true
+                            {{- end }}
+                          # The platform's rules on its own audit records, counted by the log
+                          # forwarder (gentian_audit_records_total, by source, kind, outcome
+                          # and tenant) and on the forwarder itself (docs/design/audit-events.md
+                          # §5). Always present: the forwarder follows the claim through the
+                          # Cluster Composition, and without it these series do not exist and
+                          # no rule fires.
+                          additionalPrometheusRulesMap:
+                            gentian-audit:
+                              groups:
+                              - name: gentian-audit
+                                rules:
+                                - alert: LogForwardingFailing
+                                  expr: sum by (component_id) (rate(vector_component_errors_total{component_kind="sink"}[5m])) > 0
+                                  for: 10m
+                                  labels: { severity: critical }
+                                  annotations:
+                                    summary: "The log forwarder cannot deliver to {{ "{{" }} $labels.component_id {{ "}}" }}."
+                                    description: "Audit records are buffered on the nodes' disks until the destination takes them again; a full buffer stops the forwarder reading."
+                                - alert: AuditSourceSilent
+                                  expr: (sum by (source) (increase(gentian_audit_records_total[1d])) > 0) unless (sum by (source) (increase(gentian_audit_records_total[2h])) > 0)
+                                  for: 15m
+                                  labels: { severity: warning }
+                                  annotations:
+                                    summary: "No audit record from {{ "{{" }} $labels.source {{ "}}" }} for two hours."
+                                    description: "It wrote records in the last day and none since. A source that went quiet is the first thing an auditor finds."
+                                - alert: BreakGlassUsed
+                                  expr: sum(increase(gentian_audit_records_total{kind="break-glass"}[10m])) > 0
+                                  labels: { severity: critical }
+                                  annotations:
+                                    summary: "Break-glass access was used."
+                                - alert: RefusalsSpiking
+                                  expr: |
+                                    sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[10m]))
+                                      > 10 * sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[7d]))
+                                    and sum by (tenant) (rate(gentian_audit_records_total{outcome="refused"}[10m])) > 0.2
+                                  for: 10m
+                                  labels: { severity: warning }
+                                  annotations:
+                                    summary: "Refusals in tenant {{ "{{" }} $labels.tenant {{ "}}" }} are ten times their weekly rate."
+                          prometheusOperator:
+                            resources:
+                              requests: { cpu: 50m, memory: 128Mi }
+                              limits: { memory: 256Mi }
+                    destination:
+                      server: https://kubernetes.default.svc
+                      namespace: {{ $obsNs }}
+                    syncPolicy:
+                      automated:
+                        prune: true
+                        selfHeal: true
+                      syncOptions:
+                      # The operator's CRDs are larger than the annotation a client-side
+                      # apply keeps.
+                      - ServerSideApply=true
+                    ignoreDifferences:
+                    - group: apps
+                      kind: Deployment
+                      jsonPointers:
+                      - /spec/template/spec/hostUsers
+                    - group: apps
+                      kind: DaemonSet
+                      jsonPointers:
+                      - /spec/template/spec/hostUsers
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
 
             {{- /* ── Certificate issuers: owned by step 05, not here ──────────
                  This composition used to emit a letsencrypt-http01

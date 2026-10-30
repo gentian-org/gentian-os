@@ -30,19 +30,6 @@ versions:
   headlamp:
     chart: ""
     repo: ""
-  monitoring:
-    chart: ""
-    repo: ""
-
-# The platform's metrics and alerts (templates/monitoring.yaml), from the
-# Cluster claim's monitoring block (B-01). Off unless the claim says so.
-monitoring:
-  enabled: "false"
-  retention: 15d
-  retentionSize: 18GB
-  storage: 20Gi
-  alerts:
-    webhook: ""
 
 # The realm the kernel signs people in against. Tenants have their own.
 kernelRealm: kernel

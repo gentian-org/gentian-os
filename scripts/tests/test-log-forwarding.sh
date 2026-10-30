@@ -17,7 +17,7 @@
 #     audit line keeps its fields and routes to the audit stream; a credential
 #     -- an Authorization field, a bearer, a JWT, a code in a query -- does
 #     not leave the node; a text line routes to the operations stream;
-#   - with Docker, promtool accepts the audit rules the bootstrap chart's
+#   - with Docker, promtool accepts the audit rules the Composition's
 #     monitoring carries.
 #
 # Without Docker the last two are skipped and said to be; in CI the images
@@ -79,14 +79,17 @@ repo="$(sed -n '/^logForwarding:/,/^$/s/^  repo: \(.*\)/\1/p' versions.yaml)"
 check "the Composition's chart is versions.yaml's pin (${pin})" \
     'grep -q "targetRevision: \"${pin}\"" crossplane/compositions/cluster-default.yaml && grep -q "repoURL: ${repo}\$" crossplane/compositions/cluster-default.yaml'
 
-# The audit rules ride on the monitoring Application of the bootstrap chart.
-{ echo "namespaces:"; sed 's/^/  /' kernel/namespaces.yaml; } > "${SB}/ns.yaml"
-monitoring="$(helm template b kernel/bootstrap/chart -f "${SB}/ns.yaml" -f kernel/platforms.yaml \
-    --set-string kernelDomain=k.example --set-string monitoring.enabled=true 2>&1 | python3 -c '
-import sys, json, yaml
-for d in yaml.safe_load_all(sys.stdin):
-    if d: print(json.dumps(d))')"
+# Monitoring is the same Composition's, and the audit rules ride on it.
+check "monitoring off: no stack" '! has Application monitoring "${off}"'
+monitoring="$(objects "${FIXTURES}/cluster-monitoring/expected.yaml")"
+check "monitoring on: the stack" 'has Application monitoring "${monitoring}"'
 check "monitoring: the audit rules" 'grep -q gentian-audit <<<"${monitoring}"'
+check "monitoring: the operator's metrics" 'grep -q additionalServiceMonitors <<<"${monitoring}"'
+check "monitoring: alerts go where the claim says" 'grep -q "hooks.example.org/alerts" <<<"${monitoring}"'
+mpin="$(sed -n '/^monitoring:/,/^$/s/^  chart: "\(.*\)"/\1/p' versions.yaml)"
+mrepo="$(sed -n '/^monitoring:/,/^$/s/^  repo: \(.*\)/\1/p' versions.yaml)"
+check "the Composition's monitoring chart is versions.yaml's pin (${mpin})" \
+    'grep -q "\"targetRevision\": \"${mpin}\"" <<<"${monitoring}" && grep -q "\"repoURL\": \"${mrepo}\"" <<<"${monitoring}"'
 
 printf '%s\n%s\n' "${on}" "${monitoring}" > "${SB}/on.json"
 python3 - "${SB}" <<'PY'

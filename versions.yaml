@@ -77,8 +77,10 @@ headlamp:
   repo: https://kubernetes-sigs.github.io/headlamp/
 
 # kube-prometheus-stack (Apache-2.0): the platform's metrics and alerts when
-# the Cluster claim's monitoring.enabled is true. Rendered by B-01 into the
-# bootstrap chart's monitoring Application.
+# the Cluster claim's monitoring.enabled is true. The Cluster Composition
+# composes its Application and writes the version out
+# (crossplane/compositions/cluster-default.yaml); test-log-forwarding.sh holds
+# the two equal.
 monitoring:
   chart: "92.3.0"
   repo: https://prometheus-community.github.io/helm-charts

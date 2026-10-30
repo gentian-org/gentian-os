@@ -118,9 +118,8 @@ _grafana_derive_secret() {
 
 # The Secret the platform's Grafana signs in with (the monitoring
 # Application reads it by name), in the namespace Grafana runs in. Written
-# whatever the claim says about monitoring: it costs nothing, and a cluster
-# that switches monitoring on later finds it there. The realm's client is
-# made only where monitoring is on.
+# whatever the claim says about monitoring, as the realm's client is: a
+# cluster that switches monitoring on later needs no installer step.
 ensure_grafana_oidc_secret() {
     local ns secret
     ns="$(_pl_observability_ns)"
@@ -957,7 +956,6 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=legacy_username="${legacy_username}"
         --from-literal=argocd_client_secret="${argocd_secret}"
         --from-literal=headlamp_client_secret="${headlamp_secret}"
-        --from-literal=monitoring_enabled="${MONITORING_ENABLED:-false}"
         --from-literal=grafana_client_secret="${grafana_secret}"
         --from-literal=llm_support="${llm_support}"
         --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
@@ -1420,49 +1418,48 @@ spec:
                 echo "headlamp default scope: groups"
               fi
 
-              # Grafana, the platform's metrics dashboards, where the claim
-              # switches monitoring on. Confidential, like Headlamp; it reads a
-              # person's role from the groups claim (the platform administrator
+              # Grafana, the platform's metrics dashboards. Made on every
+              # cluster, as monitoring is switched on by a setting; nothing
+              # answers at its address until then. Confidential, like Headlamp;
+              # it reads a person's role from the groups claim (the platform administrator
               # is Grafana's Admin, everyone else who reaches it a Viewer), so
               # it gets the groups scope too. The edge already decided who may
               # reach it at all: can_audit on the cluster.
-              if [ "\${MONITORING_ENABLED}" = "true" ]; then
+              GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
+                | jq -r '.[0].id // empty')
+              GRAFANA_BODY=\$(jq -n --arg secret "\${GRAFANA_CLIENT_SECRET}" --arg base "https://monitoring.\${KERNEL_DOMAIN}" '{
+                clientId: "grafana",
+                name: "Grafana",
+                enabled: true,
+                publicClient: false,
+                standardFlowEnabled: true,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                redirectUris: [(\$base + "/login/generic_oauth")],
+                rootUrl: \$base,
+                baseUrl: "/",
+                webOrigins: [\$base],
+                attributes: {"post.logout.redirect.uris": (\$base + "/*")},
+                secret: \$secret
+              }')
+              if [ -n "\${GRAFANA_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}" -d "\${GRAFANA_BODY}"
+                echo "Updated client grafana"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${GRAFANA_BODY}"
                 GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
-                  | jq -r '.[0].id // empty')
-                GRAFANA_BODY=\$(jq -n --arg secret "\${GRAFANA_CLIENT_SECRET}" --arg base "https://monitoring.\${KERNEL_DOMAIN}" '{
-                  clientId: "grafana",
-                  name: "Grafana",
-                  enabled: true,
-                  publicClient: false,
-                  standardFlowEnabled: true,
-                  directAccessGrantsEnabled: false,
-                  serviceAccountsEnabled: false,
-                  protocol: "openid-connect",
-                  redirectUris: [(\$base + "/login/generic_oauth")],
-                  rootUrl: \$base,
-                  baseUrl: "/",
-                  webOrigins: [\$base],
-                  attributes: {"post.logout.redirect.uris": (\$base + "/*")},
-                  secret: \$secret
-                }')
-                if [ -n "\${GRAFANA_CLIENT_ID}" ]; then
-                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}" -d "\${GRAFANA_BODY}"
-                  echo "Updated client grafana"
-                else
-                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${GRAFANA_BODY}"
-                  GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
-                    | jq -r '.[0].id')
-                  echo "Created client grafana"
-                fi
-                if [ -n "\${GRAFANA_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
-                  curl -sf -X PUT -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                  echo "grafana default scope: groups"
-                fi
+                  | jq -r '.[0].id')
+                echo "Created client grafana"
+              fi
+              if [ -n "\${GRAFANA_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                curl -sf -X PUT -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                echo "grafana default scope: groups"
               fi
 
               # The CLI. kubectl gentian is a client of the director, as the
@@ -1730,11 +1727,6 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: headlamp_client_secret
-            - name: MONITORING_ENABLED
-              valueFrom:
-                secretKeyRef:
-                  name: portal-bootstrap-credentials
-                  key: monitoring_enabled
             - name: GRAFANA_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
