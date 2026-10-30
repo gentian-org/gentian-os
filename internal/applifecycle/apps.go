@@ -200,6 +200,7 @@ var waitingReasons = map[string]bool{
 	"AddonBaseNotReady": true,
 	"ZoneNotReady":      true,
 	"PrivilegesPending": true,
+	"ValuesPending":     true,
 }
 
 // componentOriginLabel is the operator's label of a component an earlier

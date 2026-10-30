@@ -639,11 +639,27 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 	case profile.Spec.Package.Chart != nil:
-		var err error
+		// What the profile maps from the tenant's store, before the release
+		// that reads it: a set entry naming a Secret that is not there yet
+		// fails the release rather than waiting for it.
+		sensitive := componentSensitiveValues(comp, profile, tenant.Name)
+		arrived, err := r.ensureSensitiveValues(ctx, comp, tenant.Name, sensitive)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
+		}
+		if !arrived {
+			return r.status(ctx, comp, metav1.ConditionFalse, "ValuesPending",
+				"waiting for the values the profile maps from the tenant's store ("+sensitiveValuesName(comp)+")", componentRequeue)
+		}
 		valuesWithPullSecrets(values, profile, pull.images)
-		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values, pull)
+		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values, sensitive.set, pull)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if releaseReady && len(sensitive.set) == 0 {
+			if err := r.dropSensitiveValues(ctx, comp); err != nil {
+				return ctrl.Result{}, fmt.Errorf("sensitive values: %w", err)
+			}
 		}
 		if releaseReady && wantsPartners(profile) {
 			if err := r.rollOnPartnersSecret(ctx, comp, profile); err != nil {
@@ -1178,7 +1194,7 @@ func (r *ComponentReconciler) zoneReady(ctx context.Context, zone edgeZone) (boo
 }
 
 // ensureRelease keeps the provider-helm Release the profile's chart becomes.
-func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}, pull pullSecrets) (bool, string, error) {
+func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, values map[string]interface{}, set []interface{}, pull pullSecrets) (bool, string, error) {
 	chart := profile.Spec.Package.Chart
 	chartSpec := map[string]interface{}{
 		"repository": chart.Repository,
@@ -1223,6 +1239,11 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 		// A tenant's chart is installed as the narrow account, not as the
 		// kernel's cluster-admin one (tenant_apps_helm.go).
 		"providerConfigRef": map[string]interface{}{"name": TenantAppsProviderConfig},
+	}
+	// The values read from the component's sensitive Secret
+	// (component_integrations.go), each by its key.
+	if len(set) > 0 {
+		spec["forProvider"].(map[string]interface{})["set"] = set
 	}
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(helmReleaseGVK)

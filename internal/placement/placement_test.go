@@ -150,3 +150,44 @@ func TestInstalledLeavesOutWhatThePlatformPlacesItself(t *testing.T) {
 		t.Errorf("installed = %v, want %v", names, want)
 	}
 }
+
+// The platform pre-approves a contract between two components it places
+// itself, both of platform trust, where the consumer names the provider and
+// what it asks of it and the provider provides it -- and nothing else.
+func TestThePlatformPreApprovesContractsBetweenItsOwnComponents(t *testing.T) {
+	platform := func(p *gentianov1alpha1.ComponentProfile) { p.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform }
+	provides := func(p *gentianov1alpha1.ComponentProfile) {
+		p.Spec.Provides = []gentianov1alpha1.ContractRef{{Name: "desktop-api"}}
+	}
+	consumes := func(provider string, caps ...string) func(*gentianov1alpha1.ComponentProfile) {
+		return func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Integrations = append(p.Spec.Integrations, gentianov1alpha1.IntegrationRef{Contract: "desktop-api", Provider: provider, Capabilities: caps})
+		}
+	}
+	all := func(fs ...func(*gentianov1alpha1.ComponentProfile)) func(*gentianov1alpha1.ComponentProfile) {
+		return func(p *gentianov1alpha1.ComponentProfile) {
+			for _, f := range fs {
+				f(p)
+			}
+		}
+	}
+	every := placed(gentianov1alpha1.PlacementEvery, "")
+	users := placed(gentianov1alpha1.PlacementUsers, gentianov1alpha1.PlacementWhileStoreOffered)
+	profiles := []gentianov1alpha1.ComponentProfile{
+		profile("desktop", all(every, platform, provides)),
+		profile("store", all(users, platform, consumes("desktop", "tiles"))),
+		// Asks for nothing in particular: nothing to grant.
+		profile("vague", all(every, platform, consumes("desktop"))),
+		// Not of platform trust.
+		profile("certified", all(every, consumes("desktop", "tiles"))),
+		// A tenant installs it.
+		profile("installed", all(platform, consumes("desktop", "tiles"))),
+		// Names no provider.
+		profile("anyone", all(every, platform, consumes("", "tiles"))),
+	}
+	got := placement.Decide(placement.Facts{Profiles: profiles, StoreOffered: yes()}).Grants
+	want := []placement.Grant{{App: "store", Contract: "desktop-api", Provider: "desktop", Capabilities: []string{"tiles"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("grants = %+v, want %+v", got, want)
+	}
+}

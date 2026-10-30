@@ -53,10 +53,31 @@ func (s Set) Has(name string) bool { return contains(s.Wanted, name) }
 // Decided reports whether the set decided a profile either way.
 func (s Set) Decided(name string) bool { return !contains(s.Undecided, name) }
 
-// Answer is the placement for a user tenant and for the platform tenant.
+// Answer is the placement for a user tenant and for the platform tenant,
+// and the contracts between placed components the platform pre-approves.
 type Answer struct {
 	Users    Set `json:"users"`
 	Platform Set `json:"platform"`
+	// Grants are granted in every tenant that has both components placed.
+	Grants []Grant `json:"grants"`
+}
+
+// Grant is one contract the platform pre-approves between two components
+// it places: App may consume Contract from Provider, with Capabilities.
+//
+// The platform's own components are written to work together; asking each
+// tenant's administrator to approve that is a step that can only be got
+// wrong. So a contract is pre-approved when both sides are placed by the
+// platform itself (ByOperator), both are of platform trust, the consumer
+// names the provider (spec.integrations[].provider) and the capabilities it
+// asks for, and the provider provides the contract. Which profiles those are
+// comes with the platform's own versions: its chart and its cluster
+// catalogs. Anything else is granted by an administrator, as before.
+type Grant struct {
+	App          string   `json:"app"`
+	Contract     string   `json:"contract"`
+	Provider     string   `json:"provider"`
+	Capabilities []string `json:"capabilities"`
 }
 
 // For is the placement for one tenant.
@@ -116,6 +137,7 @@ func Decide(f Facts) Answer {
 			out.Users.Wanted = append(out.Users.Wanted, profile.Name)
 		}
 	}
+	out.Grants = preApproved(f.Profiles, f.Gone)
 	for _, s := range []*Set{&out.Users, &out.Platform} {
 		sort.Strings(s.Wanted)
 		sort.Strings(s.Undecided)
@@ -190,4 +212,39 @@ func Installed(ctx context.Context, c client.Reader, apps []gentianov1alpha1.Ten
 		}
 	}
 	return out, nil
+}
+
+// preApproved are the contracts between components the platform places
+// that it pre-approves (Grant).
+func preApproved(profiles []gentianov1alpha1.ComponentProfile, gone map[string]bool) []Grant {
+	ours := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profiles {
+		p := &profiles[i]
+		if ByOperator(p) && isApp(p) && !gone[p.Name] && p.Spec.TrustTier == gentianov1alpha1.TrustTierPlatform {
+			ours[p.Name] = p
+		}
+	}
+	out := []Grant{}
+	for _, consumer := range ours {
+		for _, in := range consumer.Spec.Integrations {
+			provider, ok := ours[in.Provider]
+			if !ok || len(in.Capabilities) == 0 || provider.Name == consumer.Name {
+				continue
+			}
+			for _, c := range provider.Spec.Provides {
+				if c.Name == in.Contract {
+					out = append(out, Grant{App: consumer.Name, Contract: in.Contract, Provider: provider.Name,
+						Capabilities: append([]string{}, in.Capabilities...)})
+					break
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].App != out[j].App {
+			return out[i].App < out[j].App
+		}
+		return out[i].Contract < out[j].Contract
+	})
+	return out
 }

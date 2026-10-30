@@ -45,6 +45,11 @@ import (
 //     one capability is llm, the cluster serving models (spec.llm.enabled).
 //     Only the cluster's catalogs place: a tenant's own catalog writing an
 //     app into every other tenant would be a way around every install check.
+//
+// And the contracts the platform pre-approves between components it places
+// itself (placement.Grant) are granted in every tenant that has both, as the
+// platform's own grant; a contract the tenant's grant already names is left
+// as the administrator wrote it.
 
 const (
 	// platformAppsEvery is how often the placement is checked. Also run at
@@ -218,6 +223,14 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 		}
 		if answered {
 			set := answer.For(platform)
+			// What the platform has placed in this tenant once this pass
+			// is through, for the contracts it pre-approves between them.
+			ours := map[string]bool{}
+			for _, a := range apps {
+				if a.Placed {
+					ours[a.Profile] = true
+				}
+			}
 			for _, name := range set.Wanted {
 				// Placed already, or an entry of the name the tenant
 				// installed itself: that one is the tenant's and stays
@@ -230,6 +243,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 					log.WarnContext(ctx, "the platform could not place an app", "tenant", t.Name, "app", name, "error", err.Error())
 					continue
 				}
+				ours[name] = true
 				if res.Changed {
 					placed++
 					log.InfoContext(ctx, "placed an app", "tenant", t.Name, "app", name, "commit", res.Commit)
@@ -249,9 +263,24 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 					log.WarnContext(ctx, "the platform could not remove an app", "tenant", t.Name, "app", a.Profile, "error", err.Error())
 					continue
 				}
+				delete(ours, a.Profile)
 				if res.Changed {
 					removed++
 					log.InfoContext(ctx, "removed an app", "tenant", t.Name, "app", a.Profile, "commit", res.Commit)
+				}
+			}
+			for _, g := range answer.Grants {
+				if !ours[g.App] || !ours[g.Provider] {
+					continue
+				}
+				res, err := s.cfg.Repo.PreApproveConsume(ctx, t.Name, g.App, g.Contract, g.Capabilities, c.meta)
+				if err != nil {
+					log.WarnContext(ctx, "the platform could not pre-approve a contract", "tenant", t.Name, "app", g.App,
+						"contract", g.Contract, "error", err.Error())
+					continue
+				}
+				if res.Changed {
+					log.InfoContext(ctx, "pre-approved a contract", "tenant", t.Name, "app", g.App, "contract", g.Contract, "commit", res.Commit)
 				}
 			}
 		}

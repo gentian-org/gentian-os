@@ -64,7 +64,10 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 	if spec.Package.Chart == nil {
 		return false
 	}
-	if spec.Secrets != nil || spec.Hooks != nil || len(spec.Extensions) > 0 || len(spec.Integrations) > 0 {
+	// Integrations are not among them: a contract's values are rendered here
+	// (component_integrations.go), and spec.integrations asks for nothing
+	// of the chart at all -- its bindings are the tenant's.
+	if spec.Secrets != nil || spec.Hooks != nil || len(spec.Extensions) > 0 {
 		return true
 	}
 	if req := spec.Requires; req != nil && req.Services != nil {
@@ -80,7 +83,7 @@ func composedDelivery(profile *gentianov1alpha1.ComponentProfile) bool {
 		}
 	}
 	if m := spec.Package.ValueMapping; m != nil {
-		if m.OIDC != nil || m.Cache != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil || len(m.Integrations) > 0 {
+		if m.OIDC != nil || m.Cache != nil || (m.LLM != nil && !operatorPlaced(profile)) || m.SMTP != nil || m.IMAP != nil || m.Volumes != nil {
 			return true
 		}
 		// A database handed over as a Secret's name is rendered here. One

@@ -243,3 +243,60 @@ func TestThePlatformDoesNotTakeOverATenantsOwnInstall(t *testing.T) {
 		}
 	}
 }
+
+// A contract the platform pre-approves is granted in every tenant that has
+// both components placed, with who granted it, and once: a second pass
+// writes nothing, and a tenant without the consumer gets no grant.
+func TestThePlatformGrantsTheContractsItPreApproves(t *testing.T) {
+	op := &placingOperator{}
+	answer := placement.Answer{Users: set("desktop", "store"), Platform: set("desktop"),
+		Grants: []placement.Grant{{App: "store", Contract: "desktop-api", Provider: "desktop", Capabilities: []string{"tiles"}}}}
+	op.set(answer)
+	h := startPlacing(t, op)
+	srv := h.server()
+	srv.PlacePlatformApps(context.Background())
+	head := dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main")
+	srv.PlacePlatformApps(context.Background())
+	if again := dt.Git(t, "", "--git-dir", h.remote, "rev-parse", "main"); again != head {
+		t.Errorf("a second pass committed %s", again)
+	}
+	for _, tenant := range []string{"demo", "solo", "other"} {
+		grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/"+tenant+"/"+gitops.GrantsFile)
+		for _, want := range []string{"app: store", "contract: desktop-api", "- tiles", "grantedBy: platform:placement", gitops.PreApprovedReason} {
+			if !strings.Contains(grants, want) {
+				t.Errorf("%s's grants lack %q:\n%s", tenant, want, grants)
+			}
+		}
+	}
+	if _, err := gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{}).Apps(context.Background(), "platform"); err != nil {
+		t.Fatal(err)
+	}
+	clone := dt.Clone(t, h.remote)
+	if out := dt.Git(t, clone, "ls-files", "clusters/"+dt.Cluster+"/tenants/platform/"); strings.Contains(out, gitops.GrantsFile) {
+		t.Errorf("the platform tenant, which has no store, got a grant: %s", out)
+	}
+}
+
+// A grant an administrator narrowed is not widened back: the platform adds
+// a contract the grant does not name, and leaves one it names as it is.
+func TestAPreApprovalLeavesAnAdministratorsGrantAlone(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	repo := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, gitops.Person{})
+	ctx := context.Background()
+	admin := gitops.Meta{Subject: "admin-1"}
+	if _, err := repo.SetAppGrant(ctx, "demo", "store", gitops.AppGrant{Consume: []gitops.ConsumeGrant{{Contract: "desktop-api", Granted: []string{"read"}}}}, admin); err != nil {
+		t.Fatal(err)
+	}
+	platform := gitops.Meta{Principal: "platform:placement"}
+	res, err := repo.PreApproveConsume(ctx, "demo", "store", "desktop-api", []string{"tiles", "read"}, platform)
+	if err != nil || res.Changed {
+		t.Fatalf("pre-approving a contract the grant names = %+v %v, want unchanged", res, err)
+	}
+	if res, err := repo.PreApproveConsume(ctx, "demo", "store", "calendar", []string{"read"}, platform); err != nil || !res.Changed {
+		t.Fatalf("pre-approving another contract = %+v %v, want changed", res, err)
+	}
+	grants := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/tenants/demo/"+gitops.GrantsFile)
+	if !strings.Contains(grants, "contract: calendar") || strings.Contains(grants, "- tiles") || !strings.Contains(grants, "grantedBy: admin-1") {
+		t.Errorf("grants:\n%s", grants)
+	}
+}

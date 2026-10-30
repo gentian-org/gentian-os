@@ -422,8 +422,10 @@ commit, never drawn by a browser or served. A person sees, first that is set:
    (`tile.icon`) where the app has no art of its own.
 
 The first two are the desktop's, in its own database. The App Store app stores a tenant's tile by
-calling the desktop's API in the same namespace with the person's token, at the address its
-profile asks for with `valueMapping.platform.desktopUrlKey`. Nothing about them is in Git or in
+calling the desktop's API in the same namespace with the person's token, at the address of the
+contract the desktop provides, `desktop-api` (`spec.integrations` and
+`valueMapping.integrations.desktop-api.endpointKey`); a profile written before the contract asks
+for it with `valueMapping.platform.desktopUrlKey`, read for one more release. Nothing about them is in Git or in
 the cluster's state: the tile catalog the operator projects carries the profile's default only.
 The platform's glyphs are `internal/tiles/glyphs/*.svg`, rendered into
 `internal/tiles/catalogue.json` and the chart's own tiles by `scripts/tools/render-tiles.py`.

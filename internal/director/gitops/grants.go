@@ -111,6 +111,56 @@ func (g *GitOps) ClearAppGrant(ctx context.Context, tenant, app string, meta Met
 // carries every old grant file over, and commits the patch and the removals
 // together.
 func (g *GitOps) writeGrants(ctx context.Context, tenant, app string, entry *gentianov1alpha1.TenantAppGrant, message string, meta Meta) (Result, error) {
+	return g.editGrants(ctx, tenant, message, meta, func(byApp map[string]gentianov1alpha1.TenantAppGrant) bool {
+		if entry != nil {
+			byApp[app] = *entry
+			return true
+		}
+		if _, ok := byApp[app]; !ok {
+			return false
+		}
+		delete(byApp, app)
+		return true
+	})
+}
+
+// PreApprovedReason is what a grant the platform pre-approved says.
+const PreApprovedReason = "pre-approved by the platform: both components are placed by it"
+
+// PreApproveConsume adds one contract an app may consume, with what of it,
+// to the app's grant, and leaves everything else the grant says as it is.
+// It is the platform's pre-approval of a contract between two components it
+// places itself; a contract the grant already names is left as it stands,
+// so an administrator's narrower grant is not widened back.
+func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, meta Meta) (Result, error) {
+	if !ValidName(tenant) || !ValidName(app) || !ValidName(contract) || len(granted) == 0 {
+		return Result{}, fmt.Errorf("%w: tenant %q app %q contract %q", ErrInvalidName, tenant, app, contract)
+	}
+	message := fmt.Sprintf("Pre-approve %s consuming %s in tenant %s", app, contract, tenant)
+	return g.editGrants(ctx, tenant, message, meta, func(byApp map[string]gentianov1alpha1.TenantAppGrant) bool {
+		entry, had := byApp[app]
+		for _, c := range entry.Consume {
+			if c.Contract == contract {
+				return false
+			}
+		}
+		entry.App = app
+		entry.Consume = append(entry.Consume, gentianov1alpha1.ConsumeGrantSpec{Contract: contract, Granted: granted})
+		// A grant an administrator wrote keeps their name on it; the
+		// commit says what the platform added.
+		if !had {
+			now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+			entry.GrantedBy, entry.GrantedAt, entry.Reason = meta.actor(), &now, PreApprovedReason
+		}
+		byApp[app] = entry
+		return true
+	})
+}
+
+// editGrants applies edit to the tenant's grants by app, carries every old
+// grant file over, and commits the patch and the removals together; edit
+// says whether it changed anything.
+func (g *GitOps) editGrants(ctx context.Context, tenant, message string, meta Meta, edit func(map[string]gentianov1alpha1.TenantAppGrant) bool) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	manifest, err := g.tenantFile(ctx, tenant)
@@ -148,13 +198,8 @@ func (g *GitOps) writeGrants(ctx context.Context, tenant, app string, entry *gen
 		}
 		writes = append(writes, tenantFileWrite{tenant: tenant, name: filepath.Base(path), list: listResource})
 	}
-	if entry != nil {
-		byApp[app] = *entry
-	} else {
-		if _, ok := byApp[app]; !ok && len(writes) == 0 {
-			return Result{Status: "unchanged"}, nil
-		}
-		delete(byApp, app)
+	if !edit(byApp) && len(writes) == 0 {
+		return Result{Status: "unchanged"}, nil
 	}
 	apps := make([]string, 0, len(byApp))
 	for a := range byApp {
