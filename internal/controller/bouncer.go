@@ -198,9 +198,13 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 //     (keepClientToken), the ID token in a header the filter likewise clears
 //     before setting.
 //   - The bouncer verifies that token itself and refuses a request without
-//     one. There is no pass-through: passThroughAuthHeader and denyRedirect
-//     are not set, and must not be without the bouncer's table saying what
-//     such a request may reach.
+//     one. There is no pass-through: passThroughAuthHeader is not set, and
+//     must not be without the bouncer's table saying what such a request may
+//     reach.
+//   - A request a page makes in the background is answered 401, not sent to
+//     sign in (denyRedirect). The browser cannot follow that redirect from a
+//     fetch, so the page never learns the session ended and may retry without
+//     pause. This passes nothing: the request stops at the filter.
 //
 // The token cookies stay encrypted, which is the filter's default. Nothing
 // but the filter reads them.
@@ -252,6 +256,11 @@ func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, au
 		"forwardAccessToken": !authz.sessionByIDToken(),
 		"scopes":             []interface{}{"openid", "profile", "email"},
 		"refreshToken":       true,
+		"denyRedirect": map[string]interface{}{
+			"headers": []interface{}{
+				map[string]interface{}{"name": "Sec-Fetch-Dest", "type": "Exact", "value": "empty"},
+			},
+		},
 	}
 	if authz.sessionByIDToken() {
 		oidc["forwardIDToken"] = map[string]interface{}{"header": edgeIDTokenHeader}
