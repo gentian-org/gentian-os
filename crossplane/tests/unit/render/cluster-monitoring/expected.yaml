@@ -591,6 +591,7 @@ spec:
     waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
+  rollbackLimit: 3
 ---
 apiVersion: kubernetes.vault.upbound.io/v1alpha1
 kind: AuthBackendConfig
