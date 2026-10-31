@@ -238,6 +238,40 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 	return fmt.Errorf("openbao put %s: HTTP %d: %s", logicalPath, resp.StatusCode, string(payload))
 }
 
+// Request sends one authenticated request to path under /v1/ and answers the
+// status and the body, for what the KV methods do not cover. A body is sent
+// as JSON, or as a JSON merge patch for PATCH.
+func (c *KVClient) Request(ctx context.Context, method, path string, body any) (int, []byte, error) {
+	tok, err := c.authToken(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("%s/v1/%s", c.addr, path), reader)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("X-Vault-Token", tok)
+	req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPatch {
+		req.Header.Set("Content-Type", "application/merge-patch+json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw, err
+}
+
 // ErrNotFound is a path that holds nothing.
 var ErrNotFound = errors.New("not found")
 

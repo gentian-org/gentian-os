@@ -1895,7 +1895,7 @@ the master realm. The operator has no git credential.
    - **provider-vault**: a token renewed for a year, in the Secret
      `openbao-crossplane-token`, with a policy that may write any policy,
      any auth role and any mount, and all of `gentian-os/*`
-     (`scripts/lib/bootstrap.sh`, `crossplane-write`). It is the vault's
+     (`internal/vaultmigrate/crossplane-write.hcl`). It is the vault's
      administrator. The operator can read that Secret.
    - **provider-keycloak**: Keycloak's master `admin` on `admin-cli`
      (`kernel/services/keycloak-config/manifests/templates/provider/externalsecret.yaml`).

@@ -82,6 +82,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
     evidence:
       - charts/gentian-os/templates/custodian.yaml:1
+  vault-migrator:
+    what: the Job that makes the vault what a release needs
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: vault-migrator}
+    evidence:
+      - charts/gentian-os/templates/vault-migrator.yaml:1
   director:
     what: the director
     namespace: kernel-control
@@ -280,6 +286,9 @@ namespaces:
               - peer: operator
                 why: reads and writes kernel and tenant secrets (BAO_ADDR)
                 evidence: [charts/gentian-os/templates/deployment.yaml:98, internal/kernel/secrets/openbao.go:89]
+              - peer: vault-migrator
+                why: changes what a release needs (BAO_ADDR)
+                evidence: [charts/gentian-os/templates/vault-migrator.yaml:50, cmd/vault-migrator/main.go:1]
               - peer: custodian
                 why: relays a person's credential writes (BAO_ADDR)
                 evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]

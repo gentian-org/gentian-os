@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 43 more'
+      gentian-cluster-config, and 45 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -976,6 +976,35 @@ spec:
   providerConfigRef:
     name: openbao
 ---
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-auth-role-vault-migrator
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-auth-role-vault-migrator
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    backend: kubernetes
+    boundServiceAccountNames:
+    - gentian-os-vault-migrator
+    boundServiceAccountNamespaces:
+    - kernel-control
+    roleName: vault-migrator
+    tokenPolicies:
+    - vault-migrator
+    tokenTtl: 900
+  providerConfigRef:
+    name: openbao
+---
 apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
@@ -1614,6 +1643,43 @@ spec:
       }
       path "secret/metadata/gentian-os/kernel/*" {
         capabilities = ["deny"]
+      }
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-vault-migrator
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-vault-migrator
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: vault-migrator
+    policy: |
+      path "sys/policies/acl/crossplane-write" {
+        capabilities = ["read", "update"]
+      }
+      path "pki-internal/roles/gentian-ca" {
+        capabilities = ["read", "patch"]
+      }
+      path "secret/data/gentian-os/kernel/internal/master-password" {
+        capabilities = ["read"]
+      }
+      path "secret/data/gentian-os/kernel/authz/openfga" {
+        capabilities = ["read", "patch"]
+      }
+      path "secret/data/gentian-os/kernel/identity/keycloak-bootstrap" {
+        capabilities = ["read", "patch"]
       }
   providerConfigRef:
     name: openbao
