@@ -418,6 +418,8 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/authorization_engine.go": {},
 	// The arbiter's own client of the app instance, beside it.
 	"cmd/arbiter/main.go": {},
+	// The names gentian-ca may sign; dials none of them.
+	"cmd/vault-migrator/main.go": {},
 	// The operator's client of the arbiter's platform path: a system namespace.
 	"internal/arbiter/client.go": {},
 	// The TURN edge's list of peers, its own pods: a system DMZ.

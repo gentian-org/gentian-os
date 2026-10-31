@@ -70,47 +70,15 @@ bootstrap_openbao_for_crossplane() {
     # ── 2. Kubernetes auth backend ────────────────────────────────────────────
 
     # ── 3. crossplane-write policy (broad — provider-vault needs sys/* access) ─
-    # The Cluster XR Policy MR will keep this policy in sync going forward.
-    # _kv_mount is substituted into the heredoc via a quoted-less delimiter so
-    # the shell expands the variable before passing the policy to bao.
+    # vault-migrator keeps this policy in sync from here on: a Job of the
+    # kernel chart, because no root token survives handover.
     #
-    # Captured into a variable, not piped straight into _bao_retry, because a
-    # heredoc is consumed once: a retry inside _bao_retry would send bao an
-    # empty body on the second attempt. _BAO_RETRY_STDIN makes it re-feed this
-    # same content fresh on every attempt.
+    # Captured into a variable, not piped straight into _bao_retry, because
+    # stdin is consumed once: a retry inside _bao_retry would send bao an empty
+    # body on the second attempt. _BAO_RETRY_STDIN makes it re-feed this same
+    # content fresh on every attempt.
     local _crossplane_write_policy
-    _crossplane_write_policy=$(cat <<POLICY
-# KV operations
-path "${_kv_mount}/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
-path "${_kv_mount}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
-# Mount management (SecretMount MR)
-path "sys/mounts/*"   { capabilities = ["create","read","update","delete","sudo"] }
-path "sys/mounts"     { capabilities = ["read","list"] }
-# Policy management (Policy MRs)
-path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","list"] }
-path "sys/policies/acl"   { capabilities = ["read","list"] }
-# Auth method management (Backend/BackendConfig/BackendRole MRs)
-path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
-# list, not just read — the same pair sys/mounts already gets above.
-#
-# OpenBao filters the sys/auth response by what the token may enumerate, so
-# with read alone this token saw a table containing only token/ even though it
-# could read sys/auth/oidc directly. provider-vault's AuthBackend finds its
-# backend by enumerating that table, so the observe-only oidc AuthBackend in
-# the Cluster composition reported "external resource does not exist" against
-# a mount that demonstrably existed (accessor and all), stayed unSynced
-# forever, and held the whole XCluster at Ready=False until B-08 timed out.
-path "sys/auth"    { capabilities = ["read","list"] }
-path "auth/+/config"  { capabilities = ["create","read","update"] }
-path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"] }
-# Token operations
-path "auth/token/create"      { capabilities = ["update"] }
-path "auth/token/lookup-self" { capabilities = ["read"] }
-# The one PKI role the Cluster composition declares (SecretBackendRole). Only
-# this name: gentian-ca stays the installer's, so this token cannot widen it.
-path "pki-internal/roles/platform-services" { capabilities = ["create","read","update","delete"] }
-POLICY
-    )
+    _crossplane_write_policy=$(sed "s/__KV_MOUNT__/${_kv_mount}/g" "${SCRIPT_DIR}/internal/vaultmigrate/crossplane-write.hcl")
     _BAO_RETRY_STDIN="${_crossplane_write_policy}" _bao_retry policy write crossplane-write -
     success "crossplane-write policy written."
     # The Kubernetes auth backend, its config, the eso-read policy and both auth

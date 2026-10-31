@@ -1,0 +1,79 @@
+{{- /* What a release changes in the vault (internal/vaultmigrate). A hook, so
+       it runs on every sync. Sync and not PostSync: PostSync waits for a healthy
+       app, and the services can be unhealthy for want of the keys this adds.
+       The Cluster composition, which gives it its role, arrives by the
+       installer and may come later, so the Job retries its login. */}}
+{{- if .Values.openbao.address }}
+{{- $name := printf "%s-vault-migrator" (include "gentian-os.fullname" .) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault-migrator
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vault-migrator
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: vault-migrator
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: vault-migrator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/vault-migrator"]
+          env:
+            {{- include "gentian-os.layoutEnv" . | nindent 12 }}
+            - name: BAO_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            {{- if .Values.openbao.caSecret }}
+            - name: BAO_CACERT
+              value: /etc/gentian/openbao-ca/ca.crt
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          {{- with .Values.openbao.caSecret }}
+          volumeMounts:
+            - name: openbao-ca
+              mountPath: /etc/gentian/openbao-ca
+              readOnly: true
+          {{- end }}
+      {{- with .Values.openbao.caSecret }}
+      volumes:
+        - name: openbao-ca
+          secret:
+            secretName: {{ . | quote }}
+      {{- end }}
+{{- end }}

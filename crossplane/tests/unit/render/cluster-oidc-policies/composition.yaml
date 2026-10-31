@@ -1393,6 +1393,65 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── vault-migrator: what a release changes in the vault ─────────
+                 No root token survives handover, so a release that needs more
+                 of the vault than Crossplane may do has this identity to do it:
+                 the Job of the same name in the kernel chart. It may write
+                 crossplane-write, which Crossplane may not, so that Crossplane
+                 never edits its own rights; the names gentian-ca signs; and
+                 keys a release adds to a kernel path.
+
+                 Composed, so a release can change these rights too. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-vault-migrator
+              name: {{ $name }}-policy-vault-migrator
+            spec:
+              forProvider:
+                name: vault-migrator
+                policy: |
+                  path "sys/policies/acl/crossplane-write" {
+                    capabilities = ["read", "update"]
+                  }
+                  path "pki-internal/roles/gentian-ca" {
+                    capabilities = ["read", "patch"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/kernel/internal/master-password" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/kernel/authz/openfga" {
+                    capabilities = ["read", "patch"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/kernel/identity/keycloak-bootstrap" {
+                    capabilities = ["read", "patch"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-vault-migrator
+              name: {{ $name }}-auth-role-vault-migrator
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: vault-migrator
+                boundServiceAccountNames:
+                  - gentian-os-vault-migrator
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                tokenPolicies:
+                  - vault-migrator
+                tokenTtl: 900
+              providerConfigRef:
+                name: openbao
+
             {{- /* ── OpenBao KV seed paths (Observe+Create, never overwrite) ────── */}}
             {{- /*
                  These MRs adopt existing paths seeded by seed-openbao.sh and

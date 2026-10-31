@@ -50,6 +50,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o registrar ./cmd/re
 # that instance's key.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o arbiter ./cmd/arbiter
 
+# vault-migrator: what a release changes in the vault, run once per release.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o vault-migrator ./cmd/vault-migrator
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
@@ -68,6 +71,7 @@ COPY --from=builder /workspace/usher /usher
 COPY --from=builder /workspace/custodian /custodian
 COPY --from=builder /workspace/registrar /registrar
 COPY --from=builder /workspace/arbiter /arbiter
+COPY --from=builder /workspace/vault-migrator /vault-migrator
 
 USER 65532:65532
 

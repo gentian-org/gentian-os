@@ -76,6 +76,40 @@ the deployments repository. After the handover `B-08`, `B-09`, `B-10` and
 `D-04` read `undefined` as well: their checks ask OpenBao, and the installer's
 token for it is revoked.
 
+### What a release changes in the vault after the handover
+
+The root token is revoked at the handover, and an upgrade needs neither it nor
+the recovery kit. Who writes what:
+
+| Change | Written by |
+|---|---|
+| A workload's policy or auth role, a new KV path | Crossplane, from the Cluster and Tenant compositions |
+| A PKI role named `platform-*` | Crossplane, from the Cluster composition |
+| A key added to a kernel path that exists | `vault-migrator` |
+| The names `gentian-ca` may sign | `vault-migrator` |
+| Crossplane's own policy, `crossplane-write` | `vault-migrator` |
+| `vault-migrator`'s policy and role | Crossplane, from the Cluster composition |
+
+Crossplane may read `crossplane-write` and not change it, and may not touch the
+role `gentian-ca`. `vault-migrator` is a Job of the kernel chart that runs on
+every sync, logs in with its own ServiceAccount, and repeats nothing that is
+already right. It only adds names and keys: a rotated password stays. A policy
+it does not recognize is left as it is, and the Job fails and says so.
+
+To add to a release, change `internal/vaultmigrate/crossplane-write.hcl`, the one
+copy of the policy, or add to `Seeds` in `internal/vaultmigrate/migrate.go`, and
+give the policy `vault-migrator` in `crossplane/compositions/cluster-default.yaml`
+any path the new work needs. To see what it did:
+
+```bash
+kubectl logs -n kernel-control job/gentian-os-vault-migrator
+```
+
+These rules stop a mistake, not an attacker: Crossplane's token can still write
+a new policy and bind it to a role. Generating a root token from the recovery
+kit stays the path for disaster recovery only; see
+[recovery-playbook.md](recovery-playbook.md).
+
 ---
 
 ## 2. Commands that change nothing

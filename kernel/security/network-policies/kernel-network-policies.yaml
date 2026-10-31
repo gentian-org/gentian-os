@@ -93,6 +93,13 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: kernel-provisioning
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-control
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: vault-migrator
+          app.kubernetes.io/name: gentian-os
     ports:
     - port: 8200
       protocol: TCP
