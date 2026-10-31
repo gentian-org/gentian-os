@@ -3,7 +3,7 @@
 # in /opt/keycloak/providers. Keycloak's own image stays upstream's, unmodified.
 # On the build platform: a jar is the same bytes for every architecture, and
 # under emulation Maven took four times as long to produce it.
-FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS build
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-26@sha256:b2c1ad85954592f9928e84327c65201f308ad9b5d8ed7d5b823717c97bf23fbb AS build
 WORKDIR /src
 COPY pom.xml .
 RUN mvn -q -B dependency:go-offline
