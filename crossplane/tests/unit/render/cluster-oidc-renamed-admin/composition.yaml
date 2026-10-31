@@ -247,6 +247,10 @@ spec:
                 crossplane.io/external-name: {{ $e.chart }}
               name: {{ $name }}-{{ $e.chart }}
             spec:
+              # Without a limit provider-helm counts a failed release as done
+              # and never tries it again, so a wait that ran out, as for a
+              # certificate that came late, stays failed for good.
+              rollbackLimit: 3
               forProvider:
                 chart:
                   name: {{ $e.chart }}
@@ -303,6 +307,7 @@ spec:
                 crossplane.io/external-name: openfga-apps
               name: {{ $name }}-openfga-apps
             spec:
+              rollbackLimit: 3
               forProvider:
                 chart:
                   name: openfga
