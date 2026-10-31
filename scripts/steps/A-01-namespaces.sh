@@ -34,11 +34,23 @@ apply() {
     # Who may reach a pod of each of them, with the namespace itself: the
     # rules are there before the first pod is. Every later step runs under
     # them, so a caller they do not list shows as a timeout in that step.
+    if ns_kernel_policies_wanted; then
+        local enforced=0
+        ns_cni_enforces_policy || enforced=$?
+        if (( enforced == 1 )); then
+            error "this cluster's CNI does not enforce NetworkPolicy: install one that does, or set KERNEL_NETWORK_POLICIES=false"
+            return 1
+        elif (( enforced != 0 )); then
+            warn "could not test whether this cluster's CNI enforces NetworkPolicy; continuing"
+        else
+            success "the CNI enforces NetworkPolicy"
+        fi
+    fi
     ns_kernel_policies_sync || { error "the kernel namespaces' NetworkPolicies could not be applied"; return 1; }
     if ns_kernel_policies_wanted; then
         success "kernel NetworkPolicies applied (ingress refused unless listed; anything but KERNEL_NETWORK_POLICIES=true removes them)"
     else
-        info "kernel NetworkPolicies are off (KERNEL_NETWORK_POLICIES=true turns them on; docs/install-reference.md)"
+        info "kernel NetworkPolicies are off (KERNEL_NETWORK_POLICIES=false; docs/install-reference.md)"
     fi
 }
 

@@ -152,8 +152,9 @@ func ShellAdminToken() string {
 	return `
 TOKEN=$(curl -sf --max-time 30 \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  --data-urlencode "client_id=${KEYCLOAK_CLIENT_ID}" \
+  --data-urlencode "client_secret=${KEYCLOAK_CLIENT_SECRET}" \
+  --data-urlencode "grant_type=client_credentials" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 if [ -z "${TOKEN}" ]; then
   echo "ERROR: could not obtain a Keycloak admin token" >&2

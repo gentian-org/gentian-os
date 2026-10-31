@@ -275,7 +275,7 @@ ns_add kernel-edge "2026-10-16T05:47:17Z"
 obj_add kernel-edge deployment.apps cert-manager 2026-10-11T08:00:00Z
 obj_add kernel-edge secret sh.helm.release.v1.cert-manager.v1 2026-10-11T08:00:00Z
 obj_add kernel-edge configmap kube-root-ca.crt 2026-10-16T05:47:17Z
-o="$(run 'source "${SCRIPT_DIR}/scripts/steps/A-01-namespaces.sh"; apply; echo "rc=$?"')"
+o="$(run 'KERNEL_NETWORK_POLICIES=false; source "${SCRIPT_DIR}/scripts/steps/A-01-namespaces.sh"; apply; echo "rc=$?"')"
 if [[ "${o}" == *"kernel-edge (created 2026-10-16T05:47:17Z) holds 2 object(s) older than itself"* &&
       "${o}" == *"deployment.apps/cert-manager"* && "${o}" == *"secret/sh.helm.release.v1.cert-manager.v1"* &&
       "${o}" != *"configmap/kube-root-ca.crt"* ]]; then

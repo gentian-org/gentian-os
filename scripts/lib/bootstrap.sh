@@ -383,13 +383,21 @@ create_crossplane_secrets() {
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --arg a "$(_derive keycloak adminPassword)" \
-            '{admin_password:$a}')"
+            --arg b "$(_derive keycloak operatorClientSecret)" \
+            '{admin_password:$a,operator_client_secret:$b}')" \
+        "gentian-os/kernel/identity/keycloak-bootstrap"
 
     # ── authz/openfga ─────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-authz-openfga" \
         "$(jq -nc \
             --arg a "$(_derive openfga preshared_key)" \
-            '{preshared_key:$a}')"
+            --arg director "$(_derive openfga director_key)" \
+            --arg bouncer "$(_derive openfga bouncer_key)" \
+            --arg usher "$(_derive openfga usher_key)" \
+            --arg registrar "$(_derive openfga registrar_key)" \
+            --arg custodian "$(_derive openfga custodian_key)" \
+            '{preshared_key:$a,director_key:$director,bouncer_key:$bouncer,usher_key:$usher,registrar_key:$registrar,custodian_key:$custodian}')" \
+        "gentian-os/kernel/authz/openfga"
 
     # ── mail/postfix (HMAC-derived fields + operator-supplied relay credentials) ─
     # relay_username and relay_password are omitted when unset rather than written
@@ -751,7 +759,8 @@ _seed_once() {
 # nothing trusts yet. The recovery kit, which opens the vault, reaches it with
 # everything else the vault holds.
 #
-# The role gentian-ca says what may be signed: the object store's names, and
+# The role gentian-ca says what may be signed: the object store's, Argo CD's
+# and the shared MariaDB's names, and
 # on a self-signed cluster, where gentian-ca is the anchor of the public
 # names too, the kernel domain and the names under it. Rewritten on every
 # run, so it follows the issuer mode. Certificates live at most 90 days,
@@ -777,6 +786,12 @@ _internal_ca_role() {
     local s3; s3="$(ns_system s3)"
     local svc="seaweedfs-all-in-one"
     local names="seaweedfs-server,seaweedfs-shell,${svc},${svc}.${s3},${svc}.${s3}.svc,${svc}.${s3}.svc.cluster.local"
+    # The Gateway checks Argo CD's server against this name.
+    local gitops; gitops="$(ns_kernel gitops)"
+    names="${names},argocd-server.${gitops}.svc,argocd-server.${gitops}.svc.cluster.local"
+    # The shared MariaDB's server certificate.
+    local mariadb; mariadb="$(ns_system mariadb)"
+    names="${names},mariadb.${mariadb}.svc,mariadb.${mariadb}.svc.cluster.local"
     local subdomains=false wildcard=false
     if [[ "$(gentian_issuer_mode)" == "self-signed" && -n "${KERNEL_DOMAIN:-}" ]]; then
         names="${names},${KERNEL_DOMAIN}"
@@ -2145,8 +2160,8 @@ _claim_carry_over_role_holders() {
     local ns user="" pass="" base="" line rc=0 out
     ns="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
     if command -v kubectl >/dev/null 2>&1; then
-        user="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)"
-        pass="$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+        user="admin"
+        pass="$(kubectl get secret keycloak-idp-credentials -n "${ns}" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
     if [[ -n "${user}" && -n "${pass}" ]]; then
         if ! base="$(gentian_service_addr "${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http" "${ns}" 8080 http)"; then

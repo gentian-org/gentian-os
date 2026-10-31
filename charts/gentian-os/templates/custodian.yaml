@@ -24,6 +24,31 @@
 {{- $deployments := .Values.appLifecycle.deployments | default dict }}
 {{- $vaultNamespace := (.Values.custodian).caSecretNamespace | default .Values.openbaoNamespace | default "kernel-secrets" }}
 {{- $caSecret := (.Values.custodian).caSecret | default "openbao-tls" }}
+{{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}-openfga-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custodian
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ $name }}-openfga-token
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
+      remoteRef:
+        key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
+        property: custodian_key
+---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -239,7 +264,7 @@ spec:
             - name: OPENFGA_API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+                  name: {{ $name }}-openfga-token
                   key: {{ .Values.director.openfgaTokenSecretRef.key }}
                   optional: true
             {{- end }}

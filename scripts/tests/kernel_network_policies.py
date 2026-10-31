@@ -294,7 +294,7 @@ def switch():
                     return passed, env.get("value")
         raise Failure("the operator's Deployment has no KERNEL_NETWORK_POLICIES")
 
-    for extra, want in (((), "false"),
+    for extra, want in (((), "true"),
                         (("--set-string", "kernelNetworkPolicies=true"), "true"),
                         (("--set-string", "kernelNetworkPolicies=false"), "false"),
                         (("--set", "kernelNetworkPolicies=true"), "true"),
@@ -303,7 +303,7 @@ def switch():
         if passed != want or got != want:
             raise Failure(f"bootstrap chart {' '.join(extra) or '(default)'}: the operator's chart is passed {passed!r} and the operator told {got!r}, want {want!r}")
     b01 = (ROOT / "scripts/steps/B-01-bootstrap-apps.sh").read_text()
-    if '"kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-false}"' not in b01:
+    if '"kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-true}"' not in b01:
         raise Failure("B-01 no longer passes KERNEL_NETWORK_POLICIES to the bootstrap chart, off by default")
 
 

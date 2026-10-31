@@ -267,7 +267,7 @@ func (w *realmWorld) run(script string) (string, error) {
 	cmd.Env = []string{
 		"PATH=" + filepath.Join(w.dir, "bin") + ":" + os.Getenv("PATH"),
 		"STUB=" + w.dir, "KEYCLOAK_URL=http://kc",
-		"KEYCLOAK_ADMIN_USERNAME=admin", "KEYCLOAK_ADMIN_PASSWORD=p&ss word",
+		"KEYCLOAK_CLIENT_ID=admin", "KEYCLOAK_CLIENT_SECRET=p&ss word",
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err

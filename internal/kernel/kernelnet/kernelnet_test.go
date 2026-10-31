@@ -379,7 +379,8 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"charts/gentian-os/templates/webhook-cert-manager.yaml": {},
 	// The log destination's certificate names, a Service of the platform
 	// tenant, not a client.
-	"internal/controller/log_destination.go": {},
+	"internal/controller/argocd_backend_tls.go": {},
+	"internal/controller/log_destination.go":    {},
 	// A comment naming the vault's address.
 	"cmd/main.go": {{"kernel-secrets", 8200}},
 	// The desktop's database: kernel-postgres or the tenants' server.

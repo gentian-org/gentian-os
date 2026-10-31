@@ -299,7 +299,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `GENTIAN_OPERATOR_OBJECTS_WAIT_SECS` | How long `E-05` waits for the catalog and every tenant declared in git to be synced -- their Argo CD Applications are asked again when a sync failed, as on a fresh install, where they first run before the operator's CRDs exist -- before it fails naming each with Argo CD's message. 600 by default. |
 | `GENTIAN_REQUIRE_SECRET_ENCRYPTION` | `true` makes pre-flight refuse a cluster whose Secrets are not encrypted at rest; unset or `false`, it warns. See *Secrets at rest* below. |
-| `KERNEL_NETWORK_POLICIES` | `true` or unset. **Off by default.** On, step `A-01` gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything else removes them. Turn it on after a successful install, and off again if a component then times out reaching another: §9. |
+| `KERNEL_NETWORK_POLICIES` | **On by default.** Step `A-01` first checks that the CNI enforces NetworkPolicy and stops if it does not, then gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([design/security.md §2.13](design/security.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything but `true` removes them: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([design/security.md §2.7](design/security.md)). |
 | `GENTIAN_NO_EXTRA_SERVICES` | `1` leaves the three extra services out of the default profiles, and the store's vendor out of the tenants' partners, as `--no-extra-services` does, takes away the ones an earlier run placed, and records `spec.catalogue.extraServices: false` on the Cluster claim so a later run keeps them out; `0` brings them back and removes the record. Unset keeps what the claim says. The operator removes the Components it placed of them once their profiles leave the catalog. |
 | `GENTIAN_NO_USAGE_STATISTICS` | `1` turns the usage statistics report off, as `--no-usage-statistics` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and there are no extra services, as with `GENTIAN_NO_EXTRA_SERVICES=1` (recorded on the claim the same way): no App Store, Operations Console or Aluvian Center; the operator does not place a profile annotated `gentianos.io/requires-usage-statistics: "true"` and removes the ones it placed. For people who manage their own cluster at their own risk — [design/operations.md §6.2](design/operations.md). |
@@ -1073,27 +1073,9 @@ grep -A8 'name: smtp-relay' credentials.yaml
 ```
 
 **Turning the kernel's network rules on, and what to do when a component
-then cannot reach another.** With `KERNEL_NETWORK_POLICIES=true` every kernel
-namespace refuses a connection that its NetworkPolicy does not list
-([design/security.md §2.13](design/security.md)). The rules are off by
-default because no cluster had run them when they were written. On a cluster
-whose install has succeeded:
-
-```bash
-# in install.env
-KERNEL_NETWORK_POLICIES=true
-
-./install.sh --only A-01,B-01
-kubectl get networkpolicy -A -l gentianos.io/kernel-network-policy=true   # twelve
-```
-
-`A-01` applies the rules; `B-01` passes the switch to the operator, which
-restarts and narrows the tenants' side. Then check, in this order: a page
-behind sign-in opens (the desktop); the administration console lists people
-and saves a setting; `kubectl get externalsecret -A` shows none failing;
-`kubectl get managed` and `kubectl get application -n kernel-gitops` settle
-as before; a new app installs. A fresh install with the switch on is the
-last check, and the one that says it can become the default.
+then cannot reach another.** Every kernel namespace refuses a connection
+that its NetworkPolicy does not list
+([design/security.md §2.13](design/security.md)).
 
 A caller the list lacks shows as a timeout, never as a refusal with a
 reason: a pod that waits for its configuration, `context deadline exceeded`
@@ -1105,8 +1087,8 @@ once and nothing puts them back until `A-01` runs again:
 kubectl delete networkpolicy -A -l gentianos.io/kernel-network-policy=true
 ```
 
-To keep them off, set `KERNEL_NETWORK_POLICIES=false` (or remove the line)
-and run `./install.sh --only A-01,B-01` again. If the trouble went away, the
+To keep them off, set `KERNEL_NETWORK_POLICIES=false` and run
+`./install.sh --only A-01,B-01` again. If the trouble went away, the
 list is missing a caller: add it to
 `internal/kernel/kernelnet/inventory.yaml`, run
 `make gen-kernel-network-policies`, and turn the switch back on. Where to

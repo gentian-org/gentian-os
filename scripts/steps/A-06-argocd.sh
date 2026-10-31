@@ -31,7 +31,7 @@ check() {
         # Serving plain HTTP is not a preference here, it is what makes the
         # console reachable at all; a step that reports satisfied without it
         # leaves a redirect loop nothing else in the sequence looks at.
-        [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.server\.insecure}' 2>/dev/null)" == "true" ]] &&
+        [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.server\.insecure}' 2>/dev/null)" == "false" ]] &&
         # And the diff computed the way the sync applies: see _a06_install.
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.controller\.diff\.server\.side}' 2>/dev/null)" == "true" ]] &&
         [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]] &&
@@ -135,7 +135,7 @@ _a06_install() {
     # the same header, and its x-frame-options cannot be turned off through a
     # parameter anyway: an empty value falls back to the default.
     kubectl patch configmap argocd-cmd-params-cm -n "${ns}" --type merge \
-        -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m","controller.diff.server.side":"true"}}' >/dev/null
+        -p '{"data":{"server.insecure":"false","reposerver.repo.cache.expiration":"3m","controller.diff.server.side":"true"}}' >/dev/null
     kubectl rollout restart deployment argocd-server argocd-repo-server -n "${ns}" >/dev/null
     # The application controller is what diffs, and reads its parameters at start.
     kubectl rollout restart statefulset argocd-application-controller -n "${ns}" >/dev/null

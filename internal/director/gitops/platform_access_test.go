@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package gitops
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -160,5 +161,21 @@ func TestTheTenantsPlatformAccessSwitchIsWrittenAndRemoved(t *testing.T) {
 	}
 	if on, _ := parseTenantPlatformAccess(off); on || strings.Contains(off, "platformAccess") {
 		t.Fatalf("still on:\n%s", off)
+	}
+}
+
+func TestBreakGlassHasToEnd(t *testing.T) {
+	h := RoleHolder{Role: "breakGlass", Scope: "cluster", Tenant: "platform", Subject: "7d0f3c2e-0000-4000-8000-000000000000",
+		Username: "ops", Reason: "the operator is down"}
+	if err := validHolder(h, time.Now()); !errors.Is(err, ErrInvalidRoleHolder) {
+		t.Fatalf("no expiry: %v", err)
+	}
+	h.ExpiresAt = time.Now().Add(time.Hour).Format(time.RFC3339)
+	if err := validHolder(h, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	h.Tenant = "acme"
+	if err := validHolder(h, time.Now()); !errors.Is(err, ErrInvalidRoleHolder) {
+		t.Fatalf("a tenant's person: %v", err)
 	}
 }

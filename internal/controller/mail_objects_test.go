@@ -192,7 +192,7 @@ func mailPinCluster(t *testing.T) (*controller.TenantReconciler, client.Client, 
 		// has to look for it here: nothing writes one anywhere else.
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: identity},
-			Data:       map[string][]byte{"url": []byte(kc.URL), "username": []byte("admin"), "password": []byte("x")},
+			Data:       map[string][]byte{"url": []byte(kc.URL), "client_id": []byte("admin"), "client_secret": []byte("x")},
 		},
 		// The kernel realm's submission credential, written by the installer
 		// beside Keycloak.

@@ -34,6 +34,31 @@
 {{- $name := printf "%s-registrar" (include "gentian-os.fullname" .) }}
 {{- $deployments := .Values.appLifecycle.deployments | default dict }}
 {{- $keycloak := .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) }}
+{{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}-openfga-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registrar
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ $name }}-openfga-token
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
+      remoteRef:
+        key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
+        property: registrar_key
+---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -209,7 +234,7 @@ spec:
             - name: OPENFGA_API_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+                  name: {{ $name }}-openfga-token
                   key: {{ .Values.director.openfgaTokenSecretRef.key }}
                   optional: true
             {{- end }}

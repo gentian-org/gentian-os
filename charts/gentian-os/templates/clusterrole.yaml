@@ -291,6 +291,7 @@ rules:
   - apiGroups:
     - gateway.networking.k8s.io
     resources:
+    - backendtlspolicies
     - gatewayclasses
     verbs:
     - get

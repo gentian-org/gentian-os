@@ -171,7 +171,7 @@ func (r *AuthorizationEngineReconciler) ensureCredentials(ctx context.Context) (
 		return map[string]any{"secretKey": key, "remoteRef": map[string]any{"key": path, "property": property}}
 	}
 	if err := r.applyExternalSecret(ctx, arbiter.DatastoreSecret,
-		map[string]any{"uri": "postgres://{{ .user }}:{{ .password }}@{{ .host }}:{{ .port }}/{{ .name }}?sslmode=disable"},
+		map[string]any{"uri": "postgres://{{ .user }}:{{ .password }}@{{ .host }}:{{ .port }}/{{ .name }}?sslmode=require"},
 		[]any{ref("user", dbPath, "user"), ref("password", dbPath, "password"), ref("host", dbPath, "host"),
 			ref("port", dbPath, "port"), ref("name", dbPath, "name")}); err != nil {
 		return "", err

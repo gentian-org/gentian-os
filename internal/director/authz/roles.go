@@ -81,8 +81,9 @@ func RolesFromClaim(claim map[string]string) (roles map[string]string, unknown [
 
 // HolderRoles are the roles the Cluster claim gives a person by name
 // (spec.platformAccess.roleHolders), keyed by the claim's spelling, each with
-// the relation it grants. Never admin or break_glass: those stay with the
-// kernel realm's groups. auditor and tenantAuditor grant the relation of one
+// the relation it grants. Never admin: that stays with the kernel realm's
+// group. breakGlass is held by a person with a reason and until a time, and
+// goes at that time. auditor and tenantAuditor grant the relation of one
 // name on the cluster and on one tenant.
 var HolderRoles = map[string]string{
 	"securityOfficer":   "security_officer",
@@ -91,6 +92,7 @@ var HolderRoles = map[string]string{
 	"sharedAppsAdmin":   "shared_apps_admin",
 	"perimeterApprover": "perimeter_approver",
 	"tenantAuditor":     "auditor",
+	"breakGlass":        "break_glass",
 }
 
 // ScopeCluster is a role holder's scope when the role is held over the
@@ -105,7 +107,8 @@ var tenantName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 // when that tenant's people may not hold the role:
 //
 //	securityOfficer, auditor           cluster, for anybody who may be named
-//	serviceAdmin, sharedAppsAdmin      cluster, for a person of the platform tenant only
+//	serviceAdmin, sharedAppsAdmin,
+//	breakGlass                         cluster, for a person of the platform tenant only
 //	perimeterApprover                  cluster for a person of the platform tenant,
 //	                                   tenant:<t> for an administrator of tenant t
 //	tenantAuditor                      none: its scope is the entry's (EntryScope)
@@ -118,7 +121,7 @@ func HolderScope(role, tenant string) (scope string, ok bool) {
 	switch role {
 	case "securityOfficer", "auditor":
 		return ScopeCluster, true
-	case "serviceAdmin", "sharedAppsAdmin":
+	case "serviceAdmin", "sharedAppsAdmin", "breakGlass":
 		return ScopeCluster, platform
 	case "perimeterApprover":
 		if platform {

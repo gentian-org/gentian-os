@@ -534,6 +534,7 @@ spec:
   forProvider:
     attributes:
       gentianPartnerRole: tenant-admin
+      gentianRequiresMFA: "true"
       gentianos.io/managed-by: platform
     name: gentian:tenant:platform:admins
     realmId: kernel
@@ -616,6 +617,7 @@ spec:
   forProvider:
     attributes:
       gentianPartnerRole: cluster-admin
+      gentianRequiresMFA: "true"
       gentianos.io/managed-by: platform
     name: gentian:tenant:platform:platform-admins
     realmId: kernel

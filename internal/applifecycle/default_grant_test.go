@@ -124,7 +124,7 @@ func TestGrantAppByDefaultWaitsForTheGroupThenAddsEverybody(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
-			Data:       map[string][]byte{"url": []byte(srv.URL), "username": []byte("admin"), "password": []byte("pw")},
+			Data:       map[string][]byte{"url": []byte(srv.URL), "client_id": []byte("admin"), "client_secret": []byte("pw")},
 		},
 		&gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"}},
 		// Named apart from its realm: the grant is made in the realm the
@@ -194,7 +194,7 @@ func TestDefaultGrantLeavesOutAdministratorsOfAnInstalledApp(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
-					Data:       map[string][]byte{"url": []byte(srv.URL), "username": []byte("admin"), "password": []byte("pw")},
+					Data:       map[string][]byte{"url": []byte(srv.URL), "client_id": []byte("admin"), "client_secret": []byte("pw")},
 				},
 				&gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "wiki"},
 					Spec: gentianov1alpha1.ComponentProfileSpec{Placement: tc.placement}},

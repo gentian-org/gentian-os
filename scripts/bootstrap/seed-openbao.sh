@@ -256,7 +256,12 @@ EOF
 OPENFGA_PRESHARED=$(derive_password "openfga" "preshared_key")
 kv_put_once "authz/openfga" "$(cat <<EOF
 {
-  "preshared_key": "${OPENFGA_PRESHARED}"
+  "preshared_key": "${OPENFGA_PRESHARED}",
+  "director_key": "$(derive_password "openfga" "director_key")",
+  "bouncer_key": "$(derive_password "openfga" "bouncer_key")",
+  "usher_key": "$(derive_password "openfga" "usher_key")",
+  "registrar_key": "$(derive_password "openfga" "registrar_key")",
+  "custodian_key": "$(derive_password "openfga" "custodian_key")"
 }
 EOF
 )"
@@ -289,7 +294,8 @@ EOF
 # --- Keycloak Bootstrap (Keycloak admin) ---
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
-  "admin_password": "${KC_ADMIN_PW}"
+  "admin_password": "${KC_ADMIN_PW}",
+  "operator_client_secret": "$(derive_password "keycloak" "operatorClientSecret")"
 }
 EOF
 )"
