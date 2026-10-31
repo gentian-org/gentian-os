@@ -5,7 +5,9 @@
 A contribution is licensed under the license of the files it touches:
 MPL-2.0, or Apache-2.0 under `api/` and the other paths
 [LICENSING.md](LICENSING.md) lists. There is no contributor agreement to sign
-and no copyright to assign; you keep the copyright in what you write.
+and no copyright to assign; you keep the copyright in what you write. Sign
+off each commit with `git commit -s`, which states the
+[Developer Certificate of Origin](https://developercertificate.org/).
 
 ## New files
 
@@ -15,4 +17,6 @@ checks it. Other files need no header.
 
 ## Before a pull request
 
-`make verify` runs everything CI runs.
+`make verify` runs the main gates: generated files, lint, step validation
+and tests. CI runs more, including the job-script, portability and
+image-digest lints, `govulncheck` and the catalog conformance checks.

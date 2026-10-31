@@ -8,7 +8,7 @@ empty git repository, how to add it to a cluster or to one tenant, and what the 
 A catalog is an **https address that serves static files**: an index, and one file per app.
 
 ```
-https://<host>/<path>/index.yaml              what is in the catalogue
+https://<host>/<path>/index.yaml              what is in the catalog
 https://<host>/<path>/profiles/<name>.yaml    one app's bundle per file: its ComponentProfile,
                                               and what travels with it
 ```
@@ -175,7 +175,7 @@ Composition is held, its Component `Ready=False` with reason `CompositionRefused
 **A Composition composes only resource types the cluster has.** A cluster creates the Crossplane
 provider types listed in gentian-os's `crossplane/providers/activation.yaml` and no others, so a
 resource of a vault or Keycloak provider kind outside that list never appears and its app waits. The
-check that says so is `scripts/lint/lint-provider-activation.py --tree <your catalogue's sources>`
+check that says so is `scripts/lint/lint-provider-activation.py --tree <your catalog's sources>`
 from a gentian-os checkout; a type that is missing is added to that list, in gentian-os, before the
 bundle that needs it is published ([install-reference.md §4](install-reference.md)).
 
@@ -303,7 +303,7 @@ spec:
         relation: can_launch
 ```
 
-**Name your profiles `<tenant>-<name>` or `<organisation>-<name>`.** ComponentProfiles are
+**Name your profiles `<tenant>-<name>` or `<organization>-<name>`.** ComponentProfiles are
 cluster-scoped: one name is one profile for every tenant of a cluster. A profile from a tenant's own
 catalog is refused when its name is already taken by a profile from anywhere else (§7), so a name
 like `notes` will collide sooner or later and `acme-notes` will not.
@@ -895,7 +895,7 @@ kubectl gentian apps install acme-notes --tenant demo
 with `--from <catalogue>`. A catalog without an index is installed from with both stated:
 `--from acme --digest sha256:<hex>`.
 
-**Remove** a catalogue:
+**Remove** a catalog:
 
 ```bash
 kubectl gentian catalogues remove acme --tenant demo

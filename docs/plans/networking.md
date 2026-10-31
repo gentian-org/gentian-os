@@ -504,7 +504,7 @@ service. [mail.md](../design/mail.md) describes what is built.
   `system-mail-dmz`. AD-9 has no exception list; a system service with an
   internet protocol has a DMZ namespace instead. §9 is the design.
 - **Cross-tenant collaboration is federation or public links, never a
-  shared session.** That is correct, and it means the catalogue should say
+  shared session.** That is correct, and it means the catalog should say
   which apps federate (Nextcloud, Matrix) and which only share by link.
 - **The edge token carries no groups.** Platform decisions are answered
   from the membership projection in OpenFGA (AD-12), so the edge client's

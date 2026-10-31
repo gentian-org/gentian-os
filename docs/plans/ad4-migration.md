@@ -1,4 +1,4 @@
-# AD-4: one catalogue kind
+# AD-4: one catalog kind
 
 `ComponentProfile` replaces `AppProfile`. This file is the inventory and the
 order of work, written before any of it, because the migration crosses four
@@ -36,7 +36,7 @@ why the system-tier engines needed their admin Secrets found one at a time.
 | `kernelRequirements` | 16 | `requires` |
 | `appSecrets` | 13 | `secrets` |
 | `optionalIntegrations` | 12 | `integrations` |
-| `browserProxy` | 6 | **nowhere — retires with the catalogue sync** |
+| `browserProxy` | 6 | **nowhere — retires with the catalog sync** |
 | `security` | 5 | `requires.privileges` (`egress`, `podSecurity`) |
 | `sidecars` | 4 | `extensions` |
 | `provisioning` (incl. `syncJob`) | 3 | `provisioning` — the same type, already present |
@@ -175,7 +175,7 @@ the API package or as a CRD; `Tenant.spec.apps[].profile` names a
 `internal/controller/mac_waiver_reconciler.go`.
 
 1. `Tenant.spec.apps` resolves `AppProfile` only. Until a `ComponentProfile`
-   can be installed into a tenant by naming it there, the catalogue cannot
+   can be installed into a tenant by naming it there, the catalog cannot
    move. This is step 5 below.
 2. The component reconciler refuses any package that is not a chart (*"only
    package.chart is reconciled yet"*). It has no addon path and no API path.
@@ -196,7 +196,7 @@ the API package or as a CRD; `Tenant.spec.apps[].profile` names a
    mechanical are the egress and waiver readers from step 2:
    `netpolicy/build.go`, `netpolicy/internal.go`, `mac_waiver_reconciler.go`.
 5. **`Tenant.spec.apps[].profile` names a ComponentProfile.** Admission
-   already refuses a profile that is not in the catalogue, so the refusal moves
+   already refuses a profile that is not in the catalog, so the refusal moves
    with the kind.
 6. **Convert the 38 documents.** The converter does it and all 33 in
    `gentian-apps` pass the CRD's schema and its CEL rules; 145 review items
@@ -209,7 +209,7 @@ the API package or as a CRD; `Tenant.spec.apps[].profile` names a
 
 ## The instance: every installed app is a Component
 
-Done after the catalogue moved. `Tenant.spec.apps` is what git declares; the
+Done after the catalog moved. `Tenant.spec.apps` is what git declares; the
 tenant reconciler makes each entry, and each addon activated inside one, a
 `Component` of class `app`, and removes it when the entry leaves. The
 Component is the unit everything hangs off: delivery, routes and the question

@@ -7,7 +7,7 @@ For environment mapping, promotion flows, and GitOps layout, see
 
 For tenant-admin app lifecycle commands, see:
 
-- ../../gentian-deployments/README.md
+- [deployment.md](deployment.md)
 
 ## CLI entry points
 
@@ -298,7 +298,7 @@ state, access, integrations, privileges, uninstall and purge.
 ```bash
 kubectl gentian apps list --tenant demo               # what the tenant has installed
 kubectl gentian apps list --tenant demo --available   # what the tenant's catalogues offer
-kubectl gentian apps install xwiki-ce --tenant demo   # the build the catalogue lists, pinned by digest
+kubectl gentian apps install xwiki-ce --tenant demo   # the build the catalog lists, pinned by digest
 kubectl gentian apps uninstall xwiki-ce --tenant demo
 ```
 
@@ -321,11 +321,11 @@ kubectl gentian catalogues add acme --oci ghcr.io/acme/catalogues/acme:1.0.0 --r
 kubectl gentian catalogues add ours --oci ghcr.io/ours/catalogue:1 --repository ours   # for every tenant, read with the cluster's repository ours
 kubectl gentian catalogues remove acme                 # the cluster's
 kubectl gentian catalogues remove acme --tenant demo
-kubectl gentian catalogues rename acme acme-apps       # the same catalogue under another name; what was installed from it follows
+kubectl gentian catalogues rename acme acme-apps       # the same catalog under another name; what was installed from it follows
 kubectl gentian catalogues rename acme acme-apps --tenant demo
 kubectl gentian tenants delegate-catalogues demo on    # demo's administrators may add their own
 kubectl gentian tenants delegate-catalogues demo off   # the same switch as: tenants set demo --admins-add-catalogues=true|false
-kubectl gentian catalogues residue                     # what the catalogue left on the cluster
+kubectl gentian catalogues residue                     # what the catalog left on the cluster
 kubectl gentian catalogues residue remove OIDCPackCatalog/xwiki-ce-oidc   # one object, name typed again
 ```
 
@@ -410,8 +410,8 @@ classes and the rules.
 Guides:
 
 - [custom-catalogues.md](custom-catalogues.md) — publish your own apps to a cluster or a tenant
-- [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) — build new apps
-- [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) — publish upstream charts
+- [gentian-apps/docs/custom-app-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/custom-app-guide.md) — build new apps
+- [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) — publish upstream charts
 
 Show all available `kubectl gentian` subcommands:
 
@@ -440,13 +440,13 @@ administrator usually does this from the App Store app; the CLI does the same:
 ```bash
 kubectl gentian apps list --tenant demo                              # what the tenant has installed
 kubectl gentian apps list --tenant demo --available                  # what the tenant's catalogues offer
-kubectl gentian apps install xwiki-ce --tenant demo                  # the build the catalogue lists
+kubectl gentian apps install xwiki-ce --tenant demo                  # the build the catalog lists
 kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several catalogues serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
-kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalogue, and why they stay
+kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalog, and why they stay
 kubectl gentian apps move-outdated [--tenant demo] [--app xwiki-ce]   # move them to the newest build, retry rolled-back moves (cluster administrator)
 kubectl gentian apps update-mode xwiki-ce --tenant demo --mode tenant # who moves this app: latest | manual | tenant | default
 ```
@@ -884,7 +884,7 @@ kubectl gentian settings set logForwarding.destination.endpoint=https://evidence
 The director holds the list of what may be set and refuses anything else, and
 refuses `tenancyMode=single` on a cluster carrying more than the one user
 tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the
-tenants' addresses ([§3](#3-create-a-tenant)); nothing else here restarts
+tenants' addresses ([§3](#3-provision-a-tenant)); nothing else here restarts
 anything.
 
 One setting is the installer's rather than the operator's:
@@ -1094,7 +1094,7 @@ kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}
 ```
 
 An app whose client the operator renders with its release (Odoo, for one)
-needs no pack entry. See [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8.
+needs no pack entry. See [app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §8.
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 

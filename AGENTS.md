@@ -47,7 +47,7 @@ L1 drop-ins are reconciled by `internal/controller/dropin_reconciler.go`.
 * **Never commit secrets.** `MASTER_PASSWORD`, SMTP credentials, and all derived kernel/app
   passwords are runtime-injected (OpenBao + External Secrets Operator) — never hardcoded or
   committed, including in `install.secrets.env`-style files.
-* **Respect third-party license terms.** `charts/infra/*` and `activepieces/*`-style vendored
+* **Respect third-party license terms.** `charts/infra/*` and other vendored
   charts carry their own upstream licenses (see each chart's `UPSTREAM.md`) — don't strip
   attribution or relicense vendored code. Check license compatibility before adding new
   dependencies.

@@ -30,7 +30,7 @@ The current target. The sections below give the detail and the reasons.
 | **Desktop** (§1) | on the cluster, per tenant | everyone | the tiles the signed-in person may open | opens them. Nothing else: no install, uninstall, add-on, access, repository or store logic |
 | **Admin console** (§2) | on the cluster, per tenant | administrators | people and groups, policies, resources, credentials, and under **Apps** every installed app: its state, who has access and whether it is for everyone, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalogue |
 | **App Store app** (§3) | on the cluster, per tenant; absent when the usage statistics report is off or no store is named | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. After a sign-in to the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
-| **The store** | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalogue to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
+| **The store** | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalog to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
 | **Operations Console** | on the cluster, where installed | whoever looks after the cluster | an add-on's own screens ([sovereignty-concept.md](sovereignty-concept.md) §5) | what the add-on does; it is not part of the OS and not changed by this document |
 | **Command line** | the administrator's machine | administrators | — | `kubectl gentian apps install …` through the director. With no store it is the only way to install an app |
 
@@ -65,7 +65,7 @@ director like any caller. It sends the store none of it.
 **Changed 2026-10-06.** This document used to describe the App Store as a
 service outside the cluster with its own interface, shown in a window on the
 desktop and asking the desktop to install through a message bridge, and the
-console as carrying a catalogue view of the cluster's own sources. Both are
+console as carrying a catalog view of the cluster's own sources. Both are
 withdrawn (AD-3, AD-14). What is outside the cluster is the store's data;
 its interface is the App Store app on the cluster; the desktop relays tiles
 and nothing else; installed apps are administered in the console's Apps
@@ -285,7 +285,7 @@ ships.
   the repository's credential through the custodian. Both ask of it what
   they ask of every other caller. Like every UI here it carries no
   authority: no ServiceAccount with write verbs, no credential of its own.
-- **It shows the catalogue at once.** Browsing needs no store account: the
+- **It shows the catalog at once.** Browsing needs no store account: the
   store's catalogue reads take no token, and the app makes them anonymously.
   An anonymous read tells the store only the address the request comes
   from; the app sends no cluster or tenant identifier with it.
@@ -295,7 +295,7 @@ ships.
   own realm, with no secret and no sign-in flow, carrying the person's
   pairwise subject only. The person registers with the store once, by
   linking their account there through their own realm. Whether the store
-  serves the tenant is learned at that call, not before; the catalogue is
+  serves the tenant is learned at that call, not before; the catalog is
   readable either way.
 - **Not an entitlement issuer, and neither is the store.** The store decides
   nothing for the cluster and the cluster does no license gating (AD-3).
@@ -356,7 +356,7 @@ director:
   1. verify the token (kernel or tenant realm, JWKS)
   2. OpenFGA Check: user can_install_app tenant:{t}        the only question asked
      (and can_grant, when the install is for everyone)
-  3. fetch the profile bundle A from the catalogue source, check it hashes
+  3. fetch the profile bundle A from the catalog source, check it hashes
      to the digest in the request; refuse and write nothing if it does not
   4. commit ComponentProfile A to the cluster's catalogue directory
      (the only profiles the cluster holds are the installed ones)
@@ -376,7 +376,7 @@ from its caller, then anyone who can call install could inject an arbitrary
 chart repository, image, requirement or privilege into a tenant — the store
 would be a supply-chain hole regardless of how well it authenticates. The
 request carries `(coordinate, digest)`, the director fetches the bundle from
-the catalogue source the Cluster claim names and verifies the digest. The
+the catalog source the Cluster claim names and verifies the digest. The
 technical spec never crosses the store boundary in either direction. The
 digest is not signed; it does not need to be, because it grants nothing — it
 only says which bytes, and the person stating it is the one already
@@ -400,9 +400,9 @@ vault. The deployments repository stays public-capable; whether it is
 private is decided by whether the *facts* in it (tenant names, plans,
 installs) are sensitive, never by the need to hold a secret.
 
-"Added to the catalogue" then means step 4: a `ComponentProfile` CR appears
+"Added to the catalog" then means step 4: a `ComponentProfile` CR appears
 in the cluster for this app at this digest, because a tenant installed it —
-not because a catalogue was synced. The `catalogue-<repo>` ApplicationSet
+not because a catalog was synced. The `catalogue-<repo>` ApplicationSet
 that synced every profile of a repository to the cluster is retired (AD-14;
 operator-split-plan.md §4.1).
 

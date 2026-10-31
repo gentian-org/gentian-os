@@ -4,7 +4,8 @@ People who already have an account in one realm — another tenant of this
 cluster, or a tenant of another cluster — sign in to a second realm with that
 account, and get rights there according to where they come from. Keycloak
 does all of it; this page is the configuration, done in Keycloak's
-administration console. Nothing of it is declared in git.
+administration console, except between two tenants of one cluster, which is
+[declared in git](#both-on-this-cluster-declared-in-git).
 
 Two realms take part:
 

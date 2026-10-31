@@ -85,7 +85,7 @@ reviewer can find, never an absence. East-west: mTLS once workloads have
 identity. The same identity object is what all three layers reason about.
 
 *Today:* default-deny holds in tenant namespaces and at L7. The kernel,
-system and shared namespaces have ingress policies that ship off and no
+system and shared namespaces have ingress policies, on by default, and no
 egress policy, and there is no mTLS. Both are tracked as C12 and C7 in
 [plans/certification.md](plans/certification.md).
 

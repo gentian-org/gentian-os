@@ -28,8 +28,8 @@ two of the five. The other three need a separate answer.
 **Status.** The schema, the two shipped profiles and the app template are
 aligned with everything below, and the rules are covered by
 `TestComponentProfileRules`. The reconciler behind the package shapes —
-chart, addon, API — and the catalogue conversion have landed since this was
-written: `AppProfile` is deleted, the catalogue is `ComponentProfile`
+chart, addon, API — and the catalog conversion have landed since this was
+written: `AppProfile` is deleted, the catalog is `ComponentProfile`
 throughout, and every installed app is a `Component`
 ([ad4-migration.md](ad4-migration.md)). §12 and §13 are kept as the record
 of what changed and in which order.
@@ -57,7 +57,7 @@ rules cannot read labels or annotations; only `name` and `generateName` are
 exposed on metadata. In the spec, "shared requires platform tier" is a schema
 invariant that fails at write time whoever is writing.
 
-**No presentation fields beyond the tile.** A catalogue listing is reference
+**No presentation fields beyond the tile.** A catalog listing is reference
 data outside the cluster (AD-3). The exception is the tile on an exposure,
 because the desktop must show what the cluster routes without asking a service
 outside it (§8.1).
@@ -138,8 +138,8 @@ rather than a workload"*.
 
 Delivery `api` does not mean external: a profile may be delivery `api` and
 point at a Service inside the cluster. The axis is whether the platform runs
-it. (The catalogue's one example of that, a console profile for the model
-gateway, has left the catalogue: the gateway is a kernel service and its
+it. (The catalog's one example of that, a console profile for the model
+gateway, has left the catalog: the gateway is a kernel service and its
 console the platform administrators'.)
 
 ### Axis 3 — trustTier: how far it was reviewed
@@ -151,7 +151,7 @@ does `forwardToken`. Unchanged.
 
 ## 3. `addon` is a package type
 
-An addon is a catalogue entry that is not deployed. It flips a switch inside
+An addon is a catalog entry that is not deployed. It flips a switch inside
 another component's addon system: an Odoo module name, a Nextcloud app id, an
 Activepieces piece name. That is the statement `api` makes — this entry is not
 run here — so it belongs in the same field.
@@ -509,7 +509,7 @@ a component you have no relationship with. Cross-namespace routing uses the
 ReferenceGrant mechanism the reconciler already writes for the edge namespace.
 
 **A tile lives on the exposure**, because a tile is a link to one host and one
-path and the exposure decides those. The operator projects the catalogue from
+path and the exposure decides those. The operator projects the catalog from
 the routes it composes, so a tile and what it points at cannot disagree. Each
 tile carries a `relation` and an `object`, so nobody is shown a tile they may
 not open.
@@ -868,7 +868,7 @@ what `app-default` still renders ([ad4-migration.md](ad4-migration.md)).
 
 1. `Tenant.spec.apps` resolves `AppProfile` only, at every site that reads it.
    Until a `ComponentProfile` can be installed into a tenant by naming it
-   there, the catalogue cannot move.
+   there, the catalog cannot move.
 2. The component reconciler refuses any package that is not a chart
    (*"only package.chart is reconciled yet"*). It has no addon path and no API
    path.

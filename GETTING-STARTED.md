@@ -813,7 +813,7 @@ On a single-tenancy cluster the tenant is `user`: read `--tenant user` for
 
 ```bash
 kubectl gentian apps list --tenant acme --available           # what the tenant's catalogues offer
-kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the catalogue lists, pinned by digest
+kubectl gentian apps install nextcloud-base-ce --tenant acme  # the build the catalog lists, pinned by digest
 kubectl gentian apps list --tenant acme                       # what the tenant has
 ```
 
@@ -875,7 +875,7 @@ differs is listed here, in the order you meet it.
 1. **Point the install at the private repository.** In `install.env`:
 
    ```bash
-   GENTIAN_DEPLOYMENTS_REPO=https://github.com/<organisation>/<deployments-repository>
+   GENTIAN_DEPLOYMENTS_REPO=https://github.com/<organization>/<deployments-repository>
    GENTIAN_DEPLOYMENTS_BRANCH=main
    GENTIAN_DEPLOYMENTS_AUTH=basic          # the default: a user name and a token
    GENTIAN_DEPLOYMENTS_CLUSTER_ID=<the directory under clusters/>
@@ -923,15 +923,15 @@ differs is listed here, in the order you meet it.
      can be published as static files. Check it from outside:
 
      ```bash
-     curl -sI https://<catalogue address>/index.yaml | head -1                 # 200
-     curl -sI https://<catalogue address>/profiles/<profile>.yaml | head -1    # 200
+     curl -sI https://<catalog address>/index.yaml | head -1                 # 200
+     curl -sI https://<catalog address>/profiles/<profile>.yaml | head -1    # 200
      ```
 4. **Add the catalog for that tenant only**, so no other tenant sees it,
    signed in as the platform admin:
 
    ```bash
    kubectl gentian catalogues add <name> --oci <host>/<path>:<tag> --repository <repository> --tenant <tenant>   # an artifact
-   kubectl gentian catalogues add <name> https://<catalogue address> --tenant <tenant>                         # or an address
+   kubectl gentian catalogues add <name> https://<catalog address> --tenant <tenant>                         # or an address
    kubectl gentian apps list --tenant <tenant> --available
    ```
 

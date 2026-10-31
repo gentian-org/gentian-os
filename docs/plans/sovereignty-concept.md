@@ -10,7 +10,7 @@ without asking the platform's permission and without depending on anyone's
 tooling to read what they took.
 
 Anyone may build on Gentian OS, and a vendor may sell add-ons and services on
-top of it. An add-on is not part of this repository: it comes from a catalogue
+top of it. An add-on is not part of this repository: it comes from a catalog
 under its own license and brings its own packaging (§5). Nothing in this
 document depends on one.
 
@@ -45,7 +45,7 @@ it. Where a commitment is about something not yet built, the table above says
 so.
 
 The commitments cover the whole open platform, not this repository alone:
-the desktop and the Admin Console (gentian-ui) and the catalogue of
+the desktop and the Admin Console (gentian-ui) and the catalog of
 open-source app profiles (gentian-apps) with it. An app in that catalogue
 keeps the license of the project it comes from.
 
@@ -94,7 +94,7 @@ nothing is promised beyond what §7 says of schema 1.
   cluster that has turned its usage statistics report off has no App Store app
   ([operations.md](../design/operations.md) §6.2); nothing else changes.
 - **Software the OS installs that is not the project's.** The system services
-  and the catalogue's apps keep their own licenses
+  and the catalog's apps keep their own licenses
   ([LICENSING.md](../../LICENSING.md)).
 
 ## 1. The one object: the bundle
@@ -146,7 +146,7 @@ A bundle is readable with [age](https://age-encryption.org) and a tar tool.
 alive; the one dependency a bundle keeps is on the **catalogue entries** it
 names — an import needs the profiles at the pinned digests, or newer ones that
 declare a migration from them. That dependency is stated in the manifest
-rather than hidden, and it is the catalogue's job (AD-3, AD-14) to serve old
+rather than hidden, and it is the catalog's job (AD-3, AD-14) to serve old
 digests for as long as a supported version can import them.
 
 ### 1.3 Three containers, one bundle
@@ -231,7 +231,7 @@ OS primitives through the director like any other client (§5).
 - **Mail.** The tenant's domain is a store like any other: Maildirs, sieve,
   DKIM key. Captured by a `mail` unit; destroyed by purge.
 - **Digests.** The manifest pins each profile's content digest, so an import
-  can refuse a catalogue that no longer serves what the data was written by.
+  can refuse a catalog that no longer serves what the data was written by.
 - **Layout.** Per-app directories, so a bundle is readable by a person and so
   §6's canonical forms have a home beside the raw stores.
 
@@ -347,7 +347,7 @@ console on a cluster without the service is told the platform owes it
 something, and the install waits until the administrator provides it. No new
 mechanism; a service that happens to carry CRDs is still a service.
 
-What is new is that a catalogue entry extends the Kubernetes API. That is a
+What is new is that a catalog entry extends the Kubernetes API. That is a
 privilege, and it goes through the one approval path privileges have
 ([target-component-structure.md](target-component-structure.md) §4.3). This
 privilege kind is designed and not built.
@@ -413,7 +413,7 @@ A default install proposes a store and one add-on. Both arrive through
 surfaces the OS already has, and the OS installs and runs without them.
 
 - **The store.** Step 0's scaffold of the Cluster claim sets
-  `catalogue.storeUrl` and lists one catalogue source. The App Store app is a
+  `catalogue.storeUrl` and lists one catalog source. The App Store app is a
   platform UI on the cluster that shows the store's data and installs through
   the director (AD-3). Every tenant can install from the source; nothing the
   store says decides what a tenant may install, and the cluster does no
