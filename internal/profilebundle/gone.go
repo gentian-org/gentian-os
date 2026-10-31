@@ -26,6 +26,9 @@ import (
 // applies the catalog directory begins with (kernel/appsets/raw/11b-catalogue.yaml).
 const CatalogueApplicationPrefix = "gentian-catalogue-"
 
+// syncStatusUnknown is an Application whose comparison with git failed.
+const syncStatusUnknown = "Unknown"
+
 // ApplicationGVK is Argo CD's Application.
 var ApplicationGVK = runtimeschema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"}
 
@@ -36,8 +39,8 @@ var ApplicationGVK = runtimeschema.GroupVersionKind{Group: "argoproj.io", Versio
 // by the installer -- is still an object, and still says whatever it said
 // about where it is placed.
 //
-// An error when no such Application can be read: then nothing is known to
-// be gone.
+// An error when no such Application can be read, or one could not compare
+// the directory: then nothing is known to be gone.
 func GoneFromCatalogue(ctx context.Context, reader client.Reader, namespace string) (map[string]bool, error) {
 	apps := &unstructured.UnstructuredList{}
 	apps.SetGroupVersionKind(ApplicationGVK.GroupVersion().WithKind("ApplicationList"))
@@ -50,6 +53,11 @@ func GoneFromCatalogue(ctx context.Context, reader client.Reader, namespace stri
 			continue
 		}
 		seen = true
+		// A comparison that failed marks everything it could not compare as
+		// requiring pruning: Argo CD could not read git, not "these left it".
+		if status, _, _ := unstructured.NestedString(apps.Items[i].Object, "status", "sync", "status"); status == syncStatusUnknown {
+			return nil, fmt.Errorf("the comparison of Argo CD Application %s with the catalog directory failed", apps.Items[i].GetName())
+		}
 		for name := range PrunableProfiles(&apps.Items[i]) {
 			gone[name] = true
 		}
