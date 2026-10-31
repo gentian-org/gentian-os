@@ -153,11 +153,21 @@ spec:
             {{- /* No credential means nothing to wait for, so the artefacts below are
                  emitted immediately rather than never. */}}
             {{- $satisfied := not $hasCred }}
+            {{- $delivered := $satisfied }}
             {{- range $probes }}
               {{- range (dig "status" "conditions" list .) }}
                 {{- if and (eq .type "Ready") (eq .status "True") }}
                   {{- $satisfied = true }}
+                  {{- $delivered = true }}
                 {{- end }}
+              {{- end }}
+              {{- /* A probe that has read the credential once has a refreshTime, and
+                   keeps it through a failed read. What was delivered stays: a vault
+                   or an API that cannot be reached says nothing about the credential,
+                   and taking its Secrets away locks the cluster out of its own
+                   repository. A requirement that was never met delivers nothing. */}}
+              {{- if dig "status" "refreshTime" "" . }}
+                {{- $delivered = true }}
               {{- end }}
             {{- end }}
 
@@ -290,6 +300,15 @@ spec:
                 - credprobe-{{ $claimName }}
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
+              {{- else if $delivered }}
+              credentialMessage: >-
+                {{ $cred.vaultPath }} cannot be read now; what was delivered from it
+                stays until it can.
+              artefacts:
+                - credreq-{{ $claimName }}
+                - credprobe-{{ $claimName }}
+                - argocd-repo-{{ $name }}
+                - appproject-source-{{ $name }}
               {{- else }}
               credentialMessage: >-
                 requirement repository-{{ $claimName }} is unsatisfied: no value at
@@ -300,7 +319,7 @@ spec:
                 - credprobe-{{ $claimName }}
               {{- end }}
 
-            {{- if $satisfied }}
+            {{- if $delivered }}
 
             ---
             # ArgoCD reads repository credentials from Secrets carrying this

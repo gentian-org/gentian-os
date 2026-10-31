@@ -23,7 +23,10 @@
 
 check() {
     local addr token
-    addr="$(gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https 2>/dev/null)" || return 1
+    addr="$(gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https 2>/dev/null)" || {
+        warn "The vault could not be reached, so whether it is seeded is not known."
+        return "${CHECK_MISSING}"
+    }
     token="$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" 2>/dev/null)" || true
     if [[ -z "${token}" ]]; then
         # Revoked at handover, with the init file: nothing here can read the
