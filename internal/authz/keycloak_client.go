@@ -24,6 +24,7 @@ import (
 	"time"
 )
 
+const keycloakAdminCLI = "admin-cli"
 const keycloakAdminPageSize = 200
 
 type keycloakUserRecord struct {
@@ -83,8 +84,8 @@ type KeycloakUser struct {
 // KeycloakAdminClient calls the Keycloak Admin REST API.
 type KeycloakAdminClient struct {
 	baseURL    string
-	clientID   string
-	secret     string
+	username   string
+	password   string
 	httpClient *http.Client
 
 	mu          sync.Mutex
@@ -92,11 +93,11 @@ type KeycloakAdminClient struct {
 	tokenExpiry time.Time
 }
 
-func NewKeycloakAdminClient(baseURL, clientID, clientSecret string) *KeycloakAdminClient {
+func NewKeycloakAdminClient(baseURL, username, password string) *KeycloakAdminClient {
 	return &KeycloakAdminClient{
 		baseURL:  strings.TrimRight(baseURL, "/"),
-		clientID: clientID,
-		secret:   clientSecret,
+		username: username,
+		password: password,
 		httpClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 		},
@@ -599,9 +600,10 @@ func (c *KeycloakAdminClient) adminToken(ctx context.Context) (string, error) {
 		return c.token, nil
 	}
 	form := url.Values{}
-	form.Set("client_id", c.clientID)
-	form.Set("client_secret", c.secret)
-	form.Set("grant_type", "client_credentials")
+	form.Set("client_id", keycloakAdminCLI)
+	form.Set("username", c.username)
+	form.Set("password", c.password)
+	form.Set("grant_type", "password")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/realms/master/protocol/openid-connect/token",
 		strings.NewReader(form.Encode()))

@@ -350,7 +350,7 @@ func databaseSecretTemplate(host, port, database, username, password string) map
 		"database":     database,
 		"username":     username,
 		"password":     password,
-		"DATABASE_URL": "postgresql+psycopg://" + username + ":" + password + "@" + host + ":" + port + "/" + database + "?sslmode=require",
+		"DATABASE_URL": "postgresql+psycopg://" + username + ":" + password + "@" + host + ":" + port + "/" + database,
 	}
 }
 

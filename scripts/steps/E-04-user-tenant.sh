@@ -33,7 +33,7 @@
 # It needs nothing the handover took away. E-03 revokes the installer's
 # OpenBao token and deletes the init file; this step reads the cluster and
 # asks Argo CD through the kubeconfig, and reaches Keycloak with the
-# keycloak-idp-credentials Secret the same kubeconfig can read -- the credential
+# keycloak-admin Secret the same kubeconfig can read -- the credential
 # ./install.sh --activate-admin uses on any cluster after its handover.
 #
 # No destroy(): the tenant is removed with every other by E-01's.

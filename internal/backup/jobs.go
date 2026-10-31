@@ -518,9 +518,10 @@ const realmScriptPrelude = keycloak.ProvisionerBootstrap + `set -eu
 new_token() {
   TOKEN=$(curl -sS --max-time 30 -X POST \
     "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-    --data-urlencode "client_id=${KEYCLOAK_CLIENT_ID}" \
-    --data-urlencode "client_secret=${KEYCLOAK_CLIENT_SECRET}" \
-    --data-urlencode "grant_type=client_credentials" | jq -r '.access_token // empty')
+    --data-urlencode "client_id=admin-cli" \
+    --data-urlencode "username=${KEYCLOAK_ADMIN_USERNAME}" \
+    --data-urlencode "password=${KEYCLOAK_ADMIN_PASSWORD}" \
+    --data-urlencode "grant_type=password" | jq -r '.access_token // empty')
   [ -n "${TOKEN}" ] || { echo "ERROR: the identity provider gave no administrator token" >&2; exit 1; }
 }
 # kc METHOD URL [FILE]: the answer's body, or an error that says what was refused.
@@ -814,10 +815,6 @@ func PlatformStorageEnv() []corev1.EnvVar {
 	return storageEnv(StorageAdminSecret)
 }
 
-// PostgresTLS makes a psql, pg_dump or pg_restore client refuse an unencrypted
-// connection.
-var PostgresTLS = corev1.EnvVar{Name: "PGSSLMODE", Value: "require"}
-
 // PostgresAdminEnv, MariaDBAdminEnv and CacheAdminEnv are how a Job reaches
 // a shared store as its administrator: the store's admin Secret, in the
 // store's own namespace. Provisioning, capture, restore and destruction all
@@ -828,15 +825,14 @@ func PostgresAdminEnv() []corev1.EnvVar {
 		meta.SecretEnv("PGPORT", PostgresAdminSecret, "port"),
 		meta.SecretEnv("PGUSER", PostgresAdminSecret, "username"),
 		meta.SecretEnv("PGPASSWORD", PostgresAdminSecret, "password"),
-		PostgresTLS,
 	}
 }
 
 func keycloakAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("KEYCLOAK_URL", KeycloakAdminSecret, "url"),
-		meta.SecretEnv("KEYCLOAK_CLIENT_ID", KeycloakAdminSecret, "client_id"),
-		meta.SecretEnv("KEYCLOAK_CLIENT_SECRET", KeycloakAdminSecret, "client_secret"),
+		meta.SecretEnv("KEYCLOAK_ADMIN_USERNAME", KeycloakAdminSecret, "username"),
+		meta.SecretEnv("KEYCLOAK_ADMIN_PASSWORD", KeycloakAdminSecret, "password"),
 	}
 }
 

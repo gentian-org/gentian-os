@@ -26,8 +26,6 @@ tuples:
   # --- cluster roles, from the Cluster claim: admin and break_glass by group (spec.platformRoles)
   - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
   - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
-  # and a person, for a stated time (spec.platformAccess.roleHolders)
-  - {user: user:gentian/bea-held,                           relation: break_glass,       object: cluster:main}
   # and the role holders it names (spec.platformAccess.roleHolders), each the account of its realm:
   # people of the platform tenant (realm kernel), and administrators of a tenant
   - {user: user:kernel/sam,    relation: security_officer,   object: cluster:main}

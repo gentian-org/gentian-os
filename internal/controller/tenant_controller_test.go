@@ -389,8 +389,8 @@ func TestMain(m *testing.M) {
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
 		Data: map[string][]byte{
 			"url":      []byte(fakeKC.URL),
-			"client_id": []byte("kcadmin"),
-			"client_secret": []byte("test-kc-password"),
+			"username": []byte("kcadmin"),
+			"password": []byte("test-kc-password"),
 		},
 	}); err != nil {
 		panic(err)

@@ -49,7 +49,7 @@ case "${all}" in
         [[ "${PINNED:-}" == "none" ]] && exit 1
         case "${all}" in
             *"image.tag"*)             printf '%s' "${PINNED:-}" ;;
-            *"kernelNetworkPolicies"*) printf 'true' ;;
+            *"kernelNetworkPolicies"*) printf 'false' ;;
             *"sync.status"*)           printf 'Synced Healthy' ;;
         esac ;;
     # The monitoring Application exists only where the claim switches it

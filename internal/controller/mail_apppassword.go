@@ -141,20 +141,21 @@ func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token s
 	if base, err = r.secretValue(ctx, keycloakAdminSecret, ns, "url"); err != nil {
 		return "", "", err
 	}
-	user, err := r.secretValue(ctx, keycloakAdminSecret, ns, "client_id")
+	user, err := r.secretValue(ctx, keycloakAdminSecret, ns, "username")
 	if err != nil {
 		return "", "", err
 	}
-	pass, err := r.secretValue(ctx, keycloakAdminSecret, ns, "client_secret")
+	pass, err := r.secretValue(ctx, keycloakAdminSecret, ns, "password")
 	if err != nil {
 		return "", "", err
 	}
 	base = strings.TrimSuffix(base, "/")
 
 	form := url.Values{
-		"client_id":     {user},
-		"client_secret": {pass},
-		"grant_type":    {"client_credentials"},
+		"client_id":  {"admin-cli"},
+		"username":   {user},
+		"password":   {pass},
+		"grant_type": {"password"},
 	}
 	// NewRequestWithContext, not http.PostForm: PostForm takes no context, so
 	// this call could not be canceled when the reconcile was.

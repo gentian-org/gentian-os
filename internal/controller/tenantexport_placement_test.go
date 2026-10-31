@@ -49,7 +49,7 @@ func adminSecrets() []adminSecret {
 		{backup.MariaDBAdminSecret, mariadbNamespace, "kernel/services/infra-mariadb/manifests/templates/externalsecret.yaml",
 			map[string]string{"host": "maria", "port": "3306", "username": "root", "password": "MARIA-ADMIN-PASSWORD"}},
 		{backup.KeycloakAdminSecret, identityNamespace, "kernel/services/keycloak-idp/manifests/templates/externalsecret-admin.yaml",
-			map[string]string{"url": "http://keycloak", "client_id": "gentian-operator", "client_secret": "KC-ADMIN-PASSWORD", "password": "KC-ADMIN-PASSWORD"}},
+			map[string]string{"url": "http://keycloak", "username": "admin", "password": "KC-ADMIN-PASSWORD"}},
 		{backup.StorageAdminSecret, s3Namespace, "kernel/services/infra-seaweedfs/manifests/templates/externalsecret.yaml",
 			map[string]string{"endpoint": "http://s3:9000", "master": "seaweedfs-all-in-one:9333", "accessKey": "s3-admin", "secretKey": "S3-ADMIN-SECRET"}},
 	}

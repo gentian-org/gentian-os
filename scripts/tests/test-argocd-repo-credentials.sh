@@ -82,8 +82,7 @@ case "${verb}:${kind}" in
     get:crd|get:deployment|get:configmap|get:clusterrolebinding)
         [[ "${ARGOCD_INSTALLED:-0}" == "1" ]] || exit 1
         case "${jsonpath}" in
-            *server*insecure*) printf 'false' ;;
-            *diff*server*side*) printf 'true' ;;
+            *server*insecure*|*diff*server*side*) printf 'true' ;;
             *subjects*) printf '%s' "${GITOPS_NS}" ;;
             # The versions check() compares with the pins: an installed Argo
             # CD at the pinned manifest, the updater at the pinned chart.

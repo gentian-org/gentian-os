@@ -37,7 +37,7 @@ func TestARoleHolderIsDeclaredOnTheClaimByTheClustersAdministrator(t *testing.T)
 	if list, _ := body["roleHolders"].([]any); len(list) != 0 {
 		t.Fatalf("holders before anybody was named: %v", list)
 	}
-	if roles, _ := body["roles"].([]any); fmt.Sprint(roles) != "[auditor breakGlass perimeterApprover securityOfficer serviceAdmin sharedAppsAdmin tenantAuditor]" {
+	if roles, _ := body["roles"].([]any); fmt.Sprint(roles) != "[auditor perimeterApprover securityOfficer serviceAdmin sharedAppsAdmin tenantAuditor]" {
 		t.Fatalf("the roles a holder may hold: %v", body["roles"])
 	}
 

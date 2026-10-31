@@ -125,12 +125,6 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 
-	if r.kernelZoneReady(ctx) {
-		if err := r.ensureArgoCDBackendTLS(ctx); err != nil {
-			return fmt.Errorf("ensure Argo CD backend TLS: %w", err)
-		}
-	}
-
 	door := kernelFrontDoorOf(tenantList.Items, r.KernelDomain, r.kernelRealm(), r.TenancyMode)
 	if door.userDesktop != "" {
 		if door.website, err = r.mainAddressWebsiteServing(ctx, tenantList.Items); err != nil {
@@ -566,7 +560,7 @@ func kernelHTTPRouteSpecs(
 			host:        fmt.Sprintf("argocd.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, argocdServerHTTPSPort,
+				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80,
 					kernelConsoleFrameFilters(kernelDomain)...),
 			},
 			authz: &routeAuthz{relation: "can_configure", object: clusterObject},

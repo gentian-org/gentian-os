@@ -2082,8 +2082,8 @@ spec:
                  forProvider and enforced from there either. */}}
             {{- $groupNames := list
                   (dict "name" (printf "gentian:tenant:%s:members" $tenant) "attributes" (dict))
-                  (dict "name" (printf "gentian:tenant:%s:admins" $tenant) "attributes" (dict "gentianPartnerRole" "tenant-admin" "gentianRequiresMFA" "true"))
-                  (dict "name" (printf "gentian:tenant:%s:platform-admins" $tenant) "attributes" (dict "gentianPartnerRole" "cluster-admin" "gentianRequiresMFA" "true"))
+                  (dict "name" (printf "gentian:tenant:%s:admins" $tenant) "attributes" (dict "gentianPartnerRole" "tenant-admin"))
+                  (dict "name" (printf "gentian:tenant:%s:platform-admins" $tenant) "attributes" (dict "gentianPartnerRole" "cluster-admin"))
                   (dict "name" (printf "gentian:tenant:%s:app-admins" $tenant) "attributes" (dict) "jobOwnsAttributes" true) }}
             {{- range $group := $groupNames }}
             {{- $g := $group.name }}
@@ -2145,105 +2145,6 @@ spec:
             {{- end }}
             {{- end }}
             {{- if not $adoptsKernelRealm }}
-
-            {{- /* ── the sign-in flow ──────────────────────────────────────────
-                 Keycloak's stock browser flow, with one rule added: a person in
-                 a group marked gentianRequiresMFA gives a second factor at every
-                 sign-in, and enrolls first if they have none. Enforced here and
-                 not per account, so it follows the group: whoever is put in it,
-                 by whatever path, meets it at their next sign-in. Everybody else
-                 is asked only if they set a second factor up. */}}
-            ---
-            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: Flow
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-browser-flow
-              name: {{ $tenant }}-browser-flow
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                alias: gentian-browser
-                description: The stock browser flow, with a second factor required of administrators
-                providerId: basic-flow
-              providerConfigRef:
-                name: keycloak
-            {{- range $e := (list
-                  (dict "id" "forms" "parent" "gentian-browser" "alias" "gentian-browser-forms" "requirement" "ALTERNATIVE" "priority" 30)
-                  (dict "id" "admin" "parent" "gentian-browser-forms" "alias" "gentian-browser-admin" "requirement" "CONDITIONAL" "priority" 20)
-                  (dict "id" "other" "parent" "gentian-browser-forms" "alias" "gentian-browser-other" "requirement" "CONDITIONAL" "priority" 30)
-               ) }}
-            ---
-            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: Subflow
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-browser-exec-{{ $e.id }}
-              name: {{ $tenant }}-browser-exec-{{ $e.id }}
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                parentFlowAlias: {{ $e.parent }}
-                alias: {{ $e.alias }}
-                providerId: basic-flow
-                requirement: {{ $e.requirement }}
-                priority: {{ $e.priority }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- range $e := (list
-                  (dict "id" "cookie" "parent" "gentian-browser" "authenticator" "auth-cookie" "requirement" "ALTERNATIVE" "priority" 10)
-                  (dict "id" "redirector" "parent" "gentian-browser" "authenticator" "identity-provider-redirector" "requirement" "ALTERNATIVE" "priority" 20)
-                  (dict "id" "password" "parent" "gentian-browser-forms" "authenticator" "auth-username-password-form" "requirement" "REQUIRED" "priority" 10)
-                  (dict "id" "admin-is" "parent" "gentian-browser-admin" "authenticator" "conditional-user-attribute" "requirement" "REQUIRED" "priority" 10 "not" "false")
-                  (dict "id" "admin-otp" "parent" "gentian-browser-admin" "authenticator" "auth-otp-form" "requirement" "REQUIRED" "priority" 20)
-                  (dict "id" "other-configured" "parent" "gentian-browser-other" "authenticator" "conditional-user-configured" "requirement" "REQUIRED" "priority" 10)
-                  (dict "id" "other-is-not" "parent" "gentian-browser-other" "authenticator" "conditional-user-attribute" "requirement" "REQUIRED" "priority" 20 "not" "true")
-                  (dict "id" "other-otp" "parent" "gentian-browser-other" "authenticator" "auth-otp-form" "requirement" "REQUIRED" "priority" 30)
-               ) }}
-            ---
-            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: Execution
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-browser-exec-{{ $e.id }}
-              name: {{ $tenant }}-browser-exec-{{ $e.id }}
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                parentFlowAlias: {{ $e.parent }}
-                authenticator: {{ $e.authenticator }}
-                requirement: {{ $e.requirement }}
-                priority: {{ $e.priority }}
-              providerConfigRef:
-                name: keycloak
-            {{- if hasKey $e "not" }}
-            ---
-            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
-            kind: ExecutionConfig
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-browser-config-{{ $e.id }}
-              name: {{ $tenant }}-browser-config-{{ $e.id }}
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                executionIdRef:
-                  name: {{ $tenant }}-browser-exec-{{ $e.id }}
-                alias: gentian-browser-{{ $e.id }}
-                config:
-                  attribute_name: gentianRequiresMFA
-                  attribute_expected_value: "true"
-                  include_group_attributes: "true"
-                  not: {{ $e.not | quote }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- end }}
 
             {{- /* ── the profile prompts a tenant user must not meet ───────────
                  A tenant user arrives through the kernel IdP with their profile
@@ -3565,12 +3466,12 @@ spec:
                 {{- $sec := $spec.security | default dict }}
                 {{- $pw := dig "password" dict $sec }}
                 {{- $pwParts := list }}
-                {{- if gt (int (dig "minLength" 12 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "length(%d)" (int (dig "minLength" 12 $pw))) }}{{- end }}
+                {{- if gt (int (dig "minLength" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "length(%d)" (int (dig "minLength" 0 $pw))) }}{{- end }}
                 {{- if dig "requireDigits" false $pw }}{{- $pwParts = append $pwParts "digits(1)" }}{{- end }}
                 {{- if dig "requireLowercase" false $pw }}{{- $pwParts = append $pwParts "lowerCase(1)" }}{{- end }}
                 {{- if dig "requireUppercase" false $pw }}{{- $pwParts = append $pwParts "upperCase(1)" }}{{- end }}
                 {{- if dig "requireSpecialChars" false $pw }}{{- $pwParts = append $pwParts "specialChars(1)" }}{{- end }}
-                {{- if gt (int (dig "historyCount" 5 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "passwordHistory(%d)" (int (dig "historyCount" 5 $pw))) }}{{- end }}
+                {{- if gt (int (dig "historyCount" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "passwordHistory(%d)" (int (dig "historyCount" 0 $pw))) }}{{- end }}
                 {{- if gt (int (dig "maxAgeDays" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "forceExpiredPasswordChange(%d)" (int (dig "maxAgeDays" 0 $pw))) }}{{- end }}
                 {{- /* Declared always, and empty when the tenant states no
                      password rules. Left off, the field is not left alone:
@@ -3708,10 +3609,7 @@ spec:
                      does it: Cookie first, then forms, with the
                      identity-provider-redirector inert without a default
                      provider. */}}
-                {{- /* The realm exists before a flow in it can, so it starts on
-                     the stock flow and moves once the last of the sign-in flow's
-                     steps has been observed. */}}
-                browserFlow: {{ ternary "gentian-browser" "browser" (not (empty (dig "keycloak-browser-exec-other-otp" "resource" "status" "atProvider" "id" "" $obsRes))) }}
+                browserFlow: browser
                 {{- /* The provider does not observe these: status.atProvider reports
                      securityDefenses as null while the realm plainly carries the
                      headers. So they cannot be confirmed by reading the resource

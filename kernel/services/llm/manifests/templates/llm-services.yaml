@@ -189,13 +189,11 @@ spec:
             secretKeyRef:
               name: llm-sensitive-values
               key: litellm_master_key
-        - name: DATABASE_URI
+        - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: litellm-db-app
               key: uri
-        - name: DATABASE_URL
-          value: $(DATABASE_URI)?sslmode=require
         # The models are the configuration file's, which is the claim's. Off,
         # the gateway loads none from its database and refuses to store one,
         # so a model cannot be added at its console or through its API and

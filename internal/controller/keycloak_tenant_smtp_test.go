@@ -122,7 +122,7 @@ exit 0
 	cmd := exec.Command("sh", "-c", buildTenantSMTPConfigureScript(`"demo"`))
 	cmd.Env = []string{
 		"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"KEYCLOAK_URL=http://keycloak.example.org", "KEYCLOAK_CLIENT_ID=admin", "KEYCLOAK_CLIENT_SECRET=x",
+		"KEYCLOAK_URL=http://keycloak.example.org", "KEYCLOAK_ADMIN_USERNAME=admin", "KEYCLOAK_ADMIN_PASSWORD=x",
 	}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)

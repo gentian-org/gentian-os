@@ -207,7 +207,7 @@ _v5_render() {
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
-        --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-true}" \
+        --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-false}" \
         --set-string "usageStatistics.enabled=$(gentian_usage_statistics_enabled)" \
         --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \

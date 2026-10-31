@@ -98,7 +98,9 @@ stored() { find "${TMP}/store" -type f | wc -l | tr -d ' '; }
 want="$(grep -c '^kind: NetworkPolicy$' kernel/security/network-policies/kernel-network-policies.yaml)"
 
 installer "" ns_kernel_policies_ok
-check "default (switch unset) on a cluster with none of the policies: the step has work to do" test $? -ne 0
+check "default (switch unset) on a cluster with none of the policies: nothing to do" test $? -eq 0
+installer "" ns_kernel_policies_sync
+check "default (switch unset): nothing is applied" test "$(stored)" = "0"
 installer "true" ns_kernel_policies_ok
 check "KERNEL_NETWORK_POLICIES=true on a cluster with none of the policies: the step has work to do" test $? -ne 0
 installer "true" ns_kernel_policies_sync
@@ -134,7 +136,7 @@ check "and the step is then satisfied" test $? -eq 0
 installer "true" ns_kernel_policies_sync
 check "KERNEL_NETWORK_POLICIES=true applies them again" test "$(stored)" = "$((want + 1))"
 installer "" ns_kernel_policies_sync
-check "and the switch unset keeps them, as true does" test "$(stored)" = "$((want + 1))"
+check "and the switch unset removes them, as false does" test "$(stored)" = "1"
 
 # The operator is told the same switch, through the bootstrap chart and its own.
 check "the operator is told the switch: off unless the installer passes true" \

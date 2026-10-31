@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/audit"
 	"os"
 	"regexp"
 	"slices"
@@ -172,9 +171,6 @@ func validHolder(h RoleHolder, now time.Time) error {
 		}
 		return fmt.Errorf("%w: %s held by a person of tenant %s has scope %s, not %q", ErrInvalidRoleHolder, h.Role, h.Tenant, derived, h.Scope)
 	}
-	if h.Role == "breakGlass" && h.ExpiresAt == "" {
-		return fmt.Errorf("%w: breakGlass has to end: expiresAt is missing", ErrInvalidRoleHolder)
-	}
 	if h.ExpiresAt != "" {
 		at, err := time.Parse(time.RFC3339, h.ExpiresAt)
 		if err != nil {
@@ -219,28 +215,11 @@ func (g *GitOps) SetRoleHolder(ctx context.Context, h RoleHolder, meta Meta) (Re
 		return Result{}, fmt.Errorf("%w: tenant %s has no realm of its own, so nobody of it can be named", ErrInvalidRoleHolder, h.Tenant)
 	}
 	message := fmt.Sprintf("feat(cluster): %s of tenant %s holds %s over %s (via %s)", h.Username, h.Tenant, h.Role, h.Scope, meta.actor())
-	res, err := g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
+	return g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
 		list = slices.DeleteFunc(list, func(e RoleHolder) bool {
 			return e.Role == h.Role && e.Tenant == h.Tenant && e.Subject == h.Subject
 		})
 		return append(list, h)
-	})
-	if err == nil && h.Role == "breakGlass" {
-		g.auditBreakGlass(ctx, "grant", h.Subject, h.ExpiresAt, meta)
-	}
-	return res, err
-}
-
-// auditBreakGlass records who gave or took emergency access, and whose it is.
-// The reason is in the claim's commit: a record carries no free text.
-func (g *GitOps) auditBreakGlass(ctx context.Context, action, subject, expiresAt string, meta Meta) {
-	detail := map[string]any{"holder": subject}
-	if expiresAt != "" {
-		detail["expires_at"] = expiresAt
-	}
-	audit.Write(ctx, g.auditLog, audit.Record{
-		Source: "director", Kind: audit.KindBreakGlass, RequestID: meta.RequestID,
-		Subject: meta.Subject, Object: "cluster", Action: action, Outcome: audit.OK, Detail: detail,
 	})
 }
 
@@ -251,15 +230,11 @@ func (g *GitOps) RemoveRoleHolder(ctx context.Context, role, tenant, subject str
 		return Result{}, err
 	}
 	message := fmt.Sprintf("feat(cluster): an account of tenant %s no longer holds %s (via %s)", tenant, role, meta.actor())
-	res, err := g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
+	return g.editRoleHolders(ctx, message, meta, func(list []RoleHolder) []RoleHolder {
 		return slices.DeleteFunc(list, func(e RoleHolder) bool {
 			return e.Role == role && e.Tenant == tenant && e.Subject == subject
 		})
 	})
-	if err == nil && role == "breakGlass" {
-		g.auditBreakGlass(ctx, "revoke", subject, "", meta)
-	}
-	return res, err
 }
 
 func (g *GitOps) editRoleHolders(ctx context.Context, message string, meta Meta, change func([]RoleHolder) []RoleHolder) (Result, error) {

@@ -44,7 +44,7 @@ mkdir -p "${SB}/bin" "${SB}/home"
 cat >"${SB}/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in
-    *"get secret keycloak-idp-credentials"*) printf 'eA==' ;;
+    *"get secret keycloak-admin"*) printf 'eA==' ;;
 esac
 exit 0
 STUB

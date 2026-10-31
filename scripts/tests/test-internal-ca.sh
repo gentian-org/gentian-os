@@ -234,8 +234,8 @@ check "the PKI engine is enabled at pki-internal with a ten-year maximum" \
     'grep -qx "secrets enable -path=pki-internal -max-lease-ttl=87600h -description=gentian-ca, the cluster'"'"'s internal CA pki" "${STATE}/bao-args.log"' "$(baoargs)"
 check "the CA is generated inside the vault: internal, EC P-256, ten years, no intermediates" \
     '[[ "$(baoargs)" == *"write pki-internal/root/generate/internal common_name=gentian-root-ca organization=gentian-os key_type=ec key_bits=256 ttl=87600h max_path_length=0"* && "$(baoargs)" != *"exported"* ]]' "$(baoargs)"
-check "the role admits exactly the object store's, Argo CD's and MariaDB's names" \
-    'grep -qx "allowed_domains=seaweedfs-server,seaweedfs-shell,seaweedfs-all-in-one,seaweedfs-all-in-one.system-s3,seaweedfs-all-in-one.system-s3.svc,seaweedfs-all-in-one.system-s3.svc.cluster.local,argocd-server.kernel-gitops.svc,argocd-server.kernel-gitops.svc.cluster.local,mariadb.system-mariadb.svc,mariadb.system-mariadb.svc.cluster.local" <<< "$(role)"' "$(role)"
+check "the role admits exactly the object store's names" \
+    'grep -qx "allowed_domains=seaweedfs-server,seaweedfs-shell,seaweedfs-all-in-one,seaweedfs-all-in-one.system-s3,seaweedfs-all-in-one.system-s3.svc,seaweedfs-all-in-one.system-s3.svc.cluster.local" <<< "$(role)"' "$(role)"
 check "and nothing beside them: no subdomains, wildcards, globs, localhost, IPs, URIs or any name" \
     '[[ "$(role)" == *"allow_subdomains=false"*"allow_wildcard_certificates=false"*"allow_glob_domains=false"*"allow_localhost=false"*"allow_any_name=false"*"allow_ip_sans=false"*"allowed_uri_sans="* ]]' "$(role)"
 check "EC P-256 keys only, at most 90 days" '[[ "$(role)" == *"key_type=ec"*"key_bits=256"*"max_ttl=2160h"* ]]' "$(role)"

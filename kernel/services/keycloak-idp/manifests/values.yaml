@@ -202,21 +202,8 @@ keycloakx:
         secretKeyRef:
           name: keycloak-idp-credentials
           key: admin-password
-    # The service account every automated caller uses: the operator, its Jobs
-    # and provider-keycloak. Keycloak creates it at first start. The admin
-    # account above is for the installer and for break-glass.
-    - name: KC_BOOTSTRAP_ADMIN_CLIENT_ID
-      value: gentian-operator
-    - name: KC_BOOTSTRAP_ADMIN_CLIENT_SECRET
-      valueFrom:
-        secretKeyRef:
-          name: keycloak-idp-credentials
-          key: operator-client-secret
     - name: KC_METRICS_ENABLED
       value: "false"
-    # The database connection is encrypted; CloudNativePG serves TLS.
-    - name: KC_DB_URL_PROPERTIES
-      value: "?sslmode=require"
     # Audit events (docs/design/audit-events.md §3.2): every line as JSON, so
     # a forwarder keeps fields rather than text, and the jboss-logging event
     # listener's success events at info, where they reach stdout at all. At

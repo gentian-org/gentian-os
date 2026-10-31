@@ -113,7 +113,7 @@ func newMailboxWorld(t *testing.T, objects ...client.Object) *mailboxWorld {
 	objects = append(objects,
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "tenant-demo"}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: keycloakAdminSecret, Namespace: identityNamespace},
-			Data: map[string][]byte{"url": []byte(kc.URL), "client_id": []byte("admin"), "client_secret": []byte("x")}})
+			Data: map[string][]byte{"url": []byte(kc.URL), "username": []byte("admin"), "password": []byte("x")}})
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
 		WithStatusSubresource(&gentianov1alpha1.MailboxRemoval{}).Build()
 	tr := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel", MailServiceMode: mailServiceModeSystem}

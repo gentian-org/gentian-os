@@ -178,7 +178,7 @@ func TestTheOIDCPackScriptCompletesWhenTheClientRoleIsNotThereYet(t *testing.T) 
 		"PATH="+dir+":"+os.Getenv("PATH"),
 		"CURL_LOG="+dir+"/calls",
 		"KEYCLOAK_URL=http://keycloak.test",
-		"KEYCLOAK_CLIENT_ID=admin", "KEYCLOAK_CLIENT_SECRET=pw")
+		"KEYCLOAK_ADMIN_USERNAME=admin", "KEYCLOAK_ADMIN_PASSWORD=pw")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("the script failed where the client exists without its role: %v\n%s", err, out)

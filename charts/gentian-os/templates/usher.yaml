@@ -43,7 +43,7 @@ spec:
     - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
       remoteRef:
         key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
-        property: usher_key
+        property: {{ .Values.director.openfgaTokenSecretRef.property }}
 ---
 {{- end }}
 apiVersion: v1

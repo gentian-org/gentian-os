@@ -77,7 +77,6 @@ func kernelDesktopEnv() []corev1.EnvVar {
 		{Name: "PGDATABASE", Value: KernelDesktopDatabase},
 		meta.SecretEnv("PGUSER", KernelDesktopSecret, "username"),
 		meta.SecretEnv("PGPASSWORD", KernelDesktopSecret, "password"),
-		PostgresTLS,
 	}
 }
 
