@@ -8,6 +8,11 @@ dbHost: ""   # empty: kernel-postgres-rw.kernel-data.svc.cluster.local
 # The openfga chart's values (charts/openfga-0.3.10.tgz). What used to be
 # the openfga-base-values ConfigMap a Crossplane Release merged.
 openfga:
+  # OpenFGA reads its preshared keys once, at start. A release that adds a key
+  # for a service restarts it, or that service gets 401 from a key the Secret
+  # already holds.
+  annotations:
+    secret.reloader.stakater.com/reload: openfga-credentials
   replicaCount: 1
   postgresql:
     enabled: false
