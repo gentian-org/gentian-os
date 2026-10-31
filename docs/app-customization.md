@@ -1,6 +1,6 @@
 # App Customization Framework — the Gentian Customization Ladder
 
-**Status:** **Live** — accepted 2026-08-06, delivering in **v0.4**. See §12 for per-step status.
+**Status:** **Live**. See §12 for per-step status.
 **Companion to:** [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md),
 [design/multi-tenancy.md](design/multi-tenancy.md), [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md)
 
@@ -1665,7 +1665,7 @@ Upstream apps cannot be given a `customization/` directory, but their **profile 
 ```
 gentian-apps/profiles/<n>/
 ├── profile.yaml            # + spec.customization
-├── customization.md        # the app's ladder, written by the catalogue maintainer
+├── customization.md        # the app's ladder, written by the catalog maintainer
 ├── dropins/
 └── customizations/         # Customization records
 ```

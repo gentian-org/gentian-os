@@ -20,10 +20,10 @@ they are, for every kind of app the platform can carry.
 - Appendix A classifies every app in the catalogue. Appendix B lists sources.
 
 What is fact and what is proposal. Statements about the platform describe
-the code on the branch `develop` of this repository and the catalogue on the
+the code on the branch `develop` of this repository and the catalog on the
 branch `v05` of `gentian-apps`, both as of 2026-10-08. Statements about an
 app's abilities come from the vendor's documentation or source code for the
-version the catalogue pins; Appendix B has the links. Anything that is a
+version the catalog pins; Appendix B has the links. Anything that is a
 proposal is under a heading or a sentence that says "proposal" or
 "recommendation". Where a conclusion comes from reading code and was not
 tried on a cluster, the text says so.
@@ -39,7 +39,7 @@ Three short answers, each explained later:
 - **Is it more secure than the old hand-over?** Yes, clearly, for the apps
   that use single sign-on. Not yet for sign-out, for tenants on their own
   domain, and for the username-and-password apps. Section 13.
-- **Do the apps in the catalogue follow this today?** Partly. Appendix A
+- **Do the apps in the catalog follow this today?** Partly. Appendix A
   names the open issues per app. Two of them are general: Keycloak's
   sign-out notice does not reach any app today (section 4.1), and three
   apps still carry parts of the old hand-over (section 14).
@@ -166,11 +166,11 @@ edition.
 If both 3 and 5 are true, take 3. The recommendation of this document is
 OIDC wherever the app offers it.
 
-Where the catalogue's apps fall today:
+Where the catalog's apps fall today:
 
 | Case | Apps |
 | --- | --- |
-| OIDC | Nextcloud (both editions in the catalogue) and its nine add-ons, XWiki, Mathesar, Open WebUI, Element, Odoo and its eleven add-ons; of the platform's tools, Argo CD and Headlamp |
+| OIDC | Nextcloud (both editions in the catalog) and its nine add-ons, XWiki, Mathesar, Open WebUI, Element, Odoo and its eleven add-ons; of the platform's tools, Argo CD and Headlamp |
 | SAML | None directly. Docmost and Activepieces use a SAML helper in front of a password sign-in; they are listed under "user name and password only" |
 | Trusts the front door | None |
 | User name and password only | OpenProject (single sign-on needs the paid edition), Docmost and Activepieces (the same; both use a helper today), the LiteLLM console |
@@ -406,7 +406,7 @@ to remove the click:
 | Open WebUI | `ENABLE_LOGIN_FORM=false` and `OAUTH_AUTO_REDIRECT=true` | Yes |
 | Mathesar 0.12 | Tile address `/auth/oidc/keycloak/login/`. Mathesar replaces allauth's "continue" page with one that submits itself | Yes |
 | Element with Synapse | In Element's `config.json`: `sso_redirect_options` with `immediate: true`. In Synapse: the Element address on `sso.client_whitelist` | No |
-| Odoo 19 | Nothing in Odoo itself. The catalogue's own Odoo module forwards a framed sign-in page to Keycloak | Yes, by that module |
+| Odoo 19 | Nothing in Odoo itself. The catalog's own Odoo module forwards a framed sign-in page to Keycloak | Yes, by that module |
 | OpenProject 16 | `OPENPROJECT_OMNIAUTH__DIRECT__LOGIN__PROVIDER` | Only with the paid edition; see section 8 |
 
 **What the platform sets up, and which program does it**
@@ -499,7 +499,7 @@ The app can sign people in with SAML and not with OIDC. Keycloak can act as
 a SAML identity provider beside its OIDC role, for the same people, in the
 same realm.
 
-No app in the catalogue speaks SAML itself today. Two profiles declare a
+No app in the catalog speaks SAML itself today. Two profiles declare a
 SAML client, but the party that speaks SAML is a helper program in front of
 the app, not the app. That arrangement is described in section 8.2.
 
@@ -598,7 +598,7 @@ front of it. Vendors call this "trusted header", "reverse proxy" or "remote
 user" authentication. The front door already sets such headers on every
 request (section 2).
 
-No app in the catalogue uses this today. Which ones could:
+No app in the catalog uses this today. Which ones could:
 
 | App | Support | Setting |
 | --- | --- | --- |
@@ -712,7 +712,7 @@ person is asked again unless something is built to prevent it. There are
 three ways to deal with that, 8.1 to 8.3, plus standards that help with
 accounts but not with sign-in, 8.4.
 
-Apps in the catalogue where this applies:
+Apps in the catalog where this applies:
 
 | App | Why |
 | --- | --- |
@@ -768,9 +768,9 @@ A small program, written for this one app, stands beside it. It finds out
 who the person is the standard way and then creates a session in the app on
 their behalf, by a means the app was not designed to offer.
 
-Two apps in the catalogue do this today, in two different ways. Both use the
+Two apps in the catalog do this today, in two different ways. Both use the
 same helper for the first half: a program that acts as a SAML party towards
-Keycloak (`gentian-sidecar-sso-saml` in the catalogue). It sends the browser
+Keycloak (`gentian-sidecar-sso-saml` in the catalog). It sends the browser
 to Keycloak, receives the signed assertion, checks the signature, the
 addressee, the audience and the validity period, and then calls a piece of
 code that belongs to the app's profile. It does not check that the
@@ -924,7 +924,7 @@ in.
   app. This is what makes option a workable without SCIM. The token lives
   in the vault, under the app's path, like the app's other secrets.
 
-### 8.5 Recommendation, and a rule for the catalogue
+### 8.5 Recommendation, and a rule for the catalog
 
 **Recommendation.**
 
@@ -940,7 +940,7 @@ in.
 4. Option c is not offered.
 5. Never a shared account. Every session in an app belongs to one person.
 
-**A rule for the catalogue: every profile says how the app signs people
+**A rule for the catalog: every profile says how the app signs people
 in.** Today no field does. The profile kind
 ([api/v1alpha1](../../api/v1alpha1/componentprofile_types.go)) has:
 
@@ -972,7 +972,7 @@ Two cases need no value: the platform's own pages are recognised by
 `forwardToken`, and a link to an outside service by its package kind. For
 `app-password`, a second field should say whether the person will meet a
 form (`signIn.prompt: true`) or a helper signs them in. The field would be
-new work in this repository, in the catalogue and in the desktop. Decision 1.
+new work in this repository, in the catalog and in the desktop. Decision 1.
 
 **In short:** such an app is as well guarded at the door as any other. It
 asks the person a second time unless a helper is built for it, and a helper
@@ -1016,7 +1016,7 @@ off, and is not asked for either: it belonged to the password form.
 
 The app has no accounts. Whoever reaches it may use it.
 
-The example in the catalogue is Collabora, the document editor that
+The example in the catalog is Collabora, the document editor that
 Nextcloud opens. It has an address of its own and no users. Which document a
 browser may open is decided by a short-lived token that Nextcloud issues,
 not by the editor.
@@ -1171,7 +1171,7 @@ document either; what the kernel offers such a program is in
 
 **When it applies**
 
-The tile leads to a service that does not run on the cluster. The catalogue
+The tile leads to a service that does not run on the cluster. The catalog
 has one: Subscriptions.
 
 **What the person experiences**
@@ -1311,7 +1311,7 @@ catalogue; nothing in this repository changes.
 ### 14.1 Nextcloud
 
 Checked against Nextcloud 33 and its sign-in app `user_oidc` 8.10.1, the
-versions the catalogue pins.
+versions the catalog pins.
 
 - **Case:** standard single sign-on, section 5. Already in place: the
   profile configures `user_oidc` with the tenant's realm.
@@ -1385,7 +1385,7 @@ server; Element is the page. Synapse is the party that signs in at Keycloak.
 
 ### 14.3 OpenProject
 
-Checked against OpenProject 16, the version the catalogue pins.
+Checked against OpenProject 16, the version the catalog pins.
 
 - **The finding that decides everything:** in OpenProject 16, single
   sign-on with OIDC or SAML is an add-on of the paid edition. Without a
@@ -1427,7 +1427,7 @@ Checked against OpenProject 16, the version the catalogue pins.
 
 ## 15. What the desktop should do, per case
 
-Today the desktop opens every catalogue tile in a frame. The list of tiles
+Today the desktop opens every catalog tile in a frame. The list of tiles
 it receives from the usher carries a name, a label, a description, an
 address and an icon, and nothing about sign-in. The desktop's code even
 has the fields for more (`linkTarget`, `authMode`) and fills them with one
@@ -1473,7 +1473,7 @@ Each is a question for the owner, with a recommendation.
    `signIn.mode` with the values `oidc`, `saml`, `front-door`,
    `app-password` and `none`?** The field does not exist. It would be added
    to the profile kind in this repository, filled in for every profile in
-   the catalogue, and passed to the desktop with the tile.
+   the catalog, and passed to the desktop with the tile.
    *Recommendation: yes.* Without it the desktop cannot behave differently
    per case, and nobody reviewing a profile can see what it claims.
 
@@ -1523,7 +1523,7 @@ Each is a question for the owner, with a recommendation.
 
 7. **OpenProject: a token for the paid edition, the second sign-in, or a
    new helper?**
-   *Recommendation: the second sign-in in the catalogue's free profile, and
+   *Recommendation: the second sign-in in the catalog's free profile, and
    single sign-on wherever a tenant holds a token. No use of the header
    sign-in without the vendor's word that it is part of the free edition.*
 
@@ -1579,7 +1579,7 @@ Each is a question for the owner, with a recommendation.
   after signing in; the exact settings of `user_saml`'s sign-in by
   environment variable.
 - Activepieces was checked on the vendor's current source, not on the old
-  version the catalogue's record names (0.28).
+  version the catalog's record names (0.28).
 - Docmost, Mathesar, Odoo, XWiki: "none found" for back-channel logout,
   header sign-in or SCIM means the files and pages read did not show one,
   not that the whole code was searched.
@@ -1587,12 +1587,12 @@ Each is a question for the owner, with a recommendation.
   0.9.0 to 0.11.0 is reported by a secondary source only.
 - The old hand-over is described from what remains in the three apps. The
   portal's side of it is not in the repositories read.
-- The versions of the opendesk edition of Nextcloud in the catalogue were
+- The versions of the opendesk edition of Nextcloud in the catalog were
   not checked separately.
 
-## Appendix A: every app in the catalogue
+## Appendix A: every app in the catalog
 
-The catalogue holds 33 profiles. Add-ons of one app share a row.
+The catalog holds 33 profiles. Add-ons of one app share a row.
 "Declared, not delivered" in the sign-out column means: the profile names a
 back-channel logout address, Keycloak has it, and the notice does not arrive
 (section 4.1).
@@ -1605,7 +1605,7 @@ back-channel logout address, Keycloak has it, and the notice does not arrive
 | Collabora (part of `nextcloud-base-ce`) | No sign-in | No tile. Nextcloud opens it | It does not. Nextcloud issues a token per document | None of its own | None |
 | Element (`element-ce`), Element Web 1.11.90, Synapse 1.115.0 | OIDC, done by Synapse | The front page of `chat.` | Synapse's own OIDC sign-in | Declared, not delivered, and Synapse's flag for it is off | No automatic redirect, no entry on Synapse's whitelist. The old hand-over page remains. The chat server's address is behind the session, which Element's own calls cannot pass (section 14.2). Trust tier `experimental` |
 | OpenProject (`openproject-ce`), 16 | User name and password. OIDC needs the paid edition | The front page of `projects.` | Its own sign-in form | None. The declared address has no effect without OIDC | The OIDC settings have no effect without a paid token. The old bridge is still deployed and calls a portal that is gone. The second factor is switched off. Keycloak's addresses lack `/auth` |
-| Odoo (`odoo-base-ce`), 19.0, and eleven add-on profiles | OIDC family (OAuth2) | A page of `erp.` per module, marked `?gentian_embed=1` | Odoo's `auth_oauth` with the catalogue's own module, which forwards a framed sign-in to Keycloak | None possible | The token travels in the page's address (implicit flow). No sign-out notice can be received |
+| Odoo (`odoo-base-ce`), 19.0, and eleven add-on profiles | OIDC family (OAuth2) | A page of `erp.` per module, marked `?gentian_embed=1` | Odoo's `auth_oauth` with the catalog's own module, which forwards a framed sign-in to Keycloak | None possible | The token travels in the page's address (implicit flow). No sign-out notice can be received |
 | XWiki (`xwiki-ce`), 17.10.9, OIDC authenticator 2.20.2 | OIDC | The front page of `wiki.` | Its own OIDC sign-in, started automatically | Declared, not delivered | Two setting names look misspelt (section 17). The old portal's address is among the sign-out addresses |
 | Mathesar (`mathesar-ce`), 0.12.0 | OIDC | `/auth/oidc/keycloak/login/` on `data.` | Its own OIDC sign-in. Administrators' accounts are created ahead by a job of the profile | None found in the app | The password form stays available beside single sign-on |
 | Open WebUI (`open-webui`), 0.10.2 | OIDC | The front page of `ai-chat.` (two tiles, same address) | Its own OIDC sign-in, started automatically. Roles from Keycloak groups | Declared, not delivered, and the app's switch for it (`ENABLE_OAUTH_BACKCHANNEL_LOGOUT`) is not set | The switch. Both tiles lead to the same page |
@@ -1614,7 +1614,7 @@ back-channel logout address, Keycloak has it, and the notice does not arrive
 | LiteLLM console (the model gateway's own; no catalogue profile) | User name and password, with a form | No tile. The console is at `llm.<cluster's domain>`, for platform administrators, where the claim switches it on (`llm.console.enabled`, off by default) | Its own form, with a user name and password from the vault | None | — |
 | Subscriptions (`gentian-subscriptions-me`) | Link to an outside service | An address outside the cluster, with the tenant's domain in it | The outside service's own sign-in | Not the platform's | None |
 
-The platform's own pages and tools, which are not in the catalogue:
+The platform's own pages and tools, which are not in the catalog:
 
 | Page or tool | Case | How it learns who the person is | Sign-out |
 | --- | --- | --- | --- |

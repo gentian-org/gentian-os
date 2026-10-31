@@ -473,7 +473,7 @@ Its routes, by group. Every write is a commit unless marked as a command.
 | --- | --- |
 | Tenants | List tenants; create one; retire one (remove it and keep its data); purge one (remove it with its data, in two commits, resumed after a restart); set or clear a tenant's custom domain; import a tenant from a backup bundle. |
 | Apps and add-ons | Read what git says a tenant has installed; install an app; uninstall it; choose its add-ons. |
-| Catalogues | List the catalogues a tenant or the cluster installs from and their entries; add or remove a catalogue for the whole cluster or for one tenant; allow or forbid a tenant's own admins to add theirs. |
+| Catalogues | List the catalogues a tenant or the cluster installs from and their entries; add or remove a catalog for the whole cluster or for one tenant; allow or forbid a tenant's own admins to add theirs. |
 | Repositories | Declare or remove a repository (its address) for a tenant or for the cluster. The password is the custodian's. |
 | Exposures | Read what a tenant publishes to the internet, and with it what each installed app asks to publish: the address, the paths and whether anybody signs in. Publish or withdraw one exposure. |
 | Privileges | Read which extra privileges a tenant's apps asked for; grant or revoke one. |
@@ -481,14 +481,14 @@ Its routes, by group. Every write is a commit unless marked as a command.
 | Backup policy | Set or clear a tenant's backup policy; set the cluster's. |
 | Platform security | Read and replace the list of exceptions to the cluster's default security rules, as git declares it. |
 | Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
-| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalogue left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
+| Commands relayed to the operator | Take a backup; delete a backup; upload or inspect a backup bundle; restore (as part of an import); send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
-When an app is installed from a catalogue, the director fetches the app's
+When an app is installed from a catalog, the director fetches the app's
 *component profile* (the file that describes how the app is installed, and
 which may hold a few other objects the app needs beside it) from
-the catalogue's address, checks that it matches the digest the request named
-and holds nothing a catalogue of that kind may not bring,
+the catalog's address, checks that it matches the digest the request named
+and holds nothing a catalog of that kind may not bring,
 and commits it to the deployment repository together with the exact bytes it
 checked. It fetches only from public
 https addresses, so an address somebody typed cannot be used to reach into
@@ -629,7 +629,7 @@ two kinds of route
 | `notify` | Publishes one notice to a tenant's people. |
 | `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, access group. |
 | `provision-app` | Puts the tenant's current members into an app's group. |
-| `remove-catalogue-residue` | Deletes one named object that the catalogue left behind, and only if it is on the list below when the command arrives. Given a tenant and a profile, it deletes less: only an object a newer build of that profile left behind, only if the tenant has the profile, and only on a cluster whose one user tenant this is. |
+| `remove-catalogue-residue` | Deletes one named object that the catalog left behind, and only if it is on the list below when the command arrives. Given a tenant and a profile, it deletes less: only an object a newer build of that profile left behind, only if the tenant has the profile, and only on a cluster whose one user tenant this is. |
 | `refresh-deployments` | *Added 2026-10-11.* Asks Argo CD to read the deployment repository now. The command names nothing. The operator itself finds, in Argo CD's namespace, every ApplicationSet with a git generator over that repository and every Application with a source in it, and sets Argo CD's refresh annotation on each (`argocd.argoproj.io/application-set-refresh`, and `argocd.argoproj.io/refresh: normal`). It starts no sync and changes nothing else: each Application syncs under its own policy, and Argo CD checks signatures as before. At most one refresh every five seconds; a command inside that time is answered as deferred and one more refresh follows when the time has passed. For this the operator may get, list and patch ApplicationSets, and has no other right on them ([http_refresh.go](../../internal/applifecycle/http_refresh.go)). |
 
 *Reads*, for the usher and the director:
@@ -641,10 +641,10 @@ two kinds of route
   integrations; its notices;
 - for the cluster: every tenant's resources; the backup policy and schedules;
   the platform security rules in force; the customization report; the license
-  report; the result of the definitions check; what the catalogue left
+  report; the result of the definitions check; what the catalog left
   behind.
 
-*What the catalogue left behind.* Argo CD applies the catalogue directory
+*What the catalog left behind.* Argo CD applies the catalog directory
 without ever removing anything, so a cluster collects objects that the
 profile file of no app still holds, and profiles no tenant uses. The operator
 lists them: objects of the four kinds a profile's file may hold beside the
@@ -700,7 +700,7 @@ every request. A positive answer is remembered for thirty seconds.
   serves its own App Store app on is not a store: the App Store app is then
   placed on no tenant, and the reason is reported.
 - *The sign-in sidecar's handler.* It runs a sidecar only with the handler of
-  a profile bundle that came from a catalogue of the whole cluster, for an
+  a profile bundle that came from a catalog of the whole cluster, for an
   install pinned to that bundle's digest, and never for a tenant that signs
   in in the kernel realm. Otherwise it holds the component and says why
   (`SignInSidecarRefused`).
@@ -890,7 +890,7 @@ and asks OpenFGA before it answers.
 | A tenant's integrations and notices | `can_view` on the tenant |
 | Every tenant's resources; the cluster's backup policy and schedules | `can_audit` on the cluster |
 | The platform security rules in force; the customization report; the usage statistics report | `can_audit` on the cluster |
-| What the catalogue left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
+| What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
 The tiles come from a file the operator writes. All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
@@ -1060,7 +1060,7 @@ and 4.2 say how a group becomes a relation.
 | Director | a tenant | `can_expose` | publishing to the internet |
 | Director | a tenant or the cluster | `can_approve_privilege`, `can_approve` | granting a privilege an app asked for; which of the two depends on the kind of privilege |
 | Director | a tenant | `can_administer` | backup, delete a backup, send a notice, read the change history |
-| Director | the cluster | `can_configure` | settings, branding, tenants, domains, catalogues, the cluster's backup policy, import, removing what the catalogue left behind |
+| Director | the cluster | `can_configure` | settings, branding, tenants, domains, catalogues, the cluster's backup policy, import, removing what the catalog left behind |
 | Director | the cluster | `can_set_admission` | the list of security exceptions |
 | Director | the cluster | `can_audit` | reading the cluster's settings, tenants, catalogues, changes |
 | Director, custodian | a tenant or the cluster | `can_write_credential` | declaring a repository (director); setting a secret (custodian) |
@@ -1082,7 +1082,7 @@ list of relations and the rules behind them are in
 
 | Program | Standing credential | What somebody who takes it over can do | What limits it |
 | --- | --- | --- | --- |
-| **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data, and one deletes objects the catalogue left behind (never one a profile on the cluster still brings: the operator checks that itself). | Every commit stays in git, signed, where it can be seen and reverted. It cannot read a secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
+| **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data, and one deletes objects the catalog left behind (never one a profile on the cluster still brings: the operator checks that itself). | Every commit stays in git, signed, where it can be seen and reverted. It cannot read a secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
 | **Operator** | Wide cluster rights, Keycloak's administrator credential, the vault role for everything | Everything. It can read every Secret, and with that it can also do what each of the others can. | Nothing inside the cluster. It is the part the platform trusts. What protects it is that no person's request reaches it directly: only Argo CD, the director and the usher on the listener, Keycloak's signed events and the API server's admission calls. |
 | **Custodian** | Vault role that writes and cannot read | Overwrite any secret the platform stores. | It cannot read or delete a secret, so the damage is loud: things stop working. No git, no Keycloak, and it cannot change any object that decides configuration. |
 | **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor, change any group. That includes the groups behind the platform roles, so it can make somebody a platform admin. It can also rewrite its own record. And it can write a `MailboxRemoval` for any address and either answer: together with deleting the account, which it can do too, that has the operator archive or delete that person's mailbox. | No git, no vault. In the cluster it can write one kind, `MailboxRemoval`, and no other object. The operator does not act on such a record because it says so: the address must be in the tenant's mail domain, no person of the realm may still hold it, and the mail server must hold no password for it. No client in Keycloak's master realm; its client holds `view-users`, `query-users`, `query-groups` and `manage-users`, so it cannot change a realm's settings (the password policy among them), cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
@@ -1215,7 +1215,7 @@ gives.
 15. **A sign-in sidecar can become anybody in its app.** That is its job: it
     holds what its handler needs to make a session in the app, usually the
     app's signing key and database login. Whoever takes one over, or changes
-    the handler in a catalogue the cluster installs from and has an install
+    the handler in a catalog the cluster installs from and has an install
     moved to the new build, has every account of that app in that tenant. Its
     one path without a session, `/sso/acs`, is guarded by its own checks and
     by nothing in front of it; and an app session it made can outlast a

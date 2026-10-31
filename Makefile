@@ -153,7 +153,7 @@ lint: lint-go lint-yaml lint-shell
 ## subset of CI's is a gate set that reports green on work CI will reject.
 verify: verify-gen lint validate-steps test test-unit
 	@bash install.sh --explain >/dev/null
-	@printf '\n\033[0;32mEverything CI runs is green here.\033[0m\n'
+	@printf '\n\033[0;32mThe local gates are green.\033[0m\n'
 
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)

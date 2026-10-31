@@ -104,7 +104,7 @@ platform, what it offers other apps, and what it exposes.
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
-  name: openproject-ce            # cluster-scoped; the file name in the catalogue
+  name: openproject-ce            # cluster-scoped; the file name in the catalog
   labels:
     gentianos.io/profile-name: openproject-ce
 spec:
@@ -353,7 +353,7 @@ kept (`Retain`) or dropped (`Delete`).
 A catalog's source can be laid out in any way; what it must serve is:
 
 ```
-index.yaml               what is in the catalogue: name, version, edition, digest
+index.yaml               what is in the catalog: name, version, edition, digest
 profiles/<name>.yaml     one bundle per app: its ComponentProfile first, then what travels with it
 ```
 

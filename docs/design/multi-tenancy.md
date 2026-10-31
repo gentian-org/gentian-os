@@ -344,7 +344,7 @@ When the mail extension is enabled:
 
 See [mail.md](mail.md) for the full mail extension model.
 
-## 8. Operational Roles {#roles}
+## 8. Operational Roles
 
 Three roles, three scopes:
 

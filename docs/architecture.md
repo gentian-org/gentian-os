@@ -86,6 +86,7 @@ graph TD
 | **Crossplane** (`kernel-provisioning`) | Composes `XCluster` and `XTenant` into managed resources (namespaces, vault policies, Jobs, `ExternalSecret`s), and an `App` claim for a profile that brings its own Composition. Its providers reconcile the managed resources the operator renders for an app, Helm `Release`s among them. | Owns what can be written down before it happens (below). |
 | **OpenBao + ESO** (`kernel-secrets`) | The one secret store, synced into Kubernetes Secrets that charts read. | Secrets never touch git or a resource's spec. |
 | **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people and groups at Keycloak. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
+| **Arbiter** (`system-authorization`, on demand) | The one way into the app instance of OpenFGA, which holds the components' authorization stores. The operator deploys it when a component declares a store. | Serves the app stores only; the kernel's rights store is separate. |
 | **Bouncer** (`kernel-edge`, beside the Gateways) | Asks OpenFGA, per request, whether the signed-in person may reach the host. | Decides nothing else ([design/routing.md §4.1](design/routing.md)). |
 
 ### 3.0 Who does what (tenant install)
@@ -229,7 +230,7 @@ Component then writes an `App` claim that Composition answers. Only a profile
 of `trustTier: platform` may.
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
-documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
+documented in [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §2.
 
 ### 3.2 Diffing: server-side
 
@@ -318,7 +319,8 @@ domain, tenancy mode, mail, models, catalogs), `Customization`
 ([app-customization.md §5](app-customization.md)), `AppPackage`, `AppGrant`,
 `Branding`, `ResourcePlan`, `TenantDomain`, `BackupPolicy`, `TenantExport`,
 `TenantExportSchedule`, `TenantRestore`, `MailboxRemoval`,
-`CredentialRequirement`, `OIDCPackCatalog`, `PlatformSecurityPolicy`. Profile
+`CredentialRequirement`, `OIDCPackCatalog`, `PlatformSecurityPolicy`,
+`BundleSource`, `ProfileBuild`. Profile
 fields, tiers and contracts are in
 [design/app-catalogue.md](design/app-catalogue.md).
 
@@ -363,7 +365,7 @@ administrators the kernel's consoles.
 
 **Catalog apps** (Nextcloud, Element, …) are installed per tenant from a
 catalog (§3.1). See [design/kernel.md](design/kernel.md) for the kernel
-functions and the kernel-versus-catalogue split.
+functions and the kernel-versus-catalog split.
 
 ---
 
@@ -493,14 +495,14 @@ The path layout, the derivation, rotation and the recovery kit are in
 ```
 gentian-os/              # The OS itself
 ├── api/                 # The resource types (a Go module of its own)
-├── cmd/, internal/      # Operator, director, usher, custodian, registrar, bouncer
+├── cmd/, internal/      # Operator, director, usher, custodian, registrar, bouncer, arbiter
 ├── charts/gentian-os/   # The chart that installs them, with the CRDs
 ├── crossplane/          # XRDs, Compositions, providers
 ├── kernel/              # What Argo CD applies that is not composed
 ├── scripts/, install.sh # The installer and kubectl-gentian
 └── docs/
 
-gentian-apps/            # A catalogue: profiles, charts, app sources
+gentian-apps/            # A catalog: profiles, charts, app sources
 gentian-ui/              # The desktop, the consoles, the sign-in page
 
 <deployments repository> # Per-cluster state; the only repository specific to a cluster
@@ -577,7 +579,7 @@ See [design/data-lifecycle.md](design/data-lifecycle.md),
 
 ### 11.1 The platform's own image
 
-Operator, director, usher, custodian, registrar and bouncer are one image
+Operator, director, usher, custodian, registrar, bouncer and arbiter are one image
 and one chart, delivered by the `gentian-os` Argo CD Application
 (`kernel/bootstrap/chart/templates/gentian-os.yaml`). The installer pins the
 image to the build of the commit it is installing from
@@ -657,7 +659,7 @@ platform's kinds to do their work.
 
 Administrator and member are separate accounts by design. Roles, groups and
 the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
-[design/multi-tenancy.md](design/multi-tenancy.md#roles).
+[design/multi-tenancy.md](design/multi-tenancy.md#8-operational-roles).
 
 ---
 
@@ -706,5 +708,5 @@ the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
 | Recovering after a loss — cluster, tenant or key | [recovery-playbook.md](recovery-playbook.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
 | LLM serving | [design/llms.md](design/llms.md) |
-| Profile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) |
-| Custom Gentian-native apps | [gentian-apps/docs/custom-app-guide.md](../../gentian-apps/docs/custom-app-guide.md) |
+| Profile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) |
+| Custom Gentian-native apps | [gentian-apps/docs/custom-app-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/custom-app-guide.md) |

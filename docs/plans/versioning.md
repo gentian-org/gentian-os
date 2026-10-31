@@ -41,7 +41,7 @@ version-line constant in the operator is derived from the chart version
 rather than kept in step by hand.
 
 The same rule holds for a profile build: `spec.version` on `develop` carries
-the `-dev` suffix and is set to the bare number when the catalogue is
+the `-dev` suffix and is set to the bare number when the catalog is
 released from `main`. The profiles were set to `0.5.1-dev` on 2026-10-19, the
 first build of every converted profile under this rule.
 
@@ -93,7 +93,7 @@ object per name like the profile; a build whose companions differ from the
 current build's is held until the tenant moves.
 
 A build stays on the cluster while any `Component` pins it. The director and
-the installer write it beside the profile into the catalogue directory, and
+the installer write it beside the profile into the catalog directory, and
 a build the cluster holds is installed again without fetching it, which is
 what gives rollback (§5).
 
@@ -123,7 +123,7 @@ release breaks; `latest` does not walk past it.
 `latest` moves apps inside a window set on the `Cluster` claim, one for the
 whole cluster. Within the window the platform moves one tenant first, waits
 for the move to verify (§5), then the rest in batches, and stops with a
-condition on the cluster at the first failure. A build the catalogue flags as
+condition on the cluster at the first failure. A build the catalog flags as
 a security fix may be applied outside the window.
 
 ### 4.2 The outdated-deployments report
@@ -178,9 +178,9 @@ leaves the cluster working at its end.
 
 | | Piece | Delivers | Depends on |
 |---|---|---|---|
-| 1 | **The version the cluster knows** (§2) | version line and build on the `Cluster` status; `spec.requires.platform`; the director's refusal and filtered listing; `spec.version` bump enforced in gentian-apps' CI; schema conformance in both CIs | the released catalogue moving again: the catalogue build on gentian-apps' `main`, every profile on `main` on a released chart, enforced by `validate-chart-refs.py` |
+| 1 | **The version the cluster knows** (§2) | version line and build on the `Cluster` status; `spec.requires.platform`; the director's refusal and filtered listing; `spec.version` bump enforced in gentian-apps' CI; schema conformance in both CIs | the released catalogue moving again: the catalog build on gentian-apps' `main`, every profile on `main` on a released chart, enforced by `validate-chart-refs.py` |
 | 2 | **Discovery and the report** (§4.2) | the outdated-deployments report in the usher, the console's screen and action, `kubectl gentian apps outdated`; the OS release feed on the cluster status | 1 |
-| 3 | **The guarded move** (§5) | export before, verify after, rollback to the previous build, the record of who moved it; the catalogue's snapshot per publish | 1, and the per-build objects of 4 for the rollback |
+| 3 | **The guarded move** (§5) | export before, verify after, rollback to the previous build, the record of who moved it; the catalog's snapshot per publish | 1, and the per-build objects of 4 for the rollback |
 | 4 | **Per-build profiles, modes, staged rollout** (§3, §4) | one `ComponentProfile` per build and the pointer; the three modes and the per-tenant override; `manual` for customized apps; the window and the staged `latest`; the store's Update action gated by mode | 1; 3 for the rollout's verification |
 | 5 | **The OS re-run converges** | every installer step compares the pinned version with the running one, Argo CD's, metrics-server's, each provider package's, each bootstrap Application's against its template; Image Updater pinned or removed; then Argo CD takes over the bootstrap Applications and the Crossplane definitions, so one sync moves every definition with the binary that reads it | 1 |
 
@@ -223,9 +223,9 @@ A nightly matrix installs each app on each supported version line, N and
 N-1, signs in through the gateway, runs `restore.verify`, exports and
 restores. One upgrade case: apps installed on N, platform moved to N+1, apps
 still healthy, then each moved to its new build. CI writes the result into
-the catalogue index as `testedOn` per build and line; the single "one tag
+the catalog index as `testedOn` per build and line; the single "one tag
 across three repositories" snapshot becomes a matrix that stays true while
-the catalogue moves between platform releases.
+the catalog moves between platform releases.
 
 ## 8. Open
 

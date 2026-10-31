@@ -2,7 +2,7 @@
 
 Gentian OS is the open-source cloud-native operating system at the core of the Gentian
 ecosystem: a Kubernetes operator and the services beside it (director, usher, custodian,
-registrar, bouncer), CRDs (`ComponentProfile`, `Component`, `Tenant`, `Cluster`, …), and
+registrar, bouncer, arbiter), CRDs (`ComponentProfile`, `Component`, `Tenant`, `Cluster`, …), and
 the automation that lets a cluster provision identity, mail, gateway routing, and third-party
 apps for multiple tenants from declarative config.
 
@@ -18,7 +18,7 @@ needs regardless of which apps run on it. It does **not** contain:
 - Proprietary profiles, or any private catalog: published by whoever maintains
   them, at an address a cluster or a tenant adds as a catalog
   ([docs/custom-catalogues.md](docs/custom-catalogues.md)).
-- Any license gate. Editions (`ce · pe · me · ee`) say who maintains and
+- Any license gate. Editions (`ce · me · ie · pe · ee`) say who maintains and
   supports an app; the OS gates none of them. Whether a paid app arrives is
   decided at the repository it is pulled from, by the credential a tenant
   holds for it ([docs/design/store-contract.md](docs/design/store-contract.md) §2).

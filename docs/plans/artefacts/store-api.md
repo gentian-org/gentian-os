@@ -124,12 +124,12 @@ Whoever keeps a copy of these files: this is what moved, newest first.
 
 **2026-10-21** (1.5, additive: a 1.4 client reads every answer as before)
 
-1. **`GET /v1/meta` may list `catalogues`**: the catalogue sources the
+1. **`GET /v1/meta` may list `catalogues`**: the catalog sources the
    store's entries come from, each `{name, url, displayName}`, https only.
    The first half of every coordinate the store serves is one of the
    names. A cluster's installer adds a listed catalogue the cluster has no
    source of that name for, so an entry acquired at the store can be
-   installed without the administrator adding its catalogue first.
+   installed without the administrator adding its catalog first.
 
 **2026-10-20** (1.4, additive: a 1.3 client reads every answer as before)
 
@@ -278,11 +278,11 @@ one for a tenant it does not serve, is ignored on an open read: the answer
 is the anonymous one, not an error.
 
 Whether a store serves a tenant (`tenant-refused`, §4) is a question of the
-signed-in calls only. An anonymous visitor sees the catalogue whatever the
+signed-in calls only. An anonymous visitor sees the catalog whatever the
 standing of their tenant, and learns at the first signed-in call whether the
 store serves it.
 
-**What the App Store app does.** It shows the catalogue immediately, with no
+**What the App Store app does.** It shows the catalog immediately, with no
 store account, from the open reads. It acts for the person at the store only
 when they acquire something or open what the tenant has acquired: it asks
 `GET /v1/tenant` first, and shows the refusal or the notices it is given, or
@@ -474,7 +474,7 @@ cacheable for the `max-age` it states.
 | `mediaOrigins` | origin[] | yes | Where image URLs may point. The app fixes its content security policy from it |
 | `checkoutOrigins` | origin[] | yes | Where a `checkoutUrl` may point |
 | `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3). Unknown values are ignored |
-| `catalogues` | `{name, url, displayName?}[]` | no | The catalogue sources the store's entries come from. `name` is the first half of the coordinates from that source; `url` its https address (`index.yaml` and `profiles/` beneath it); `displayName` plain text ≤ 80. A cluster's installer adds each one the cluster has no source of that name for, and changes or removes none ([store-contract.md](../../design/store-contract.md) §9). Added in 1.5 |
+| `catalogues` | `{name, url, displayName?}[]` | no | The catalog sources the store's entries come from. `name` is the first half of the coordinates from that source; `url` its https address (`index.yaml` and `profiles/` beneath it); `displayName` plain text ≤ 80. A cluster's installer adds each one the cluster has no source of that name for, and changes or removes none ([store-contract.md](../../design/store-contract.md) §9). Added in 1.5 |
 | `links` | object | no | `terms`, `privacy`, `support`, `account`: pages of the store's, each a URL |
 
 ## 4. Tenant standing
@@ -482,7 +482,7 @@ cacheable for the `max-age` it states.
 A store that depends on usage statistics serves a tenant only when the
 reports it has received list that tenant. The app asks before the call the
 person wanted and shows what it is told. Standing governs the signed-in
-calls only: the catalogue stays readable to a tenant the store refuses, and
+calls only: the catalog stays readable to a tenant the store refuses, and
 to somebody who never registers. A notice is likewise seen only on a
 signed-in call.
 
@@ -617,7 +617,7 @@ All five operations here are open reads (§1): no token, cacheable, never
 refused for a tenant's standing.
 
 An entry is identified by its **coordinate**, `<catalogue>/<app>`: the name
-of a catalogue source and the name of the app's profile in it, each a DNS
+of a catalog source and the name of the app's profile in it, each a DNS
 label. It is the value the cluster's install request carries. A profile's
 name includes its edition, so each edition of an app is an entry of its own;
 `family` ties them together.
@@ -811,8 +811,8 @@ answer (`Cache-Control: private, no-store`). A `country` asked always wins.
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `version` | string ≤ 64 | yes | The catalogue version, as the catalogue source's index states it |
-| `digest` | `sha256:<64 hex>` | yes | The SHA-256 of this version's profile bundle — the exact bytes the catalogue source serves. Lower case. **What the cluster pins and verifies** |
+| `version` | string ≤ 64 | yes | The catalog version, as the catalog source's index states it |
+| `digest` | `sha256:<64 hex>` | yes | The SHA-256 of this version's profile bundle — the exact bytes the catalog source serves. Lower case. **What the cluster pins and verifies** |
 | `releasedAt` | date-time | yes | RFC 3339, UTC |
 | `releaseNotes` | Markdown (`store-markdown-1`) ≤ 20 000 | yes | May be empty |
 | `requirements` | object | yes | `platform` (a version range, `>=0.5`), `resources` (`cpu`, `memory`, `storage` as Kubernetes quantities), `notes` (sentences). Each may be absent or `null` |
@@ -1141,7 +1141,7 @@ A free app's confirmation:
 |---|---|---|---|
 | `coordinate` | coordinate | yes | The entry confirmed. The cluster's install request carries exactly this |
 | `version` | string | yes | The version confirmed, for a person to read |
-| `digest` | `sha256:<64 hex>` | yes | **What the cluster pins and verifies.** The cluster fetches the profile bundle from the catalogue source its own Cluster claim names for `<catalogue>` and installs only if those bytes hash to this value |
+| `digest` | `sha256:<64 hex>` | yes | **What the cluster pins and verifies.** The cluster fetches the profile bundle from the catalog source its own Cluster claim names for `<catalogue>` and installs only if those bytes hash to this value |
 | `repository` | Repository | no | The private repository the app's chart and images are pulled from. Absent when they are public |
 | `addons` | item[] | yes | Each with `coordinate`, `version`, `digest` and optionally `repository`, exactly as above. Add-ons do not nest |
 
