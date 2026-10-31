@@ -335,7 +335,7 @@ run without it, and it is visible in the console as a pending request, which is
 a state the tenant administrator can act on or escalate. That is why the
 request has to be an object rather than a field the operator silently drops.
 
-This closes [security-gap-closing.md](security-gap-closing.md) G27: MAC waivers
+This closes a gap: MAC waivers
 are intersected against the cluster allowlist, so an administrator approves
 them, while `security.egress` is copied into a NetworkPolicy with no equivalent
 check. One requirement block with one approval path removes the asymmetry by

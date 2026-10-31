@@ -1877,7 +1877,7 @@ force_reconcile_failed_helm_releases() {
 # 0. Pre-flight checks
 # =============================================================================
 # secrets_at_rest_verdict — one word for what is known about Secret encryption
-# in etcd (roadmap 1.18, certification plan C9).
+# in etcd.
 #
 #   flag      the API server is visible and runs --encryption-provider-config
 #             (kubeadm's static pod) or --secrets-encryption (k3s, rke2)
@@ -1917,7 +1917,7 @@ secrets_at_rest_verdict() {
 # run on do not encrypt, and a pre-flight that refused them would be switched
 # off rather than acted on. GENTIAN_REQUIRE_SECRET_ENCRYPTION=true makes every
 # verdict but flag, cluster and provider a refusal; it becomes the default once
-# the clusters that run this have it (roadmap 1.18).
+# the clusters that run this have it.
 check_secrets_at_rest() {
     local verdict msg
     verdict="$(secrets_at_rest_verdict)"

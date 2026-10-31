@@ -267,8 +267,7 @@ of a form.
 
 **Import does not depend on the source cluster.** Platform-issued credentials
 are re-minted by the importing cluster, and where an app has cached one in its
-own store the profile's restore hook rewrites it. [open-items.md](open-items.md)
-records the alternative — the recovery kit as the cluster's identity, so that
+own store the profile's restore hook rewrites it. The alternative — the recovery kit as the cluster's identity, so that
 a new server importing it *becomes* the old cluster — and it is not taken:
 it would bind a tenant's portability to its provider's kit, which is the
 dependency this document exists to remove.
@@ -287,8 +286,7 @@ contract. The purge dialog in the console and `tenants retire --purge` in the
 CLI both expose the flag, off by default.
 
 Purge ends by writing a **deletion record**: tenant, who asked, request id,
-the inventory destroyed, signed by the director (`records.deletion`;
-[open-items.md](open-items.md) §6). A tenant leaving can be given that record; it is the proof
+the inventory destroyed, signed by the director (`records.deletion`). A tenant leaving can be given that record; it is the proof
 the promise was kept.
 
 ### 4.5 Offboarding is a flow, not a procedure
@@ -494,8 +492,7 @@ materialises the default profiles into `clusters/<id>/catalogue/`
 5. **Canonical forms**: CRD field, hooks in the first profiles (Nextcloud
    files, contacts, calendar; mail).
 6. **Scheduling leaves the tree** (§9.2): the order of that work, and what
-   breaks at each step, is in
-   [scheduled-backups-out.md](scheduled-backups-out.md).
+   breaks at each step, is in [#608](https://github.com/gentian-org/gentian-os/issues/608).
 
 ## 8. Open questions
 
@@ -534,9 +531,7 @@ not followed yet: the kinds `TenantExportSchedule` and `BackupPolicy`, their
 two controllers in the operator, and the director's and the usher's
 backup-policy and backup-schedule routes are all still here and working. A
 cluster built from this tree takes scheduled backups with no add-on
-installed. [scheduled-backups-out.md](scheduled-backups-out.md) lists every
-part and the order in which it is to leave. Whether and when that move
-starts is open ([open-items.md](open-items.md) §4, item 32).
+installed. Whether and when that move starts is open ([#608](https://github.com/gentian-org/gentian-os/issues/608)).
 
 Built since the first draft: download, import (upload, inspect, declare from the manifest,
 restore), `keepBundles`, the default-profile materialisation.

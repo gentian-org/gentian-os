@@ -687,7 +687,7 @@ session for them, and each ends differently.
 
 **When an administrator switches a member off.** There is no Sessions screen and no act that
 ends somebody's session by hand; one is a possible future feature
-([roadmap.md](../roadmap.md) §3.7). What happens today:
+([#598](https://github.com/gentian-org/gentian-os/issues/598)). What happens today:
 
 - The registrar sets the account to disabled at the realm (`update-person`), or deletes it
   (`remove-person`). It ends no session itself and tells no app
@@ -734,7 +734,7 @@ real image and Keycloak 26.8.0):
 | Docmost, OpenProject | yes, through the sidecar | ends, every session of that person |
 | Activepieces 0.28.0 | the sidecar is told; the app has nothing to end a session with | lasts what is left of its hour |
 | Nextcloud (`nextcloud-base-od`) | declared, not shown with its own image | unknown until it is |
-| Open WebUI 0.10.2 | declared, not in effect: needs a switch and Redis ([roadmap.md](../roadmap.md) 2.27) | lasts as long as its own token |
+| Open WebUI 0.10.2 | declared, not in effect: needs a switch and Redis ([gentian-apps#211](https://github.com/gentian-org/gentian-apps/issues/211)) | lasts as long as its own token |
 | Element (Synapse) | no: nothing registers an address, and Synapse's switch is off | lasts as long as Synapse keeps it |
 | Mathesar, Odoo | no: neither has an endpoint for it | lasts as long as the app keeps it |
 

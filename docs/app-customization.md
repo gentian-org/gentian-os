@@ -486,7 +486,7 @@ namespace (`internal/controller/dropin_reconciler.go`) and removes it when the e
 where it ends: the platform generates no mount, and no chart of the catalog mounts that
 ConfigMap, so the content is validated, stored, and read by nothing. For it to take effect a chart
 has to mount the ConfigMap of that name at the declared path, after the profile's own, where
-tenant files win by the `90-`–`99-` prefix ([roadmap.md](roadmap.md) §2.33).
+tenant files win by the `90-`–`99-` prefix ([#591](https://github.com/gentian-org/gentian-os/issues/591)).
 
 **Guardrails** — checked by the operator when it reconciles the tenant. One entry that fails
 holds every drop-in of the tenant back (the Tenant's `DropInsReady` condition is false, reason
@@ -506,7 +506,7 @@ drop-ins (`config.dropIns`) and a customization record of tenant scope (§5) can
 by a commit to the deployments repository. No route of the director writes any of them and the
 admin console has no screen for them. A route that writes them as signed commits, and an editor
 for the tenant's administrator — the declared tenant-editable drop-ins, validated, with the
-resulting diff — are on the roadmap ([roadmap.md](roadmap.md) §2.32) and not built.
+resulting diff — are on the roadmap ([#590](https://github.com/gentian-org/gentian-os/issues/590)) and not built.
 
 ### 2.3 L2 — Companion (side-by-side)
 
@@ -1821,5 +1821,5 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
 | 10 | Tenant drop-in reconciler (§2.2.1) | `gentian-os` | **done**; the editor for it in the admin console is not built |
 | 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (§4.2) | `gentian-os`, `gentian-apps` | **done** |
-| — | Automated grade rubric in CI | `gentian-apps` | roadmap 2.13 |
+| — | Automated grade rubric in CI | `gentian-apps` | [gentian-apps#210](https://github.com/gentian-org/gentian-apps/issues/210) |
 | — | Third-party delegation process (signing, review SLAs) | — | deferred, §2.9 |

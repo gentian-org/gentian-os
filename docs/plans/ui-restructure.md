@@ -79,7 +79,7 @@ embedded app windows, notifications, an AI widget. In `gentian-ui`, `frontend/sr
 BFF in `backend/app`.
 
 **What it held that it should not** — the state this plan started from; all
-four are removed ([implementation-plan.md](implementation-plan.md) S5, S7A.6):
+four are removed:
 
 | Held | Where | Why it is authority |
 | --- | --- | --- |
@@ -131,8 +131,7 @@ and `spec.tenant` filters in Python — which
 [rbac.yaml](https://github.com/gentian-org/gentian-ui/blob/main/chart/templates/rbac.yaml)
 said of itself: *"these verbs are the console's, not any admin's."*
 
-**What it held that it should not** — removed with the bundled console
-([implementation-plan.md](implementation-plan.md) S7A.6):
+**What it held that it should not** — removed with the bundled console:
 
 | Held | Why it is authority |
 | --- | --- |

@@ -5,9 +5,8 @@ as tenants, users, apps and agents multiply. They are normative: a change that
 breaks one needs a written reason, not a workaround. The models behind them
 (MAC / ReBAC / ABAC layering, the principal chain, the derived ceiling) are in
 [design/security.md §2](design/security.md#2-security-principles); what each
-one still lacks in code is tracked, with its evidence, in
-[plans/security-gap-closing.md](plans/security-gap-closing.md), and the
-longer-dated items in [the roadmap](roadmap.md) §1.
+one still lacks in code is tracked in the
+[issues](https://github.com/gentian-org/gentian-os/issues?q=is%3Aissue+is%3Aopen+label%3Asecurity).
 
 The goal they serve: **safe by default, easy to control, easy to audit, without
 limiting what can be done.** Every rule below is a way of getting the fourth
@@ -88,8 +87,7 @@ identity. The same identity object is what all three layers reason about.
 *Today:* default-deny holds in tenant namespaces and at L7. The kernel,
 system and shared namespaces have ingress policies that ship off and no
 egress policy, and there is no mTLS. Both are tracked as C12 and C7 in
-[plans/certification.md](plans/certification.md) and as G8 and G28 in
-[plans/security-gap-closing.md](plans/security-gap-closing.md).
+[plans/certification.md](plans/certification.md).
 
 ## 7. Audit is three logs joined by one request id
 

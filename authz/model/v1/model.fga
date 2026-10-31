@@ -226,7 +226,7 @@ type session
     # runs, and nothing is lost when a replica restarts (AD-13).
     define revoked: [user]
 
-# Wave 2 (security-gap-closing G9) adds, without changing anything above:
+# Wave 2 adds, without changing anything above:
 #
 #   type task
 #     relations

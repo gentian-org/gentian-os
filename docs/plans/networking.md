@@ -317,7 +317,7 @@ kernel namespace by its rules and on the way out by nothing.
 | Single-tenancy cluster: the user tenant | `desktop.<kernel>`, `admin.<kernel>`, `<app>.<kernel>` | `oidc` | session in realm `user` | as a tenant's | components in `tenant-user`, on the catch-all listener and the cluster's own certificate. The kernel's own labels at that level are refused to it (`HostReserved`) |
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
 | Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/auth/admin/*` on `id.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`; `can_open_kernel_tools` (administrators and service administrators) for Headlamp | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
-| Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 **Except `/auth/admin/*`**, which is the same hostname behind the kernel-realm session and `can_configure` — see below. |
+| Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only ([#540](https://github.com/gentian-org/gentian-os/issues/540)) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 **Except `/auth/admin/*`**, which is the same hostname behind the kernel-realm session and `can_configure` — see below. |
 | Perimeter, HTTP | app host (paths) or own host | per entry | — | — | proxy in `tenant-<t>-dmz` |
 | Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn-dmz` (§9) |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | `none` | — | — | cert-manager solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned perimeter surfaces |
@@ -578,8 +578,7 @@ service. [mail.md](../design/mail.md) describes what is built.
   `HTTPRoute` in the instance's namespace plus a `SecurityPolicy` for its
   `authMode`; per enabled `surface: perimeter` entry, an `HTTPRoute` in
   `tenant-<t>-dmz` targeting the proxy.
-- The ext-auth bouncer is the new enforcement point of
-  [security-gap-closing.md](security-gap-closing.md) G3; the per-zone edge
+- The ext-auth bouncer is the new enforcement point; the per-zone edge
   OIDC clients are created alongside the app clients, each with its
   back-channel logout URI pointing at the director, not at the Gateway (§4).
   Which component performs that Keycloak write is open: AD-12 retires the
@@ -651,8 +650,7 @@ by declarations.
 template, `authMode`, client address, status, bytes, latency, request id
 — and any share token or capability in the path is **hashed**, otherwise
 the log is a list of valid public links. They go to the cluster log store
-(the audit stack of [security-gap-closing.md](security-gap-closing.md)
-G10; the DMZ is the strongest argument for building it).
+(the audit stack; the DMZ is the strongest argument for building it).
 
 **A WAF is protection, not inventory.** Coraza with the OWASP core rules
 runs in-cluster inside the proxy image for every `authMode: none` surface:
@@ -852,7 +850,7 @@ the SFU belongs to the app.
   under a shared secret, and the app mints one per session. One secret for
   the cluster, kept in the vault and delivered to the edge and to every
   component that declares the requirement. An edge per tenant, with a
-  secret, peers and an address of its own, is roadmap 2.35.
+  secret, peers and an address of its own, is [#593](https://github.com/gentian-org/gentian-os/issues/593).
 - **Tunnel mode.** A tunnel carries no UDP and no TURN. A component that
   declares the requirement on a tunnel cluster is not installed. It waits
   under `SystemEngineNotReady` with the reason named.
@@ -886,7 +884,7 @@ networking.
 - **Talk's high-performance backend** (signalling server, Janus, and NATS
   where there is more than one signalling server) is part of the tenant's
   Nextcloud, `class: app`, in `tenant-<t>`. One backend for every tenant is
-  roadmap 2.36.
+  [#594](https://github.com/gentian-org/gentian-os/issues/594).
 - **Media** reaches Janus through the TURN edge alone. A profile lists the
   Services the edge may relay to as `requires.services.turn.mediaBackends`.
   The operator resolves them to their pods, adds them to the edge's peers,

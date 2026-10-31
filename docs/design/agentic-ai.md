@@ -294,8 +294,8 @@ understands.
 
 The unification depends on:
 
-- MCP registry deployment ([roadmap.md](../roadmap.md) §4.1)
-- NATS / CloudEvents infrastructure ([roadmap.md](../roadmap.md) §2.3)
+- MCP registry deployment ([#599](https://github.com/gentian-org/gentian-os/issues/599))
+- NATS / CloudEvents infrastructure ([#574](https://github.com/gentian-org/gentian-os/issues/574))
 - At least two apps declaring both `mcp` and `automationHooks` to
   validate the shared schema in practice
 
@@ -331,7 +331,7 @@ identity and RBAC model as any human operator.
 ## 7. Planned Capabilities
 
 MCP registry, the assistant's tools, workflow agents, and profile generator
-milestones are tracked in [roadmap.md](../roadmap.md).
+milestones are tracked as [issues](https://github.com/gentian-org/gentian-os/issues).
 
 Automation hooks milestones:
 
@@ -339,9 +339,9 @@ Automation hooks milestones:
 |---|---|---|
 | **Phase 1** | ActivePieces profile (PostgreSQL, Redis, SAML SSO, desktop tile). Manual connection config in the AP UI. | SAML sign-in (`requires.services.identity.saml`) |
 | **Phase 2** | `automationHooks` schema on the `ComponentProfile` CRD. Existing apps (OpenProject, Nextcloud, XWiki) declare hooks. Operator generates `IntegrationBinding` when a workflow engine is co-installed. | Generic operator work (not app-specific) |
-| **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. Ship `@gentian/activepieces-piece`. | OIDC token exchange ([roadmap.md](../roadmap.md) §1.14) |
-| **Phase 4** | CloudEvents / NATS delivery mode. Workflow engine subscribes via NATS instead of webhook registration. | NATS deployment ([roadmap.md](../roadmap.md) §2.3) |
-| **Phase 5** | Unified `spec.capabilities` block. MCP + automationHooks merge with per-capability `deliveryModes`. | MCP registry ([roadmap.md](../roadmap.md) §4.1) + Phase 4 |
+| **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. Ship `@gentian/activepieces-piece`. | OIDC token exchange ([#546](https://github.com/gentian-org/gentian-os/issues/546), [#572](https://github.com/gentian-org/gentian-os/issues/572)) |
+| **Phase 4** | CloudEvents / NATS delivery mode. Workflow engine subscribes via NATS instead of webhook registration. | NATS deployment ([#574](https://github.com/gentian-org/gentian-os/issues/574)) |
+| **Phase 5** | Unified `spec.capabilities` block. MCP + automationHooks merge with per-capability `deliveryModes`. | MCP registry ([#599](https://github.com/gentian-org/gentian-os/issues/599)) + Phase 4 |
 
 ## 8. Security Model
 

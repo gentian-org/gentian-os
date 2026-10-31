@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Architecture
 
-**Status:** Draft v0.3 · Architecture reference. The normative one-page rules are [security-principles.md](../security-principles.md); what is implemented versus target is §3.0, with the closing work in [plans/security-gap-closing.md](../plans/security-gap-closing.md) and the longer-dated items in [roadmap.md](../roadmap.md) §1.
+**Status:** Draft v0.3 · Architecture reference. The normative one-page rules are [security-principles.md](../security-principles.md); what is implemented versus target is §3.0, with the open work in the [issues](https://github.com/gentian-org/gentian-os/issues?q=is%3Aissue+is%3Aopen+label%3Asecurity).
 **Scope:** Identity, authorization, and isolation for a fully cloud-based, Kubernetes-native sovereign cloud OS.
 
 ---
@@ -306,7 +306,7 @@ published; its next review is asked.
 control. A site that breaks the rule, or one whose own scripts are replaced
 by an attacker, can still do both things above to anybody who visits it. The
 complete fix is to move the sign-in addresses to a domain that never serves
-tenant content ([roadmap 1.37](../roadmap.md)).
+tenant content ([#562](https://github.com/gentian-org/gentian-os/issues/562)).
 
 ### 2.11 No app at an address people trust as the platform's
 
@@ -579,7 +579,7 @@ What `app` costs is said to the approver in the director's words before they app
 
 **The same approver decides one thing that is not a public address.** An entry behind sign-in may declare `clientAuthorization: app`: the `Authorization` header is the app's own. Approved (`signInAppAuthorization` in the registry), the Gateway leaves the header as the browser sent it and the bouncer does not remove it. The session and the bouncer's question are required as on every entry — the OAuth2 filter admits no request on a bearer, and the bouncer is shown the session as an ID token in a header of its own ([routing.md §4.1](routing.md)) — and no platform token reaches the app. What changes for the app is that it now receives a header a signed-in person's browser chose, where before it received none; it must check it as it would on its own.
 
-**Not built.** Limits on routes behind a session (sync clients and uploads have bursts of their own); a limit on the token endpoint; a cap on a WebSocket's duration; a global limit across Envoy pods, which needs a rate limit service; a web application firewall; the checks the withdrawn modes named (`basic`, `signature`, a bearer verified at the edge); cookies for a client on a public address; and credentials the platform issues and can revoke, which is what would end a removed person's access through an app password ([roadmap.md](../roadmap.md) 1.34).
+**Not built.** Limits on routes behind a session (sync clients and uploads have bursts of their own); a limit on the token endpoint; a cap on a WebSocket's duration; a global limit across Envoy pods, which needs a rate limit service; a web application firewall; the checks the withdrawn modes named (`basic`, `signature`, a bearer verified at the edge); cookies for a client on a public address; and credentials the platform issues and can revoke, which is what would end a removed person's access through an app password ([#560](https://github.com/gentian-org/gentian-os/issues/560)).
 
 **How it is held.** The proxy's rules are asked of the proxy: `TestTheProxyItself*` (`internal/controller/component_perimeter_nginx_test.go`) start the image the operator deploys with the configuration it renders, in front of a server that says back what it was sent, and send it some ninety paths written to leave a prefix or reach a denied path, every identity header in three spellings, oversized bodies and headers, and bursts from two addresses; and, for an entry that passes the credential, that `Authorization` arrives as sent on the declared paths and on no other, that `Cookie` and every identity header still do not, and that guesses from one address are answered 429 at the lower limit. They need docker and are skipped without it. The sign-in limits are validated against the pinned release's definitions, and `TestEnvoyGatewayAcceptsTheRateLimits` puts them through that release's own translator where its `egctl` is installed.
 
@@ -618,7 +618,7 @@ holds a session for the token's `sid`, `sub` and issuer together; XWiki's OIDC a
 checks signature, issuer and audience against the keys the realm publishes, provided a provider
 is configured, which the profile does. (Open WebUI checks the token as well, and cannot end the
 session without Redis, so its declaration has no effect yet;
-[roadmap.md](../roadmap.md) 2.27.)
+[gentian-apps#211](https://github.com/gentian-org/gentian-apps/issues/211).)
 
 **(b) Who can reach the path.** Nothing new. The address is the app's Service inside the
 cluster, and what reaches an app's pods is what the tenant's network policies already admit
@@ -1372,7 +1372,7 @@ random, and the platform takes no snapshot of OpenBao. What follows:
   every service and app is locked out of its own store until each credential
   is set by hand. A cluster that runs `random` has to snapshot OpenBao itself
   and keep the unseal material from the recovery kit with the snapshot
-  ([roadmap 2.30](../roadmap.md)).
+  ([#588](https://github.com/gentian-org/gentian-os/issues/588), [#589](https://github.com/gentian-org/gentian-os/issues/589)).
 
 No person's password is derived or generated. The platform administrator and
 each tenant's administrator set their own through a single-use activation link
@@ -1674,7 +1674,7 @@ back no granted right; with one this cluster signed for this tenant it brings
 back the rights this cluster recorded. A restore is run by a tenant's or the
 cluster's administrator, names the tenant it confirms (`confirmTenant`), and
 writes only the paths above; checking the artifacts is on the roadmap
-([1.41](../roadmap.md)). Until then, restore only bundles whose origin is
+([#566](https://github.com/gentian-org/gentian-os/issues/566)). Until then, restore only bundles whose origin is
 known.
 
 **The bundle signing key.** Ed25519, derived from 32 random bytes the
@@ -1763,7 +1763,7 @@ value as well; nothing does that for a changed path.
 
 One kernel credential can be changed on its own, by hand as above.
 Rotation driven by an annotation or a schedule is not built
-([roadmap.md](../roadmap.md)).
+([#544](https://github.com/gentian-org/gentian-os/issues/544)).
 
 ### Rotation in `derived` mode
 
