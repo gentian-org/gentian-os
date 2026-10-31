@@ -41,7 +41,11 @@ func main() {
 	defer stop()
 
 	mariadb := layout.System("mariadb")
-	names := []string{"mariadb." + mariadb + ".svc", "mariadb." + mariadb + ".svc.cluster.local"}
+	gitops := layout.Kernel(layout.GitOps)
+	names := []string{
+		"mariadb." + mariadb + ".svc", "mariadb." + mariadb + ".svc.cluster.local",
+		"argocd-server." + gitops + ".svc", "argocd-server." + gitops + ".svc.cluster.local",
+	}
 	vault := secrets.NewKVClient(os.Getenv("BAO_ADDR"), role, "")
 
 	var err error
