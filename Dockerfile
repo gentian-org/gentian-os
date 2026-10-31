@@ -2,7 +2,7 @@
 # BUILDPLATFORM keeps the compile on the native runner while GOARCH targets the
 # requested platform — a cross-compile, not emulation, which for a static Go
 # binary is both correct and far faster than running the toolchain under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.25.7-bookworm@sha256:564e366a28ad1d70f460a2b97d1d299a562f08707eb0ecb24b659e5bd6c108e1 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder
 ARG TARGETARCH
 
 WORKDIR /workspace
@@ -54,7 +54,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o arbiter ./cmd/arbi
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o vault-migrator ./cmd/vault-migrator
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
 # gnupg: the director signs what it commits (AD-2), and git shells out to
 # gpg to do it. Without it every commit is unsigned and Argo CD refuses the
