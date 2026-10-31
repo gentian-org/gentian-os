@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -150,30 +151,50 @@ func (g *GitOps) SetClusterBackupPolicy(ctx context.Context, policy BackupPolicy
 // declarations are synced beats inventing a second place Argo would also
 // have to be told about.
 func (g *GitOps) writeClaimsFile(ctx context.Context, name, body, message string, meta Meta) (Result, error) {
+	return g.updateClaimsFile(ctx, name, message, meta, func([]byte) (string, error) { return body, nil })
+}
+
+// updateClaimsFile is the same for a file whose new content depends on the
+// old. render is given the file as the remote holds it and starts over from
+// there when the push loses a race, so what another writer landed in between
+// is carried forward and not reverted.
+func (g *GitOps) updateClaimsFile(ctx context.Context, name, message string, meta Meta, render func(existing []byte) (string, error)) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if err := g.ensureRepo(ctx); err != nil {
-		return Result{}, err
+	for started, attempt := time.Now(), 1; ; attempt++ {
+		if err := g.ensureRepo(ctx); err != nil {
+			return Result{}, err
+		}
+		path := filepath.Join(g.claimsDir(), name)
+		existing, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Result{}, err
+		}
+		body, err := render(existing)
+		if err != nil {
+			return Result{}, err
+		}
+		if string(existing) == body {
+			return Result{Status: "unchanged"}, nil
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return Result{}, err
+		}
+		rel, err := filepath.Rel(g.path, path)
+		if err != nil {
+			return Result{}, err
+		}
+		err = g.commitPaths(ctx, []string{rel}, message, meta)
+		if err == nil {
+			return g.landed(ctx, "updated")
+		}
+		if !errors.Is(err, errPushRejected) {
+			return Result{}, err
+		}
+		if err := retryPush(ctx, started, attempt); err != nil {
+			return Result{}, err
+		}
 	}
-	path := filepath.Join(g.claimsDir(), name)
-	existing, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Result{}, err
-	}
-	if string(existing) == body {
-		return Result{Status: "unchanged"}, nil
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return Result{}, err
-	}
-	rel, err := filepath.Rel(g.path, path)
-	if err != nil {
-		return Result{}, err
-	}
-	if err := g.commitPaths(ctx, []string{rel}, message, meta); err != nil {
-		return Result{}, err
-	}
-	return g.landed(ctx, "updated")
 }
 
 // writeClaimsFileIfAbsent writes one only where the claims do not hold it yet,
