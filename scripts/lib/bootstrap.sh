@@ -106,6 +106,9 @@ path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"
 # Token operations
 path "auth/token/create"      { capabilities = ["update"] }
 path "auth/token/lookup-self" { capabilities = ["read"] }
+# The one PKI role the Cluster composition declares (SecretBackendRole). Only
+# this name: gentian-ca stays the installer's, so this token cannot widen it.
+path "pki-internal/roles/platform-services" { capabilities = ["create","read","update","delete"] }
 POLICY
     )
     _BAO_RETRY_STDIN="${_crossplane_write_policy}" _bao_retry policy write crossplane-write -
