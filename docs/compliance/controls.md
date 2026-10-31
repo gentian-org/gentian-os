@@ -3,10 +3,9 @@
 One row per control objective: the principle it serves
 ([security-principles.md](../security-principles.md)), the mechanism that
 implements it, the query that produces its evidence, and what is still
-missing, named by its item in [plans/certification.md](../plans/certification.md)
-or its gap in [plans/security-gap-closing.md](../plans/security-gap-closing.md).
+missing, named by its item in [plans/certification.md](../plans/certification.md).
 This is the system description an ISO 27001 Statement of Applicability and
-a SOC 2 report map to (roadmap §5.4). A row changes only when the code does;
+a SOC 2 report map to. A row changes only when the code does;
 [design/security.md §3.0](../design/security.md) holds the finer-grained
 status per mechanism.
 
@@ -28,7 +27,7 @@ operating.
 | K9 | Privileged credentials are few, scoped and rotated | 5, 8 | OpenBao holds kernel credentials; the custodian rotates external ones; automated callers sign in to Keycloak as `gentian-operator`; one OpenFGA key per kernel service | OpenBao audit of the paths; rotation dates | The service account holds Keycloak's `admin` role; OpenFGA keys cannot be read-only; no master-password rotation (C6, G20, G21) |
 | K10 | Break-glass access is time-bound and recorded | 5, 7 | `breakGlass` role holder on the Cluster claim, with a reason and a required expiry, dropped by the operator at that time | The claim's commits; `break-glass` audit records from the director | The group path of `platformRoles.breakGlass`, kept by decision and unset by default, has no reason or expiry (C6) |
 | K11 | Changes to a person's identity and rights are recorded with who asked and what allowed it | 7 | Registrar record, 400-day retention (`internal/registrar/record`); Keycloak user and admin events on in tenant realms | `select * from actions where at between …` on the registrar database; Keycloak events API | Events exported and retained outside Keycloak (C8); expiry set (step 3) |
-| K12 | Who holds access is reviewed on an interval and the review is recorded | 5 | — | — | C6, roadmap 5.5 |
+| K12 | Who holds access is reviewed on an interval and the review is recorded | 5 | — | — | C6, [#604](https://github.com/gentian-org/gentian-os/issues/604) |
 | K13 | Tenants are isolated from each other and from the kernel | 6 | Namespace per tenant with default-deny ingress and egress; Kyverno pod-security policies in Enforce; LimitRange; per-tenant OpenBao store and policy | `kubectl get networkpolicy -n <tenant>`; `kubectl get clusterpolicy`; `bao policy read <tenant>` | Kernel egress (C12, G28) |
 | K14 | Secrets are held in a vault and reach a workload only through its tenant's store | 8 | OpenBao with transit auto-unseal; External Secrets Operator with one store, role and policy per tenant | `kubectl get externalsecret -A`; OpenBao policies | Per-app policies (G12) |
 | K15 | Secrets are encrypted at rest | 8 | Pre-flight reads the API server's encryption flag where it is visible and otherwise the Cluster claim's `controlPlane.secretsAtRest` with its `evidence`; `scripts/tools/rewrite-secrets.sh` re-encrypts Secrets written before the provider was switched on | The claim's `controlPlane` block and the commit that set it; the pre-flight line; on a self-hosted control plane, `etcdctl get` on one Secret key showing the provider prefix | The Aluvian cluster's claim says nothing yet: the provider's answer is outstanding; a KMS provider for self-hosted clusters (G17) |

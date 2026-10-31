@@ -1925,8 +1925,8 @@ spec:
               # what that looks like when the two disagree: Synced=False, unable to
               # reconcile, while reading Ready=True.
               #
-              # The Job's tenant-realm half is written and verified but blocked on
-              # roadmap 1.29; until it lands, this is what keeps the two apart.
+              # The Job's tenant-realm half is written and verified but not yet in
+              # use; until it is, this is what keeps the two apart.
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: gentian-dovecot

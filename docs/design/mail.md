@@ -361,8 +361,8 @@ test-mail-edge-lab`, part a2); not yet run on a cluster.
   stays as long as the archive.
 - Whether somebody holds a recorded address is found by listing every person
   of the mail domain at the identity provider, at each sync. A lookup per
-  address, for tenants of many thousand people, is on the roadmap, item 2.29
-  ([roadmap.md](../roadmap.md)).
+  address, for tenants of many thousand people, is planned
+  ([#587](https://github.com/gentian-org/gentian-os/issues/587)).
 
 **Putting an archived mailbox back by hand.** Not offered. On the node, in a
 pod of the mail server's image with the volume mounted, as user 1000:

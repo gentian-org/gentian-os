@@ -37,7 +37,7 @@
 # cluster-wide `secrets` read to do their job. Kubernetes enforces escalation
 # prevention: nothing can create a role granting a permission it does not
 # itself hold. So the identity that installs them stays cluster-admin; scoping
-# it needs the platform to own those charts' RBAC (docs/roadmap.md §1.16).
+# it needs the platform to own those charts' RBAC.
 #
 # A tenant's apps are installed under another identity. Their Releases name
 # the ProviderConfig tenant-apps, whose kubeconfig (written by B-05) makes

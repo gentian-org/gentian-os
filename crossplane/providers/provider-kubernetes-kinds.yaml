@@ -43,8 +43,7 @@
 # let anything create a role granting permissions it does not itself hold.
 # Scoping it means either holding the union of everything every installed
 # chart grants, or `escalate` — which permits minting any role at all and is
-# cluster-admin under a quieter name. See provider-rbac.yaml and
-# docs/roadmap.md §1.16.
+# cluster-admin under a quieter name. See provider-rbac.yaml.
 verbs:
   - get
   - list

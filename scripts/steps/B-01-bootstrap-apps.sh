@@ -304,7 +304,7 @@ check() {
     # them today: a template changed without the build changing -- a new
     # parameter, a corrected sync wave, a bumped chart pin -- otherwise
     # reached a fresh install and never an already-bootstrapped one
-    # (roadmap 2.21). A subset test, by scripts/lib/bootstrap-app-drift.py.
+    # A subset test, by scripts/lib/bootstrap-app-drift.py.
     _v5_bootstrap_apps_current || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done

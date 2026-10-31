@@ -230,4 +230,4 @@ the catalogue moves between platform releases.
 ## 8. Open
 
 What the build of §6 left open is on the roadmap,
-[roadmap.md §2.34](../roadmap.md), so this plan is not read as a backlog.
+[#592](https://github.com/gentian-org/gentian-os/issues/592), so this plan is not read as a backlog.

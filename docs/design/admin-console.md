@@ -208,7 +208,7 @@ Keycloak is replaced by what git says.
 
 The console has no Sessions screen. Listing a person's sessions and ending
 one from the console is not built; it is a possible future feature
-([roadmap.md](../roadmap.md) §3.7).
+([#598](https://github.com/gentian-org/gentian-os/issues/598)).
 
 What ends a session today when an administrator switches a member off or
 removes them is the realm's refusal to renew it, within five minutes; nobody
@@ -355,7 +355,7 @@ that on (*Security* → *Platform administrators may enter this tenant*,
 *Enter tenant*.
 
 A mode that withholds routine access to tenants' people from platform
-administrators is not built ([roadmap.md](../roadmap.md) §3.3).
+administrators is not built ([#596](https://github.com/gentian-org/gentian-os/issues/596)).
 
 ---
 
@@ -366,12 +366,12 @@ a control that exists.
 
 | Topic | State |
 |---|---|
-| Session list and revocation in the console | Not built; a possible future feature (§4.6, [roadmap.md](../roadmap.md) §3.7) |
-| Sign-in and access audit, export, retention | Not built (§4.7; [roadmap.md](../roadmap.md) §1.12) |
+| Session list and revocation in the console | Not built; a possible future feature (§4.6, [#598](https://github.com/gentian-org/gentian-os/issues/598)) |
+| Sign-in and access audit, export, retention | Not built (§4.7; [#362](https://github.com/gentian-org/gentian-os/issues/362)) |
 | Realm-wide second-factor rule, WebAuthn | Not built (§4.4) |
 | Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
 | Group-scoped and mailed notices | Not built (§5) |
-| A model's health as the gateway sees it | Not built (§6a; [llms.md](llms.md) §5; [roadmap.md](../roadmap.md) §2.31) |
+| A model's health as the gateway sees it | Not built (§6a; [llms.md](llms.md) §5; [#586](https://github.com/gentian-org/gentian-os/issues/586)) |
 | Making a backup key in the console | Not offered here. A person makes one with `age-keygen` and gives the console the public half, or makes one in the browser in the Operations Console, which can also have the custodian keep a copy in the vault ([tenant-backup-guide.md](../tenant-backup-guide.md) §8). No server makes a key |
 | Agents and delegation, access requests, break-glass workflow | Not built |
 | A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |
