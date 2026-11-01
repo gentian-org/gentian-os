@@ -883,8 +883,10 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 }
 
 // errPushRejected is the optimistic-concurrency signal: another writer landed
-// between this writer's sync and its push.
-var errPushRejected = errors.New("push rejected: remote moved")
+// between this writer's sync and its push. It is a kind of ErrPushContended, so
+// a write with no loop of its own to retry in answers the same as one that
+// spent its budget: try again.
+var errPushRejected = fmt.Errorf("%w: push rejected, remote moved", ErrPushContended)
 
 // identClean removes what git's ident syntax reserves. Name and address come
 // from token claims a user can edit in their own profile; they must not be

@@ -13,6 +13,7 @@ package gitops_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
@@ -261,5 +262,74 @@ func TestTheDeploymentsValuesStartTheAllowlistOnce(t *testing.T) {
 	}
 	if _, err := fresh.SeedPlatformSecurity(ctx, []gitops.MacWaiver{{Profile: "a", Policy: "b"}}, nil); err == nil {
 		t.Fatal("a waiver without a scope was seeded")
+	}
+}
+
+// A save carries the other list as the remote holds it. Read from a checkout
+// of a moment ago, it would put back what another writer has just removed.
+func TestASecurityPolicySaveKeepsTheOtherListAsTheRemoteHoldsIt(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t, "demo")
+	first := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	second := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+
+	roles := []gitops.ClusterRoleAllowance{{Profile: "headlamp", Role: "viewer"}}
+	if _, err := first.SetPlatformClusterRoles(ctx, roles, meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	// The second director's checkout now counts as fresh for a read.
+	if got, err := second.PlatformClusterRoles(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("roles = %v, err = %v", got, err)
+	}
+	if _, err := first.SetPlatformClusterRoles(ctx, nil, meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	waivers := []gitops.MacWaiver{{Profile: "nextcloud", Policy: "seccomp", Scope: "unconfined"}}
+	if _, err := second.SetPlatformSecurity(ctx, waivers, meta("u-bob")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := first.PlatformClusterRoles(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a removed role came back: %v, err = %v", got, err)
+	}
+	file := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/kernel/claims/"+gitops.PlatformSecurityFile)
+	if strings.Contains(file, "headlamp") || !strings.Contains(file, "nextcloud") {
+		t.Fatalf("the file holds:\n%s", file)
+	}
+}
+
+// Both lists saved at once from two directors: both land.
+func TestConcurrentSecurityPolicySavesBothLand(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t, "demo")
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i, save := range []func(*gitops.GitOps) error{
+		func(g *gitops.GitOps) error {
+			_, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{{Profile: "nextcloud", Policy: "seccomp", Scope: "unconfined"}}, meta("u-ada"))
+			return err
+		},
+		func(g *gitops.GitOps) error {
+			_, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{{Profile: "headlamp", Role: "viewer"}}, meta("u-bob"))
+			return err
+		},
+	} {
+		g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+		wg.Add(1)
+		go func(i int, save func(*gitops.GitOps) error) {
+			defer wg.Done()
+			errs <- save(g)
+		}(i, save)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/kernel/claims/"+gitops.PlatformSecurityFile)
+	if !strings.Contains(file, "headlamp") || !strings.Contains(file, "nextcloud") {
+		t.Fatalf("one save was lost:\n%s", file)
 	}
 }
