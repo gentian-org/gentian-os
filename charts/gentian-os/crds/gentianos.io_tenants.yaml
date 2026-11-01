@@ -473,7 +473,7 @@ spec:
                 - Delete
                 type: string
               displayName:
-                description: DisplayName is a human-readable name for this tenant/organisation.
+                description: DisplayName is a human-readable name for this tenant/organization.
                 maxLength: 256
                 minLength: 1
                 type: string

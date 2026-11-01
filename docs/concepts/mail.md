@@ -905,11 +905,11 @@ on.
 
 ### Cloudflare specifics
 
-**MX records must be DNS-only — the grey cloud, not the orange one.** Cloudflare
+**MX records must be DNS-only — the gray cloud, not the orange one.** Cloudflare
 proxies HTTP and HTTPS; it does not proxy SMTP. An MX record left proxied, or
 pointing at a proxied A record, resolves to Cloudflare's HTTP edge and mail
 delivery fails silently. The same applies to the A record the MX points at: it
-must be grey-clouded even though the rest of the zone is proxied.
+must be gray-clouded even though the rest of the zone is proxied.
 
 TXT records for SPF, DKIM and DMARC are unaffected by the proxy setting.
 

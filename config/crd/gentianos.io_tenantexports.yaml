@@ -309,7 +309,7 @@ spec:
                             type: string
                           target:
                             description: |-
-                              Target is where a restore puts the artefact: the database, bucket or
+                              Target is where a restore puts the artifact: the database, bucket or
                               claim of that kind in the tenant being restored into, which is named
                               differently when the tenant is. Set by a restore only.
                             type: string

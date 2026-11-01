@@ -248,7 +248,7 @@ func (t *Tenant) AdminRequiresMFA() bool {
 }
 
 type TenantSpec struct {
-	// DisplayName is a human-readable name for this tenant/organisation.
+	// DisplayName is a human-readable name for this tenant/organization.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256

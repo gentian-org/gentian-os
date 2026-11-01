@@ -443,7 +443,7 @@ type BundleArtefact struct {
 	// Release is the Helm release a captured volume claim recorded.
 	// +optional
 	Release string `json:"release,omitempty"`
-	// Target is where a restore puts the artefact: the database, bucket or
+	// Target is where a restore puts the artifact: the database, bucket or
 	// claim of that kind in the tenant being restored into, which is named
 	// differently when the tenant is. Set by a restore only.
 	// +optional

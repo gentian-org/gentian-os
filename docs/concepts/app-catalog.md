@@ -560,9 +560,9 @@ is there a shared instance of P offered to this tenant?
 
 Binding creates no release, so from inside the tenant a bound app and a
 dedicated one are indistinguishable. The tenant may refuse the choice:
-`Component.spec.fulfilment` is `auto` (default) or `dedicated`; there is no
+`Component.spec.fulfillment` is `auto` (default) or `dedicated`; there is no
 `shared` value, because a tenant cannot demand a backend the platform has not
-offered. `status.fulfilment` records what the install got, and a later offer
+offered. `status.fulfillment` records what the install got, and a later offer
 does not move a running app.
 
 **A shared backend knows a person by issuer and subject.** People of several
@@ -920,7 +920,7 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
   Service.
 
 On the instance (`component_types.go`): `class` and `profileRef.name` are
-immutable; `fulfilment` applies to class `app` only; a service switches on no
+immutable; `fulfillment` applies to class `app` only; a service switches on no
 perimeter enablement; an enablement's `owner` is immutable and `reviewAt` is
 not later than `expiresAt`; a grant's `approver` and `approvedAt` are
 immutable.
@@ -1058,7 +1058,7 @@ metadata: {name: openproject, namespace: tenant-acme}
 spec:
   profileRef: {name: openproject, digest: "sha256:..."}
   class: app
-  fulfilment: auto
+  fulfillment: auto
   addons: []
   exposures:
     - exposureName: public-share
@@ -1071,6 +1071,6 @@ spec:
       approvedAt: 2026-09-25T09:00:00Z
       reason: "The tenant relays through its provider."
 status:
-  fulfilment: dedicated
+  fulfillment: dedicated
   pendingPrivileges: []
 ```

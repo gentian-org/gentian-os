@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// AppPackage is a named preset that pre-selects a set of addons for a family.
+// AppPackage is a named preset that preselects a set of addons for a family.
 //
 // It is deliberately **not deployable**. Nothing reconciles an AppPackage and it
 // owns no workload, namespace or credential: it exists only so the App Store can
@@ -57,7 +57,7 @@ type AppPackageSpec struct {
 	// +kubebuilder:validation:MaxLength=512
 	Description string `json:"description,omitempty"`
 
-	// Addons lists the ComponentProfile names this preset pre-selects. Each must name an
+	// Addons lists the ComponentProfile names this preset preselects. Each must name an
 	// addon profile (gentianos.io/deployment-role: addon) in the same family.
 	//
 	// Entries are a starting point, not a constraint: the user may untick any of

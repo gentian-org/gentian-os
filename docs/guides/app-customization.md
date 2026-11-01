@@ -689,7 +689,7 @@ Nextcloud apps, XWiki extensions, Keycloak SPIs, Collabora — none.
 |---|---|---|
 | `git-sidecar` | `gentian-sidecar-git-modules` syncs a git repo into the app's addon path (`odoo` chart: `gentian.git.repo` → `gentian.modulesPath`) | addons iterate faster than the app image |
 | `image-layer` | addons baked into a Gentian-built image layer at build time | reproducibility/airgap matters more than iteration speed |
-| `addon-profile` | a thin `ComponentProfile` whose package is `spec.package.addon.{id,of}`; the tenant selects it into a base via `Tenant.spec.apps[].addons` | the addon is a *catalogue-visible product* |
+| `addon-profile` | a thin `ComponentProfile` whose package is `spec.package.addon.{id,of}`; the tenant selects it into a base via `Tenant.spec.apps[].addons` | the addon is a *catalog-visible product* |
 | `app-store-api` | the app's own runtime API installs the extension (Nextcloud `occ app:install`) via `spec.hooks.postInstall` | the app owns its own registry |
 
 #### How an `addon-profile` is activated
@@ -1324,7 +1324,7 @@ field: the edition is what the catalog's index entry states for it
 Never infer either from a profile name.
 
 A **package** is an `AppPackage`: cluster-scoped, no status, no reconciler, no
-workload. It names a family and a set of addons, and pre-selects them in the
+workload. It names a family and a set of addons, and preselects them in the
 install window. The user may still adjust the selection, which is why a curated
 bundle stays a preset rather than becoming an artifact.
 

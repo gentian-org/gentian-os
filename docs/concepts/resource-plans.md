@@ -262,7 +262,7 @@ annotation on the **Tenant**, resolved by the API on every call.
 
 It is not a request parameter. A ceiling a request supplies is a ceiling a
 request can omit, and the console is not the only thing that can reach the
-resources API. An unparseable value is treated as absent rather than as zero —
+resources API. An unparsable value is treated as absent rather than as zero —
 zero is the base tier and would silently pin a tenant to the smallest plan on
 the cluster, which is a worse answer to a typo than no ceiling, and the operator
 who typed it sees the tenant able to upgrade.

@@ -76,8 +76,13 @@ reported through a private security advisory, not written into a page.
 
 ## 7. Checks
 
-`make verify` runs the lints; `scripts/tools/verify-authz-vocabulary.sh`
-checks that the `can_*` relations the pages name and the ones the model
-defines are the same set. The render fixtures under
-`crossplane/tests/unit/render/` are byte-identical copies of the compositions,
-so a citation changed in a composition is changed in every copy.
+`make lint-docs` runs `scripts/lint/lint-docs.py`: every relative link
+resolves and every anchor exists, every page under `docs/` carries its front
+matter and is listed in [index.md](../index.md), and prose outside code is
+American English. `make lint-spelling` runs codespell over the pages with the
+settings in `.codespellrc`. `make verify-gen` regenerates the reference pages
+that `scripts/gen/gen-docs.py` writes and fails when a committed copy differs.
+`scripts/tools/verify-authz-vocabulary.sh` checks that the `can_*` relations
+the pages name and the ones the model defines are the same set. The render
+fixtures under `crossplane/tests/unit/render/` are byte-identical copies of the
+compositions, so a citation changed in a composition is changed in every copy.

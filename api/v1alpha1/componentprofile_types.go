@@ -97,7 +97,7 @@ type PlacementCondition string
 const (
 	// PlacementWhileStoreOffered is for as long as the cluster offers an App
 	// Store: usage statistics are on and the Cluster claim names a store
-	// (spec.catalogue.storeUrl).
+	// (`spec.catalogue.storeUrl`).
 	PlacementWhileStoreOffered PlacementCondition = "storeOffered"
 	// PlacementWhileLLM is for as long as the cluster serves models
 	// (spec.llm.enabled). The catalog's index repeats it as placedWith: llm,
@@ -425,7 +425,7 @@ type PackageAddon struct {
 
 // RequirementSpec is everything the platform must provide or permit.
 type RequirementSpec struct {
-	// Services are what the platform must fulfil before this component runs:
+	// Services are what the platform must fulfill before this component runs:
 	// identity, database, object storage, cache, mail, MCP. Each is fulfilled
 	// by a component of class "service", or by something outside the cluster
 	// entirely -- a relay, a bucket at a cloud provider. It was called

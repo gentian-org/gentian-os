@@ -1261,7 +1261,7 @@ The installer's credential can write every secret in the cluster. Revoking it
 before anyone else has demonstrably written one would leave a cluster nobody
 can supply a credential to; revoking it with no recovery kit would mean that
 if the login path later breaks, there is nothing to fall back on. Either gap
-alone makes the recovery "re-initialise OpenBao from scratch", so the
+alone makes the recovery "re-initialize OpenBao from scratch", so the
 revocation waits for both. Until it happens, creating tenants is held back.
 There is no exception for the install's own: on a single-tenancy cluster the
 user tenant's manifest is committed in step 0 and the cluster refuses it like
