@@ -27,6 +27,12 @@ import (
 // argocdServerTLSSecret is the name Argo CD's server looks for.
 const argocdServerTLSSecret = "argocd-server-tls"
 
+// The label Argo CD watches its settings Secrets by.
+const (
+	argocdPartOfLabel = "app.kubernetes.io/part-of"
+	argocdPartOfValue = "argocd"
+)
+
 // argocdServerHTTPSPort is the Service's TLS port.
 const argocdServerHTTPSPort = 443
 
@@ -47,6 +53,11 @@ func buildArgoCDServerCertificate(namespace string) *unstructured.Unstructured {
 	name := argocdServerName(namespace)
 	obj.Object["spec"] = map[string]interface{}{
 		"secretName": argocdServerTLSSecret,
+		// Argo CD reloads only a Secret labeled as part of it; without this it
+		// keeps the certificate it started with.
+		"secretTemplate": map[string]interface{}{
+			"labels": map[string]interface{}{argocdPartOfLabel: argocdPartOfValue},
+		},
 		"commonName": name,
 		"dnsNames":   []interface{}{name, argocdServerServiceName + "." + namespace + ".svc"},
 		// The role signs EC P-256 keys.

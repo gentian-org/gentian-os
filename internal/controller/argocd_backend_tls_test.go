@@ -30,3 +30,11 @@ func TestGatewayChecksTheNameOnArgoCDsCertificate(t *testing.T) {
 		t.Fatalf("policy reads %v, certificate writes %q", refs, secret)
 	}
 }
+
+func TestArgoCDReloadsItsCertificate(t *testing.T) {
+	cert := buildArgoCDServerCertificate("kernel-gitops")
+	value, _, _ := unstructured.NestedString(cert.Object, "spec", "secretTemplate", "labels", "app.kubernetes.io/part-of")
+	if value != "argocd" {
+		t.Fatalf("Secret is labeled part-of %q, Argo CD reloads only argocd", value)
+	}
+}
