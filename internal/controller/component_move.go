@@ -12,6 +12,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -68,14 +70,18 @@ const (
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create
 
-// moveExportName names the export taken before a move: the app and the
-// build it moves to, short enough for an object's name.
-func moveExportName(component, digest string) string {
+// moveExportName names the export taken before a move: the app, the build it
+// moves to and the request, short enough for an object's name. The request
+// is in the name so that each one exports afresh: a retry that found the
+// export of the attempt before would stop on its failure, or roll out on a
+// copy of data older than what the app holds now.
+func moveExportName(component, digest, movedAt string) string {
 	app := component
-	if len(app) > 40 {
-		app = app[:40]
+	if len(app) > 33 {
+		app = app[:33]
 	}
-	return "move-" + app + "-" + strings.TrimPrefix(profilebundle.Short(digest), "sha256:")
+	request := sha256.Sum256([]byte(movedAt))
+	return "move-" + app + "-" + strings.TrimPrefix(profilebundle.Short(digest), "sha256:") + "-" + hex.EncodeToString(request[:3])
 }
 
 // beginMove decides which build this pass renders: the pinned one, or the one
@@ -99,7 +105,7 @@ func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alp
 		comp.Status.Rollout = &gentianov1alpha1.RolloutStatus{
 			Digest: ro.Digest, Previous: ro.Previous, Target: requested,
 			Phase:   gentianov1alpha1.RolloutExporting,
-			Export:  moveExportName(comp.Name, requested),
+			Export:  moveExportName(comp.Name, requested, comp.Spec.MovedAt),
 			MovedAt: comp.Spec.MovedAt, MovedBy: comp.Spec.MovedBy,
 		}
 		if err := r.ensureMoveExport(ctx, comp); err != nil {

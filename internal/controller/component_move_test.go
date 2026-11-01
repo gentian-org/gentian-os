@@ -252,6 +252,36 @@ func TestAMoveWhoseExportFailsDoesNotStart(t *testing.T) {
 	}
 }
 
+// A later request after a failed export exports afresh: it does not stop on
+// the failure of the attempt before, which stays as its record.
+func TestARetriedMoveTakesAFreshExport(t *testing.T) {
+	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, _, newDigest := startMove(t, wikiBundle, newer)
+	got := h.reconcile()
+	failed := got.Status.Rollout.Export
+	h.endExport(failed, gentianov1alpha1.TenantExportPhaseFailed)
+	if got = h.reconcile(); got.Status.Rollout.Phase != gentianov1alpha1.RolloutFailed {
+		t.Fatalf("after a failed export: %+v", got.Status.Rollout)
+	}
+
+	h.setPin(newDigest, "2026-10-19T11:00:00Z", "u-ada")
+	got = h.reconcile()
+	ro := got.Status.Rollout
+	if ro.Phase != gentianov1alpha1.RolloutExporting || ro.Export == failed {
+		t.Fatalf("the retry: %+v, failed export %s", ro, failed)
+	}
+	if h.export(failed).Status.Phase != gentianov1alpha1.TenantExportPhaseFailed {
+		t.Fatalf("the failed export was not kept: %+v", h.export(failed).Status)
+	}
+	if got = h.reconcile(); got.Status.Rollout.Phase != gentianov1alpha1.RolloutExporting {
+		t.Fatalf("the retry stopped before its export ended: %+v", got.Status.Rollout)
+	}
+	h.endExport(ro.Export, gentianov1alpha1.TenantExportPhaseReady)
+	if got = h.reconcile(); got.Status.Rollout.Phase != gentianov1alpha1.RolloutRolling {
+		t.Fatalf("the retry did not roll out: %+v", got.Status.Rollout)
+	}
+}
+
 // A build that does not come up within the deadline is rolled back.
 func TestAMoveThatDoesNotComeUpInTimeIsRolledBack(t *testing.T) {
 	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
