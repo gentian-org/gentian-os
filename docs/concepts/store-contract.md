@@ -124,7 +124,7 @@ makes the common answer — everyone — part of the install: it is written on t
 app's entry in the same commit (`spec.apps[].defaultGrant`), and the operator
 acts on it once the app's group exists. The people who are members of the
 tenant at that moment are added to the group, and the group is marked so that
-somebody invited later has the app pre-selected. The first is done **once per
+somebody invited later has the app preselected. The first is done **once per
 install** and noted in `Tenant.status.defaultGrantedApps`, so a person an
 administrator later takes out of the group stays out; the mark stays. Until it
 is done, and if it fails, the Tenant carries the condition

@@ -213,7 +213,7 @@ requests, which are the tenant's perimeter approver's (`can_approve_privilege`).
 No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
 **Inviting a member.** *Members* → *Invite*: address, name, optional recovery
-address, the app groups to join (an app installed for everyone is pre-selected).
+address, the app groups to join (an app installed for everyone is preselected).
 The registrar creates the account with no password and has Keycloak mail a
 link with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 

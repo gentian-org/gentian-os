@@ -12,7 +12,7 @@ This repo owns the **kernel** — the operator and the director, CRDs, install/u
 kernel-level services (identity, mail, gateway, infra data stores) that every Gentian cluster
 needs regardless of which apps run on it. It does **not** contain:
 
-- App or sidecar implementations/catalogues — see [gentian-apps](https://github.com/gentian-org/gentian-apps)
+- App or sidecar implementations/catalogs — see [gentian-apps](https://github.com/gentian-org/gentian-apps)
   (open-source profiles) and [gentian-sidecars](https://github.com/gentian-org/gentian-sidecars)
   (sidecar templates).
 - Proprietary profiles, or any private catalog: published by whoever maintains
@@ -37,6 +37,7 @@ bootstrap via `install.sh`.
 [docs/index.md](docs/index.md) lists every document by section and audience.
 
 - [AGENTS.md](AGENTS.md) — repo rules for coding agents
+- [docs/overview/introduction.md](docs/overview/introduction.md) — what Gentian OS is, in plain terms
 - [docs/overview/architecture.md](docs/overview/architecture.md) — system architecture overview
 - [docs/guides/](docs/guides/) — deployment, app customization, custom catalogs, identity brokering, backup and recovery, node-pool migration
 - [docs/reference/](docs/reference/) — the installer, the `kubectl gentian` commands, the store API

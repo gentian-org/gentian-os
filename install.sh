@@ -223,7 +223,7 @@ Other options:
                         GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
                         where to put it so a later run does not turn it back on
   --no-extra-services   leave out the store's extra services, which a cluster
-                        otherwise gets from the store's catalogue: the
+                        otherwise gets from the store's catalog: the
                         Operations Console (platform tenant), the App Store app
                         and the Aluvian Center (every other tenant, new
                         ones included, while the cluster offers a store),

@@ -166,6 +166,12 @@ jobs:
       - name: Install controller-gen
         run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
 
+      # Most of the generators parse YAML (the CRDs, versions.yaml, the
+      # namespace layout) and until now ran only because the runner image
+      # happened to ship PyYAML; the lint job installs it for the same reason.
+      - name: generator dependencies
+        run: python3 -m pip install --quiet pyyaml
+
       - name: Verify generated deepcopy and CRD YAML are up to date
         run: make verify-gen
 
@@ -222,13 +228,13 @@ jobs:
       # recovery-kit check below: two of these are Python and parse YAML, and
       # until now they ran only because the runner image happened to ship it.
       - name: lint dependencies
-        run: python3 -m pip install --quiet pyyaml
+        run: python3 -m pip install --quiet pyyaml codespell
 
       - name: lints
         # lint-marker-ascii: a kubebuilder marker that carries a typographic
         # quote renders a CRD the API server refuses, and nothing else catches
         # it — not envtest, whose newer API server is more forgiving.
-        run: make lint-shell lint-yaml lint-job-scripts lint-portability lint-image-digests lint-marker-ascii verify-openbao-cli-release
+        run: make lint-shell lint-yaml lint-job-scripts lint-portability lint-image-digests lint-marker-ascii lint-docs lint-spelling verify-openbao-cli-release
 
       # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
       # and only its export was ever exercised. age is installed rather than

@@ -20,6 +20,7 @@ For readers who know software but not cloud-native systems.
 
 | Document | What it answers |
 |---|---|
+| [introduction.md](overview/introduction.md) | What Gentian OS is and how it is run, in plain terms, with a glossary |
 | [architecture.md](overview/architecture.md) | What Gentian OS is, the OS analogy, the architecture at a glance, the kinds, how it scales |
 | [why-a-cloud-os.md](overview/why-a-cloud-os.md) | Why open-source business software needs an operating system around it |
 | [faq.md](overview/faq.md) | Frequently asked questions |
@@ -47,6 +48,13 @@ Complete and exact: every flag, command and field.
 | [install.md](reference/install.md) | The installer: steps, flags, configuration surfaces, tenancy modes |
 | [commands.md](reference/commands.md) | The `kubectl gentian` commands |
 | [store-api/](reference/store-api/store-api.md) | The App Store API: contract, OpenAPI documents, schema |
+| [crds.md](reference/crds.md) | Every `gentianos.io` kind with all of its fields, generated from the CRDs |
+| [commands-synopsis.md](reference/commands-synopsis.md) | The `kubectl gentian` synopsis, generated from the plugin |
+| [install-steps.md](reference/install-steps.md) | The installer's flags and steps, generated from `install.sh` and `scripts/steps/` |
+| [versions.md](reference/versions.md) | The pinned component versions, generated from `versions.yaml` |
+| [namespaces.md](reference/namespaces.md) | The namespace layout by tier, generated from `kernel/namespaces.yaml` |
+
+The generated pages are written by `scripts/gen/gen-docs.py` (`make gen-docs`), which also writes [llms.txt](llms.txt) for language models.
 
 ## Concepts
 

@@ -62,7 +62,7 @@ spec:
             properties:
               addons:
                 description: |-
-                  Addons lists the ComponentProfile names this preset pre-selects. Each must name an
+                  Addons lists the ComponentProfile names this preset preselects. Each must name an
                   addon profile (gentianos.io/deployment-role: addon) in the same family.
 
                   Entries are a starting point, not a constraint: the user may untick any of

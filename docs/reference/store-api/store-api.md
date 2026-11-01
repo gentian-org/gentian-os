@@ -223,7 +223,7 @@ country, address and industry, each optional. A store that needs a contact
 asks the person for it there or in its checkout. The first account that
 registers for a tenant manages it (§4).
 
-### GET /v1/meta
+### GET `/v1/meta`
 
 Open: it takes no token and ignores one. Read before anything else;
 cacheable for the `max-age` it states.
@@ -271,7 +271,7 @@ calls only: the catalog stays readable to a tenant the store refuses, and
 to somebody who never registers. A notice is likewise seen only on a
 signed-in call.
 
-### GET /v1/tenant
+### GET `/v1/tenant`
 
 Answers for the tenant the assertion's issuer is. It is the one signed-in call that
 never answers `403 tenant-refused`: a refusal is stated in the body, so the
@@ -407,7 +407,7 @@ label. It is the value the cluster's install request carries. A profile's
 name includes its edition, so each edition of an app is an entry of its own;
 `family` ties them together.
 
-### GET /v1/categories
+### GET `/v1/categories`
 
 ```jsonc
 {"items": [{"id": "collaboration", "name": "Collaboration"},
@@ -417,7 +417,7 @@ name includes its edition, so each edition of an app is an entry of its own;
 The whole list, unpaged, in the order the store shows it. `id` is stable
 across languages; `name` is in the language of the request.
 
-### GET /v1/apps
+### GET `/v1/apps`
 
 | Parameter | In | Meaning |
 |---|---|---|
@@ -500,7 +500,7 @@ this API.
 | `period` | `month` \| `year` \| null | no | For `subscription` |
 | `note` | string ≤ 300 \| null | no | Anything the numbers do not say |
 
-### GET /v1/apps/{catalogue}/{app}
+### GET `/v1/apps/{catalogue}/{app}`
 
 Everything in the summary, and:
 
@@ -606,7 +606,7 @@ answer (`Cache-Control: private, no-store`). A `country` asked always wins.
 enforces is what the profile bundle itself declares, read from the bundle,
 never from the store.
 
-### GET /v1/apps/{catalogue}/{app}/reviews
+### GET `/v1/apps/{catalogue}/{app}/reviews`
 
 Newest first, paged. `summary` is over every review of the entry, not over
 the page.
@@ -647,7 +647,7 @@ company, never its name), and the summary carries `recommend.yes`,
 `recommend.no` and the mean and count of each score. `?companySize=` and
 `?industry=` narrow the list and the summary alike.
 
-### PUT /v1/apps/{catalogue}/{app}/reviews/mine
+### PUT `/v1/apps/{catalogue}/{app}/reviews/mine`
 
 The signed-in person's review, written or replaced; one per person and
 entry.
@@ -664,14 +664,14 @@ Refused with `409 company-missing` while the account names no company, with
 one, and with `400` for `support` or `value` on an entry that is not `ee`.
 `GET` answers one's own review or `404`; `DELETE` withdraws it.
 
-### GET /v1/account/company
+### GET `/v1/account/company`
 
 The company the person is with: `{"name": "Acme AG", "size": "10-49",
 "industry": "information-communication"}`, or `404` while there is none.
 The store's operator records it, outside this API. The sizes and
 industries, with their names, are in `GET /v1/meta`.
 
-### GET /v1/apps/{catalogue}/{app}/reports
+### GET `/v1/apps/{catalogue}/{app}/reports`
 
 Documents somebody wrote about the app. Newest first, unpaged.
 
@@ -702,7 +702,7 @@ Documents somebody wrote about the app. Newest first, unpaged.
 The store states who issued a report; it does not vouch for it, and nothing
 on the cluster reads one.
 
-### POST /v1/apps/{catalogue}/{app}/support-requests
+### POST `/v1/apps/{catalogue}/{app}/support-requests`
 
 Signed in (1.3, feature `support`). The person asks for one of the app's
 support offers:
@@ -752,7 +752,7 @@ may become `cancelled`. Closed.
 | `failure` | `{reason, detail}` \| null | yes | Present exactly when `failed`. `reason` is open (`payment-declined`, `checkout-expired`, `not-available`, `access-declined`); `detail` is for the person |
 | `confirmation` | Confirmation \| null | yes | Present exactly when `confirmed` (§7) |
 
-### POST /v1/acquisitions
+### POST `/v1/acquisitions`
 
 ```jsonc
 // request
@@ -793,7 +793,7 @@ a separate window; the person pays there, at the store, signed in to the
 store. The app then asks `GET /v1/acquisitions/{id}` for the outcome. The
 store does not tell the cluster: there is no callback.
 
-### POST /v1/acquisitions/free
+### POST `/v1/acquisitions/free`
 
 Added in 1.13, with the feature `free-acquisition`. A tenant takes an app
 whose price model is `free` without anybody registering with the store. The
@@ -826,7 +826,7 @@ subject. The answers are those of `POST /v1/acquisitions`; while one is
 `GET /v1/acquisitions/{id}` needs an account. A confirmation answered here
 carries its repository credential: it is the tenant's.
 
-### GET /v1/acquisitions/{id}
+### GET `/v1/acquisitions/{id}`
 
 The outcome. While `pending` the answer carries `Retry-After`, which the app
 honors before asking again, and never asks more often than every two
@@ -857,14 +857,14 @@ An acquisition of another tenant answers `404`, not `403`.
 }
 ```
 
-### GET /v1/acquisitions
+### GET `/v1/acquisitions`
 
 Every acquisition of the tenant in the token, in any status, newest first,
 paged; `?status=` filters. In this listing a confirmation's repositories
 **never carry a `credential`**: a credential is handed out one acquisition
 at a time, by the three operations around it.
 
-### POST /v1/acquisitions/{id}/credential
+### POST `/v1/acquisitions/{id}/credential`
 
 **Replace this credential now.** Rotation, for when a credential may have
 leaked or an administrator asks. No body. It replaces the credential of

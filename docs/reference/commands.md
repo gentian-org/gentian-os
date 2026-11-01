@@ -551,7 +551,7 @@ What each act keeps and destroys, kind by kind, is in
 `--for-everyone` writes `defaultGrant: true` on the app's entry in the same
 commit. Every member of the tenant then has the app by default: the people who
 are members when the app's group first exists are added to it once, and
-somebody invited later has it pre-selected. It needs the right to grant in the
+somebody invited later has it preselected. It needs the right to grant in the
 tenant as well as to install. Without the flag, access is given per person
 ([store-contract.md](../concepts/store-contract.md) §3).
 

@@ -70,7 +70,7 @@ system:
     holds: the CNPG cluster tenant databases are provisioned on; the kernel's own is kernel-postgres, in kernel-data
   - name: system-mariadb
     function: mariadb
-    holds: MariaDB, for catalogue apps that speak no other engine
+    holds: MariaDB, for catalog apps that speak no other engine
   - name: system-cache
     function: cache
     holds: Redis

@@ -211,7 +211,7 @@ A profile cannot choose an issuer for its own hosts: `ComponentProfile` has no s
 
 When traffic is **proxied** (e.g. Cloudflare orange cloud), the CSP must also present a valid certificate for each hostname. Universal SSL on `*.platform.example.com` does **not** cover `meet.demo.platform.example.com`.
 
-Optional operator integration (Cloudflare): proxied CNAME `*.<effectiveDomain>` → tunnel target so **Total TLS** issues `*.<effectiveDomain>` at the edge. If disabled, use DNS-only (grey cloud) or TLS passthrough to the cluster origin cert.
+Optional operator integration (Cloudflare): proxied CNAME `*.<effectiveDomain>` → tunnel target so **Total TLS** issues `*.<effectiveDomain>` at the edge. If disabled, use DNS-only (gray cloud) or TLS passthrough to the cluster origin cert.
 
 Origin and edge are separate: cert-manager in the tenant namespace is the portable contract; Cloudflare/ACM/Front Door adapters are deployment options.
 

@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests gen-platform-version test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-platform-role-groups test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-internal-ca test-bundle-signing test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation lint-composed-provider-fields test-provider-activation refresh-provider-types test-default-profile-digest test-store-catalogues lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-secrets-at-rest test-log-forwarding test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-object-storage-lab test-build-pin test-one-cluster test-namespace-teardown test-operator-objects test-claims-kinds
+.PHONY: verify all build generate manifests gen-platform-version gen-docs test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-platform-role-groups test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-internal-ca test-bundle-signing test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation lint-composed-provider-fields test-provider-activation refresh-provider-types test-default-profile-digest test-store-catalogues lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-secrets-at-rest test-log-forwarding test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-object-storage-lab test-build-pin test-one-cluster test-namespace-teardown test-operator-objects test-claims-kinds
 
 all: generate build test
 
@@ -125,8 +125,17 @@ gen-cluster-setting-defaults:
 gen-platform-version:
 	python3 scripts/gen/gen-platform-version.py
 
+## Write the generated reference pages under docs/ (CRDs, install flags and
+## steps, the kubectl gentian synopsis, versions, namespaces) and docs/llms.txt
+gen-docs:
+	python3 scripts/gen/gen-docs.py
+
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-platform-version gen-authz-model gen-kernel-network-policies
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-platform-version gen-authz-model gen-kernel-network-policies gen-docs
+
+## The pages scripts/gen/gen-docs.py writes; verify-gen checks them by status,
+## not by diff, so a new page counts as drift until it is committed.
+GEN_DOCS := docs/reference/crds.md docs/reference/install-steps.md docs/reference/commands-synopsis.md docs/reference/versions.md docs/reference/namespaces.md docs/llms.txt
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
@@ -136,13 +145,17 @@ verify-gen: gen-all
 	@# check the kind at all.
 	@test -z "$$(git status --porcelain --untracked-files=all internal/schemacheck/definitions/ | grep '^??')" || (echo "A newly embedded definition is not committed: git add internal/schemacheck/definitions/" && exit 1)
 	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go internal/platformversion/line.go config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	@# The same for the generated docs pages: a page written for the first
+	@# time, or rewritten, is a change the diff above would not see while it
+	@# is untracked, so any status line at all under these paths fails.
+	@test -z "$$(git status --porcelain --untracked-files=all -- $(GEN_DOCS))" || (git status --porcelain --untracked-files=all -- $(GEN_DOCS); echo "Generated docs are out of date or not committed. Run 'make gen-docs' and git add them." && exit 1)
 
 ## Tidy module dependencies
 tidy:
 	go mod tidy
 
 ## Run every linter the CI Lint job runs (Go, YAML, shell)
-lint: lint-go lint-yaml lint-shell
+lint: lint-go lint-yaml lint-shell lint-docs lint-spelling
 
 ## Everything CI runs, in one target.
 ##
@@ -157,6 +170,13 @@ verify: verify-gen lint validate-steps test test-unit
 
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
+lint-docs:
+	python3 scripts/lint/lint-docs.py
+
+# codespell reads .codespellrc; the British spellings are lint-docs' job.
+lint-spelling:
+	codespell docs README.md GETTING-STARTED.md AGENTS.md CONTRIBUTING.md SECURITY.md LICENSING.md
+
 lint-go:
 	golangci-lint run ./...
 	@# The API module carries its own license header and its own config for it.

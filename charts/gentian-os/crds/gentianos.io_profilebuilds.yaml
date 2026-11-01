@@ -2908,7 +2908,7 @@ spec:
                               storeUrlKey:
                                 description: |-
                                   StoreURLKey receives the base address of the App Store API this cluster
-                                  names (the Cluster claim's spec.catalogue.storeUrl), and the empty
+                                  names (the Cluster claim's `spec.catalogue.storeUrl`), and the empty
                                   string while the cluster offers no App Store: none is named, or license
                                   reporting is off.
 
@@ -3492,7 +3492,7 @@ spec:
                         type: object
                       services:
                         description: |-
-                          Services are what the platform must fulfil before this component runs:
+                          Services are what the platform must fulfill before this component runs:
                           identity, database, object storage, cache, mail, MCP. Each is fulfilled
                           by a component of class "service", or by something outside the cluster
                           entirely -- a relay, a bucket at a cloud provider. It was called

@@ -47,7 +47,7 @@ The result: installing a new desktop app is a one-click operation.
 Removing it cleans up after itself. Apps interoperate (drag a file from
 the file manager into the editor) without prior integration work.
 
-A cloud-native equivalent would do the same for organisations:
+A cloud-native equivalent would do the same for organizations:
 
 > Click "install Nextcloud" — and the platform allocates a database,
 > registers an OIDC client, mints S3 credentials, configures DKIM for

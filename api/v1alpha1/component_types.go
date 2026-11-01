@@ -251,7 +251,7 @@ type ComponentStatus struct {
 	// +kubebuilder:validation:Enum=dedicated;shared
 	Fulfilment string `json:"fulfilment,omitempty"`
 
-	// SharedInstance names the backend when Fulfilment is "shared".
+	// SharedInstance names the backend when `fulfilment` is "shared".
 	// +optional
 	SharedInstance string `json:"sharedInstance,omitempty"`
 
