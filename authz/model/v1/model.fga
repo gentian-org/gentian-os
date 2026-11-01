@@ -1,8 +1,8 @@
 model
   schema 1.1
 
-# Target authorization model, v1. The single vocabulary every plan is
-# checked against — see ../authorization-model.md for the rules behind it.
+# Authorization model, v1. The single vocabulary every document is checked
+# against — see docs/design/authorization.md for the rules behind it.
 #
 # Conventions
 #   type            one per CRD kind; object id = the CR's name, namespaced
@@ -27,7 +27,7 @@ model
 #                   with "<relation> from <parent>"
 #   exclusion       "but not" only for least-privilege invariants
 #   membership      STORED, like everything else. group:<g>#member@user:<sub>
-#                   is written by the director from Keycloak's event stream and
+#                   is written by the operator from Keycloak's event stream and
 #                   reconciled with a read-only client (AD-12, R7). It is never
 #                   taken from a token's groups and never edited in place: the
 #                   store is a projection of Keycloak, so an access review is
@@ -35,7 +35,7 @@ model
 #                   who might present which claim.
 #   contextual      runtime facts only — task TTL, acting_for, device posture.
 #                   Never identity, never membership.
-#   structure       everything else is stored, written only by the director
+#   structure       everything else is stored, written only by the operator
 
 type user
 
@@ -204,7 +204,7 @@ type contract
     # (G8) there is nothing sitting on an app-to-app call, so the tuple
     # records the tenant's consent and bounds what the director will bind —
     # it does not intercept traffic. What revoking therefore costs today is
-    # in authorization-model.md §3 and design/security.md §3.4; the one thing
+    # in design/authorization.md §3 and design/security.md §3.4; the one thing
     # it is not is free.
 
 type shared_instance

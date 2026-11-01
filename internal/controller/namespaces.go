@@ -32,7 +32,7 @@ import (
 // all of these, and addressing it by name is what kept every tenant out of a
 // cluster built in any other shape.
 //
-// The system functions are the ones namespace-cleanup.md names; a cluster
+// The system functions are the ones kernel.md §6.1 names; a cluster
 // that has not composed one of them yet has no tenant using it either.
 var (
 	provisioningNamespace = layout.Namespace(layout.Provisioning)

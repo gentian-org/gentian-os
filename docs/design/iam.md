@@ -1,3 +1,8 @@
+---
+audience: architect, operator
+type: design
+---
+
 # Identity and Access Management (IAM)
 
 This document describes identity, roles, and access control in Gentian OS.
@@ -6,6 +11,8 @@ This document describes identity, roles, and access control in Gentian OS.
 - [admin-console.md](admin-console.md) — the administration console
 - [multi-tenancy.md](multi-tenancy.md) — namespace, network, and data isolation
 - [security.md](security.md) — Keycloak, OpenFGA, MAC layers
+- [authorization.md](authorization.md) — the rights model, roles and enforcement points
+- [partners.md](partners.md) — identity across clusters
 
 ---
 
@@ -272,14 +279,14 @@ leaves the platform group is out of both at their next sign-in through it.
 The second group grants nothing in the tenant -- no role in the kernel
 store, nothing on the desktop or in an app; it exists so that an assertion
 towards a partner can say the person is a cluster administrator
-([cross-cluster-identity.md §2](../plans/cross-cluster-identity.md)). The person arrives as
+([partners.md §2](partners.md)). The person arrives as
 a new account of the tenant's realm, under Keycloak's own first-broker-login
 flow; an address the realm already has is linked only once its owner confirms
 it. The provider is hidden on the tenant's sign-in page: the way in is the
 *Enter tenant* action in the platform console, which is
 `https://desktop.<tenant domain>/?kc_idp_hint=kernel`. The tenant realm's
 login events record each entry as a sign-in through `kernel`. This switch is
-not the tenant's `operated_by` consent (authorization-model.md §3): that one
+not the tenant's `operated_by` consent ([authorization.md §3](authorization.md)): that one
 lets the cluster's administrators act on the tenant through the director,
 this one lets them sign in to it, and each is set and withdrawn on its own.
 
@@ -300,7 +307,7 @@ membership, and access to each app:
 | `gentian:tenant:<t>:members` | All workspace members |
 | `gentian:tenant:<t>:admins` | Tenant IT admins. Carries the group attribute `gentianPartnerRole: tenant-admin`, which an assertion towards a partner reads and nothing else does |
 | `gentian:tenant:<t>:platform-admins` | The platform's administrators while they are in the tenant through `kernel` (§1.1c), filled and emptied at every sign-in like `admins`. Grants nothing: no tuple in the kernel store, nothing on the desktop or in an app. Carries `gentianPartnerRole: cluster-admin`, for the partner assertion alone |
-| `gentian:tenant:<t>:app-admins` | The App Admin role: who administers the tenant's apps. One group for the whole tenant, not one per app (§1.11) |
+| `gentian:tenant:<t>:app-admins` | The App Admin role: who administers the tenant's apps. One group for the whole tenant, not one per app (`internal/keycloak/groups.go`); it is the one group an app's own administrator role is derived from, by the profile's sync Job (§1.8) or by the sign-in sidecar (§1.11) |
 | `gentian:tenant:<t>:app:<profile>` | Access to one installed app (§1.6) |
 
 Membership reaches **OpenFGA** as events: Keycloak's event listener posts signed statements to the
@@ -523,8 +530,48 @@ a mail server written without its password, is in [mail.md §5d](mail.md).
 A tenant realm states `loginWithEmailAllowed` in both cases: `false`, and
 `true` where people sign up with their address as the login.
 
-What is declared and what is still a Job:
-[tenant-identity-composition.md](tenant-identity-composition.md).
+**The manifest bridge.** The Jobs reach the Composition this way: the
+operator seeds credentials in OpenBao and builds the Job manifests in Go,
+writes them to the ConfigMap `tenant-{name}-provisioning-jobs` (`jobs.json`)
+in `kernel-provisioning`, and `tenant-default` emits one
+`kubernetes.crossplane.io/Object` per Job. A Job's pod template is immutable,
+so the operator stamps each Job with a hash of its script and removes a
+finished Job whose script changed; the Composition then creates it again.
+`tenant-default` runs `function-sequencer`: objects that need the realm are
+held back until what they depend on is Ready.
+
+What is declared and what is a Job:
+
+| Declared in `tenant-default` | A Job |
+|---|---|
+| The zone's sign-in client (`gentian-edge-<zone>`), its scopes and audience mappers | `keycloak-realm-{tenant}`: creates the realm |
+| The token-exchange client (`gentian-edge-exchange`), the `groups` scope and mapper, the user profile, realm events | `keycloak-gentian-groups-{tenant}`: the tenant's groups, one per installed app included, and their attributes |
+| The four fixed groups (`members`, `admins`, `app-admins`, `perimeter`) | `keycloak-admin-{tenant}`: the tenant administrator's account, without a password |
+| The realm's required actions | OIDC client Jobs, for an app whose client has an OIDC pack (§1.7); SAML client Jobs |
+| `gentian-dovecot` and the `mailbox` scope, where the cluster has its own mail server | `keycloak-tenant-smtp-{tenant}`: the realm's mail-server settings, where the cluster has SMTP credentials |
+| The realm itself, adopted by name | |
+| For a tenant people sign up to (`spec.signUp.enabled`): the realm's registration settings, its registration flow with the platform's proof-of-work check, and the binding of the realm to that flow | |
+| For a tenant that lets the platform's administrators enter (`spec.platformAccess.adminsEnter`): the identity provider `kernel` and its mappers into the admins groups (§1.1c) | |
+| For the platform tenant: per entering tenant the client `broker-to-<t>` in the kernel realm | |
+| A tenant's partners: the partner client and scope, the identity provider `partner-<name>` ([partners.md](partners.md)) | |
+
+An app without a pack gets its OIDC client rendered with its release by the
+operator (`internal/apprender`), not from a Job; the tenant reconciler only
+seeds the client's secret. The platform tenant adopts the kernel realm: it
+gets no realm Job, no administrator Job and no mail-server Job, only its
+groups, and the clients the platform's administrators enter other tenants
+with, which are declared.
+
+**Deleting a tenant.** The operator runs one Job
+(`internal/controller/identity_reconciler.go`): it deletes the realm where
+the tenant's `spec.deletionPolicy` is `Delete`, and otherwise disables it.
+The kernel realm is never touched. The composed Keycloak objects have
+`deletionPolicy: Orphan`: they are not deleted one by one, they go with the
+realm.
+
+Rendered Compositions are tested under `crossplane/tests/unit/render/`; the
+Jobs of a tenant are listed with
+`kubectl get jobs -n kernel-authentication -l gentianos.io/tenant=<name>`.
 
 ---
 
@@ -665,6 +712,27 @@ A client with no browser session reaches an app only through a public entry of `
 with a credential the app issued: the platform does not know that caller, and removing a person
 from the realm does not end such a credential ([security.md §2.14](security.md)). And a sign-out ends an app's own session
 only where the app can be told of it (§1.12).
+
+**Which way for which app.** Every address of an app is behind the same front door
+([routing.md §4.1](routing.md)); what differs is how the app then learns who is there. Ask in
+this order and stop at the first that applies:
+
+| The app | Its profile declares | What the app receives | How the person experiences it |
+|---|---|---|---|
+| is a page of the platform itself that calls the platform's services (desktop, administration console, App Store app) | `forwardToken: true` on the entry for the page's server, allowed for `trustTier: platform` only, because the session's token is valid at the director and every sibling | the session's own token, which it passes on; each platform service verifies it and asks OpenFGA | signed in; no second step |
+| verifies the person itself from a token the platform hands it | `exchangeToken: true` on the entry: the bouncer exchanges the session's token at the tenant's realm for one whose audience is the app alone (`internal/bouncer/exchange.go`); any app may ask for it | a token valid at this app and nowhere else, in `Authorization`; it need not trust the identity headers | signed in; no second step |
+| can sign people in with OIDC in the edition installed | `requires.services.identity.oidc` | its own client at the realm; the realm session from the desktop answers without a form | a redirect to the realm and back, no form |
+| can do so with SAML and not with OIDC | `requires.services.identity.saml` | a SAML client at the realm | the same |
+| has accounts with a user name and a password, and neither | `requires.services.identity.sidecar` | the platform's sign-in sidecar beside it, which signs the person in through its handler (above) | the same |
+| has pages that send the app's own token to the app's API | `clientAuthorization: app` on the entry, in effect once the tenant's perimeter approver approved it ([routing.md §7](routing.md)) | its own `Authorization` header, left as the page sent it; the session is still required | the app's own sign-in in the page, behind the platform's |
+| has no accounts at all | nothing | the identity headers, or nothing it reads | the front door alone |
+
+A program is not a person at a browser: the command line reaches the director through the API
+server ([commands.md](../commands.md)), and a client without a session reaches an app only
+through a public entry of `authMode: app`. The rules for the catalog: every profile says how its
+app signs people in, by exactly one of the three `identity` declarations, or by none for an app
+without accounts; `forwardToken` and `exchangeToken` are entry settings, never a substitute for
+one; and no app is given a shared account: every session in an app belongs to one person.
 
 ### 1.12 Signing out: what ends, where, and when
 

@@ -940,7 +940,7 @@ other, and a tenant moved back to a build it ran finds it on the cluster without
 such an install is a companion the build brings that differs from the one on the cluster
 (`CompanionMismatch`): companions are one object per name, like the profile.
 
-A move is one guarded operation, whoever asks for it ([versioning.md](plans/versioning.md) §5):
+A move is one guarded operation, whoever asks for it ([design/versioning.md](design/versioning.md) §5):
 the app's data is exported first, to the platform's own storage; the new build rolls out; once its
 release is ready the profile's `restore.verify` command runs; a build that does not come up within
 fifteen minutes or does not verify is rolled back, and the instance runs the build it ran. The

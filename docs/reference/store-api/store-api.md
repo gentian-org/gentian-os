@@ -1,3 +1,8 @@
+---
+audience: store-vendor, architect
+type: reference
+---
+
 # The store API
 
 What a store serves, written for whoever builds one. A Gentian OS cluster
@@ -19,234 +24,14 @@ depths, and they must agree:
 | this document | The same definition in full, in prose, with annotated examples |
 | [store-contract.md](../../design/store-contract.md) | Why it is shaped this way: who trusts whom, and what the cluster does with each answer |
 
+The version of the definition is the `info.version` of the OpenAPI file. A
+field or operation added in a later minor version is marked with that
+version in the tables below; a client of an earlier minor version reads
+every answer as before.
+
 The report a cluster sends about itself, which a store depends on (§4), is a
 separate format: [usage-statistics.openapi.yaml](usage-statistics.openapi.yaml),
 spelled out in [operations.md §6.2](../../design/operations.md).
-
-## Changes to the definition
-
-Whoever keeps a copy of these files: this is what moved, newest first.
-
-**2026-10-29** (1.15, a 1.14 client is answered as before: it finds no
-`tenant-access` in `features` and calls nothing removed)
-
-1. **No account holds a tenant any more.** Removed: `GET /v1/tenant/access`,
-   `POST /v1/tenant/access/{subject}/approve` and `…/decline`, the feature
-   `tenant-access`, the role `holder` and the code `not-tenant-holder`. An
-   account that does not manage the tenant still gets an acquisition
-   waiting for `approval`; an owner or administrator of the organization
-   the tenant belongs to, or the store's operator, approves or declines it,
-   outside this API (§4).
-2. **A store takes no company from an account.** Removed: `PUT
-   /v1/account/company`. `GET` stays; the store's operator records the
-   company, outside this API.
-
-**2026-10-29** (1.14, additive: a 1.13 client is answered as before)
-
-1. **`organization` on `POST /v1/acquisitions`**, with the feature
-   `tenant-organization`: who the tenant is, as its Tenant Settings say
-   (display and legal name, country, address, tax id, contact). A store
-   may make the person's organization from it where they have none, and
-   hold an unclaimed tenant to it; nothing about the tenant's people. The
-   App Store app sends it only to a store that lists the feature.
-
-**2026-10-25** (1.13, additive: a 1.12 client is answered as before)
-
-1. **`POST /v1/acquisitions/free`**, with the feature `free-acquisition`: a
-   tenant takes an app whose price model is `free` without registering
-   (§6, *POST /v1/acquisitions/free*). The store checks the assertion
-   itself and holds its issuer and the tenant `uid` to the usage
-   statistics reports, and the tenant's acceptance to the terms in force.
-2. **New problem codes** `registration-required` and `terms-not-accepted`
-   (§8).
-
-**2026-10-24** (1.11, not additive: signed-in calls change)
-
-1. **The token of a signed-in call is a partner assertion** (§3): the App
-   Store app exchanges the person's token at the tenant's own realm for an
-   assertion whose only audience is the store's realm, and sends it. No
-   sign-in flow, no store token, no `tenant_url`. The tenant a call is about
-   is the assertion's issuer.
-2. **`GET /v1/meta`** names `partner.issuer` (the store's realm) and
-   `registrationUrl` (the registration page) instead of `issuer`,
-   `clientId` and `scopes`.
-3. **A person not linked yet** is answered `401` with
-   `WWW-Authenticate: Partner link="<registration page>?tenant=<uid>"`.
-4. **Removed:** `/v1/tenant-sign-ins/{tenantUid}`, `/v1/account/registration`,
-   the features `tenant-sign-in` and `registration`, and `signIn` on
-   `GET /v1/tenant`. Registration is the store's page.
-
-**2026-10-23** (1.10, additive: a 1.9 client is answered as before)
-
-1. **`features` may include `registration`**: a tenant's administrator
-   registers once with the store, and their first sign-in makes the store
-   account through the tenant's own realm (§3, *Registration*).
-2. **`GET` and `PUT /v1/tenant-sign-ins/{tenantUid}`**, open: whether the
-   sign-in through that tenant's realm is ready and whether the tenant is
-   registered, and asking the store to prepare it.
-3. **`GET` and `PUT /v1/account/registration`**, signed in: the person's
-   registration, accepting the terms and privacy notice (`links.terms`,
-   `links.privacy` of `GET /v1/meta`), with optional company details.
-
-**2026-10-23** (1.9, additive: a 1.8 client is answered as before)
-
-1. **`POST /v1/acquisitions` may carry `seats`**: how many people the app
-   is for. A priced app's checkout is for that many seats at the price per
-   seat.
-
-**2026-10-23** (1.8, additive: a 1.7 client reads every answer as before)
-
-1. **A version's `requirements` may carry `offers` and `canUse`**: the
-   integration contracts the app provides (`spec.provides`) and those it
-   can consume optionally (`spec.integrations`), each `{contract, name}`
-   with `name` the contract's name as people read it where the store has
-   one.
-
-**2026-10-23** (1.7, additive: a 1.6 client reads every answer as before)
-
-1. **`features` may include `tenant-sign-in`**, and **`GET /v1/tenant` may
-   carry `signIn: {tenantUid}`**: the tenant id (the report's
-   `tenants[].uid`) the store associated with an account for the tenant
-   URL. The store's realm then signs people in through that tenant's own
-   realm, with the identity provider `org-<tenantUid>`; a client may ask
-   with `kc_idp_hint=org-<tenantUid>` and `prompt=none`, and falls back to
-   the visible sign-in on any error ([store-contract.md](../../design/store-contract.md) §6.1).
-
-**2026-10-23** (1.6, additive: a 1.5 client reads every answer as before)
-
-1. **An app summary may carry a `maturityScore`**, an integer from 0 to 10
-   or `null`, and **an `installations` count**: how many tenants the store
-   counts as having the entry. What each point of the score means, and
-   what is counted, is the store's to define and publish.
-2. **A detail may carry `customization`**: the grade and the supported
-   rungs of the customization ladder, as the entry's profile declares them.
-3. **A link may be `rel: video`**: a tutorial or demonstration video.
-
-**2026-10-21** (1.5, additive: a 1.4 client reads every answer as before)
-
-1. **`GET /v1/meta` may list `catalogues`**: the catalog sources the
-   store's entries come from, each `{name, url, displayName}`, https only.
-   The first half of every coordinate the store serves is one of the
-   names. A cluster's installer adds a listed catalogue the cluster has no
-   source of that name for, so an entry acquired at the store can be
-   installed without the administrator adding its catalog first.
-
-**2026-10-20** (1.4, additive: a 1.3 client reads every answer as before)
-
-1. **An app summary may say how many add-ons it has** (`addonCount`), so a
-   listing can show that without asking for each detail.
-2. **An add-on in a detail's `addons` may carry its `iconUrl`, `edition`
-   and `price`**, enough to show it beside its base without a request of
-   its own.
-
-**2026-10-19** (1.3, additive: a 1.2 client reads every answer as before)
-
-1. **Support offers** (feature `support`). An app may carry `support`:
-   the partners that offer support for it, each with who they are and
-   whether the store verified them, the countries and languages covered,
-   the tiers offered, a price hint, a contact address and whether a
-   request may be sent through the API (`SupportOffer`, §5).
-   `GET /v1/apps/{catalogue}/{app}` takes `country` to list only the
-   offers that cover it.
-2. **A support request** is sent with
-   `POST /v1/apps/{catalogue}/{app}/support-requests`, signed in, naming
-   the offer and an optional message; the store answers `202 received`.
-   What the store does with it is the store's. An offer that takes no
-   request answers `422 not-requestable`.
-
-**2026-10-15** (1.2)
-
-1. **The token carries no scopes.** It says who signed in, for which
-   tenant, and until when; what that account may do for the tenant is the
-   store's to decide, from its own records. `GET /v1/meta` lists `scopes`
-   empty, and the app asks for exactly the scopes listed. The error
-   `insufficient-scope` is gone. A 1.1 app that still asks for the old
-   scopes is served as before. What `store.acquire` guarded is kept: a
-   repository credential reaches only an account that manages the tenant
-   (`403 not-tenant-manager` on `POST …/credential`).
-2. **More than one account may manage a tenant** (feature
-   `tenant-access`). The first account that signs in for a tenant holds
-   it. Another account is served — it reads the tenant's standing and
-   acquisitions — and asks to manage the tenant by acquiring for it: its
-   acquisition waits for `approval` until the holder approves or declines
-   it (`GET /v1/tenant/access`, `POST /v1/tenant/access/{subject}/approve`
-   and `…/decline`), or the store's operator does. `GET /v1/tenant`
-   carries the account's own `access.role`. Such a store does not refuse
-   with `tenant-not-claimed`. (The holder, its operations and the feature
-   were removed in 1.15.)
-3. **A pending acquisition says what it waits for** (`waitingFor`):
-   `confirmation`, `approval` or `checkout`. Only while it waits for a
-   checkout does it carry `checkoutUrl`. Not additive for a 1.1 app, which
-   takes every `pending` acquisition for a checkout: an app talking to a
-   1.2 store must know `waitingFor`.
-4. `POST /v1/acquisitions` answers `202` for every acquisition not decided
-   at once, and `201` may carry a `failed` one.
-
-**2026-10-15** (1.1, additive: a 1.0 client reads every answer as before)
-
-1. **Reviews are written.** `PUT` and `DELETE /v1/apps/{catalogue}/{app}/reviews/mine`,
-   and `GET` for one's own, with the new scope `store.review`. A review
-   says whether its author would recommend the app and gives stars for
-   features, ease of use and ease of setup, and on an `ee` entry for
-   support and value for money (`ReviewScores`). `rating` stays: the
-   rounded mean of the scores.
-2. **Reviews carry their author's company size and industry**
-   (`reviewer`), never the company's name, and `GET …/reviews` takes
-   `companySize` and `industry` to narrow both the list and the summary.
-   The summary adds `recommend` and the mean of each score.
-3. **An account has a company.** `GET` and `PUT /v1/account/company`
-   (scope `store.account`; `PUT` removed in 1.15): a name, a size (`CompanySize`, the EU size
-   classes with large split at 1000) and an industry (`Industry`, the NACE
-   sections, as Odoo lists them). A review is refused (`409`,
-   `company-missing`) until there is one.
-4. **`GET /v1/meta`** names the sizes and industries in the request's
-   language and says whether a review needs an acquisition
-   (`reviewing.requireAcquisition`; refused with `403`,
-   `review-not-acquired`). `features` gains `review-writing` and `company`.
-5. **A link may be `rel: donate`**: where to give money to the people who
-   build an app that is not sold.
-
-**2026-10-07**
-
-1. **`repository.name` is removed** from the confirmation — schema,
-   examples, field tables. The store names nothing on the cluster. The App
-   Store app computes the name a repository is declared under from the
-   tenant's name and `repository.url` (§7, "The repository's name on the
-   cluster").
-2. **A repository credential does not expire, for now.** `expiresAt` stays
-   in the schema, required and nullable; a store issues `null`, and every
-   example says `null`. The rule "renew when under 30 days" and the
-   renewal narrative are removed. The feature value `credential-renewal`
-   is removed from `GET /v1/meta`.
-3. **`POST /v1/acquisitions/{id}/credential` is redefined** from "renew" to
-   "replace this credential now" (rotation). The replaced credential is
-   refused 24 hours after the call. `operationId` is `replaceCredential`
-   (was `renewCredential`). Every store serves it.
-4. **What ends a credential** is stated: rotation, or the acquisition
-   ending (§7).
-5. **`credential.username` is one per tenant**, chosen by the store, opaque
-   to the cluster. A credential is one per tenant and repository (§7).
-6. **Accounts and tenants** (§3): a tenant is an organization in the
-   store's records, an account is a person, and by default exactly the
-   tenant administrator's account acts for the tenant.
-   `tenant-not-claimed` is specified as the refusal for an account that is
-   not associated with the tenant (§4).
-7. **The code is exchanged by the App Store app's backend**, and the store
-   token stays there, bound to the administrator's cluster session. It is
-   never handed to the browser (§3).
-8. **The issuer redirects to exactly one address per tenant**,
-   `https://store.<the tenant's base domain>/oauth/callback`, in place of
-   "any host under the tenant's address" (§3).
-9. **Reading a repository credential needs `store.acquire`.**
-   `GET /v1/acquisitions/{id}` answered to a token with `store.read` alone
-   carries the confirmation without `repository.credential` (§3, §6).
-10. In `usage-statistics.openapi.yaml`, prose only: a receiver remembers the
-    key first seen per **`cluster.url`**, not per `cluster.id`, and the
-    account holder resets it. The format of a report is unchanged.
-11. §9: the questions these decisions answer are removed — who may act
-    for a tenant, credential lifetime, where the redirect lands, repository
-    names, the user name convention — and so is the one on add-ons, whose
-    pinning is built. Questions 2 to 5 of the list are new.
 
 ## 1. Ground rules
 
@@ -260,8 +45,6 @@ store's that the person's browser opens.
 **Base address.** A cluster names its store by one `https` address
 (`spec.catalogue.storeUrl` on its Cluster claim), with no trailing slash.
 Every path below is appended to it: `https://store.example` + `/v1/apps`.
-A cluster installed with the installer's defaults names
-`https://store-service.aluvian.io`; that default is provisional.
 
 **Open reads and signed-in calls.** The API has two halves, and the line
 between them is whether a call concerns a tenant.
@@ -269,10 +52,10 @@ between them is whether a call concerns a tenant.
 | | Calls | Token |
 |---|---|---|
 | **Open reads** | `GET /v1/meta`, `/v1/categories`, `/v1/apps`, `/v1/apps/{catalogue}/{app}` and its `/reviews` and `/reports` | none needed. What a store offers can be seen at once, by anyone, with no account. Never `401`, never `403` |
-| **Signed-in calls** | `GET /v1/tenant` and every `/v1/acquisitions` operation | required (§3) |
+| **Signed-in calls** | `GET /v1/tenant`, every `/v1/acquisitions` operation, a support request, the person's own review and company | required (§3) |
 
 A token *may* be presented on an open read. The store may then add what it
-knows of the token's tenant to the answer — today one member, `acquired`,
+knows of the token's tenant to the answer — one member, `acquired`,
 on an app (§5). It is never required. A token the store cannot validate, or
 one for a tenant it does not serve, is ignored on an open read: the answer
 is the anonymous one, not an error.
@@ -377,12 +160,14 @@ present. A type written `string \| null` is present and may be `null`.
 
 | Method and path | Token | Answers |
 |---|---|---|
-| `GET /v1/meta` | **open** | The store's name, API version, issuer, client id, languages, allowed origins, features |
+| `GET /v1/meta` | **open** | The store's name, API version, its realm as a partner (`partner.issuer`), its registration page, languages, allowed origins, features, the catalog sources its entries come from, the company sizes and industries it knows, its rules for reviews |
 | `GET /v1/categories` | **open** | The categories apps are filed under |
 | `GET /v1/apps` | **open** | A page of apps; filters `category`, `edition`, `q` |
 | `GET /v1/apps/{catalogue}/{app}` | **open** | One app in full: description, screenshots, versions with digests, add-ons, links |
 | `GET /v1/apps/{catalogue}/{app}/reviews` | **open** | A page of reviews and the summary of all of them |
 | `GET /v1/apps/{catalogue}/{app}/reports` | **open** | Evaluations and reports about the app |
+| `GET`, `PUT`, `DELETE /v1/apps/{catalogue}/{app}/reviews/mine` | signed in | The signed-in person's own review of the app: read, written or replaced, withdrawn (1.1) |
+| `GET /v1/account/company` | signed in | The company the signed-in person is with (1.1) |
 | `POST /v1/apps/{catalogue}/{app}/support-requests` | signed in | Ask a partner for support with an app: `202 received` |
 | `GET /v1/tenant` | signed in | Whether the store serves the tenant the assertion's issuer is, the reason if not, notices to show, and the account's role |
 | `GET /v1/acquisitions` | signed in | What this tenant has acquired; filter `status` |
@@ -391,7 +176,7 @@ present. A type written `string \| null` is present and may be `null`.
 | `GET /v1/acquisitions/{id}` | signed in | One acquisition; once confirmed, its confirmation with the repository credential |
 | `POST /v1/acquisitions/{id}/credential` | signed in | Replaces the repository credentials now; answers the confirmation with the new ones |
 
-*Open* means no token is needed. One may be presented on the five catalogue
+*Open* means no token is needed. One may be presented on the five catalog
 reads, where it only adds `acquired`; `GET /v1/meta` ignores it.
 
 ## 3. Partner assertions
@@ -401,7 +186,7 @@ support request — carries a **partner
 assertion** as `Authorization: Bearer`. Browsing needs none.
 
 The store's realm is a partner of the tenant's realm (AD-17,
-[plans/cross-cluster-identity.md](../cross-cluster-identity.md)). For each
+[partners.md](../../design/partners.md)). For each
 call the App Store app makes one request to its own realm's token endpoint,
 OAuth 2.0 Token Exchange (RFC 8693), with the person's token as
 `subject_token`, `scope=partner-<name>` and its service account token as
@@ -420,7 +205,7 @@ Nothing else about the person is in it: no name, no address, no group.
 bearer grant (RFC 7523), and acts as the account the answer names. It finds
 the tenant by the assertion's issuer among the tenants the usage statistics
 reports name (`tenants[].issuer`). A store decides from its own records what
-that account may do for the tenant, as before.
+that account may do for the tenant.
 
 **Not linked.** Where the store's realm has no partner entry for the
 tenant's realm yet, or the person has not linked their account, the grant
@@ -611,7 +396,7 @@ A notice, a refusal and a subscription are the store's business with the
 tenant. Nothing on the cluster is blocked by any of them: apps that are
 installed keep running, and the command-line install does not ask a store.
 
-## 5. Catalogue
+## 5. Catalog
 
 All five operations here are open reads (§1): no token, cacheable, never
 refused for a tenant's standing.
@@ -936,7 +721,7 @@ false`, whose `contactUrl` is the way to it.
 ## 6. Acquisitions
 
 An **acquisition** is the store's record that a tenant has an app. Acquiring
-is not installing: the store records it and, for an app whose artefacts are
+is not installing: the store records it and, for an app whose artifacts are
 in a private repository, mints the credential that repository checks. The
 install happens afterwards, on the cluster, under the cluster's own checks.
 
@@ -1101,7 +886,7 @@ All four acquisition answers carry `Cache-Control: no-store`.
 ## 7. The confirmation
 
 The confirmation is what the store hands the cluster's side when a tenant
-has an app: which build, and — when the build's artefacts are in a private
+has an app: which build, and — when the build's artifacts are in a private
 repository — where they are and the credential that repository checks.
 
 ```jsonc
@@ -1109,7 +894,7 @@ repository — where they are and the credential that repository checks.
   "coordinate": "gentian/nextcloud-base-ee",
   "version": "31.0.4",                       // for a person; the cluster pins the digest, not this
   "digest": "sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6",
-  "repository": {                            // absent for an app whose artefacts are public
+  "repository": {                            // absent for an app whose artifacts are public
     "type": "oci",
     "url": "oci://registry.store.example/apps",
     "credential": {                          // absent in GET /v1/acquisitions, and for an account not managing the tenant
@@ -1149,7 +934,7 @@ A free app's confirmation:
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `type` | `oci` | yes | Closed, one value: an OCI registry of charts and images. It is the only type a cluster pulls a tenant's app charts and images from with a credential today. The cluster's director also knows `git`; the app refuses it from a store, because on a cluster a git repository of apps is a source of profiles, which is what a store may not supply |
+| `type` | `oci` | yes | Closed, one value: an OCI registry of charts and images. It is the only type a cluster pulls a tenant's app charts and images from with a credential. The cluster's director also knows `git`; the app refuses it from a store, because on a cluster a git repository of apps is a source of profiles, which is what a store may not supply |
 | `url` | `oci://<host>[/<path>]` | yes | No credentials in it, no trailing slash. It must contain the address the entry's profile bundle names for its chart: the same host and port, and a path that is a prefix of the chart's by whole segments. The cluster pulls from where the verified bundle says, and this only supplies the credential for that address. It must not overlap another repository the same tenant has declared: the cluster does not install a chart whose address lies inside two of a tenant's repositories, rather than guess which credential is meant. A chart inside none is pulled with no credential |
 | `credential` | Credential | no | Absent in `GET /v1/acquisitions`, and for an account that does not manage the tenant |
 
@@ -1163,7 +948,7 @@ the same `url` for the same repository every time, in one spelling.
 |---|---|---|---|
 | `username` | string 1–255 | yes | The user name the registry expects with the token. **One per tenant**: the store chooses it, hands the same tenant the same one every time, and hands it to no other tenant. The cluster treats it as opaque and stores it beside the token. **Required**: the cluster's chart installer needs a user name and a password, and a token with no user name fails there |
 | `token` | string 1–4096 | yes | The secret. No leading or trailing whitespace |
-| `expiresAt` | date-time \| null | yes | `null`: the credential does not expire. A store issues every credential with `null` for now. The member stays, required, so that an expiry can be introduced later without changing the format; an app that is handed a date shows it and does nothing else on its account |
+| `expiresAt` | date-time \| null | yes | `null`: the credential does not expire, and a store issues every credential with `null`. The member is required so that an expiry could be introduced without changing the format; an app that is handed a date shows it and does nothing else on its account |
 
 The credential is the tenant's **registry credential**, and it is **opaque
 to the cluster**. The store mints it for one tenant and the store's
@@ -1179,7 +964,7 @@ repository address a tenant has declared. Every confirmation a store hands
 one tenant for the same `url` therefore carries the same `username` and a
 token that pulls everything that tenant has acquired in that repository.
 
-**It does not expire, for now.** Two things end a credential, and nothing
+**It does not expire.** Two things end a credential, and nothing
 else does:
 
 | | |
@@ -1300,49 +1085,46 @@ What the app does when the store cannot be reached, or answers 5xx: it says
 so, and offers nothing that would need the store. Everything installed is
 unaffected; it does not depend on the store being there.
 
-## 9. Open questions
+## 9. What the definition leaves to the store
 
-Decisions this definition leaves to the store's owner, and points where a
-choice was made that should be confirmed before the store is built on it.
+The format decides what crosses between the App Store app and a store, and
+nothing else. Three things a store might expect to find here are absent by
+design:
 
-**Answered, and no longer open:** who may act for a tenant (§3 and §4: the tenant
-administrator's account, and accounts an owner or administrator of the
-tenant's organization approves; the tenant an organization); credential lifetime
-and renewal (§7: no expiry for now, rotation on request); where the
-redirect lands (§3: one address per tenant, the App Store app's callback);
-who names the repository (§7: the cluster's side); the user name
-convention (§7: one per tenant); what an add-on's digest pins (built:
-[store-contract.md](../../design/store-contract.md) §3 and §4).
+* **No sign-in flow and no store token.** A signed-in call carries a partner
+  assertion the tenant's own realm issues (§3). The App Store app runs no
+  authorization-code flow against the store, keeps no token of the store's,
+  and the store issues none to it. There are therefore no token lifetimes
+  to agree on: an assertion lasts minutes and is used once.
+* **No redirect and no callback.** Nothing of the store's lands on the
+  cluster: not a redirect after a sign-in, not a callback after a checkout.
+  The registration page and the checkout are the store's own pages, opened
+  in a separate window; the app learns the outcome by asking
+  (`GET /v1/acquisitions/{id}`).
+* **No name for anything on the cluster.** The repository's name is
+  computed on the cluster's side (§7), the tenant a call is about is the
+  assertion's issuer, and the install request is the cluster's own.
 
-1. **Token lifetimes.** How long an access token lasts, whether refresh
-   tokens are issued, and how long those last. The app keeps tokens in its
-   backend for the length of the administrator's cluster session and
-   nowhere durable.
-2. **How an account becomes the tenant's.** By what act a store associates
-   the tenant administrator's account with a tenant the first time, what it
-   checks, and how the association moves when the administrator changes.
-3. **More than one account per tenant.** Outside the definition for now
-   (§3).
-4. **Cutting a leaked credential off at once.** Rotation leaves the
-   replaced credential working for 24 hours. Whether a store needs a way to
-   end it immediately, short of ending the acquisition.
-5. **An ended acquisition and a shared credential.** A credential is one
-   per tenant and repository (§7), so it may serve several acquisitions.
-   The definition says it stops pulling the app whose acquisition ended and
-   ends with the last; whether a registry is to enforce that per app is to
-   be confirmed.
-6. **Reviews.** Who may write one (any account, only an account whose
-   tenant acquired the app), and whether that is an operation of this API
-   or a page of the store's. This version reads reviews only.
-7. **Only `oci`.** A store cannot hand over a git repository. If a store
-   ever needs to, the cluster first needs a kind of repository that carries
-   a credential without being a source of profiles.
-8. **How stale is stale.** After how long without a report a store answers
-   `reports-stale`, as a notice or as a refusal.
-9. **Tax in the list price.** `price` is the list price. Whether it
-   includes tax is the store's to state in `note` until the format needs
-   to say.
-10. **Open to whom.** The open reads take no token, so they are open to
-    anyone who can reach the store, not only to clusters; a store cannot
-    tell the two apart. Whether a store wants more than a rate limit in
-    front of them is its own decision and does not change this format.
+What a store decides for itself, and states in its own terms:
+
+1. **Cutting a leaked credential off at once.** Rotation leaves the
+   replaced credential working for 24 hours (§6). A store that needs to end
+   one immediately ends the acquisition.
+2. **An ended acquisition and a shared credential.** A credential is one
+   per tenant and repository (§7), so it may serve several acquisitions. It
+   stops pulling the app whose acquisition ended and ends with the last;
+   whether the registry enforces that per app is the store's.
+3. **Only `oci`.** A store hands over no git repository. A cluster has no
+   kind of repository that carries a credential without being a source of
+   profiles, and a store may not supply profiles.
+4. **How stale is stale.** After how long without a report a store answers
+   `reports-stale`, as a notice or as a refusal (§4).
+5. **Tax in the list price.** `price` is the list price. Whether it includes
+   tax is the store's to state in `note` (§5).
+6. **Who may write a review.** `reviewing.requireAcquisition` in
+   `GET /v1/meta` says whether a review needs an acquisition; a company on
+   the account is required either way (§5).
+7. **Open to whom.** The open reads take no token, so they are open to
+   anyone who can reach the store, not only to clusters; a store cannot tell
+   the two apart. Whether a store wants more than a rate limit in front of
+   them is its own decision and does not change the format.

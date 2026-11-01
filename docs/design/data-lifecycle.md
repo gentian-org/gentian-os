@@ -1,3 +1,8 @@
+---
+audience: operator, architect
+type: design
+---
+
 # The life of a tenant's and an app's data
 
 **Companion to:** [operations.md](operations.md) (reference detail, §9),
@@ -51,6 +56,23 @@ sign-in scope, databases, bucket, cache user, model key, sign-in client, the
 running app, and with it the files.
 **Order of removal:** the same list backwards. Nothing is destroyed while
 something made after it still needs it.
+
+**Every act is built from the same few primitives**, each implemented once:
+*declare* (the director writes a tenant's manifest to the deployments
+repository as a signed commit; Argo CD and the operator do the rest),
+*inventory* (the list above, read from a tenant's apps and their profiles),
+*capture* (`TenantExport`: pause one app at a time, copy each inventoried
+store into the bundle, write the manifest last), *load* (`TenantRestore`:
+the inverse, into a tenant that exists) and *destroy* (deletion under
+`deletionPolicy: Delete`, over the same inventory). Import is declare plus
+load; deleting a tenant is retiring it plus destroy. No act introduces
+machinery the others lack, which is what keeps them agreeing about what "all
+of the data" is: a store that a backup copies is a store a deletion
+destroys, and the tests on the inventory hold them to it. Anything further —
+a backup on a timer, a recovery of the newest bundle, a migration from or to
+another product — is a composition of these acts, and whatever builds it
+calls the director like any other client ([sovereignty.md](sovereignty.md)
+§4, §5).
 
 An app that was **uninstalled with its data kept** is in the table twice: its
 data is "kept" by the uninstall, and a backup taken afterwards copies it as
@@ -187,12 +209,20 @@ of another tenant is refused before anything starts, whoever uploaded it
 ([commands.md §12](../commands.md)).
 
 A bundle states its format in its manifest (`schemaVersion`). The format
-written is 4. Format 3 holds the data of apps uninstalled with
+written is 5. Format 3 holds the data of apps uninstalled with
 their data kept, the mailboxes, and the access rights that follow from
-nothing else. Format 4 adds each app's own secrets. A restore reads formats 1
-to 4, puts back what the bundle holds, and refuses a format newer than its
+nothing else. Format 4 adds each app's own secrets; format 5 adds each app's
+authorization store. A restore reads formats 1
+to 5, puts back what the bundle holds, and refuses a format newer than its
 own. A bundle older than format 4 holds no secrets: a restore of one changes
 no stored secret, and says so.
+
+**Download.** The bundle leaves the cluster as one `.gentian` file, the
+artifacts under its prefix streamed as a tar, still encrypted
+(`GET /v1/tenants/{t}/backups/{name}/download`). The download is
+authenticated and goes through the director, never a presigned URL: the
+director is the enforcement point for the tenant's data (AD-1), and a link
+that works without a session is a session nobody can revoke.
 
 **Import = create + restore.** The director first makes sure the cluster
 has the definition of every app the bundle's tenant lists: already there at
@@ -275,6 +305,17 @@ administrator is not bounded.
 The import is recorded in git beside the new tenant until it has finished.
 A director that restarts goes on with it. It needs the bundle's key again
 only if the restore had not yet started: the key is never written down.
+
+**An import does not depend on the source cluster.** The credentials the
+platform mints for an app — its database's, its bucket's, its cache's, its
+sign-in client's — are made anew by the importing cluster, and where an app
+has cached one in its own store the profile's post-restore commands rewrite
+it; only the app's own secrets travel, because the data is unreadable
+without them (§5). The alternative, a recovery kit that is the cluster's
+identity so that a new server importing it *becomes* the old cluster, is not
+taken: it would bind a tenant's portability to its provider's kit, which is
+the dependency the bundle exists to remove ([sovereignty.md](sovereignty.md)
+§2).
 
 **Uninstall and purge.** This is the critical difference. *Uninstalling*
 removes the running app and its sign-in client. Everything the app stored

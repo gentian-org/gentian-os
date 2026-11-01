@@ -39,7 +39,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
-// The system engines on demand (app-authorization.md §3). The system tier
+// The system engines on demand (kernel.md §7, app-authorization.md §3). The system tier
 // runs an engine that is not on every cluster only once something declares
 // it: the operator keeps, per cluster, the set of engines that are wanted, and
 // the Cluster composition composes each one the set names.

@@ -1,9 +1,9 @@
 ---
 # Every image the platform publishes under ghcr.io/gentian-org is signed in CI
 # with the building workflow's GitHub identity (keyless, Sigstore) and carries
-# an SBOM and a provenance attestation (certification plan C5). This policy
-# asks admission to check the signature on those images and no other: a
-# third-party image has no gentian-org signature to check.
+# an SBOM and a provenance attestation (docs/compliance/controls.md K3). This
+# policy asks admission to check the signature on those images and no other:
+# a third-party image has no gentian-org signature to check.
 #
 # The signature is read in cosign's legacy form, the sha256-<digest>.sig tag,
 # which is what Kyverno 1.13's default verifier understands; CI writes that

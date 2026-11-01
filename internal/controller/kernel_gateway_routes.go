@@ -264,7 +264,7 @@ func (r *GatewayPlatformReconciler) mainAddressWebsiteServing(ctx context.Contex
 }
 
 // desktopPresent reports whether this cluster ships a desktop at all: the
-// profile the operator chart installs (ui-restructure.md §1). Without it
+// profile the operator chart installs (admin-console.md §1.2). Without it
 // there is no desktop anywhere, and nothing is redirected to one.
 func desktopPresent(ctx context.Context, c client.Reader) bool {
 	profile := &gentianov1alpha1.ComponentProfile{}

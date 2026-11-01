@@ -91,7 +91,7 @@ jobs:
 
       # Every bundle the published catalogs serve, held to this build's
       # install and rollout checks: a platform change that breaks a published
-      # profile fails here, not at a tenant's install (docs/plans/versioning.md).
+      # profile fails here, not at a tenant's install (docs/design/versioning.md).
       - name: Published catalogues conform to this platform
         env:
           GENTIAN_CONFORMANCE_CATALOGUES: https://gentian-org.github.io/gentian-apps,https://gentian-org.github.io/gentian-apps/develop
@@ -346,7 +346,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
-          # (certification plan C5).
+          # (docs/compliance/controls.md K3).
           sbom: true
           provenance: mode=max
           context: .
@@ -367,16 +367,17 @@ jobs:
             || 'type=cacheonly' }}
 
       # The published image, signed with this workflow's identity and scanned
-      # (certification plan C5). Only where the build pushed: a pull request's
-      # image exists nowhere to be signed. The scan is advisory until the backlog
-      # it finds is triaged; dropping continue-on-error makes it block.
+      # (docs/compliance/controls.md K3, K5). Only where the build pushed: a
+      # pull request's image exists nowhere to be signed. The scan is advisory
+      # until the backlog it finds is triaged; dropping continue-on-error makes
+      # it block.
       - name: Install cosign
         if: needs.plan.outputs.publish == 'true'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
       # --new-bundle-format=false: cosign 3 stores a signature as a Sigstore bundle
       # behind the OCI referrers API by default; the cluster's Kyverno 1.13 verifies
       # the legacy form, a sha256-<digest>.sig tag, with its default verifier. The
-      # bundle form returns with the Kyverno upgrade (certification plan C5).
+      # bundle form returns with the Kyverno upgrade (controls.md K3).
       # --use-signing-config=false goes with it: the TUF signing config is only
       # for the bundle form, and cosign refuses the legacy form while it is on.
       - name: Sign the image
@@ -397,8 +398,8 @@ jobs:
   # Known vulnerabilities in the Go dependency graph, from the Go vulnerability
   # database, reported against the symbols the code actually reaches. Advisory:
   # it reports and does not fail the run until what it finds on its first runs
-  # is triaged (certification plan C2); dropping continue-on-error makes it
-  # block.
+  # is triaged (docs/compliance/controls.md K4); dropping continue-on-error
+  # makes it block.
   govulncheck:
     name: Go — govulncheck
     runs-on: ubuntu-latest
@@ -516,7 +517,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
-          # (certification plan C5).
+          # (docs/compliance/controls.md K3).
           sbom: true
           provenance: mode=max
           context: kernel/extensions/keycloak-event-listener
@@ -530,9 +531,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # The published image, signed with this workflow's identity and scanned
-      # (certification plan C5). Only where the build pushed: a pull request's
-      # image exists nowhere to be signed. The scan is advisory until the backlog
-      # it finds is triaged; dropping continue-on-error makes it block.
+      # (docs/compliance/controls.md K3, K5). Only where the build pushed: a
+      # pull request's image exists nowhere to be signed. The scan is advisory
+      # until the backlog it finds is triaged; dropping continue-on-error makes
+      # it block.
       - name: Install cosign
         if: >-
           github.event_name != 'pull_request'
@@ -602,7 +604,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
-          # (certification plan C5).
+          # (docs/compliance/controls.md K3).
           sbom: true
           provenance: mode=max
           context: kernel/images/storage-tools
@@ -616,9 +618,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # The published image, signed with this workflow's identity and scanned
-      # (certification plan C5). Only where the build pushed: a pull request's
-      # image exists nowhere to be signed. The scan is advisory until the backlog
-      # it finds is triaged; dropping continue-on-error makes it block.
+      # (docs/compliance/controls.md K3, K5). Only where the build pushed: a
+      # pull request's image exists nowhere to be signed. The scan is advisory
+      # until the backlog it finds is triaged; dropping continue-on-error makes
+      # it block.
       - name: Install cosign
         if: >-
           github.event_name != 'pull_request'

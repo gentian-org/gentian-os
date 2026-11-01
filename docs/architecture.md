@@ -221,8 +221,7 @@ an install. See [custom-catalogues.md](custom-catalogues.md) and
 [design/store-contract.md](design/store-contract.md).
 
 **Identity.** Realms, clients, groups and brokering are described in
-[design/iam.md](design/iam.md) §1.8–1.9 and
-[design/tenant-identity-composition.md](design/tenant-identity-composition.md).
+[design/iam.md](design/iam.md) §1.8–1.9.
 
 A profile whose app needs more than the operator renders brings a Composition
 of its own in its bundle and names it in `spec.package.composition`; the
@@ -689,13 +688,14 @@ the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
 | Tenants, isolation, domains, network/identity security | [design/multi-tenancy.md](design/multi-tenancy.md) |
 | Routing, the edge, sign-in sessions, embedding | [design/routing.md](design/routing.md) |
 | One brand on every page: tokens, identity, publishing | [design/branding.md](design/branding.md) |
-| Profile schema, IntegrationBindings, contracts, tiers | [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md) |
+| Profile schema, IntegrationBindings, contracts, tiers | [design/app-catalogue.md](design/app-catalogue.md) |
 | Publishing your own catalog | [custom-catalogues.md](custom-catalogues.md) |
 | Customizing an installed app | [app-customization.md](app-customization.md) |
 | What the cluster accepts from an App Store | [design/store-contract.md](design/store-contract.md) |
 | The security rules | [security-principles.md](security-principles.md) |
 | OpenBao, ESO, TLS, derivation, rotation | [design/security.md](design/security.md) |
 | Identity and Access Management (IAM) and Roles | [design/iam.md](design/iam.md) |
+| People of another realm signing in to a tenant | [identity-brokering.md](identity-brokering.md) |
 | The administration console | [design/admin-console.md](design/admin-console.md) |
 | Resource plans and quotas | [design/resource-plans.md](design/resource-plans.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
@@ -707,3 +707,12 @@ the relations behind them are in [design/iam.md](design/iam.md) §1.2–1.3 and
 | LLM serving | [design/llms.md](design/llms.md) |
 | Profile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) |
 | Custom Gentian-native apps | [gentian-apps/docs/custom-app-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/custom-app-guide.md) |
+| Security controls, as an auditor reads them | [compliance/controls.md](compliance/controls.md) |
+| The programs of the control plane, what each holds and refuses | [design/control-plane.md](design/control-plane.md) |
+| Architectural decisions (AD-n) | [design/decisions.md](design/decisions.md) |
+| Versions, floors, update modes, the guarded move | [design/versioning.md](design/versioning.md) |
+| The authorization model: relations, roles, projections | [design/authorization.md](design/authorization.md) |
+| Authorization stores for apps, the arbiter | [design/app-authorization.md](design/app-authorization.md) |
+| Partners: identity across clusters | [design/partners.md](design/partners.md) |
+| Network policies, egress, TURN | [design/networking.md](design/networking.md) |
+| Sovereignty | [design/sovereignty.md](design/sovereignty.md) |

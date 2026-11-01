@@ -618,7 +618,7 @@ func (g *GitOps) InstallFrom(
 // RetryMove asks again for a move the platform rolled back or could not
 // start: the app stays pinned to digest, and its entry records a fresh move
 // (movedAt, movedBy), which is what the operator takes as a request to try
-// once more (docs/plans/versioning.md §5). Whether the last move to digest
+// once more (docs/design/versioning.md §5). Whether the last move to digest
 // did end badly is the caller's to have read from the cluster; this only
 // refuses an entry that is not pinned to digest, so a retry can never move a
 // pin. The status is "retried".

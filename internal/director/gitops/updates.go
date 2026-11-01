@@ -19,7 +19,7 @@ import (
 )
 
 // UpdateMode is how an installed app moves to newer builds
-// (docs/plans/versioning.md §4).
+// (docs/design/versioning.md §4).
 type UpdateMode string
 
 const (

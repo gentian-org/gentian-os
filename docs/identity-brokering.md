@@ -1,3 +1,8 @@
+---
+audience: operator
+type: design
+---
+
 # Identity brokering: people of one realm signing in to another
 
 People who already have an account in one realm — another tenant of this
@@ -67,7 +72,7 @@ alias below is filled in.
 | Field | Value |
 |---|---|
 | Alias | short and stable, e.g. `team`; it is part of the redirect URI of step 1 |
-| Display name | what the sign-in page's button says, e.g. "Aluvian team account" |
+| Display name | what the sign-in page's button says, e.g. "Team account" |
 | Discovery endpoint | `https://id.<source-domain>/auth/realms/<source>/.well-known/openid-configuration` — the page every realm publishes with its addresses; Keycloak fills in the rest from it |
 | Client authentication | Client secret sent as post |
 | Client ID / Client secret | from step 1 |
@@ -151,12 +156,13 @@ hand earlier is in the way, and is removed first.
 When the other realm is on another cluster, neither side is configured by
 hand: each tenant declares the other as a **partner** (Tenant
 `spec.partners`, written by the director as `partners.yaml` beside the
-tenant; [plans/cross-cluster-identity.md](plans/cross-cluster-identity.md),
-AD-17). A person links their account here with their account there once, by
-signing in there through this realm; from then on apps on either side call
-each other on that person's behalf. Only minimal information crosses: a
-**pairwise subject**, and the person's role on the tenant when they are its
-administrator or the cluster's.
+tenant; [design/partners.md](design/partners.md), AD-17 in
+[design/decisions.md](design/decisions.md)). A person links their account
+here with their account there once, by signing in there through this realm;
+from then on apps on either side call each other on that person's behalf.
+Only minimal information crosses: a **pairwise subject**, and the person's
+role on the tenant (`gentian_roles`) when they are its administrator or the
+cluster's.
 
 ```bash
 # our people towards them (we issue)
@@ -201,6 +207,8 @@ kubectl gentian tenants partners customers remove acme     # ends it
 - **Apps.** An app is on a partner's list by declaring it in its profile
   (`requires.services.partners.call: [<name>]`, or `accept: true` to take
   partners' assertions); see [app-customization.md](app-customization.md).
+  How an app then calls across, and what a partner learns of a person:
+  [design/partners.md §5 and §8](design/partners.md).
 
 ## Removing it
 

@@ -1,3 +1,8 @@
+---
+audience: architect, app-author
+type: design
+---
+
 # The App Store contract
 
 A store is a service outside the cluster, run by a vendor, on infrastructure
@@ -13,16 +18,16 @@ happens when a button is pressed happens on the cluster.
 This document is the contract between the two: who calls whom, what a store
 must serve, what the cluster does with each answer, and what a store is
 trusted with. The format of every request and answer is in
-[plans/artefacts/](../plans/artefacts/):
+[reference/store-api/](../reference/store-api/):
 
 | | |
 |---|---|
-| [store-api.openapi.yaml](../plans/artefacts/store-api.openapi.yaml) | The store API, machine-readable. **Normative**: where this document or the next differs from it, the file is right |
-| [store-api.md](../plans/artefacts/store-api.md) | The same in prose, field by field, with examples. It can be handed to whoever builds a store |
-| [usage-statistics.openapi.yaml](../plans/artefacts/usage-statistics.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
+| [store-api.openapi.yaml](../reference/store-api/store-api.openapi.yaml) | The store API, machine-readable. **Normative**: where this document or the next differs from it, the file is right |
+| [store-api.md](../reference/store-api/store-api.md) | The same in prose, field by field, with examples. It can be handed to whoever builds a store |
+| [usage-statistics.openapi.yaml](../reference/store-api/usage-statistics.openapi.yaml) | The report a cluster sends about itself, which a store depends on (§6.2). It is spelled out in [operations.md §6.2](operations.md) |
 
-This specification and the three format files in `plans/artefacts/` are under
-MPL-2.0, like the rest of the repository; see
+This specification and the three format files in `reference/store-api/` are
+under MPL-2.0, like the rest of the repository; see
 [LICENSING.md](../../LICENSING.md).
 
 ## 1. Direction
@@ -319,8 +324,8 @@ name on it.
 One API, versioned under `/v1`, at the address the Cluster claim names. Every
 operation is a request from the cluster's side. The full definition — every
 parameter, field and example — is in
-[store-api.md](../plans/artefacts/store-api.md); the machine-readable form is
-[store-api.openapi.yaml](../plans/artefacts/store-api.openapi.yaml), and it
+[store-api.md](../reference/store-api/store-api.md); the machine-readable form is
+[store-api.openapi.yaml](../reference/store-api/store-api.openapi.yaml), and it
 wins where the two differ.
 
 **Browsing needs no sign-in.** The API has two halves, and the line between
@@ -464,8 +469,7 @@ either direction.
 
 Needed only to acquire and to see the tenant's acquisitions; never to
 browse. The store is a **partner** of the tenant's realm
-([plans/cross-cluster-identity.md](../plans/cross-cluster-identity.md),
-AD-17): the Cluster claim's `spec.partners.defaults` name the store's realm
+([partners.md](partners.md), AD-17): the Cluster claim's `spec.partners.defaults` name the store's realm
 for every tenant (the installer declares it with the store's extra
 services), and the App Store app's profile declares
 `requires.services.partners.call` with it. The app runs **no sign-in flow**
@@ -759,6 +763,35 @@ renewed, attended or not. Two things end one:
 A credential that has ended stops new pulls — a pod that is rescheduled
 onto a node without the image does not start — and leaves what is running
 untouched.
+
+### 6.5 Why the request is a reference, and the credential is not in git
+
+**Reference, not profile.** If the director accepted a profile document from
+its caller, anyone who can call install could inject an arbitrary chart
+repository, image, requirement or privilege into a tenant, and the store
+would be a supply-chain hole however well it authenticated. So the request
+carries `(coordinate, digest)`, the director fetches the bundle from the
+catalog source the cluster declares and verifies the digest (§4), and the
+technical specification never crosses the store boundary in either
+direction. The digest is not signed; it does not need to be, because it
+grants nothing. It only says which bytes, and the person stating it is the
+one already authorized to change the tenant. A store that names a wrong
+digest gets a refused install, not a different build (§7).
+
+**Whose identity.** Every call to the cluster carries the person's token, so
+the authorization check is on the person and the commit is authored as the
+person. The App Store app has no identity of its own toward the cluster, the
+store has none either, and the cluster holds no key of the store's. A store
+that could install with its own credential, or whose signature could admit
+an install, would be a component with power; that is what this contract
+exists to rule out.
+
+**No secret in git.** A credential committed to git, however private the
+repository, is readable by Argo CD, every clone, CI, break-glass and the
+history after rotation: a credential with no revocation. The repository's
+address is a commit; its credential goes to the vault through the custodian.
+Whether the deployments repository is private is decided by whether the
+facts in it are sensitive, never by a need to hold a secret.
 
 ## 7. Trust
 

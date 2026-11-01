@@ -106,9 +106,7 @@ The model gateway ([llms.md](llms.md)) has its own
 platform-admin console, separate from the tenant-facing MCP/agent
 surface described above (§4). This section is operational notes for
 the cluster admin, not an architecture doc — see
-[llms.md](llms.md) for the design and
-[llm-integration-research.md](../research/llm-integration-research.md)
-for backend sizing/quantization research.
+[llms.md](llms.md) for the design.
 
 ### 7.1 LiteLLM admin console
 
@@ -123,9 +121,7 @@ which is what keeps LLM administration platform-admin-only.
 LiteLLM's native SSO is free for ≤5 users on OSS (v1.76.0+); the
 JWT/OIDC/SCIM/`enforce_rbac` features that require an Enterprise license
 are a different feature (`enable_jwt_auth`, for authenticating
-*inference API calls*, not the admin UI) and are intentionally unused —
-see the licensing caveat in
-[llm-integration-research.md](../research/llm-integration-research.md).
+*inference API calls*, not the admin UI) and are intentionally unused.
 
 **Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by the
 `TenantReconciler` (`internal/controller/litellm_team.go`), during the
@@ -159,9 +155,7 @@ LoRA adapters, which can be hot-loaded/unloaded via `POST
 /v1/load_lora_adapter` and `/v1/unload_lora_adapter` — vLLM's own docs
 flag this as **dev-only**, not for production use.
 
-Cheat-sheet of the flags that matter most in production (full sizing
-guide in
-[llm-integration-research.md](../research/llm-integration-research.md#model-sizing-guide)):
+Cheat-sheet of the flags that matter most in production:
 
 | Flag | Purpose |
 | --- | --- |

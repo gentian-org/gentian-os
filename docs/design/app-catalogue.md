@@ -167,8 +167,8 @@ spec:
 The field reference is the type itself (`api/v1alpha1/componentprofile_types.go`,
 `profile_parts.go`); how to write a profile is
 [custom-catalogues.md §4.1](../custom-catalogues.md) and the app profile guide
-in `gentian-apps`. See [app-profiles.md](app-profiles.md) for version,
-edition and the tile.
+in `gentian-apps`. Version, edition and identity are §12; the component model
+behind the fields (classes, requirements, privileges, exposure) is §13 to §19.
 
 **The kind is generic.** It has no per-app fields, and no reconciler knows a
 profile's name. What is specific to one app's rollout (ordering, bootstrap
@@ -360,4 +360,712 @@ profiles/<name>.yaml     one bundle per app: its ComponentProfile first, then wh
 How `gentian-apps` produces the default catalog from its `profiles/`
 directory is [custom-catalogues.md §3](../custom-catalogues.md).
 
-For version, edition and tiles, see [app-profiles.md](app-profiles.md).
+---
+
+## 12. Identity, version and edition
+
+`ComponentProfile` is the catalog unit: one profile, one name, one file in a
+catalog.
+
+| Where | Field | Purpose |
+|---|---|---|
+| profile | `metadata.name` | The profile's name; the same app keeps it across builds |
+| profile | `spec.version` | Version of the catalog entry, not of the upstream project |
+| profile | `spec.trustTier` | Review level (`platform`, `certified`, `experimental`); required |
+| profile | `spec.package.chart.version` | The Helm chart pin, distinct from `spec.version` |
+| profile | `spec.requires.platform` | The oldest platform line the build runs on (`>=0.5`); a cluster on an older line refuses the install |
+| catalog index | `edition` | `ce`, `me`, `ie`, `pe` or `ee`; absent means `ce` |
+| catalog index | `digest` | sha256 of the profile's bundle as served; what an install pins |
+
+A profile has no `family`, `catalogueVersion`, `edition` or `license` field.
+Descriptions, pictures, prices and license terms are a store's listing, outside
+the cluster ([store-contract.md](store-contract.md) §5).
+
+### 12.1 Identity
+
+An install names a profile and a build:
+
+```yaml
+# Tenant.spec.apps[]
+- profile: openproject-ce
+  catalogue: gentian          # first half of the coordinate <catalogue>/<profile>
+  digest: sha256:…            # the bundle this install pinned
+```
+
+The digest is a field of the install, not part of the profile's name.
+`Component.spec.profileRef` selects a profile by name only; a reference by
+family, version or edition is refused. `spec.classes`, `spec.launch`,
+`spec.trustTier`, `spec.version` and `spec.package` are required and have no
+default.
+
+### 12.2 Editions
+
+`ce` is the upstream community edition; `me` the community edition's code,
+curated and maintained by the catalog's maintainer; `ie` an internal edition,
+published by its own operator for their own tenants; `pe` a proprietary one,
+free of charge; `ee` a proprietary, paid one. The cluster gates none of them.
+It lists the `ce`, `me` and `ie` entries of its catalogs to the command line;
+`pe` and `ee` entries are a store's to show. Whether something is paid for is
+decided where it is handed over: a private chart or image arrives only where
+the tenant holds a credential for its repository
+([custom-catalogues.md §8](../custom-catalogues.md)).
+
+### 12.3 The catalog index
+
+There is no catalog object in the cluster. A catalog's `index.yaml` lists its
+entries (name, version, edition, digest, trust tier); the director fetches it
+when asked and answers `kubectl gentian apps list --available`
+([custom-catalogues.md §2](../custom-catalogues.md)). A profile reaches a
+cluster from a catalog, at the digest an install names, and in no other way.
+
+---
+
+## 13. The component model: kinds, classes and axes
+
+### 13.1 One kind, one instance, two levels
+
+`ComponentProfile` is the cluster-scoped catalog entry; `Component` is the
+namespaced instance. Whether a component *can* serve several tenants safely is
+a claim the catalog certifies; *running* it that way is a decision a named
+person makes. So the same word appears at two levels:
+
+- `ComponentProfile.spec.classes` is a **list** of the modes this component may
+  be deployed under (one or two entries). A certification claim, reviewed with
+  the entry.
+- `Component.spec.class` is a **single value**, and must be a member of that
+  list. The deployment decision. It is immutable: a change of class is a
+  reinstall.
+
+`trustTier` is in the spec rather than a label because CRD validation rules
+cannot read labels; "shared-app requires platform tier" is then a schema
+invariant that fails at write time whoever is writing.
+
+A profile carries no presentation beyond the tile on an exposure (§17.3). A
+catalog listing is a store's data outside the cluster; the tile is the
+exception because the desktop must show what the cluster routes without asking
+a service outside it.
+
+### 13.2 Three axes
+
+**Class: who it serves.**
+
+| value | serves | responsible | namespace | instances |
+|---|---|---|---|---|
+| `app` | the people of one tenant | tenant administrator, via the director | `tenant-<t>` (+ `-dmz`) | one per tenant |
+| `adapter` | a program acting for a person, by turning one app's abilities into tools | tenant administrator, via the director | `tenant-<t>`, beside the app it adapts | one per tenant |
+| `service` | other components over contracts, and operators at its own console | platform administrator | `system-<function>` | one |
+| `shared-app` | the people of several tenants, from one backend | platform administrator, via the director | `shared-<app>` | one |
+
+`service` and `adapter` are each exclusive: a profile that lists one lists
+nothing else. An adapter has `launch: none`, exposes nothing, provides and
+integrates nothing, is never placed, and carries `spec.adapter` (what it
+adapts, how it speaks as the person, the reviewed list of its tools;
+[agentic-ai.md](agentic-ai.md)).
+
+*Class `service` is an option that exists in the schema and is not
+implemented.* Engines are delivered as Argo CD applications from
+`kernel/appsets` and started on demand ([kernel.md §7](kernel.md)); the
+operator refuses a Component of that class with `ClassUnsupported`. *Class
+`shared-app` is a planned structure, not yet implemented* (§13.5).
+
+**Delivery: how the platform realizes it.** Derived from `spec.package` and
+reported in `status.delivery`, never stated as a second field:
+
+| delivery | package holds | meaning |
+|---|---|---|
+| `workload` | `chart`, `composition`, or the two together | the platform runs it |
+| `api` | `api` (`runtime`, `baseUrl`, `tenantBinding`, optional `tile`) | the platform routes to something already running, inside or outside the cluster |
+| `addon` | `addon` (`id`, `of`) | the platform flips a switch inside another component's own addon system; nothing is run and nothing is routed |
+
+The package is a chart, a composition, the two together, an `api`, or an
+`addon`, and nothing else beside them. Chart and composition together are the
+one legal pair because they answer different halves of one question: the chart
+is what is installed, the composition what else is created beside it. A
+delivery stated beside the package would be a second statement of one fact
+that can be wrong; the field that was (`deploymentMethod`) does not exist.
+`package.images` pins the image repositories and digests a component runs,
+where a placement needs them.
+
+An addon is a package type, not a customization: "this entry is not run here"
+is the statement `api` makes, so `addon` belongs in the same field. What
+`spec.customization` keeps is the assessment of how changeable a deployable
+app is ([app-customization.md](../app-customization.md)); an addon is not an
+assessment.
+
+**Trust tier: how far it was reviewed.** Required, no default (§4).
+`shared-app`, `forwardToken`, `requires.services.rights`, `.vouching`,
+`.logDestination`, `valueMapping.platform.storeUrlKey` and `.desktopUrlKey`
+need `platform`.
+
+### 13.3 Placement
+
+A profile with `spec.placement` is placeable: the platform writes it into the
+tenants it names as an entry of their `spec.apps`, and takes it out again when
+they no longer qualify; no tenant installs, moves or removes it. A profile
+without one is installable by a tenant's administrator and never placed.
+
+```yaml
+spec:
+  placement:
+    tenants: every          # every | platform | users
+    while: storeOffered     # optional: storeOffered | llm | credentialSet
+```
+
+`while` names the condition the placement lasts for; absent, it lasts for the
+life of each tenant. A conditional placement is also taken away, so such a
+profile must own no data; `credentialSet` is the exception and never takes it
+away. Only class `app` is placed: a service and a shared-app have one instance.
+`defaultForTenants`, `defaultForPlatform` and `defaultWhereStoreOffered` are
+the same three placements in an older spelling and are still read.
+
+### 13.4 What the class derives
+
+| | `app` | `shared-app` | `service` |
+|---|---|---|---|
+| namespace | `tenant-<t>` (+ `-dmz`) | `shared-<app>` | `system-<function>` |
+| north-south route | the tenant's gateway | per granted tenant | its console, gateway only |
+| OIDC client | the tenant realm | per granted tenant realm | one |
+| scope of `provides` | within the tenant | cluster-wide | cluster-wide |
+| tenant binding | implicit | a grant per tenant | none |
+| placement | allowed | meaningless | meaningless |
+| delete blast radius | one tenant | every granted tenant | every consuming component |
+
+Nothing here is a new field. The class reinterprets the scope of declarations
+the profile already makes. The `shared-app` and `service` columns describe the
+structures marked in §13.2.
+
+### 13.5 Shared instances: offered, then installed
+
+*This is a planned structure and is not yet implemented.*
+
+A shared instance existing is not the same as a tenant having the app. Two
+steps, two people: the platform administrator installs the component with
+`class: shared-app` into `shared-<app>` and **offers** it to tenants, one
+`shared_instance:<p>#offered_to@tenant:<t>` tuple each, under
+`can_grant_shared`; nothing is visible to anyone yet. The tenant administrator
+then installs the app and gets its own `app` object, group, OIDC client in its
+own realm, route and tile. Only the backend is shared.
+
+```
+is there a shared instance of P offered to this tenant?
+  no  → install a dedicated release in tenant-<t>
+  yes → bind: create the tenant-side objects only, with the route's backend
+        in shared-<app> and a NetworkPolicy allowing that one hop
+```
+
+Binding creates no release, so from inside the tenant a bound app and a
+dedicated one are indistinguishable. The tenant may refuse the choice:
+`Component.spec.fulfilment` is `auto` (default) or `dedicated`; there is no
+`shared` value, because a tenant cannot demand a backend the platform has not
+offered. `status.fulfilment` records what the install got, and a later offer
+does not move a running app.
+
+**A shared backend knows a person by issuer and subject.** People of several
+tenants reach one backend, each through their own realm, and only the pair of
+the realm's issuer and the person's `sub` is unique across them. The username
+is unique only within one realm; the `uid` attribute is not unique even
+within one. A `shared-app` profile keys the app's accounts on issuer and
+subject, never on `uid`, the username or the e-mail address.
+
+---
+
+## 14. Requirements, provides and integrations
+
+### 14.1 `requires` and `integrations` differ in six ways
+
+| | `requires` | `integrations` |
+|---|---|---|
+| counterparty | the platform | another component |
+| if unmet | does not start | runs normally |
+| whose fault | the platform's | nobody's |
+| when resolved | once, before install | continuously |
+| consent | implicit in using the platform | explicit tenant grant |
+| signal | a condition naming the platform as responsible | a status note, never an alert |
+
+They are separate fields because they are separate controller paths:
+requirements gate admission, integrations reconcile forever after. Keycloak is
+the worked example: its database is a requirement; its SMTP relay is an
+integration, supplied after install, and a realm without it simply cannot send
+invitations.
+
+### 14.2 `requires.services`
+
+| | what the platform fulfills | what components offer each other |
+|---|---|---|
+| where | `spec.requires.services` | `spec.provides`, `spec.integrations` |
+| shape | closed set, one typed struct per member | open set, a name and a protocol |
+| members | `identity`, `database`, `storage`, `cache`, `mail`, `mcp`, `llm`, `rights`, `logDestination`, `vouching`, `partners`, `authorization`, `turn` | `file-store`, `project-management`, `central-navigation`, … |
+| fulfilled by | a system engine ([kernel.md §7](kernel.md)), or something outside the cluster (a relay, a bucket at a cloud provider) | another component |
+
+The word is `services` and not `resources`, because *resources* already means
+quota here (`ResourcePlan`, `Tenant.spec.quotas`); and not `contracts`, which
+is the word for the open named set in the second column. Go type
+`ServiceRequirements`; an extension (`spec.extensions[]`) still writes the key
+`kernelRequirements`.
+
+`identity` is exactly one of `oidc`, `saml` or `sidecar`
+([iam.md §1.11](iam.md)). `llm` gives the component a key at the model gateway
+and a network path to it, and nothing to a component that does not declare it
+([security.md §2.9](security.md)). `authorization` gives the component an
+OpenFGA store of its own with its own model, reached through the arbiter with
+a key for that store and nothing else; the platform reads nothing in it, so
+every trust tier may declare it. `turn` gives the component's clients the TURN
+edge's address and the secret to mint time-limited credentials with. `rights`,
+`vouching` and `logDestination` need `trustTier: platform`.
+
+### 14.3 `provides` and `integrations`
+
+A **contract** is a name and a protocol. A provider lists it under `provides`,
+with an optional `endpoint` (Service, port, path) so a granted consumer is
+told an address and the network path opens to that one port and no other. A
+consumer lists it under `integrations`, with an optional `provider` and the
+`capabilities` it wants. When a tenant has both installed the operator binds
+the pair (§8); what a consumer may use is the tenant administrator's
+`AppGrant` ([multi-tenancy.md §4](multi-tenancy.md)). The scope of `provides`
+follows the class (§13.4).
+
+---
+
+## 15. Privileges: asking, and being granted
+
+A cluster's `PlatformSecurityPolicy` is a standing list of what may be **asked
+for** at all. Granting is the separate act of saying this component, in this
+tenant, may have this privilege, with a person, a time and a reason. Every
+request carries a `name`, so a grant can refer to it as `<kind>/<name>`, and a
+`reason` the approver reads.
+
+```yaml
+spec:
+  requires:
+    privileges:
+      podSecurity:
+        - name: needs-write-root
+          policy: require-read-only-root
+          scope: odoo
+          reason: "Odoo writes its filestore under /var/lib/odoo."
+      egress:
+        - name: smtp-relay
+          rule: {...}                 # a NetworkPolicyEgressRule
+          reason: "Outbound mail to the tenant's relay."
+      clusterRoles:
+        - name: read-nodes
+          rules: [...]
+          reason: "The dashboard lists node capacity."
+```
+
+**Who approves follows from the kind, never from a field**, or a component
+could ask for the cheaper approver (`internal/security/privilege.go`, read by
+the director and by the console alike):
+
+| kind | scope | approver | relation |
+|---|---|---|---|
+| pod-security waiver | cluster: weakens an admission rule protecting the node | security officer | `cluster#can_approve` |
+| cluster role | cluster: reaches the Kubernetes API | security officer | `cluster#can_approve` |
+| egress beyond baseline | tenant: leaves the tenant's own namespace | perimeter approver | `tenant#can_approve_privilege`, which is `can_expose` |
+
+The grant sits on the Component, written only by the director from the
+caller's token. `approver` and `approvedAt` are immutable: a new approval is a
+new grant. `expiresAt` is optional; a waiver with no expiry is a waiver nobody
+reviews.
+
+```yaml
+spec:
+  privileges:
+    - privilege: egress/smtp-relay
+      approver: <keycloak subject>
+      approvedAt: 2026-09-25T09:00:00Z
+      reason: "In the approver's words, not the profile's."
+      expiresAt: 2027-09-25T09:00:00Z
+```
+
+An install with an ungranted privilege **waits**. It is neither rejected nor
+run without it; `status.pendingPrivileges` lists what is missing, and the
+console shows it as a request the tenant administrator can act on or
+escalate. That is why the request is an object rather than a field the
+operator silently drops. A pod-security waiver takes effect only where the
+cluster's allowlist names it *and* it was granted; either alone waives nothing
+([security.md §3.0](security.md)). One requirement block with one approval
+path means egress is held to the same standard as a waiver, by construction.
+
+---
+
+## 16. Secrets: three kinds
+
+| kind | origin | declared |
+|---|---|---|
+| granted credential | arrives with a fulfilled requirement | **no**: restating it creates drift |
+| generated | random, created once, held in the vault | `secrets.generated` |
+| derived | deterministic from tenant and component name | `secrets.derived`; prefer generated |
+| supplied | only a person can provide it; asked for in the console after install | `secrets.supplied` |
+
+Generated secrets have no counterparty: an admin bootstrap password, a session
+signing key. Derivation's stability comes from recomputation rather than
+storage, so the formula and its inputs are load-bearing forever, and a change
+to either silently rotates the value for every existing tenant. Generated and
+stored is the more robust default. How each mode is computed and kept is
+[security.md §6](security.md).
+
+---
+
+## 17. Exposure
+
+### 17.1 The entry
+
+An `expose[]` entry declares one entry point. Its fields:
+
+| field | meaning |
+|---|---|
+| `name` | the entry's name; what an enablement and a backchannel-logout declaration refer to |
+| `surface` | `gateway` (behind the zone's session, always on) or `perimeter` (a publishing proxy in `tenant-<t>-dmz`, off until approved) |
+| `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter |
+| `subDomain` | host label in the tenant's zone; empty means the component's name |
+| `apex` | a perimeter entry on the cluster's bare domain; `authMode: none`, no `subDomain` ([routing.md §5](routing.md)) |
+| `paths`, `denyPaths`, `stripPrefix` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
+| `source` | pins the caller before `authMode` is considered: exactly one of `cidrs` or `component`; `component` is preferred because CIDRs age badly |
+| `forwardToken` | passes the edge access token to the backend; `trustTier: platform` only, because that token is valid at the director and at every sibling |
+| `exchangeToken` | the bouncer hands the backend a token exchanged at the tenant's realm for one whose audience is this app and nothing else; any trust tier; gateway and `oidc` only |
+| `clientAuthorization: app` | the `Authorization` header is the app's own and the edge leaves it alone; a request, in force once approved |
+| `annotations` | gateway policy for this host: frame ancestors, escaped-slashes action |
+| `tile` | how the entry appears on the desktop (§17.3) |
+| `backend` | `{component?, service, port}`: the Service routed to |
+
+`authMode` is required with no default because `none` has to be a word
+somebody wrote and a reviewer can find. `surface` is one field and not a
+separate public-surfaces list because the two surfaces differ in namespace,
+credential, policy and blast radius. A gateway entry is behind the session or
+pins its caller; what needs neither is a perimeter surface. Collabora's WOPI
+callbacks are safe at `authMode: none` only because the caller is pinned.
+
+A component asks for `forwardToken` or for `exchangeToken`, never both, and
+`clientAuthorization` excludes either across all its entries: one policy
+carries the session on every host the component has, and the `Authorization`
+header toward the app is either the app's own or a token the platform puts
+there. What each mode means at the edge, and what a published entry is held
+to, is [routing.md §7](routing.md) and [security.md §2.14](security.md).
+
+### 17.2 A service may expose, and a backend may be another component's
+
+A contract surface is in-cluster and reached over a plain Service; that is not
+the same as having no north-south surface. A service with a console exposes
+it on the gateway only, never the perimeter, with one instance, and its tile
+asks `object: cluster`.
+
+`backend.component` names another component whose Service this entry routes
+to; empty means this component's own. Three cases need it and share one
+mechanism:
+
+| case | backend |
+|---|---|
+| an addon's tile | the base's Service, named by `package.addon.of` |
+| a bound `shared-app` (§13.5) | the shared instance's Service in `shared-<app>` |
+| an `app` or `service` | its own Service |
+
+The named component must be one this component is already bound to: its addon
+base, or the shared instance. Publishing is never a way to reach a component
+there is no relationship with.
+
+### 17.3 Tiles
+
+A tile is how an installed component appears on the desktop. It lives on the
+exposure (`spec.expose[].tile`), or on `spec.package.api` for a component that
+is only a link to a service elsewhere, because a tile is a link to one host
+and one path and the exposure decides those: the operator projects the tiles
+from the routes it composes, so a tile and what it points at cannot disagree.
+
+```yaml
+      tile:
+        displayName: "Projects"
+        displayNames: { de_DE: "Projekte" }
+        description: "Plan and track work"
+        image: assets/tile.png                 # the author's copy, in git
+        logo: data:image/png;base64,…          # what the cluster reads
+        path: /                                # optional: where the tile leads
+        relation: can_launch                   # what the person must hold
+        object: app                            # app (default) | tenant | cluster
+```
+
+- `logo` is required and inline: a square PNG of 128x128, at most 65536
+  characters as a data URI. `gentian-apps/scripts/sync-profile-tile.py`
+  writes it from `image`. PNG and nothing else: an SVG is a document a browser
+  runs. Inline rather than a URL because the desktop renders from one
+  ConfigMap and must not fetch an image per tile from a third party on every
+  login. What a person sees in its place is the desktop's to decide
+  ([app-customization.md](../app-customization.md#211-tiles)).
+- `relation` is required: a tile with no question is a link shown to everyone.
+  `object` is what it is checked against: the component's own app object by
+  default, the tenant for an administration tile (`can_administer`), the
+  cluster for a service's console (`can_operate_system`, `can_configure`,
+  `can_audit`). The field is `object` and not `on`: YAML 1.1 reads a bare `on`
+  as the boolean `true`, so a hand-written profile would carry a key named
+  `true` and be refused by the schema; the same goes for `off`, `yes` and `no`.
+
+The operator projects the tiles of every installed Component whose route
+exists into one ConfigMap in `kernel-control`
+(`internal/controller/tile_projection_reconciler.go`). The usher reads it and
+answers, for the signed-in person, the tiles whose relation they hold; the
+desktop shows that answer. The projection carries each tile's default image
+and nothing else.
+
+### 17.4 `launch`
+
+A person reaches a component in exactly three ways, and `spec.launch` names
+which:
+
+```yaml
+spec:
+  launch: tile                  # at least one expose entry (or package.api) carries a tile
+  # launch: from                # opened by another component …
+  # launchFrom: file-store      #   … named by the contract it provides
+  # launch: none                # the launcher itself, or no human surface
+```
+
+`launch` is required with no default, for the reason `authMode`, `surface` and
+`trustTier` are: the schema cannot otherwise tell *deliberately unadvertised*
+from *omitted*, and an app nobody can open is installed and lost rather than
+refused. "Nothing opens this" has to be a word somebody wrote. The desktop has
+exposures and no tile (`none`: it is the launcher); the administration console
+has a tile on its `web` entry and none on `api`, which is what an API entry
+should be; Collabora is `from`, opened by Nextcloud and never from a launcher.
+
+`spec.sessionMaxAge` caps a component's **own** session, for one that
+establishes a login through its own client. The edge bounds reachability but
+does not refresh the group model a component captured at its own login, so
+this value bounds what a person may still do inside it after their rights
+change (AD-13, [decisions.md](decisions.md)).
+
+### 17.5 Enablement: the tenant's half
+
+The profile declares what **may** be published. What **is** published is
+recorded on the instance. Gateway entries need no enablement: they carry the
+session and are always on. A perimeter entry, and an entry asking
+`clientAuthorization: app`, are off until a perimeter approver enables them
+(`can_expose` on the tenant, [security.md §2.14](security.md)); the director
+writes the enablement from the caller's token and commits it to the tenant's
+registry.
+
+```yaml
+# Component.spec
+exposures:
+  - exposureName: public-share       # names an entry of the profile
+    kind: public                     # public | publicAppCredential | signInAppAuthorization
+    owner: <keycloak subject>        # immutable: a renewal by someone else is a new enablement
+    reviewAt: 2026-11-24T00:00:00Z   # always set
+    expiresAt: 2026-12-24T00:00:00Z  # optional
+    apex: false                      # this surface is the cluster's main address
+    alias: statistics                # a second name directly under the cluster's domain
+```
+
+`authMode` is not repeated: the profile's entry is the one source, and an
+enablement cannot weaken it. The field is `exposureName` and not `surface`,
+because `surface` is the enum on the profile's entry and one name meaning two
+things in adjacent structs is how a schema drifts.
+
+`kind` records what was approved, and the approval is in force only while the
+entry still declares that kind: a catalog entry that later asks for more is a
+request again ([routing.md §7](routing.md)). `reviewAt` is always set and may
+not be later than `expiresAt`: what is public is known and revisited, whether
+or not it ends; an overdue review is reported and takes nothing down.
+`expiresAt` is optional by design: at expiry the operator treats the
+enablement as absent and removes the proxy, route and listener, while the
+entry stays in git as history; a surface meant to stay, a tenant's website,
+has none, because an expiry nobody renewed takes a production site off the
+internet with no decision behind it. `apex` and `alias` are copied from the
+tenant's registry entry; what each admits is [routing.md §5 and §7](routing.md).
+
+A host in the tenant's own zone needs no certificate work: the zone's
+wildcard covers it. A vanity host is admitted only if the tenant's approved
+domains include it ([routing.md §3](routing.md)).
+
+---
+
+## 18. Where enforcement goes
+
+CEL for what the object may say; the operator and the director for who may say
+it and whether it is admitted. CEL cannot see the writer, the namespace or
+another object, and no admission path can be relied on at every write.
+
+### 18.1 CRD rules
+
+On the profile (`api/v1alpha1/componentprofile_types.go`):
+
+- `service` and `adapter` are each exclusive within `classes`; `shared-app`
+  requires `trustTier: platform`;
+- the package is a chart, a composition, the two together, an `api` or an
+  `addon`, and nothing else; `customization.addon` is refused;
+- `launch` is required; `tile` needs a tile on an exposure or on
+  `package.api`, a tile means `launch: tile`, `from` needs `launchFrom` and
+  `launchFrom` is meaningless otherwise;
+- `forwardToken`, `requires.services.rights`, `.vouching`, `.logDestination`,
+  `valueMapping.platform.storeUrlKey` and `.desktopUrlKey` require
+  `trustTier: platform`; so does `requires.services.llm` on a placed profile;
+- a service's exposures are all `surface: gateway`, its tiles ask
+  `object: cluster`, and it declares no `clientAuthorization`;
+- `placement` and the default-placement booleans are for class `app`;
+- an adapter has `launch: none`, no `expose`, `provides`, `integrations`,
+  `vouching`, `placement` or `package.addon`, and carries `spec.adapter`;
+- on an entry: a perimeter entry is `none` or `app`, never `oidc`, and the
+  four modes nothing checks (`jwt`, `bearer`, `basic`, `signature`) are refused
+  there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
+  only; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
+  exclude `forwardToken` and each other; `apex` is a perimeter entry with
+  `authMode: none` and no `subDomain`; a gateway entry is `oidc` or pins its
+  `source`; `source` is exactly one of `cidrs` or `component`;
+- an OIDC audience is the profile's own name, a dash and a label;
+  `backchannelLogout.exposure` names an entry routing to the component's own
+  Service.
+
+On the instance (`component_types.go`): `class` and `profileRef.name` are
+immutable; `fulfilment` applies to class `app` only; a service switches on no
+perimeter enablement; an enablement's `owner` is immutable and `reviewAt` is
+not later than `expiresAt`; a grant's `approver` and `approvedAt` are
+immutable.
+
+### 18.2 The operator and the director
+
+- The operator makes Components only from `Tenant.spec.apps`, in the tenant's
+  namespace, and the director writes `spec.apps` only for a caller holding
+  `can_install_app` on that tenant. The Tenant webhook
+  (`internal/webhook/tenant_validator.go`) refuses an entry whose profile is
+  not on the cluster and more apps than `spec.quotas.maxApps`.
+- At reconcile the operator refuses a class it does not run
+  (`ClassUnsupported`: only `app` and `adapter` are reconciled) and an
+  instance whose class its profile does not list (`ClassMismatch`); nothing is
+  rolled out from either (`internal/controller/component_reconciler.go`).
+- Enablements and grants are written only by the director, from the token of
+  the person who approved, with the relation the kind demands (§15, §17.5).
+- A Component pinned to a digest is rendered only while the profile on the
+  cluster is that bundle's (§2).
+
+### 18.3 What the CRD cannot catch
+
+A structural schema **prunes** an unknown field before CEL runs. A profile
+that still spells a field the old way (`requires.contracts`,
+`package.deploymentMethod`, `package.apiIntegration`) is admitted, the field is dropped, and the component installs Ready and without
+what it asked for. That is worse than a refusal, and no CRD rule can reach it.
+`make lint-legacy-profile-fields` (`scripts/lint/lint-legacy-profile-fields.py`)
+does, by reading the profiles that ship and refusing the old spellings by
+name.
+
+### 18.4 Why the model closes
+
+A tenant administrator cannot create a service: the only classes the operator
+runs in a tenant namespace are `app` and `adapter`. They never need to: what a
+component requires arrives through `requires.services`, fulfilled by somebody
+else. When something needs what no contract covers, it ships as an extension
+inside the component's own pod (`spec.extensions`), in the tenant namespace,
+in tenant ownership, in the tenant's blast radius. The escape hatch never
+creates a cluster-scoped object.
+
+---
+
+## 19. A profile, end to end
+
+```yaml
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: openproject
+spec:
+  classes: [app]
+  launch: tile
+  trustTier: platform
+  version: "1.4.2"
+
+  package:                       # a chart, a composition, both, an api, or an addon
+    chart:
+      repository: oci://ghcr.io/gentian-org/charts
+      name: openproject
+      version: 16.1.0
+    valueMapping: {...}
+    extraValues: {...}
+
+  requires:
+    services:
+      identity:
+        oidc: {...}
+      database:
+        engine: postgresql
+      storage:
+        s3: {...}
+    privileges:
+      egress:
+        - name: smtp-relay
+          rule: {...}
+          reason: "Outbound mail to the tenant's relay."
+
+  provides:
+    - name: project-management
+      protocol: http-json
+  integrations:
+    - contract: central-navigation
+      provider: desktop
+
+  secrets:
+    generated: [...]
+
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: projects
+      exchangeToken: true
+      backend: {service: openproject, port: 80}
+      tile:
+        displayName: Projects
+        description: Plans, tasks and timelines
+        logo: data:image/png;base64,…
+        relation: can_use
+        object: app
+    - name: public-share
+      surface: perimeter
+      authMode: none
+      subDomain: projects
+      paths: ["/public/"]
+      backend: {service: openproject, port: 80}
+
+  sessionMaxAge: 8h
+```
+
+An addon differs in the package and routes its tile into its base:
+
+```yaml
+  package:
+    addon: {id: mrp, of: odoo-base-ce}
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      backend: {component: odoo-base-ce, service: odoo, port: 80}
+      tile:
+        displayName: Manufacturing
+        logo: data:image/png;base64,…
+        path: /odoo/action-mrp.mrp_production_action
+        relation: can_use
+        object: app
+```
+
+The instance records answers, never requests:
+
+```yaml
+apiVersion: gentianos.io/v1alpha1
+kind: Component
+metadata: {name: openproject, namespace: tenant-acme}
+spec:
+  profileRef: {name: openproject, digest: "sha256:..."}
+  class: app
+  fulfilment: auto
+  addons: []
+  exposures:
+    - exposureName: public-share
+      kind: public
+      owner: <keycloak subject>
+      reviewAt: 2026-11-24T00:00:00Z
+  privileges:
+    - privilege: egress/smtp-relay
+      approver: <keycloak subject>
+      approvedAt: 2026-09-25T09:00:00Z
+      reason: "The tenant relays through its provider."
+status:
+  fulfilment: dedicated
+  pendingPrivileges: []
+```

@@ -215,7 +215,7 @@ spec:
                       type: object
                       description: >
                         How installed apps move to newer builds
-                        (docs/plans/versioning.md §4). The cluster's
+                        (docs/design/versioning.md §4). The cluster's
                         administrator sets a mode for every app and may name
                         another per app; a tenant's entry may carry an
                         override the cluster's administrator wrote. latest:

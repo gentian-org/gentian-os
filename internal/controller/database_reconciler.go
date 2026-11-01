@@ -40,7 +40,7 @@ const (
 	// portalShellAppName names the desktop's database as exports and restores
 	// address it. The tenant reconciler no longer provisions it: the desktop
 	// is a component, and its database is that component's granted
-	// requirement (ui-restructure.md §1), fulfilled where the component is.
+	// requirement (admin-console.md §1.2), fulfilled where the component is.
 	portalShellAppName = backup.DesktopStore
 )
 

@@ -158,7 +158,7 @@ type Repository interface {
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
-// of operator-split-plan.md §4.2, and the questions a commit or a command depends on -- which plans
+// of control-plane.md §4.2, and the questions a commit or a command depends on -- which plans
 // a tenant may move to, whether a restore finished, what the cluster still
 // holds of a tenant being purged. No person's read of live state passes
 // through here; those are the usher's. See internal/director/lifecycle.
@@ -508,7 +508,7 @@ func (s *Server) routes() {
 
 	// What the caller holds on a tenant, for the desktop: it renders from
 	// the answer -- the admin tile by can_administer, the store by
-	// can_install_app -- and decides nothing itself (ui-restructure.md §2).
+	// can_install_app -- and decides nothing itself (admin-console.md §1.2).
 	// Entered under can_enter, the relation that reaches the desktop at all.
 	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
 
@@ -614,7 +614,7 @@ func (s *Server) routes() {
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
 		if s.cfg.Lifecycle != nil {
-			// Import: a bundle in, a tenant out (sovereignty-concept.md §4.3).
+			// Import: a bundle in, a tenant out (data-lifecycle.md §4).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
 			// An upload in steps, which a transfer that stops part-way
 			// continues: started, then filled with ?into=, its files listed.
@@ -785,7 +785,7 @@ func (s *Server) routes() {
 
 		// The bundle as one file, through the director and never a signed
 		// URL: a link that works without a session is a session nobody can
-		// revoke (sovereignty-concept.md §4.2). The one read of live state
+		// revoke (data-lifecycle.md §4). The one read of live state
 		// left here: the usher's identity at the operator lists backups and
 		// does not fetch one.
 		s.guarded("GET /v1/tenants/{t}/backups/{name}/download", "can_administer", tenantObject, s.tenantBundleDownload)

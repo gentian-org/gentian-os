@@ -45,7 +45,6 @@ bootstrap via `install.sh`.
 - [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavor
 - [docs/faq.md](docs/faq.md) — frequently asked questions
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)
-- [docs/research/](docs/research/) — exploratory research notes
 
 ## License
 

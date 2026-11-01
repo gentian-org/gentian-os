@@ -30,7 +30,7 @@ is present, so there is no state file on your machine to fall out of sync. It
 asks for the version too, where there is one: a pin moved in `versions.yaml`
 or `crossplane/providers/providers.yaml`, or a bootstrap Application's
 template changed, is applied by the next run, which is how a cluster takes a
-newer release ([versioning.md](plans/versioning.md)).
+newer release ([design/versioning.md](design/versioning.md)).
 
 One program therefore covers three directions:
 

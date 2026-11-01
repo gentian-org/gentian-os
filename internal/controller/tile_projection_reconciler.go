@@ -390,7 +390,7 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				URL:          tilecatalogue.URL(string(route.Spec.Hostnames[0]), e.Tile.Path),
 				// Which object the relation is asked on is the tile's to say:
 				// app:<tenant>/<profile>, where an installed app's own
-				// permissions hang off (authorization-model.md §4), or the
+				// permissions hang off (authorization.md §4), or the
 				// tenant itself, where administering it is decided.
 				Object:  tileObject(e.Tile, tenant, comp.Spec.ProfileRef.Name, r.Cluster),
 				AnyOf:   []string{e.Tile.Relation},

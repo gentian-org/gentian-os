@@ -1500,7 +1500,7 @@ it was written with.
 ## 12a. Tenant Import
 
 Create plus Restore, from a bundle, on this cluster or another one
-(sovereignty-concept.md §4.3). The bundle is the `.gentian` file **Download**
+(data-lifecycle.md §4). The bundle is the `.gentian` file **Download**
 produced, or a bucket prefix the cluster can reach.
 
 ```bash
