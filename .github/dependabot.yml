@@ -5,6 +5,7 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
     groups:
@@ -17,6 +18,7 @@ updates:
     directories:
       - /
       - /api
+    target-branch: develop
     schedule:
       interval: weekly
     groups:
@@ -29,6 +31,7 @@ updates:
       - /
       - /kernel/extensions/keycloak-event-listener
       - /kernel/images/storage-tools
+    target-branch: develop
     schedule:
       interval: weekly
     groups:
