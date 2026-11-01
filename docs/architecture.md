@@ -170,7 +170,7 @@ work for *every* Kubernetes resource, not just managed resources. Crossplane's
 reconcile loop handles the slow, eventually-consistent external APIs
 that Argo CD cannot reason about.
 
-### 3.1 How provisioning works on the cluster today
+### 3.1 How provisioning works on the cluster
 
 A fresh install leaves the platform tenant (`Tenant/platform`, whose realm is
 the kernel realm) and, on a single-tenancy cluster, the one user tenant
@@ -634,9 +634,6 @@ A cluster may serve language models. Where the Cluster claim enables it,
 gateway's address and a network path to it; no other app can reach it. The
 gateway has no public route; its console is a claim setting, for platform
 administrators, behind the kernel sign-in.
-
-Agents acting for a person across apps, and an MCP gateway for them, are
-designed and not built.
 
 See [design/llms.md](design/llms.md), [design/agentic-ai.md](design/agentic-ai.md)
 and [design/security.md](design/security.md) §2.9.

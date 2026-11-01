@@ -128,7 +128,7 @@ License-header templates used by `controller-gen` and `golangci-lint`
 | `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **copy** of the deployed Composition + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. A copy, not a symlink, so `check-render-fixtures.sh` has something to compare — a stale copy keeps a golden test green against a Composition nobody runs. |
 | `tests/unit/schema/` | `valid/` fixtures that must pass and `invalid/` fixtures that must be rejected by `crossplane beta validate` against `xrds/`. |
 | `tests/e2e/scripts/` | The kernel-service smoke check (`make verify-kernel-services`). |
-| `functions/` | Reserved for in-repo composition functions; empty today (only pipeline functions from upstream packages are used). |
+| `functions/` | Reserved for in-repo composition functions; empty (only pipeline functions from upstream packages are used). |
 
 ### `charts/`
 | Path | Purpose |
@@ -172,10 +172,6 @@ Three files stay at the top because their path is part of their interface:
 is run from a rescue shell against a cluster that may have nothing else left.
 
 The rule that keeps this from decaying: **anything sourced lives in `lib/`.**
-`lib-runtime.sh`, `mail-lib.sh`, `llm-lib.sh`, `verify-kernel-services.sh` and
-`portal-login-bootstrap.sh` used to sit one level up while being sourced by the
-same `load.sh`, which meant "is it a library?" could not be answered by looking
-at the directory.
 
 Configuration surfaces at the repo root:
 
@@ -191,10 +187,10 @@ Configuration surfaces at the repo root:
 
 | Path | Purpose |
 |---|---|
-| `authz/model/v0/`, `v1/` | The OpenFGA authorization model (`model.fga`, `model.json`) and its tests, one directory per version. `v1` is what the director asks against (`make gen-authz-model` copies it to `internal/director/authz/model.json`); `v0` is still embedded by `internal/authz/model_embed.go`. |
+| `authz/model/v0/`, `v1/` | The OpenFGA authorization model (`model.fga`, `model.json`) and its tests, one directory per version. `v1` is what the director asks against (`make gen-authz-model` copies it to `internal/director/authz/model.json`); `v0` is embedded by `internal/authz/model_embed.go`. |
 | `config/crd/` | Two different things: controller-gen output for `gentianos.io_*`, **and** hand-maintained fixtures that only exist so envtest can start — third-party CRDs (Argo CD, cert-manager, Gateway API, CNPG, provider-helm, provider-keycloak) and stubs for the Crossplane-owned `apps`/`xtenants` kinds. |
 | `config/rbac/` | Gitignored controller-gen intermediate; the committed artifact is the chart's `clusterrole.yaml`. |
-| `docs/` | `architecture.md` and its `design/` deep-dives; `security-principles.md`; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `custom-catalogues.md`, `faq.md`, `roadmap.md`; the operator runbooks `recovery-playbook.md`, `tenant-backup-guide.md` and `node-pool-migration.md`; `releases/` for one file per release; `plans/` for working plans; `research/` for exploratory notes. |
+| `docs/` | `architecture.md` and its `design/` deep-dives; `security-principles.md`; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `custom-catalogues.md`, `faq.md`; the operator runbooks `recovery-playbook.md`, `tenant-backup-guide.md` and `node-pool-migration.md`; `releases/` for one file per release; `plans/` for working plans; `research/` for exploratory notes. |
 
 Root docs: `README.md` (scope and what this repo is *not*), `AGENTS.md` (rules
 for coding agents), `LICENSING.md` and `CONTRIBUTING.md`, `GETTING-STARTED.md` (the steps to a running cluster; flags,

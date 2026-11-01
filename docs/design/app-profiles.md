@@ -52,9 +52,8 @@ An install names a profile and a build:
 ```
 
 The digest is a field of the install, not part of the profile's name.
-`profileRef` selects a profile by name only: resolving one by family, version
-and edition was removed with the metadata it matched against, and such a
-reference is refused.
+`profileRef` selects a profile by name only: a reference by family, version
+or edition is refused.
 
 ---
 

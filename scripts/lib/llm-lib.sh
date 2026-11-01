@@ -9,7 +9,7 @@
 # any of these, so nothing prunes them automatically otherwise). PVCs are
 # deliberately left behind (orphaned, not deleted) — cached model weights
 # can be tens of GB and take many minutes to redownload (see the HF_TOKEN
-# rate-limit note in agentic-ai.md §10.2); re-adding the same instance ID
+# rate-limit note in agentic-ai.md §7.2); re-adding the same instance ID
 # later picks the cache back up instead of paying that cost again. Remove
 # stale PVCs manually if you want the disk space back:
 

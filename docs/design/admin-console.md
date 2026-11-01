@@ -1,6 +1,6 @@
 # Administration console — design
 
-**Scope:** what the administration console is, what each of its screens does and which service answers it, and what is not built.
+**Scope:** what the administration console is, what each of its screens does and which service answers it.
 
 **Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [routing.md](routing.md), [store-contract.md](store-contract.md), [resource-plans.md](resource-plans.md).
 
@@ -135,7 +135,7 @@ requests, which are the tenant's perimeter approver's (`can_approve_privilege`).
   administrator*; when the invitation expired or could not be mailed, the
   button is back. Without an address nothing changes: the console waits for
   the tenant and shows the link once. If the registrar cannot keep the
-  request, the console says so and waits with the page open, as it did before.
+  request, the console says so and waits with the page open.
 
 No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
@@ -149,7 +149,6 @@ link with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 | Action | Mechanism |
 |---|---|
 | Reset by an administrator | The registrar has Keycloak mail a link with `UPDATE_PASSWORD`, to `gentian.inviteEmail` if set, else the primary address |
-| Self-service "forgot password" | Not built |
 
 ### 4.3a Removing a member
 
@@ -206,11 +205,9 @@ Keycloak is replaced by what git says.
 
 ### 4.6 Sessions
 
-The console has no Sessions screen. Listing a person's sessions and ending
-one from the console is not built; it is a possible future feature
-([#598](https://github.com/gentian-org/gentian-os/issues/598)).
+The console has no Sessions screen.
 
-What ends a session today when an administrator switches a member off or
+What ends a session when an administrator switches a member off or
 removes them is the realm's refusal to renew it, within five minutes; nobody
 ends it by hand. The whole of it is in [iam.md §1.12](iam.md).
 
@@ -223,7 +220,7 @@ permitted it. It needs no store of its own.
 Not in it: sign-ins, refused requests and reads of data, for which no store
 exists, and changes to people. For those the registrar keeps a record of who
 asked and what permitted it, with a retention period, beside Keycloak's own
-admin events; the console does not show either yet. The screen says what it
+admin events; the console does not show either. The screen says what it
 leaves out. There is no export.
 
 ### 4.8 Resources
@@ -278,9 +275,6 @@ tenant. Publishing is an action at the director (`can_administer`), which
 records who published it. Notices are stored in the tenant's own database,
 in the table the desktop reads; the console keeps no copy and reads the
 history through the usher.
-
-Not built: an audience narrower than the tenant (the director's action takes
-no group) and delivery by mail or chat.
 
 ---
 
@@ -354,31 +348,9 @@ that on (*Security* → *Platform administrators may enter this tenant*,
 `Tenant.spec.platformAccess.adminsEnter`); the *Tenants* page then offers
 *Enter tenant*.
 
-A mode that withholds routine access to tenants' people from platform
-administrators is not built ([#596](https://github.com/gentian-org/gentian-os/issues/596)).
-
 ---
 
-## 8. Not built
-
-Designed at some point and absent from the code. None of it should be read as
-a control that exists.
-
-| Topic | State |
-|---|---|
-| Session list and revocation in the console | Not built; a possible future feature (§4.6, [#598](https://github.com/gentian-org/gentian-os/issues/598)) |
-| Sign-in and access audit, export, retention | Not built (§4.7; [#362](https://github.com/gentian-org/gentian-os/issues/362)) |
-| Realm-wide second-factor rule, WebAuthn | Not built (§4.4) |
-| Creating and removing accounts inside apps (SCIM or events) | Not built (§6) |
-| Group-scoped and mailed notices | Not built (§5) |
-| A model's health as the gateway sees it | Not built (§6a; [llms.md](llms.md) §5; [#586](https://github.com/gentian-org/gentian-os/issues/586)) |
-| Making a backup key in the console | Not offered here. A person makes one with `age-keygen` and gives the console the public half, or makes one in the browser in the Operations Console, which can also have the custodian keep a copy in the vault ([tenant-backup-guide.md](../tenant-backup-guide.md) §8). No server makes a key |
-| Agents and delegation, access requests, break-glass workflow | Not built |
-| A tenant's own upstream identity provider, service-account registry, dynamic groups, guests with an end date, access certification | Not built |
-
----
-
-## 9. Non-goals
+## 8. Non-goals
 
 These stay outside the console:
 
@@ -389,7 +361,7 @@ These stay outside the console:
 
 ---
 
-## 10. References
+## 9. References
 
 | Topic | Location |
 |---|---|

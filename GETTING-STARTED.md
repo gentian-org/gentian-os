@@ -209,7 +209,7 @@ them quietly gives you the earlier cluster instead of the one you mean:
    ```
 2. **A pinned image in `install.env`.** A line `GENTIAN_OS_IMAGE_TAG=…` left
    from an earlier run is used as it stands: the cluster runs that older
-   build under today's manifests. The installer warns only when the value is
+   build under the current manifests. The installer warns only when the value is
    a tag that moves (`develop`), not when it is an old build. Delete the line
    (step 2).
 3. **A list of default profiles in `install.env`.** A line
@@ -219,7 +219,7 @@ them quietly gives you the earlier cluster instead of the one you mean:
    step 0**, and so does one whose catalog lists no digest for it; one whose
    catalog cannot be reached is a warning, and the cluster then comes
    without the profile. Delete the line; unset, step 0 places the Operations
-   Console from `https://catalogue.aluvian.io`, only if the file hashes to the
+   Console from the catalog `GENTIAN_STORE_CATALOGUE_URL` names, only if the file hashes to the
    digest that catalog's index lists
    ([install-reference.md §4](docs/install-reference.md)).
 4. **The cluster's definition in the deployments repository.** If
@@ -236,7 +236,7 @@ them quietly gives you the earlier cluster instead of the one you mean:
 
    ```yaml
    catalogue:
-     storeUrl: https://store-service.aluvian.io
+     storeUrl: https://<store address>   # GENTIAN_STORE_URL
      sources:
        - name: gentian
          url: https://gentian-org.github.io/gentian-apps/develop   # without /develop when installing a release
@@ -737,10 +737,10 @@ people who may install apps there — the tenant's administrators — and it
 opens `https://store.<the tenant's domain>/`. It is an app on the cluster
 that shows what a store elsewhere offers: its own server asks the store named
 on the Cluster claim (`spec.catalogue.storeUrl`,
-`https://store-service.aluvian.io` by default) for the list, with no account,
+set from `GENTIAN_STORE_URL`) for the list, with no account,
 and installs through the director as the person signed in.
 
-The App Store app comes from the store's catalog (`catalogue.aluvian.io`),
+The App Store app comes from the store's catalog,
 with the Aluvian Center beside it and the Operations Console in the
 platform tenant: step 0 places the three profiles, the *extra services*,
 unless `./install.sh --no-extra-services` (recorded on the claim as
@@ -789,8 +789,8 @@ order:
    when it does not. From any machine:
 
    ```bash
-   curl -s https://store-service.aluvian.io/v1/meta        # the address on your claim
-   curl -s 'https://store-service.aluvian.io/v1/apps?limit=5'
+   curl -s https://<store address>/v1/meta        # the address on your claim
+   curl -s 'https://<store address>/v1/apps?limit=5'
    ```
 
    Both must answer `200` with JSON, without a redirect and without a login.
@@ -1081,9 +1081,7 @@ The installer reads the environment first, then its cache, then OpenBao, and
 prompts for whatever is still missing — so a partly-supplied environment still
 works interactively.
 
-**There is no secrets file.** A plaintext file of secrets beside the installer
-was a fourth source that nothing rotated and nothing audited, so it was removed
-rather than kept working.
+**There is no secrets file.**
 
 ### The bootstrap credential cache
 
@@ -1167,13 +1165,13 @@ A fresh install creates only the provider resource types the platform uses —
 25 of the 374 the vault and Keycloak providers ship — because every installed
 type costs API-server memory on a managed control plane. `kubectl get mrap`
 shows the policy that lists them (`gentian-platform`) and `kubectl get mrd`
-every type with whether it is active. A cluster installed before this keeps
-every type: Crossplane does not take one away.
+every type with whether it is active. Crossplane does not take a type away
+from a cluster that has it.
 
 If a fresh install stops in `B-05` naming a type that did not appear, or a
 composite waits on a kind the API server does not know, set
 `CROSSPLANE_ACTIVATE_ALL=true` in `install.env` and run the installer again:
-that is the old behavior, every type installed. The list, and how to add a
+that installs every type. The list, and how to add a
 type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
 
 ### Running one step, or stopping early

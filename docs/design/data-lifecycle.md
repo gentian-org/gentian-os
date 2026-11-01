@@ -20,16 +20,14 @@
 - A backup holds the data of installed apps, the data uninstalled apps left,
   and what is the tenant's own: its people, its desktop, its mailboxes and
   the access rights that follow from nothing else.
-- §7 lists what does not work, or is not decided, today. None of it has been
-  run on a cluster since backup, restore and import were reworked: §7 says
-  what only a cluster can confirm.
+- §7 lists the limits of these acts.
 
 | Act | What it is for | Who starts it, and where | Does it destroy anything? |
 | --- | --- | --- | --- |
 | **Create** a tenant | A new, empty workspace | Cluster administrator. Console, *Tenants*; or `kubectl gentian tenants create` | No |
 | **Install** an app | Add an app to a tenant, with empty stores | Tenant administrator. App Store app; or `kubectl gentian apps install` | No |
 | **Back up** (export) | Copy the tenant's data into a bundle | Tenant administrator. Admin Console, *Backup*; a schedule; or a `TenantExport` object. *Download* hands out the same bundle as one file | No. Each app is paused while it is copied |
-| **Restore** | Put a bundle's data back into the tenant it came from | Cluster administrator only. A `TenantRestore` object; there is no button | Yes: what was written since the backup is replaced |
+| **Restore** | Put a bundle's data back into the tenant it came from | Administrator | Yes: what was written since the backup is replaced |
 | **Import** | Make a tenant again from a bundle, under the name it carries, here or on another cluster | Cluster administrator. `kubectl gentian tenants import` | No. The new tenant has its own names; nothing of another tenant is touched |
 | **Uninstall** an app | Take the app away, keep its data | Tenant administrator. App Store app; or `kubectl gentian apps uninstall` | No |
 | **Purge** an app | Destroy what an uninstalled app left | Tenant administrator. App Store app; or `apps uninstall --purge` | Yes, for good |
@@ -98,8 +96,8 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | Mailboxes (a cluster that runs its own mail server; a mail domain that is the tenant's alone) | filled by use | copied | put back on top of what is there | put back into the new tenant's mail domain | — | — | kept | destroyed, after the mail routing is gone |
 | Archived mailboxes of removed people (the same clusters and domains) | made when a person is removed and whoever removed them chose *archive* | copied, as archived | put back as archived, never into a live mailbox | put back as archived into the new tenant's mail domain, and put on record there | — | — | kept | destroyed, with the mailboxes |
 | Web addresses: routes, certificate, DNS records | made | not copied | — | made new | the app's route removed | — | removed | removed |
-| Access rights that follow from the tenant, its apps and its people (the rights store) | derived | not copied | derived again | derived again | the app's removed | — | the apps' removed | the apps' removed; the tenant's own entries and who is its member stay (gap 1) |
-| Access rights that follow from nothing else: a right granted beyond the defaults, a default withdrawn | written in the store | copied; the manifest is signed by the cluster | put back, after the rest is derived, from a bundle this cluster signed and took; from any other only what was withdrawn | as a restore: granted ones (a person's among them) only from this cluster's own bundle of a tenant of the same name, otherwise **not** brought, and named | kept | — | kept | **not removed** (gap 1) |
+| Access rights that follow from the tenant, its apps and its people (the rights store) | derived | not copied | derived again | derived again | the app's removed | — | the apps' removed | the apps' removed; the tenant's own entries and who is its member stay (§7) |
+| Access rights that follow from nothing else: a right granted beyond the defaults, a default withdrawn | written in the store | copied; the manifest is signed by the cluster | put back, after the rest is derived, from a bundle this cluster signed and took; from any other only what was withdrawn | as a restore: granted ones (a person's among them) only from this cluster's own bundle of a tenant of the same name, otherwise **not** brought, and named | kept | — | kept | **not removed** (§7) |
 | The backup bucket and the bundles in it | made by the first backup | bundles are written here | read | — | — | — | kept | destroyed, unless the tenant keeps its bundles |
 | The list of what was provisioned | written | not copied | — | written new | kept | shortened, kind by kind | kept | destroyed, last |
 
@@ -130,7 +128,7 @@ purge of one app uses. The tenant's mailboxes go once its mail routing is
 gone, so that nothing is delivered into a mailbox being destroyed, and the
 deletion waits for that step as it waits for a store's. Two things are left
 behind: the keys an app wrote into the shared cache, and the tenant's entries
-in the rights store other than its apps' (gap 1).
+in the rights store other than its apps' (§7).
 
 **Removing a person** is not one of the eight acts, and it is the one moment
 a single mailbox is decided about. Whoever removes the person chooses:
@@ -188,8 +186,8 @@ the cluster, and its manifest has to name the tenant restored into: a bundle
 of another tenant is refused before anything starts, whoever uploaded it
 ([commands.md §12](../commands.md)).
 
-A bundle states its format in its manifest (`schemaVersion`), now 4. Format 3
-added what a bundle did not hold before: the data of apps uninstalled with
+A bundle states its format in its manifest (`schemaVersion`). The format
+written is 4. Format 3 holds the data of apps uninstalled with
 their data kept, the mailboxes, and the access rights that follow from
 nothing else. Format 4 adds each app's own secrets. A restore reads formats 1
 to 4, puts back what the bundle holds, and refuses a format newer than its
@@ -248,8 +246,7 @@ Access rights follow one rule for an import and a restore alike. A right
 there, a person's among them, is granted only when the bundle provably comes
 from this cluster: its manifest signed with this cluster's key, taken on a
 cluster of this cluster's id ([security.md §6.4](security.md)). From any
-other bundle — unsigned as every bundle written before signing is, or
-another cluster's — each
+other bundle — unsigned, or another cluster's — each
 is named in the result, for whoever may grant it here, and
 `status.rights.provenance` says why.
 
@@ -374,10 +371,7 @@ rights that are derived, the running apps themselves, the apps' definitions.
 Purge and delete report success only when what they removed is verifiably
 gone.
 
-## 7. Known gaps
-
-Found by reading the code, not by running it on a cluster. Ordered by how
-much it matters.
+## 7. Limits
 
 1. **Three things no act removes:** the keys an app wrote into the shared
    cache, the entries in the rights store that say who is a tenant's member,
@@ -387,8 +381,8 @@ much it matters.
 2. **An import carries the privileges and published addresses** the bundle's
    tenant had approved (`spec.privileges`, `spec.exposures`) as approved: the
    new tenant's entry in git is written from the bundle's settings, and these
-   two are among them. Nobody on the importing cluster approved them. Open,
-   until an import has been drilled. Rights *in the rights store* are
+   two are among them. Nobody on the importing cluster approved them. Rights
+   *in the rights store* are
    not carried (§4); these are settings of the tenant's entry in git.
 3. **An import brings an uninstalled app's data only if the cluster has the
    app's definition.** It fetches the definitions of the apps the tenant
@@ -411,14 +405,14 @@ much it matters.
 9. **At a tenant's deletion the web addresses are removed after the stores,**
    not before them.
 
-Accepted, not a gap: **a restore creates every missing person enabled,** also
+**A restore creates every missing person enabled,** also
 one who was disabled when the backup was taken. They have no password; a
 sign-in through another provider that the bundle recorded for them works.
 Each comes back under the id they had, so an app that keys an account by the
 sign-in's subject finds the same person; one already in the realm keeps the
 id they have there, and the restore's output says so.
 
-Accepted, not a gap: **nothing the realm has is made anew from the
+**Nothing the realm has is made anew from the
 bundle.** Each client, role and group here keeps its id, which the
 platform's provider-keycloak resources know it by; Keycloak's OVERWRITE
 would delete it and make it under the bundle's, a role or group held by
@@ -439,23 +433,12 @@ user reads in the realm, at the bundle's addresses with each host of the
 tenant's old domain, or the cluster's, moved to the new one; where either
 domain is not known, as the bundle recorded them, and the result says so.
 
-Closed: the data of uninstalled apps, the platform tenant's desktop database
-and mailboxes are in a backup; mailboxes are destroyed with the tenant; the
-rights that follow from nothing else are in a backup; a removed person's
-mailbox is archived or deleted, as whoever removed them chose.
-
 An external destination: a bundle records its endpoint, region, credential
 and addressing style (`path`, the default, or `virtualHost`), and its
 restore and deletion use them, whatever the policy says later. The steps of
 such a run that are in the tenant's namespace are given a way out to that
 destination alone while it runs; a run whose bundle stays in the platform's
 storage is given none.
-
-What only a cluster can confirm: that each step's pod starts in its namespace
-and reaches the object store through the network policies, the mailbox steps
-beside the mail server's volume among them; that the realm
-steps work against the running sign-in service; and that each app signs
-people in after its realm is put back.
 
 Further technical limits (bundle format, MariaDB naming, cache keys) are in
 [operations.md](operations.md) §9.6.

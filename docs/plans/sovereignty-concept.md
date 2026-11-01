@@ -29,14 +29,13 @@ branch this document is on; §9 has the detail.
 
 | What | Who does it | State |
 |---|---|---|
-| The bundle: one format for a tenant's data, encrypted, readable with [age](https://age-encryption.org) and a tar tool (§1) | — | built as schema 1; schema 2 (credentials, secrets, mail, standard formats per app) is designed |
+| The bundle: one format for a tenant's data, encrypted, readable with [age](https://age-encryption.org) and a tar tool (§1) | — | built as schema 1; schema 2 (secrets, mail) is designed |
 | Export now, and download the bundle as one file (§4.2) | tenant administrator | built |
 | Import a bundle as a new tenant, on this cluster or another (§4.3) | cluster administrator | built |
-| Restore a bundle into a tenant that exists | cluster administrator | built, with no console screen |
+| Restore a bundle into a tenant that exists | administrator | built, with no console screen |
 | Retire a tenant and keep its data | cluster administrator | built |
 | Purge: destroy a tenant's data (§4.4) | cluster administrator | built for databases, buckets, volumes, the realm and the backup bucket; the stores listed in §9.3 are still left behind |
 | Offboard: export to the tenant's key, hand over, purge, and a signed record of what was destroyed (§4.5) | tenant administrator asks, cluster administrator confirms | not built |
-| Standard formats per app — files, vCard, iCalendar, Maildir (§6) | — | not built |
 
 ## What the project commits to keep free
 
@@ -61,9 +60,7 @@ keeps the license of the project it comes from.
    it, and it is readable with standard tools and no running service (§1,
    §1.2).
 4. **A bundle is always encrypted, and the tenant can have it encrypted to a
-   key of their own**, which the provider cannot read. That this is the
-   default for an export a person asks for is decided and not yet built
-   (§1.4).
+   key of their own**, which the provider cannot read (§1.4).
 5. **An import does not depend on the cluster the bundle came from**, nor on
    its provider's recovery kit (§4.3).
 6. **The OS builds, installs and runs with no add-on and no store present.**
@@ -73,9 +70,6 @@ keeps the license of the project it comes from.
 7. **The cluster gates nothing on a license.** It holds no entitlement, and
    an install is asked of the person who makes it and of nothing else
    ([architectural-decisions.md](architectural-decisions.md) AD-3, AD-14).
-8. **The standard formats per app are standards, never a Gentian schema**, so
-   that a tenant's files, contacts, calendars and mail stay readable by other
-   products (§6).
 
 ## An aim, not a commitment
 
@@ -113,31 +107,19 @@ format.
 |---|---|---|
 | `manifest.json` | tenant name, the full `TenantSpec` as committed in git, operator version, per-app profile coordinate **and content digest**, chart version, stores, capture times | present; digest missing |
 | `identity/realm.json`, `users.ndjson`, `memberships.ndjson` | the Keycloak realm: groups, roles, clients, every user, every membership | present |
-| `identity/credentials.ndjson` | password hashes, TOTP secrets, WebAuthn credentials, required actions — **included by default**; an export may say `omitCredentials` | absent |
-| `identity/scim/` | the same people and groups as SCIM 2.0 resources (RFC 7643 `User`, `Group`) | absent |
 | `apps/<app>/postgres/*.pgc`, `mariadb/*.sql.gz`, `s3/*.tar.gz`, `volumes/*.tar.gz` | each app's stores, as the profile's requirements declare them | present (flat layout) |
-| `apps/<app>/canonical/` | the app's data in its **canonical interchange form** where the profile declares one (§6) — files as an object tree, mail as Maildir, contacts as vCard, calendar as iCalendar | absent |
 | `secrets/<app>.json` | the OpenBao secrets the tenant's apps own that are *data* rather than platform-issued credentials (API keys the tenant typed, OAuth tokens to third parties) | declared (`boundSecretKeys`), never written |
 | `mail/<domain>/` | Maildirs and sieve scripts for the tenant's mail domain; DKIM private key | absent |
 | `shell/` | the desktop's own database (preferences, notifications, usage) | present |
 | `bundle-info.json` (cleartext) | tenant, schema, encryption mode, recipients, `howToDecrypt` | present |
 
-**Credentials are in the bundle** because they are the tenant's: a restored
-workspace is one people can sign in to, and the bundle is encrypted to a key
-the tenant chose, so a leaked bundle is a leaked key — which is already true
-of the realm. The `omitCredentials` flag is for a tenant who wants a bundle a
-provider can hold without that exposure; the console shows it as a checkbox on
-the export form, off by default.
-
-**Identity is Keycloak and the portable form is SCIM.** There is no LDAP in
-Gentian and none is proposed. A bundle carries the realm export for a faithful
-restore and the SCIM projection for everything that is not Gentian — the
-standard formats of §6, and any directory the tenant moves to next.
-
 Not in a bundle, on purpose: caches (Redis), derived files an app regenerates,
 and **platform-issued credentials** — the database passwords, S3 keys and
 OIDC client secrets the operator mints for an app. Those are the cluster's,
 not the tenant's, and an import mints new ones (§4.3).
+
+People's sign-in credentials are not in a bundle either: a restored person
+gets a password reset.
 
 ### 1.2 Self-contained
 
@@ -167,14 +149,12 @@ Every artefact is an age file. The recipient is one of:
 
 | Mode | Who can open it | Default for |
 |---|---|---|
-| **tenant key** — an X25519 identity minted in the console, shown once, escrowable at the tenant's choice | the tenant | manual export |
-| **passphrase** | whoever holds the phrase | manual export, on request |
-| **platform key** — the cluster's backup recipients | the tenant and the operator | scheduled export |
+| **platform key** — the cluster's backup recipients | the tenant and the operator | manual export, scheduled export |
+| **existing recipient** — a public key whose private half the tenant holds | the tenant | — |
+| **passphrase** | whoever holds the phrase | — |
 
-The three modes exist. One change is decided and not built: a manual export
-defaults to the tenant's own key, not the platform's — today an export that
-names no key is encrypted to the cluster's. Sovereignty means the default
-bundle is one the provider cannot read.
+The console offers these three, starts on the platform key and makes no key
+itself.
 
 ## 2. The primitives
 
@@ -201,7 +181,7 @@ closing that is the first piece of work.
 | **Create** | cluster admin | P1 | built |
 | **Export** | tenant admin, one click | P3 → stage in the cluster's bucket → stream to the browser as a `.gentian` file → delete the stage after `ttlSeconds` | built |
 | **Import** | cluster admin | read `manifest.json` → P1 with the bundle's `TenantSpec` → wait for Ready → P4 | built |
-| **Restore** | cluster admin | P4 into the existing tenant from a bundle the admin supplies | built, admin-only, no console |
+| **Restore** | administrator | P4 into the existing tenant from a bundle the admin supplies | built, no console |
 | **Retire** | cluster admin | remove the manifest; data follows `deletionPolicy` (Retain) | built |
 | **Purge** | cluster admin | set `deletionPolicy: Delete`, wait for the cluster to hold it, remove the manifest → P5 | built 2026-10-02; P5 incomplete (§9.3) |
 | **Offboard** | tenant admin asks, cluster admin confirms | Export to the tenant's key → hand over → Purge → signed deletion record | missing; the sovereign exit |
@@ -213,16 +193,13 @@ path.
 Anything further is a composition of these and is not a flow of the OS: a
 backup is an Export on a timer, a recovery is an Import or a Restore of the
 newest bundle, and a migration from or to another product is a converter on
-either side of Import and Export (§6). Whoever builds such a thing calls the
+either side of Import and Export. Whoever builds such a thing calls the
 OS primitives through the director like any other client (§5).
 
 ## 4. What has to change in Gentian OS for the flows to hold
 
 ### 4.1 The bundle becomes complete (schema 2)
 
-- **Identity.** Keep the realm export. Add `credentials.ndjson` so a restored
-  workspace is one people can sign in to, and the SCIM projection so a bundle's
-  people are readable by anything that speaks SCIM.
 - **Secrets.** Walk the tenant's OpenBao tree the way purge already does
   (`SidecarNames`, `purgeOpenBaoSecrets`) and capture the keys the profile
   marks as tenant data. A profile declares which of its secrets are data
@@ -232,8 +209,7 @@ OS primitives through the director like any other client (§5).
   DKIM key. Captured by a `mail` unit; destroyed by purge.
 - **Digests.** The manifest pins each profile's content digest, so an import
   can refuse a catalog that no longer serves what the data was written by.
-- **Layout.** Per-app directories, so a bundle is readable by a person and so
-  §6's canonical forms have a home beside the raw stores.
+- **Layout.** Per-app directories, so a bundle is readable by a person.
 
 ### 4.2 Export lands in the browser
 
@@ -241,9 +217,8 @@ A director route streams a bundle as one `.gentian` file:
 `GET /v1/tenants/{t}/backups/{name}/download`. The export is staged in the
 cluster's own bucket as today, the stream is a tar of the prefix, and the stage
 is removed when `ttlSeconds` expires. The console's Export tab gets a
-**Download** button per bundle and an **Export now** that defaults to "to my
-computer, encrypted to my key", with the `omitCredentials` checkbox beside the
-key choice.
+**Download** button per bundle and an **Export now** with the key choice of
+§1.4.
 
 The download is authenticated and goes through the director, never a presigned
 URL: the director is the enforcement point for the tenant's data (AD-1), and a
@@ -331,82 +306,6 @@ with the add-on installed it links to it, and without it the same place says
 what the add-on would do and offers to install it. The OS path is always
 there and always works.
 
-### 5.2 An add-on that brings a controller
-
-An add-on that reconciles objects of its own is two catalogue entries,
-because it is two kinds of thing:
-
-| Entry | Class (AD-4) | Installed by | Holds |
-|---|---|---|---|
-| the service | `service` | the platform administrator, once per cluster, into a namespace of its own | the CRDs, the controller, its ClusterRole |
-| the console | `app` | each tenant | the screens: frontend, backend, tile |
-
-The console **requires the service** the way an app requires a database —
-`requires.services` — and AD-5 does the rest: a tenant that installs the
-console on a cluster without the service is told the platform owes it
-something, and the install waits until the administrator provides it. No new
-mechanism; a service that happens to carry CRDs is still a service.
-
-What is new is that a catalog entry extends the Kubernetes API. That is a
-privilege, and it goes through the one approval path privileges have
-([target-component-structure.md](target-component-structure.md) §4.3). This
-privilege kind is designed and not built.
-
-```yaml
-spec:
-  classes: [service]
-  requires:
-    privileges:
-      apiExtensions:
-        - name: schedule-kinds
-          group: schedules.example.org
-          kinds: [Schedule]
-          reason: "Schedules are declared per tenant and reconciled cluster-wide."
-      clusterRoles:
-        - name: run-exports
-          rules: [...]   # create TenantExport/TenantRestore, read Tenants
-          reason: "The scheduler creates the exports the OS defines."
-```
-
-| kind | scope | approver | relation |
-|---|---|---|---|
-| **API extension** — the component installs CRDs and runs a controller that reconciles them | cluster: a new kind every namespace can hold | security officer | `cluster#can_approve` |
-
-Rules that come with the kind, each preventing something specific:
-
-- **The CRDs are the component's and travel with it.** They are rendered from
-  the profile's package like any other object, in the component's own API
-  group, never in `gentianos.io`; uninstalling the service removes the
-  controller and leaves the CRDs and their objects in place until a
-  cluster administrator deletes them, which is the Helm `crds/` behaviour and
-  what every operator framework settled on, because a CRD removed takes every
-  object of its kind with it.
-- **The controller's reach is the ClusterRole it asked for**, granted
-  alongside — it can create `TenantExport` and `TenantRestore` because those
-  are the OS's own kinds, and it can read `Tenant`; it cannot write git, it
-  cannot touch a tenant's data except through an export the OS captures, and
-  it holds no credential the director would honour.
-- **A tenant's objects of the new kinds live in `tenant-<t>`** and are written
-  by the director from the console's requests, like every other declaration.
-  The tenant's own RBAC never gets to write them directly, because then the
-  controller would be a second writer beside git.
-- **One extension per group.** Two profiles asking for kinds in the same group
-  are refused at admission; the second would otherwise fight the first over
-  the CRD.
-
-Precedent, so none of this is invented: OLM's `ClusterServiceVersion`
-declares the CRDs a package owns and the permissions its controller needs, and
-an `InstallPlan` is approved by a cluster administrator before anything is
-applied — the request/grant split above. Crossplane packages ship CRDs plus a
-controller, are installed cluster-wide by an administrator, and declare
-dependencies on other packages — the service/app split above. Helm installs a
-chart's `crds/` once and never upgrades or deletes them — the ownership rule
-above. Rancher distinguishes cluster-level apps from project-level apps on
-exactly the line the two entries sit on. Argo CD's `AppProject` whitelists
-which cluster-scoped kinds a project may apply; ours admits everything today,
-and the grant is where the whitelist would otherwise have to be, because the
-grant has an approver and a reason and a whitelist has neither.
-
 ### 5.3 What a default install proposes
 
 A default install proposes a store and one add-on. Both arrive through
@@ -430,37 +329,6 @@ surfaces the OS already has, and the OS installs and runs without them.
   extension. The switch is also to leave out the API-extension grant of §5.2
   once that exists; today the scaffold only records the choice.
 
-## 6. Standard formats per app
-
-A bundle's app data is store-shaped: a Nextcloud bundle is a Postgres dump and
-an object tree keyed the way Nextcloud keys them. Another product cannot
-usefully read or produce that. What it can read and produce is **files in
-folders, contacts as vCard, calendars as iCalendar, mail as Maildir** — the
-interchange forms every workspace product can emit and ingest. These are
-standard formats, never a Gentian schema, so the exit door stays open with
-nothing but the OS installed. This document calls an app's data in these
-formats its canonical form.
-
-A `ComponentProfile` may therefore declare, under `spec.backup`:
-
-```yaml
-backup:
-  canonical:
-    files:    { export: <hook>, import: <hook> }   # object tree with paths
-    contacts: { export: <hook>, import: <hook> }   # vCard 4.0
-    calendar: { export: <hook>, import: <hook> }   # iCalendar
-    mail:     { export: <hook>, import: <hook> }   # Maildir
-```
-
-Export runs the hooks and writes `apps/<app>/canonical/`; import, finding
-canonical data and no raw stores for an app, runs the import hooks after the
-app is provisioned. A converter from another product therefore writes a
-bundle containing a manifest (tenant name, people as SCIM, the apps to
-install) and canonical data only, and Import brings it up like any other
-bundle. A converter in the other direction reads canonical data and the SCIM
-people. The hooks are each app's own and ship with its profile; converters
-are not part of the OS.
-
 ## 7. Order of work
 
 **M1 (landed 2026-10-02) — the structures, before the content.** Creating
@@ -482,16 +350,11 @@ materialises the default profiles into `clusters/<id>/catalogue/`
 1. **Inventory parity** (P2 = P3 = P5): mail unit, OpenBao data secrets,
    OpenFGA tuples, kernel-realm artefacts, LiteLLM, Redis keys — each added
    to the inventory and to both capture and purge. Deletion record.
-2. **Schema 2**: per-app layout, digests in the manifest, credentials
-   (with `omitCredentials`) and SCIM in the identity part, single-file
+2. **Schema 2**: per-app layout, digests in the manifest, single-file
    container, `bundle` package with three backends. Schema 1 bundles stay
    readable.
-3. **Export defaults**: the tenant's own key as the default of a manual
-   export, and the `omitCredentials` checkbox.
-4. **Offboard** flow and console action.
-5. **Canonical forms**: CRD field, hooks in the first profiles (Nextcloud
-   files, contacts, calendar; mail).
-6. **Scheduling leaves the tree** (§9.2): the order of that work, and what
+3. **Offboard** flow and console action.
+4. **Scheduling leaves the tree** (§9.2): the order of that work, and what
    breaks at each step, is in [#608](https://github.com/gentian-org/gentian-os/issues/608).
 
 ## 8. Open questions
@@ -512,18 +375,17 @@ materialises the default profiles into `clusters/<id>/catalogue/`
   last, cleartext `bundle-info.json` with the decrypt command.
 - Capture of Postgres, MariaDB, S3 buckets, volumes, the Keycloak realm
   (users, groups, memberships — no credentials) and the shell database.
-- Restore into an existing tenant, admin-only, realm by partial import with
-  `passwordResetRequired`.
-- Console: Export tab with key choice (platform / new / existing /
+- Restore into an existing tenant by an administrator, realm by partial import
+  with `passwordResetRequired`.
+- Console: Export tab with key choice (platform / existing /
   passphrase) and download.
 - Retire and, since 2026-10-02, purge through the director, behind a typed
   name in console and CLI.
 
 ### 9.2 Not built, and what is still in the tree
 
-Offboarding, the deletion record, the SCIM projection, credentials in the
-bundle, mail and secrets capture, canonical forms, the tenant's own key as
-the default of a manual export, and the API-extension privilege kind.
+Offboarding, the deletion record, mail and secrets capture, and the
+API-extension privilege kind.
 
 **Scheduled backups are still in this repository.** The body of this
 document describes v0.5, in which they are not part of the OS. The code has

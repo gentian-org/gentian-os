@@ -44,7 +44,6 @@ bootstrap via `install.sh`.
 - [docs/security-principles.md](docs/security-principles.md) — the security rules
 - [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavor
 - [docs/faq.md](docs/faq.md) — frequently asked questions
-- [docs/roadmap.md](docs/roadmap.md) — direction of the project; the work is in the issues
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)
 - [docs/research/](docs/research/) — exploratory research notes
 

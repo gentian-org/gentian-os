@@ -489,8 +489,7 @@ installer creates only the ones in use:
 - `B-05` applies `crossplane/providers/activation.yaml` — one
   `ManagedResourceActivationPolicy` listing the 25 types — before the
   providers, and waits until each of them is an established CRD.
-- `provider-http`, which nothing used, is no longer installed, and is removed
-  from a cluster that has it.
+- `provider-http` is not installed, and is removed from a cluster that has it.
 
 provider-kubernetes and provider-helm do not declare Crossplane's safe-start
 capability; all of their (seven) types are installed whatever the list says.
@@ -503,7 +502,7 @@ changes nothing.
 To see it:
 
 ```bash
-kubectl get mrap                      # the policies: gentian-platform, and "default" only on an older cluster
+kubectl get mrap                      # the policies: gentian-platform
 kubectl get mrd | grep -c Active      # the types that exist as CRDs
 kubectl get mrd | grep -v Active      # the ones that were left off
 ```
@@ -533,15 +532,14 @@ in `providers.yaml`, run `make refresh-provider-types`.
 
 ### Upgrading a cluster that copied its profiles
 
-Earlier installs worked differently: step 0 scaffolded a `Repository` claim for
-the gentian-apps git repository (`type: git`, `role: apps`), and an
-ApplicationSet `catalogue-gentian-apps` copied every profile of that repository
-into the cluster and followed its branch. That is retired. The installer no
-longer writes the claim, and `GENTIAN_APPS_REPO`, `GENTIAN_APPS_BRANCH`,
-`GENTIAN_APPS_AUTH` and the `gentian-apps-repository` credential are gone with
-it; an `install.env` that still sets them is read without effect.
+This concerns a cluster with a `Repository` claim for the gentian-apps git
+repository (`type: git`, `role: apps`) and an ApplicationSet
+`catalogue-gentian-apps` that copies every profile of that repository into the
+cluster and follows its branch. The installer writes no such claim, and an
+`install.env` that sets `GENTIAN_APPS_REPO`, `GENTIAN_APPS_BRANCH` or
+`GENTIAN_APPS_AUTH` is read without effect.
 
-**On a fresh install nothing needs doing.** On a cluster installed before:
+**On a fresh install nothing needs doing.** On a cluster with that claim:
 
 - The `catalogue-<name>` ApplicationSet is removed as soon as the cluster runs
   the new Compositions, and Argo CD prunes the `catalogue-<profile>`
@@ -570,8 +568,8 @@ it; an `install.env` that still sets them is read without effect.
   on the cluster until it is deleted there
   (`kubectl delete repository gentian-apps -n kernel-provisioning`); it composes
   nothing but an Argo CD repository entry in the meantime.
-- A tenant's own `Repository` of `type: git` and `role: apps` copies nothing any
-  more either, and the director refuses to declare a new one. Publish those
+- A tenant's own `Repository` of `type: git` and `role: apps` copies nothing,
+  and the director refuses to declare a new one. Publish those
   profiles as a catalog instead and add it for the tenant.
 
 ### Upgrading a cluster whose roles were held by groups
@@ -730,9 +728,8 @@ to read it. A provider's token is entered in the administration console,
 under the credential `llm-provider-<name>`; the gateway restarts by itself
 when it arrives or changes, and until then the provider's models are listed
 and answer an authentication error. The gateway takes models from nowhere
-else, so one that was added at its console on an earlier version is no longer
-offered. An instance is offered and **not started**: nothing in the platform
-runs the vLLM server behind it yet ([llms.md §5 and §6](design/llms.md), which
+else. An instance is offered and **not started**: nothing in the platform
+runs the vLLM server behind it ([llms.md §5 and §6](design/llms.md), which
 also say how to check what is served).
 
 The model gateway's image (`llm.enabled`) is not a setting. It is one chart
@@ -990,7 +987,7 @@ no setting that redirects them, and the installer asks for no chart registry
 credential. The credential `infra-chart-registry` is declared all the same,
 as optional: it has a form in the Credentials screen and a path in OpenBao
 (`gentian-os/kernel/storage/registry`), an install without it is complete,
-and no chart is pulled through it yet.
+and no chart is pulled through it.
 
 App profiles are not part of this: they are fetched from a catalog, which is
 a public https address (`GENTIAN_CATALOGUE_URL` for the default one). A
@@ -1057,8 +1054,7 @@ and `clusters/<cluster-id>/kernel/signing/keys.env` records which key that is.
 When it records one and this host's keyring (`~/.gentian/gnupg`) does not hold
 it, the install stops before it writes anything — no file in the checkout, no
 key, no object in a cluster — and says what is recorded and what is missing.
-It used to generate another key and replace the recorded id. A first install,
-which records nothing yet, generates its key as before; other keys in the
+A first install, which records nothing yet, generates its key; other keys in the
 keyring change nothing either way. The ways forward:
 
 ```bash

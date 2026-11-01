@@ -59,11 +59,8 @@ its own. How many there may be, and where their hosts are, is the cluster's
 | `desktop.<KERNEL_DOMAIN>` | sent to the bare domain, like `www` | the user tenant's desktop |
 | The platform admin | `admin@<KERNEL_DOMAIN>`, kernel realm, at `platform.<KERNEL_DOMAIN>` | the same |
 
-The desktop's address was `console.<tenant>.<KERNEL_DOMAIN>` (`console.<KERNEL_DOMAIN>`
-on a single-tenancy cluster, `console.<custom domain>` on a tenant's own domain)
-until 2026-10-08. Nothing answers on the old name: a cluster is installed
-fresh, so there is no alias. No app may take `console` either: people may
-still type it, so it is kept free ([routing.md §3.1](routing.md)).
+No app may take the label `console`: people may type it, so it is kept free
+([routing.md §3.1](routing.md)).
 
 On a single-tenancy cluster the user tenant has no domain of its own: its base
 domain is the cluster's. Two things follow.
@@ -524,10 +521,7 @@ Job. Which login a realm uses in each mail mode, and what Keycloak does with
 a mail server written without its password, is in [mail.md §5d](mail.md).
 
 A tenant realm states `loginWithEmailAllowed` in both cases: `false`, and
-`true` where people sign up with their address as the login. Keycloak makes a
-realm with it on, and a realm the realm Job created before the provider did
-was copied that value, after which the provider refused every update beside
-`duplicateEmailsAllowed`.
+`true` where people sign up with their address as the login.
 
 What is declared and what is still a Job:
 [tenant-identity-composition.md](tenant-identity-composition.md).
@@ -686,13 +680,13 @@ session for them, and each ends differently.
 | **Any other app session** | nothing the platform does. The app's own lifetime for a session | a sidecar's app: an hour at most. An app with its own client: as long as the app keeps a session |
 
 **When an administrator switches a member off.** There is no Sessions screen and no act that
-ends somebody's session by hand; one is a possible future feature
-([#598](https://github.com/gentian-org/gentian-os/issues/598)). What happens today:
+ends somebody's session by hand. What happens:
 
 - The registrar sets the account to disabled at the realm (`update-person`), or deletes it
   (`remove-person`). It ends no session itself and tells no app
   (`internal/registrar/identity/people.go`).
-- The realm stops signing the account in and stops renewing its tokens. The front door keeps a
+- The realm stops signing the account in and stops renewing its tokens. The bouncer asks no
+  revocation question, and the rights store records no ended session. The front door keeps a
   person signed in only by renewing a five-minute access token against the realm session, so
   every host of the zone stops answering them **within five minutes**, not at once
   (`accessTokenLifespan` in `tenant-default`).
@@ -732,9 +726,8 @@ real image and Keycloak 26.8.0):
 | Nextcloud (`nextcloud-base-ce`) | yes, its own client | ends for the browser that signed out |
 | XWiki (`xwiki-ce`) | yes, its own client | ends, every session of that person |
 | Docmost, OpenProject | yes, through the sidecar | ends, every session of that person |
-| Activepieces 0.28.0 | the sidecar is told; the app has nothing to end a session with | lasts what is left of its hour |
 | Nextcloud (`nextcloud-base-od`) | declared, not shown with its own image | unknown until it is |
-| Open WebUI 0.10.2 | declared, not in effect: needs a switch and Redis ([gentian-apps#211](https://github.com/gentian-org/gentian-apps/issues/211)) | lasts as long as its own token |
+| Open WebUI 0.10.2 | declared, not in effect: needs a switch and Redis | lasts as long as its own token |
 | Element (Synapse) | no: nothing registers an address, and Synapse's switch is off | lasts as long as Synapse keeps it |
 | Mathesar, Odoo | no: neither has an endpoint for it | lasts as long as the app keeps it |
 

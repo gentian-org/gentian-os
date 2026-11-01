@@ -13,7 +13,7 @@ Two things are worth knowing before you start, because they surprise people:
 - **Taking a backup briefly pauses your apps**, one at a time. This is not a
   side effect to be engineered away; it is the only way the backup can be
   internally consistent. See [§3](#3-what-happens-while-it-runs).
-- **Restoring is not yet self-service.** You ask your cluster administrator.
+- **Restores are run by an administrator.**
   See [§6](#6-recovering-your-data).
 
 ---
@@ -173,11 +173,10 @@ including the index of what was captured, is encrypted.
 
 ## 6. Recovering your data
 
-**Restoring is a cluster-administrator operation today.** There is no button in
-the administration console. This is deliberate for now: a restore replaces live data with
-what the backup recorded, and everything written since is lost.
+**Restoring is an administrator's operation.** A restore replaces live data
+with what the backup recorded, and everything written since is lost.
 
-### What to tell your cluster administrator
+### What to tell your administrator
 
 1. **Which backup** — its name on the Export screen.
 2. **Which apps**, if you only want some of them restored.

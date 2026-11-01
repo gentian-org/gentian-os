@@ -48,8 +48,6 @@ If it is the same across your stages but particular to your deployment,
 from there. Layer 3's `values.yaml` repeats it for the platform's chart,
 because a running process needs it as an environment variable at start and
 cannot read a file in git: one copy that exists for a structural reason.
-There is no `cluster-settings.env` any more; everything it carried is a field
-of the claim.
 
 **A cluster has exactly one stage, fixed at bootstrap.** The stage selects
 which `profiles/<stage>.yaml` the cluster reads and is half of the claim's

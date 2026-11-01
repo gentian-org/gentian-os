@@ -1127,8 +1127,7 @@ sender's address on as well: by forwarding packets
 (`externalTrafficPolicy: Local`, which the Service sets), or, where it opens
 its own connection, with the PROXY protocol switched on at both ends
 (`loadBalancer.proxyProtocol` in `kernel/services/mail-edge`,
-[design/mail.md §9b](design/mail.md#9b-the-mail-edge)). The mail edge is
-built, not yet run on a cluster.
+[design/mail.md §9b](design/mail.md#9b-the-mail-edge)).
 
 ### Switch a cluster to its own mail
 

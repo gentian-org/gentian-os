@@ -154,8 +154,9 @@ hand: each tenant declares the other as a **partner** (Tenant
 tenant; [plans/cross-cluster-identity.md](plans/cross-cluster-identity.md),
 AD-17). A person links their account here with their account there once, by
 signing in there through this realm; from then on apps on either side call
-each other on that person's behalf. The other side learns a **pairwise
-subject** only — never a name, an address, a group or a role.
+each other on that person's behalf. Only minimal information crosses: a
+**pairwise subject**, and the person's role on the tenant when they are its
+administrator or the cluster's.
 
 ```bash
 # our people towards them (we issue)

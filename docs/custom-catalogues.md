@@ -353,7 +353,7 @@ alone checks it: for sync clients, API keys and webhooks holding a credential th
 The approver of an `app` entry is told that the platform does not know who calls and that a
 removed person's app password works until the app revokes it; cookies pass in neither direction
 and the rate per client address is lower. `basic`, `bearer`, `jwt` and `signature` are refused on
-a perimeter entry: the platform verifies none of them yet. An approval is for the kind of entry
+a perimeter entry: the platform verifies none of them. An approval is for the kind of entry
 it was given for; a profile that changes an approved entry's kind is a request again.
 `apex: true` asks for the cluster's main address, for the user tenant of a single-tenancy cluster
 only, with the approver's acknowledgement. Limits, reserved paths and the rule for such a website:
@@ -655,8 +655,7 @@ read as the placement they meant for one more release, and are then removed.
 
 ### 4.2 Generate the index
 
-Take the build script from gentian-apps and run it. It is on that repository's `develop` branch,
-and not on its `main` yet:
+Take the build script from gentian-apps and run it. It is on that repository's `develop` branch:
 
 ```bash
 curl -fsSLo scripts/build-catalogue-source.py \
@@ -1111,8 +1110,8 @@ artifact was read with a credential earns its bytes nothing.
   ServiceAccount its chart runs under. The role is bound only where the platform has it, the
   cluster's `PlatformSecurityPolicy` permits it for the profile, and the security officer granted
   it on the install; otherwise nothing is bound and the Component says why (`ClusterRolesBound`).
-  Rules stated on an entry are ignored and make it bind nothing. The platform's set is empty
-  today, so a catalog cannot obtain any access to the Kubernetes API for an app
+  Rules stated on an entry are ignored and make it bind nothing. The platform's set is empty,
+  so a catalog cannot obtain any access to the Kubernetes API for an app
   ([security.md §3.4](design/security.md)).
 - **Nothing here is a license check.** Whether an app arrives is decided where its chart and images
   are pulled.

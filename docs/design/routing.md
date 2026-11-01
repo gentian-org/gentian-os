@@ -191,8 +191,7 @@ holds (`422`). Binding is for the user tenants of a multi-tenancy cluster:
 the director refuses a bind for any tenant when the tenancy mode is `single`
 (the user tenant would leave the cluster's own addresses and give up the
 main address), and for the platform tenant under either mode (`422`, with
-the reason; nothing is committed). Removing a binding is refused to nobody,
-so a tenant bound before this was asked can be put back. The operator still
+the reason; nothing is committed). Removing a binding is refused to nobody. The operator
 follows a `TenantDomain` that reaches the cluster another way. Nobody checks
 the DNS record or the certificate.
 
@@ -317,8 +316,8 @@ issues every certificate, and then fails the first time a tenant is deployed —
 seconds until the deploy times out. Everything else about that tenant is
 healthy, which is what makes it confusing.
 
-**The second permission is not called what the API implies.** Cloudflare folded
-tunnels into Cloudflare One and renamed it, so there is no "Cloudflare Tunnel"
+**The second permission is not called what the API implies.** Cloudflare lists
+tunnels under Cloudflare One, so there is no "Cloudflare Tunnel"
 entry in the permission list — it is **Cloudflare One Connector: cloudflared**,
 and older accounts may still show *Argo Tunnel (Legacy)*, which covers the same
 endpoints. Nothing under **Access** or **Zero Trust** grants them; those are the
@@ -353,10 +352,7 @@ own (`TenantDomain`), which the DNS credential has to cover; set with
 `kubectl gentian settings set` and applied by `./install.sh --only B-01` --
 from two sources it is already configured with: `gateway-httproute` for every hostname the operator
 routes, and `crd` (`DNSEndpoint`) for records with no HTTP object behind them,
-which is how mail publishes. There is no per-provider DNS code in the operator,
-and there was: a Cloudflare-only record writer, which meant a Route 53 cluster
-had no DNS writer at all and a static-ip cluster had none either. Both failed
-silently — names simply never resolved.
+which is how mail publishes. There is no per-provider DNS code in the operator.
 
 What a tunnel actually lacks is not a writer but a **target**. external-dns
 publishes what a Gateway resolves to, and a tunneled Gateway has no address:
@@ -664,8 +660,7 @@ Envoy Gateway and its chart are pinned in `versions.yaml`. Envoy Gateway 1.9
 is tested on Kubernetes 1.33 to 1.36, which makes **Kubernetes 1.33 the
 minimum** for this release; pre-flight refuses an older cluster. The chart
 installs the Gateway API v1.6.1 CRDs (experimental channel). A-05 applies the
-chart's CRDs before the chart, because Helm does not upgrade CRDs
-([operations.md §7.5](operations.md)).
+chart's CRDs before the chart, because Helm does not upgrade CRDs.
 
 On listeners whose certificates overlap — the kernel wildcard serves several —
 Envoy Gateway offers HTTP/1.1 only, so that a browser cannot reuse one HTTP/2
@@ -745,7 +740,7 @@ with `apex: true` (`400`, with the warning) until it also carries
 `"acknowledgeMainAddressRule": true`, on the first publication and on every
 review. The registry entry records who acknowledged and when
 (`apexAcknowledgedBy`, `apexAcknowledgedAt`). The operator publishes by
-`apex` alone, so an entry approved before the acknowledgement was asked
+`apex` alone, so an entry approved with no acknowledgement
 keeps serving and is asked at its next review.
 
 *What the approver sees.* The director's read of a tenant's registry
@@ -931,8 +926,8 @@ that the platform does not know or check who calls, and that an app password
 or token of a person removed from the tenant keeps working until the app
 itself revokes it. A client that needs the app's cookies on a public address
 does not work: cookies pass in neither direction. `jwt`, `bearer`, `basic`
-and `signature` named a check at the edge that nothing makes; the schema
-refuses them on a perimeter entry until they are built.
+and `signature` name a check at the edge that nothing makes; the schema
+refuses them on a perimeter entry.
 
 **An alias: a second address directly under the cluster's domain.** A
 published entry answers at `<label>.<the tenant's domain>`. The cluster's

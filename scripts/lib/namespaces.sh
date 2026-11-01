@@ -141,10 +141,8 @@ ns_declined() {
 # under a running workload on a fresh install and nothing has to be running
 # to deliver it: not Argo CD, not the operator.
 #
-# KERNEL_NETWORK_POLICIES=true applies them. Anything else -- unset is off --
-# removes every one of them and applies none. Off by default, because no
-# cluster had run these rules when they were written: turn them on once an
-# install has succeeded, with ./install.sh --only A-01,B-01
+# KERNEL_NETWORK_POLICIES=true applies them, and unset means true. Anything
+# else removes every one of them and applies none.
 # (docs/install-reference.md), and off again the same way if a component
 # then times out reaching another.
 #

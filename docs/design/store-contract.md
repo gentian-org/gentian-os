@@ -412,8 +412,7 @@ cluster whose usage statistics report is off (§6.2), on one that names no
 store, and on one installed without the store's extra services.
 
 **Where it is, and when.** The operator chart does not ship it: it is a
-profile in the store's own catalog (`app-store-pe` at
-`catalogue.aluvian.io`), one of the store's *extra services* that the
+profile in the store's own catalog (`app-store-pe`), one of the store's *extra services* that the
 installer's step 0 places in the cluster's catalog unless
 `--no-extra-services` leaves them out. The profile says
 `placement: {tenants: users, while: storeOffered}`, and the platform places it
@@ -431,8 +430,8 @@ and gives the reason when there is none: `usage-statistics-disabled`,
 It answers at `store.<the tenant's base domain>`, behind the tenant's
 session. A store's API must therefore not be given an address a cluster's
 own App Store app could have — `store.<a domain a cluster is installed
-under>` — which is why the installer's default for a new claim is
-`https://store-service.aluvian.io` (`GENTIAN_STORE_URL` names another); a
+under>` — which is why a claim names the store in `spec.catalogue.storeUrl`, set from
+`GENTIAN_STORE_URL`; a
 cluster whose claim names the host of one of its own tenants' App Store app
 offers no store and says `store-address-is-own-host`. Its routes and its tile ask the same question, `can_install_app` on
 the tenant: a member who knows the address is refused at the edge. `/api`,
@@ -646,9 +645,9 @@ outcome. The store does not tell the cluster.
 | `coordinate` | which entry. Sent to the director as it is |
 | `version` | for a person to read. The cluster does not pin it |
 | `digest` | **what the cluster pins and verifies** (§4) |
-| `repository.type` | `oci`, and nothing else: it is the only type a tenant's app charts and images are pulled from with a credential today (§2), and the only one accepted from a store (§7) |
+| `repository.type` | `oci`, and nothing else: it is the only type a tenant's app charts and images are pulled from with a credential (§2), and the only one accepted from a store (§7) |
 | `repository.url` | the registry the bundle's chart and images are in. It must contain the chart's address — same host and port, its path a prefix by whole segments — and must not overlap another repository the tenant has declared (§2) |
-| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. The user name is one per tenant, chosen by the store. `expiresAt` is `null`: a credential does not expire, for now. Present only in an answer to an account that manages the tenant |
+| `repository.credential` | **opaque to the cluster.** A user name **and** a token, both required, which the store minted for this tenant and the store's repository checks on pull. The user name is one per tenant, chosen by the store. `expiresAt` is `null`: a credential does not expire. Present only in an answer to an account that manages the tenant |
 | `metering` | **opaque to the cluster**, for an app priced by use only: where the app reports what it ran (`url`), the name it reports under (`install`) and the key it signs with (`key`). The App Store app sets it as the app's supplied credential `metering` at the custodian once the install has made that requirement, and keeps it nowhere; a person can replace it but never read it |
 | `addons` | add-ons the acquisition includes, each an entry of its own |
 
@@ -699,7 +698,7 @@ What the rule gives, and why it is this one:
   `<name>-<5 generated characters>` (46), and the credential requirement
   named after that composite, `repository-<name>-<5>` (57).
 
-It is one function of two strings, to be implemented once, in the App Store
+It is one function of two strings, implemented once, in the App Store
 app, and tested against the two rows above.
 
 **What the app does with it**, each step with the person's own cluster
@@ -810,10 +809,8 @@ not from what the App Store app is expected to do.
   source.
 * **Supply a profile through the repository.** The App Store app declares
   what a store names as an OCI registry with role `apps`, and refuses any
-  other type. A *git* repository with role `apps` used to be a source of
-  profiles that Argo CD copied into the cluster, with no digest involved.
-  That copying is retired: the composition makes no ApplicationSet for such
-  a claim, and the director refuses to declare one. The declaration
+  other type. The composition makes no ApplicationSet for a *git* repository
+  with role `apps`, and the director refuses to declare one. The declaration
   an OCI registry gets carries a credential and names no content: what is
   pulled is what the verified bundle names.
 * **Replace a repository the tenant already has.** A store names nothing
@@ -1081,7 +1078,7 @@ barer shop beside the one that is maintained would be worse at everything a
 shop is for, and an install action in an administrative screen is one more
 place that logic would live.
 
-A **catalog source** remains what it was: an https address serving
+A **catalog source** is an https address serving
 profile bundles, which the director fetches from. Those of the whole cluster
 are named on the Cluster claim:
 
@@ -1171,17 +1168,12 @@ There is no tuple for a source: the install route asks whether the person
 may install apps in the tenant, and resolves the coordinate's catalog among
 those the tenant sees (§3).
 
-**Nothing copies profiles into a cluster ahead of an install.** The
-ApplicationSet that synced every profile of a git repository with role
-`apps` is retired, and such a repository is no longer declared (§7). A
+**Nothing copies profiles into a cluster ahead of an install.** A
 profile reaches a cluster when it is installed, with one exception.
 
 **The installer's default profile: the one exception, at a digest.** At
 install, before there is a director, the installer places the Operations
-Console's profile in the cluster's catalog directory (AD-14, decided
-2026-10-09). The address is
-`https://catalogue.aluvian.io/profiles/operations-console-ee.yaml` by default;
-`GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name others, each
+Console's profile in the cluster's catalog directory (AD-14). `GENTIAN_STORE_CATALOGUE_URL` or `GENTIAN_DEFAULT_PROFILES` name it, each
 the https address of a profile in a catalog. The installer reads that
 catalog's `index.yaml`, takes the digest listed for the entry — or the
 digest the person installing pinned with `@sha256:<digest>`, which the index

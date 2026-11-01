@@ -1,6 +1,5 @@
 # Resource plans and usage — design
 
-**Status:** v1  
 **Scope:** How a tenant's resource ceiling is chosen, enforced, recorded and invoiced.
 
 **Companion docs:** [admin-console.md](admin-console.md), [multi-tenancy.md](multi-tenancy.md), [app-catalogue.md](app-catalogue.md), [operations.md](operations.md), [commands.md](../commands.md).
@@ -10,17 +9,10 @@
 ## 1. Purpose
 
 A tenant runs under a ceiling: how much CPU, memory and storage its apps may
-claim between them. Before this, that ceiling existed — `Tenant.spec.quotas`
-became a `tenant-quota` ResourceQuota in the tenant namespace — but three things
-were missing, and each one cost something different:
-
-| Missing | Cost |
-|---|---|
-| A way for a tenant to change it | Every resize was a cluster operator editing YAML |
-| A record of what was in force, when | A month could not be invoiced from the platform's own state |
-| Any observation of what was used underneath it | Nobody could tell an over-provisioned tenant from a tight one |
-
-This design adds all three, and adds them the way the App Store adds an app: a
+claim between them. `Tenant.spec.quotas` becomes a `tenant-quota` ResourceQuota
+in the tenant namespace. On top of it a tenant can change the ceiling, the
+platform records what was in force and when, and it observes what was used
+underneath. All three work the way the App Store adds an app: a
 **named choice** from a **priced catalog**, written to the deployments
 repository through an **API shared by the CLI and the console**.
 
@@ -132,9 +124,8 @@ At `nodes-16` the burst ceiling stops bounding much on a small cluster; that is
 inherent to a multiplicative ceiling and is why the top plan says to arrange
 anything larger with the platform operator.
 
-**Tenants already running will read as `custom`** until a plan is applied,
-because a cluster's existing `tenant-defaults` predates the catalog and sets
-no reserved capacity at all. That is the honest reading — nothing prices those
+**A tenant on `tenant-defaults` reads as `custom`** until a plan is applied,
+because `tenant-defaults` sets no reserved capacity at all. That is the honest reading — nothing prices those
 tenants — and applying a plan settles it. A cluster that wants new tenants to
 start on `base` should set its `tenant-defaults` component to `base`'s
 quantities.
@@ -176,9 +167,7 @@ resources:  tenant.yaml            cpu: 48   ← what the API wrote
 components: tenant-defaults        cpu: 32   ← what wins
 ```
 
-The edit would commit cleanly, push cleanly, sync cleanly and change nothing —
-the exact failure `app_workload_health.go` was written to explain after fifteen
-hours of it.
+The edit would commit cleanly, push cleanly, sync cleanly and change nothing.
 
 ### 3.2 What is written instead
 
@@ -452,12 +441,8 @@ and the *reading* is behind an interface:
 
 ```
 usage.ActualSource
- ├── MetricsAPISource   (metrics.k8s.io — today, optional)
- └── PromQL             (later, if a cluster grows one)
+ └── MetricsAPISource   (metrics.k8s.io, optional)
 ```
-
-Adopting Prometheus later is a change of source, not a restart of the record —
-the series already collected stays, and neither the API nor the UI changes.
 
 Install with `scripts/steps/A-07-metrics-server.sh` and set
 `usage.metricsServer.enabled=true`. Without it the Resources tab shows ceilings
@@ -512,22 +497,10 @@ through the `desktop-database` Secret in the tenant's namespace. A tenant withou
 that Secret is skipped and logged; the others are unaffected.
 
 **Plan shows as `custom`:** the tenant's quotas match no plan. Either the tenant
-predates the catalog and reserves nothing (see [§2.3](#23-the-ladder)), the
+reserves nothing (see [§2.3](#23-the-ladder)), the
 catalog was re-priced under a tenant already on it, or `tenant.yaml` was
 edited by hand. Applying a plan settles it.
 
 **Plan shows as `drifted`:** the recorded plan and the enforced ceiling
 disagree. The cluster enforces what is there; what is billed is what is
 recorded. Re-applying a plan settles both.
-
----
-
-## 11. Not in v1
-
-| Deferred | Note |
-|---|---|
-| Per-app quotas inside a tenant | The ceiling is per namespace, which is where Kubernetes enforces it |
-| Automatic right-sizing | The data to justify it is what this collects; acting on it is a later decision |
-| Cost in currency | The platform reports plan intervals and SKUs; pricing is the commerce backend's |
-| Scheduled or time-boxed plans | A plan is in force until changed |
-| Cluster capacity planning | The overview shows per-tenant headroom, not node headroom |

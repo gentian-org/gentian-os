@@ -39,28 +39,17 @@ kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode'
 
 ---
 
-## 0a. What works today, and what does not
+## 0a. What works
 
-Stated plainly, because the gap between "deployed" and "delivers mail" is where
-this design has repeatedly been misread.
-
-**Working, verified on a cluster:** a message addressed to a registered tenant
+A message addressed to a registered tenant
 domain is accepted by Postfix, handed to Dovecot over LMTP, and written to a
 maildir on persistent storage at `/var/mail/<domain>/<local-part>`. A mail
 client authenticates over IMAP and reads it. Sending from a client inside the
 cluster is accepted for any domain in the map.
 
-**Built, and proven only outside a cluster:** the path from the internet. Ports
-25, 587 and 993 are published by a proxy in the mail DMZ, which passes each
-connection to Postfix or Dovecot with the client's address (§9b). That was run
-against the real images in local containers, not on a cluster with a load
-balancer in front of it. Outbound mail to external recipients would be refused
-or binned by most providers until the DNS records in §10 exist.
-
-**Was broken until the namespaces were put right (§5a):** on the layout with
-`system-mail`, the operator wrote Postfix's maps and Dovecot's passwd-files
-into namespaces neither server runs in. Postfix knew no tenant domain and
-Dovecot no password, while every tenant reported its mail as ready.
+Ports 25, 587 and 993 are published by a proxy in the mail DMZ, which passes each
+connection to Postfix or Dovecot with the client's address (§9b). Most providers refuse or bin outbound mail to external recipients until
+the DNS records in §10 exist.
 
 ## 1. Why Mail Is an Extension, Not Core Kernel
 
@@ -111,7 +100,7 @@ configuration level:
 - **DKIM signing** is done by OpenDKIM inside the Postfix image, from
   operator-generated, per-domain keys mounted as a Secret — see §10. There is no
   Rspamd or other spam-filtering component in this stack; nothing here does
-  spam scoring today.
+  spam scoring.
 
 This is the same model every other shared kernel component uses:
 
@@ -153,11 +142,11 @@ monitoring, and a dedicated IP for any tenant whose volume justifies one.
 ## 5. Provisioning Flow (selfhosted mode)
 
 When a Tenant with `mail.mode: selfhosted` is reconciled, the
-**operator** (not a finished Crossplane-only pipeline) performs:
+**operator** performs:
 
 1. **DKIM keypair Secret**, an RSA-2048 key generated with a CSPRNG (not derived from
    the master password) and stored as a Kubernetes Secret (`dkim-{name}`) in
-   `system-mail` — see §10, which this used to disagree with.
+   `system-mail` — see §10.
 2. **Virtual domain entry** in the operator's own registry of tenant domains,
    ConfigMap `mail-postfix-virtual-domains`, from which it writes the maps
    Postfix mounts (`postfix-kernel-virtual-mailbox-maps`, §5a).
@@ -175,11 +164,9 @@ Postfix reads its maps again without a restart, except the list of signing
 domains (§10). Dovecot is restarted when its passwd-files or the set of
 realms change.
 
-**Future:** emit the same objects from a mail Composition step instead of the
-operator's own reconcile loop. `mail.serviceMode` — the cluster-level knob — is
-already single-sourced, read from the Cluster claim via `gentian-cluster-config`
-rather than from Helm values (see §0). What is still operator-driven, in plain
-Go rather than a Composition, is everything in this list: the tenant is
+`mail.serviceMode` — the cluster-level knob — is read from the Cluster claim via
+`gentian-cluster-config` rather than from Helm values (see §0). Everything in
+this list is plain Go rather than a Composition: the tenant is
 provisioned by `internal/controller/mail_reconciler.go`, not by Crossplane.
 
 ## 5a. Where each object lives
@@ -215,8 +202,7 @@ chart, Job or Composition that reads it.
 A mailbox is a directory on Dovecot's one volume,
 `/var/mail/<domain>/<local-part>`, and exists from the first message
 delivered to it. Nothing else records it. What each act does with a tenant's
-mailboxes ([data-lifecycle.md](data-lifecycle.md) has the whole table); all of
-it is built, and not yet run on a cluster:
+mailboxes ([data-lifecycle.md](data-lifecycle.md) has the whole table):
 
 - **A backup copies them, a restore puts them back.** Each runs as a Job beside
   Dovecot in `system-mail`, with `doveadm` of the image the server runs, so a
@@ -240,9 +226,6 @@ it is built, and not yet run on a cluster:
   Every act goes by the domain the tenant has now.
 
 ## 5c. A removed person's mailbox
-
-Built, and proven in local containers with the mail server's image; not yet
-run on a cluster.
 
 **Who is asked, and when.** Only where the person has a mailbox here: the
 cluster runs its own mail server (`mail.serviceMode: system`), the tenant's
@@ -270,8 +253,7 @@ flag is as the server left it.
   their mail password is taken out of Dovecot's file and out of the tenant's
   own copy at once, not at the tenant's next reconcile.
 - The same address given to somebody new starts with **no** directory, so
-  with an empty mailbox. Before this was built the new person found the old
-  person's mail.
+  with an empty mailbox.
 - It is in the tenant's backups, as an archived mailbox; a restore and an
   import put it back as one, below the archive of the tenant's mail domain,
   and put it on record there.
@@ -347,12 +329,11 @@ directory is made.
   accepted or refused by the recipient policy as before.
 
 Proven against the rendered Postfix in local containers (`make
-test-mail-edge-lab`, part a2); not yet run on a cluster.
+test-mail-edge-lab`, part a2).
 
 **Limits.**
 
-- A person removed before this was built, or whose record is gone, is not
-  known: mail to that address is accepted under `catchall` as before.
+- A person whose record is gone is not known: mail to that address is accepted under `catchall` as before.
 - An IMAP session that was open when the person was removed is not ended.
 - The platform has no shared mailboxes and no aliases other than `abuse@`
   and `postmaster@`, which forward and have no mailbox.
@@ -360,9 +341,7 @@ test-mail-edge-lab`, part a2); not yet run on a cluster.
   address is refused for those 30 days. The record of an archived mailbox
   stays as long as the archive.
 - Whether somebody holds a recorded address is found by listing every person
-  of the mail domain at the identity provider, at each sync. A lookup per
-  address, for tenants of many thousand people, is planned
-  ([#587](https://github.com/gentian-org/gentian-os/issues/587)).
+  of the mail domain at the identity provider, at each sync.
 
 **Putting an archived mailbox back by hand.** Not offered. On the node, in a
 pod of the mail server's image with the volume mounted, as user 1000:
@@ -467,9 +446,7 @@ no app-specific mail logic in the platform.
   credential per tenant, shared across every app that tenant runs** — not one
   per app. A compromised app's stored SMTP credential is therefore usable by
   anything else that app can reach in the same tenant's traffic; it is not
-  independently revocable per app. This was previously documented as a
-  per-app identity with independent revocation, which was never what the code
-  did — `seedPerAppMailSecrets` explicitly copies one tenant-wide credential
+  independently revocable per app. `seedPerAppMailSecrets` copies one tenant-wide credential
   into every app's OpenBao path *because* they all authenticate to the same
   submission endpoint as one user. Revoking one app's access to send mail
   means rotating the tenant's shared credential, which revokes every app.
@@ -498,19 +475,14 @@ no app-specific mail logic in the platform.
   [security.md](security.md) §2.16.
 - **Rate limits and per-user quotas are not enforced.** Postfix runs with
   `smtpd_client_message_rate_limit = 0`, its default, which is no limit, and
-  Dovecot loads no quota plugin. This section previously described both as
-  enforced, and two clusters carried settings for them: a tenant could ask for
-  100/h and 5Gi and receive neither, with nothing to say so. The fields have
-  been removed rather than left to read as configuration — see the roadmap for
-  making them real.
+  Dovecot loads no quota plugin.
 
 See [security.md](security.md) for OpenBao path layout and key
 derivation.
 
 ## 8. External-Mode Tenants
 
-Two different settings carry the word "external", on two different objects, and
-conflating them is how this section used to read:
+Two different settings carry the word "external", on two different objects:
 
 | Setting | Scope | Decides |
 |---|---|---|
@@ -722,7 +694,7 @@ and a TCP proxy is one: Postfix stays the only MTA, in `system-mail`.
 PROXY header upstream (`BackendTrafficPolicy.proxyProtocol`), but by its API
 reference its connection limit counts a listener's connections as a whole and
 its rate limit counts HTTP requests -- neither is per client address on a TCP
-listener. That was read, not tried. And a mail listener on the
+listener. And a mail listener on the
 shared fleet would put the cluster's mail and its web sign-in behind one
 process in `kernel-edge`, with a path from that namespace into `system-mail`.
 HAProxy is what mail operators put in this place; Postfix and Dovecot document
@@ -765,13 +737,7 @@ own address, so the proxy would name the load balancer as every client.
 addresses>]` makes the proxy take a PROXY header from those addresses and from
 nobody else; the load balancer has to be switched to send one
 (`loadbalancer.openstack.org/proxy-protocol: "true"`). Off by default, and no
-field of the Cluster claim sets it yet.
-
-**From the layout before.** `postfix-<stage>-smtp` and `dovecot-<stage>-imaps`,
-the two load balancers in `system-mail`, are no longer rendered and Argo CD
-prunes them. The one that replaces them gets an address of its own unless
-`loadBalancer.ip` pins one; the operator republishes `mail.` and `imap.` from
-it.
+field of the Cluster claim sets it.
 
 **Proven** by `make test-mail-edge-lab`, which runs the rendered proxy in front
 of the rendered Postfix and Dovecot in local containers: mail on 25 with
@@ -779,9 +745,7 @@ STARTTLS, authenticated submission on 587 and IMAPS on 993 through the proxy,
 each logged by the server with the client's address; a relay refused to that
 same client; a removed person's address refused as an unknown recipient while
 the rest of its domain is accepted; the header ports refusing a connection
-without a header; the pods' listeners unchanged; both limits; and the load-balancer setting. Not
-proven: anything that needs a cluster — the load balancer, the policies as a
-CNI enforces them, a pod reaching the public name.
+without a header; the pods' listeners unchanged; both limits; and the load-balancer setting.
 
 ---
 
