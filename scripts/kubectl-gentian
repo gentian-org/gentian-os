@@ -2535,11 +2535,14 @@ cmd_apps_outdated() {
              elif (.rollout.phase // "") == "Failed" then "move failed: " + (.rollout.message // .rollout.reason // "")
              else "current" end)] | @tsv)' <<<"${answer}" | column -t -s $'\t'
     # A move to the pinned build that ended badly is tried again by
-    # installing that build again; a build that keeps failing is never
-    # retried by the platform on its own.
+    # move-outdated, which needs no catalog to list the app; where the tenant
+    # moves its own apps, by installing that build again. A build that keeps
+    # failing is never retried by the platform on its own.
     jq -r '.entries[] | select(((.rollout.phase // "") == "RolledBack" or (.rollout.phase // "") == "Failed") and .rollout.target == .pinned)
-        | "kubectl gentian apps install " + .profile + " --tenant " + .tenant
-          + (if (.newest // "") != "" and .newest != .pinned then " --digest " + .pinned else "" end)
+        | (if .mode == "tenant"
+           then "kubectl gentian apps install " + .profile + " --tenant " + .tenant
+                + (if (.newest // "") != "" and .newest != .pinned then " --digest " + .pinned else "" end)
+           else "kubectl gentian apps move-outdated --tenant " + .tenant + " --app " + .profile end)
           + " retries the move to " + .pinned[0:19]' <<<"${answer}"
     local partial unread
     partial="$(jq -r '.partial // empty' <<<"${answer}")"

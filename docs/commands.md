@@ -495,7 +495,8 @@ the build the app is already pinned to changes nothing, unless the move to it
 was rolled back or did not start: then the director asks for the move once
 more, under the same rights as a move, and says why the last one ended
 (`retrying the move that was rolled back: …`). `apps outdated` prints the
-command for every such app, and `apps move-outdated` retries them all. The
+command for every such app, and `apps move-outdated` retries them all, an app
+the catalogs leave to the store too. Each retry exports afresh. The
 platform never retries a move by itself. The
 `PLATFORM` column of `--available` is the build's floor, `spec.requires.platform`;
 one marked `(not met)` needs a newer platform than this cluster runs.
