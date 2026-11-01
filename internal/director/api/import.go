@@ -28,7 +28,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// Importing a tenant: Create plus Restore (sovereignty-concept.md §4.3).
+// Importing a tenant: Create plus Restore (data-lifecycle.md §4).
 //
 // The bundle is uploaded or named; its manifest is read with the key the
 // person gives; the definition of every app the bundle's tenant lists is

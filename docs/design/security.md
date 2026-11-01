@@ -1,3 +1,8 @@
+---
+audience: architect, operator, auditor
+type: design
+---
+
 # Gentian Cloud OS — Security Architecture
 
 Architecture reference. The normative one-page rules are [security-principles.md](../security-principles.md); §3.0 lists the controls in place.
@@ -249,10 +254,36 @@ read or forge anybody's session. It can do two things:
 
 The same is true of every app host on a single-tenancy cluster; a public
 website makes it more likely, because websites load scripts from other
-parties and have more editors. Cookie names with the `__Host-` prefix would
-close it, and are not available as configuration in Envoy Gateway 1.9.2 or
-Keycloak. Detail and options:
-[networking.md §8.7](../plans/networking.md#87-a-website-on-the-clusters-main-address).
+parties and have more editors.
+
+The platform's session cookies are set per host and without a `Domain`
+([routing.md §4.2](routing.md)). The bare domain has none, the website's
+server receives none, and it cannot set any through its answers: the proxy
+removes `Cookie` and `Authorization` from every request and `Set-Cookie` from
+every answer. What the proxy cannot stop is a script running in a page on
+`<kernelDomain>` setting a cookie for the whole domain (`Domain=<kernelDomain>`);
+the browser then sends it to `desktop.`, `admin.`, `platform.` and
+`id.<kernelDomain>` beside the real one, and the Gateway reads the first
+cookie of a name it finds (Envoy's OAuth2 filter).
+
+| Can the website's page... | Answer |
+| --- | --- |
+| read somebody's session, or forge one | **No.** The cookies are encrypted and signed with a key the page does not have, and the signature covers the host |
+| stop a visitor from signing in | **Yes.** A cookie with the right name and a wrong value makes the Gateway reject the session, until the visitor clears their cookies or the planted cookie expires |
+| sign a visitor in to an account the page's author chose | **Yes.** The author can plant the cookies of a session of their own. The visitor then works in that account without having chosen it; their own account is not exposed, but what they type goes to the wrong one |
+
+What would close it is the `__Host-` cookie name prefix: browsers refuse a
+`Domain` on such a cookie, so a planted one is never sent. It is not a
+configuration change in the versions in use. Envoy Gateway lets a policy name
+two of the OAuth2 filter's seven cookies (the access and ID token); the other
+five have fixed names (`OauthHMAC-`, `OauthExpires-`, `RefreshToken-`,
+`OauthNonce-`, `CodeVerifier-`), and two of those are set with a path other
+than `/`, which the prefix forbids. Keycloak's cookie names on
+`id.<kernelDomain>` are fixed in its source. An owner who does not accept the
+risk keeps the website off the cluster's domain, on a domain of its own, or
+allows on the main address only a website whose scripts the organization
+controls; a website can protect its visitors itself with a strict content
+security policy and no third-party scripts.
 
 **The rule.** A website goes on the main address only if the organization
 itself controls every script it runs: no third-party scripts (analytics,
@@ -686,9 +717,152 @@ A catalog at an https address is public, and no credential is sent to one. A cat
 | The registry is held to the address rules ([custom-catalogues.md §7](../custom-catalogues.md)): https on 443, public host, checked in the dialer, no proxy. A manifest is not redirected; a layer's redirect is followed to a public https host only, without the credential, at most three hops | The layer's redirect is the one exception to "no redirects": a registry such as `ghcr.io` serves no blob without it, and the bytes are held to the layer's digest |
 | Manifest and layer are held to their digests; the manifest is a catalog's (type, one layer); the tar is plain relative files (no `..`, absolute path, link or device), at most 10 MiB packed, 32 MiB unpacked, 4096 entries, 1 MiB a file | — |
 | Who may add one is who may add an address, delegation included; whether the credential is set is not asked when it is added | — |
-| A taken-over director reads every repository credential of the cluster | Accepted (AD-14): the policy bounds it to repository credentials |
+| A taken-over director reads every repository credential of the cluster, every tenant's included | Accepted (AD-14). The director holds one vault role, `gentian-os-director`, bound to its ServiceAccount through a token for the vault's audience; its policy reads `tenants/+/repositories/+` and `kernel/repositories/+` and nothing else, so what the role bounds it to is repository credentials, and no other secret of the cluster |
 
 What it does not change: whoever can push to the artifact's registry repository can put any profile into the catalog. The catalog is no stronger than that repository, and its index is not signed. Whoever may view a tenant (`can_view`) can read the name, version, edition and digest of every entry of a catalog that tenant sees, as for a catalog at an address; a profile itself reaches the cluster when somebody who may install apps installs it, and is then one object for the whole cluster like every profile. A catalog declared for the whole cluster is therefore listed to every tenant; one that only a tenant should see is declared for that tenant.
+
+### 2.18 The layers a request passes
+
+Each layer answers one question and is enforced by one component; a lower
+layer never re-answers a higher one. The rules each rests on are in the
+sections above; the network side is [networking.md §1](networking.md).
+
+| # | Layer | Question | Enforced by |
+| --- | --- | --- | --- |
+| L0 | TLS, rate limit | well-formed and within budget? | the Envoy listener; a local limit per client address on sign-in posts (§2.14); the publishing proxy's limits per client address on a published entry |
+| L1 | Edge session | who is this, in which realm? | `SecurityPolicy.oidc`, one confidential client per tenant zone, the kernel realm for the platform tenant's zone and the kernel consoles ([routing.md §4.1](routing.md)) |
+| L1′ | Perimeter | which paths, how much, does a credential pass? | the publishing proxy in the tenant's DMZ: declared paths only, one reading of a path, identity headers and cookies removed, `Authorization` removed unless approved as `authMode: app` (§2.14). It verifies no caller |
+| L2 | Reachability | may this person reach this component at all? | the bouncer, asking OpenFGA the route's relation over the stored membership projection; cached per `(sub, sid, route)`, evicted on the change log |
+| L3 | App session and authorization | what may they do inside? | the app, from the identity headers or its own session with its own client and audience, capped by `sessionMaxAge` |
+| L5 | Network | may these two pods talk at all? | NetworkPolicy from `requires`, `integrations` and granted privileges (§2.6–§2.9, §2.13); Kyverno for what a pod may be |
+
+The edge decides reachability and the app decides everything finer, so the
+rights store is asked per login and app, not per request. A perimeter route
+skips L1–L2 by declaration: its `authMode` is the whole of its
+authentication.
+
+### 2.19 The session at the edge
+
+**The edge is the only session authority** (AD-13). One confidential client
+per tenant zone, established by the code flow against `id.<kernelDomain>` and
+silent whenever the realm's session exists; no platform component downstream
+runs a code flow of its own. The desktop and the consoles hold no OIDC client
+secret: a second confidential client in the same realm would be a second
+session with its own lifetime and its own sign-out, and in `tenant-platform`
+it would put a kernel-realm client secret inside a tenant namespace. The one
+platform component below the edge that holds a client secret is the bouncer,
+for each realm's `gentian-edge-exchange` client, with which it trades the
+session's token for one valid at a single app on a route that says
+`exchangeToken` ([networking.md §1.1](networking.md)).
+
+**The edge token is not handed to every backend.** It carries the director
+in its audience, so an app that received it could call the director, or a
+sibling, as the person. The Gateway forwards it only on a route whose entry
+sets `forwardToken` -- the desktop and the administration console, which relay
+to the director -- and gives every other backend identity headers it sets after
+removing inbound ones. An app that needs a session of its own runs a silent
+sign-in with its own client and audience, exactly as it would on a direct
+link.
+
+**L2 caches its decision per `(sub, sid, route)`**: the session, not the
+token. Keying on `jti` would make every refresh a cache miss, so load would
+scale with refreshes rather than sign-ins, and no entry could be evicted for a
+session nothing can name. Eviction, not expiry, is what makes a change
+visible: the bouncer polls OpenFGA's `ReadChanges` log on an interval and
+evicts by subject, so a withdrawn right is refused within about two seconds
+([routing.md §4.2](routing.md)); OpenFGA has no push stream, so that interval
+is the stated bound. If OpenFGA cannot be reached, decisions already cached
+stay valid until they expire and nothing not previously allowed gets through.
+
+**A session ends at the realm, and the edge follows within one access-token
+lifetime.** The edge holds a five-minute access token and renews it against
+the realm session; a refresh against an ended session fails, and so does the
+next request on every host of the zone. There is no back-channel revocation
+at the edge, and no list of ended sessions, because the edge holds no session
+state of its own: the session is encrypted cookies in the browser and a
+refresh at the realm, and the bouncer runs as several replicas that keep no
+state between them. The bound on how long a signed-out person is still let
+through is the access token's lifetime, which the realm sets; that lifetime
+is the control. The realm tells an app of a sign-out inside the cluster where
+the app can be told (§2.15), and the hard bound on what a person may do
+*inside* an app is the app's own session, which a profile caps with
+`sessionMaxAge`.
+
+**Platform rights follow the store; app rights follow the token.** Membership
+reaches OpenFGA from the realm's signed events through the operator (§3.0),
+and the bouncer evicts on the next poll, so a withdrawn platform right is gone
+without any token being touched. Apps read groups from their own tokens, so a
+changed membership reaches an app at that person's next sign-in to it; a
+profile whose app keeps its own session declares `sessionMaxAge` so the bound
+is a number somebody chose.
+
+**WebSockets** are authorized at upgrade; the connection carries no duration
+limit (§3.0).
+
+### 2.20 An app without single sign-on: the options
+
+Some apps in the catalog have no OIDC and no SAML in the installed edition.
+The front door does not depend on the app: nobody reaches it without a
+session at the realm and the right to use it, so such an app is as well
+guarded from outside as one with single sign-on. What does not come for free
+is the second half: the app has its own accounts and its own sign-in form, and
+does not know that the person was just checked. Three ways exist to deal with
+that, and the platform offers two.
+
+| Option | What happens | Where the password is | What it costs |
+| --- | --- | --- | --- |
+| **The front door, then the app's own sign-in** | The person is admitted and the app shows its own form. Accounts are created by the platform at grant time where the app has an interface for it (`provisioning.syncJob`), else by hand | With the person, as a hash in the app; the platform never knows it | A second password to manage, and an account that stays in the app when the person leaves unless the platform removes it. Two independent locks: a stolen app password is useless without a session at the front door |
+| **The sign-in sidecar** (`requires.services.identity.sidecar`) | A program of the platform's beside the app acts as a SAML party towards the realm and makes the app's session for the person the realm vouches for, by the app's own means (§2.12, [iam.md §1.11](iam.md)) | Nobody has one: the app's form is of no use | The sidecar can become anybody in its app; the app's own protections for sign-in do not apply; a handler depends on the app's inside. Whether a vendor accepts it in place of its paid single sign-on is a judgment per app, recorded in the app's `Customization` |
+| **A stored password per person, typed by the platform** | Not offered. The custodian writes secrets into the vault and never reads one back, on purpose; nothing is allowed to read a person's app password on every open | -- | A password is replayed: whoever reads it once can use it until it is changed, where a token is valid for one app and for minutes. The store of every person's passwords for an app is a target that does not exist otherwise. The password works without the platform, and sign-out and removal do not touch it |
+
+The order is the order of preference: OIDC in the installed edition first,
+then the front door with accounts the platform creates, then the sidecar per
+app after a review. Never a shared account: every session in an app belongs
+to one person.
+
+**An app that trusts the front door's headers** ("trusted header", "remote
+user" authentication) is the simplest of all: no trip to the realm for the
+app, no client, no secret. The whole protection is the network rule, because
+an app in this mode believes whoever sends the header. What keeps others out:
+the tenant's namespace is closed by default and admits an app's pods to the
+Gateway's Envoy pods, the identity provider's namespace and the operator's
+([networking.md §2](networking.md)); programs of one app reach each other;
+another app of the tenant reaches it only where an integration between the two
+was granted, and can then send any header it likes; the bouncer overwrites the
+identity headers on every request it admits, so a browser cannot send its own;
+a published entry does not pass the bouncer, and its proxy removes the
+identity headers (§2.14). The header carries the e-mail address, and an app
+that keys accounts on it hands an old account to whoever is given that address
+later; `x-gentian-subject` does not have that problem, and few apps accept it.
+There is no session of the app to end if it reads the header on every
+request; an app that reads it once and then keeps a cookie of its own is like
+any other for sign-out (§2.15).
+
+Standards that help with accounts, not with sign-in: SCIM creates and removes
+users in an app, and nothing in this repository sends it ([iam.md §1.8](iam.md));
+LDAP would need a directory server the platform does not run, and would have
+people type their password into the app. An app's own user interface with a
+service token, called by a job in the profile when a person is granted the
+app, is what makes the first option workable.
+
+### 2.21 What a break-in at an app can and cannot reach
+
+Somebody who takes over an app, meaning they run their own code as the app:
+
+| Can | Cannot |
+| --- | --- |
+| Read and change everything in that app | Reach another app of the tenant, unless an integration between the two was granted |
+| See the name, e-mail address and identifier of everybody who uses it | Obtain anybody's password: it is typed at the realm only |
+| Use the app's client secret to complete sign-ins for this app | Sign in to any other app or to the platform with that secret |
+| Keep people's sessions in this app alive | Obtain a person's token for the platform's services, or the front door's cookies: the bouncer removes them, and the app gets the identity headers (§2.19) |
+| Show false content to its users | Be shown inside any page but its own tenant's desktop, or frame other apps ([routing.md §4.3](routing.md)) |
+| | Reach another tenant, the vault, the rights store or the identity provider's administration (§2.13) |
+
+One qualification: the app's pages run in the person's browser under the
+tenant's domain, beside the desktop. A hostile page can try to mislead the
+person. It cannot read the desktop's or another app's pages or cookies:
+browsers keep addresses apart, and the front door's cookies are valid for one
+host each.
 
 ---
 

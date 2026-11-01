@@ -1,3 +1,8 @@
+---
+audience: architect, operator
+type: design
+---
+
 # Administration console — design
 
 **Scope:** what the administration console is, what each of its screens does and which service answers it.
@@ -58,6 +63,59 @@ service's answer from OpenFGA.
 component of its own beside the console ([store-contract.md](store-contract.md)
 §6), or from `kubectl gentian apps install` where there is no store.
 
+### 1.2 Three interfaces, one rule
+
+The console is one of three interfaces the platform serves on a cluster,
+beside the desktop and the App Store app, and one rule holds for all of
+them: **a UI carries no authority.** It renders what an API returns and turns
+clicks and key presses into API calls made with the signed-in person's token.
+It holds no ServiceAccount with write verbs, no admin credential, no master
+key, and decides nothing — every "may this person see or do X" is a verdict
+it received from a named enforcement point (AD-1,
+[security-principles.md §3](../security-principles.md)), never a branch it
+evaluated.
+
+A single-page app cannot keep a confidential client secret or a refresh token
+safely, so something server-side has to hold the session. That something is
+the **edge**: the Gateway runs the code flow for the whole tenant zone and
+forwards the token on the routes whose entry asks for it (`forwardToken`,
+[routing.md](routing.md)). A backend-for-frontend therefore exists only for
+same-origin relaying and for the small amount of UI state an interface
+keeps — for the desktop, per-viewer preferences and the notification inbox,
+in the tenant's own database, granted as a requirement of its profile. It
+runs no code flow, holds no OIDC client secret and has no Kubernetes RBAC: it
+relays an identity the edge established.
+
+| Interface | Where | For whom | Shows | Does |
+| --- | --- | --- | --- | --- |
+| **Desktop** | on the cluster, per tenant | everyone | the tiles the signed-in person may open: the usher's answer (`GET /v1/tenants/{t}/tiles`), filtered for the caller before it arrives | opens them. Nothing else: no install, uninstall, add-on, access, repository or store logic |
+| **Administration console** (this document) | on the cluster, per tenant | administrators | people and groups, policies, resources, credentials, and under **Apps** every installed app: its state, who has access and whether it is for everyone, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalog |
+| **App Store app** ([store-contract.md](store-contract.md) §6) | on the cluster, per tenant; absent when the usage statistics report is off or no store is named | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. Signed in at the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
+| **The store** ([store-contract.md](store-contract.md) §1) | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalog to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
+| **Operations Console** | on the cluster, where installed | whoever looks after the cluster | an add-on's own screens ([sovereignty.md](sovereignty.md) §5) | what the add-on does; it is not part of the OS |
+| **Command line** | the administrator's machine | administrators | — | `kubectl gentian apps install …` through the director. With no store it is the only way to install an app |
+
+The three interfaces on the cluster are separate components — the desktop
+and `apps/admin-console` in the gentian-ui repository, and the App Store
+app, which the store's vendor publishes — and none of them is a mode of
+another.
+
+**What comes from where.** The App Store app and the console never show the
+same fact from two places:
+
+| From the store, shown by the App Store app | From the cluster, shown by the console |
+| --- | --- |
+| What an app is: name, summary, description, pictures | What is installed, at which digest |
+| Reviews and their summary | Its state: installing, ready, failing, and why |
+| Evaluations and reports | Who has access, and the "for everyone" setting |
+| Editions, versions and the digest of each | Its integrations |
+| Prices | Its privileges: what it requests of the platform and what was approved |
+| What the tenant has acquired | What its data is, when it is uninstalled and when it is purged |
+
+The App Store app needs one fact from the cluster to be useful — which of
+the store's entries this tenant has installed — and reads it from the
+director like any caller. It sends the store none of it.
+
 ---
 
 ## 2. Placement in the security model
@@ -76,6 +134,21 @@ Authority in the console is not read from a token's groups. Which screens a
 person gets is decided from two answers of the director: the verbs they hold
 on the tenant and on the cluster. Every relayed call is checked again by the
 service that receives it.
+
+**The desktop is a relay for tiles.** It is the app of people who hold no
+privilege. Code that installs, removes or grants, shipped to every member's
+browser and reachable on every member's origin, is code a member can try to
+drive; the checks behind it would hold, but the cheapest way to be sure a
+path is not misused is for it not to be there. So the desktop carries no
+install, uninstall, purge, add-on, access-granting, repository or store
+logic — no route in its backend, no screen in its bundle — and the
+administrative paths live in the two interfaces only administrators are
+served: this console and the App Store app, which an administrator's tiles
+lead to. The desktop does not know what an administrator is: the usher's
+answer comes back already filtered for the caller, and `can_launch` derives
+from the app's own entitlement group, not from tenant membership. Its AI
+widget calls the model gateway with the desktop component's own granted
+credential, an `llm` requirement of its profile, never a master key.
 
 ---
 
@@ -369,6 +442,6 @@ These stay outside the console:
 | Hosts, the front door, sessions | [routing.md](routing.md) |
 | MAC backbone | [security.md](security.md) |
 | OpenFGA model | `authz/model/v1/model.fga` |
-| Tenant identity objects | [tenant-identity-composition.md](tenant-identity-composition.md) |
+| Tenant identity objects | [iam.md §1.9](iam.md) |
 | The App Store app | [store-contract.md](store-contract.md) |
 | Resource plans and usage | [resource-plans.md](resource-plans.md) |

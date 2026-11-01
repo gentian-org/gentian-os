@@ -21,8 +21,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
 )
 
-// Restoring a bundle into the tenant it was taken of (sovereignty-concept.md
-// §4.3, data-lifecycle.md §4). An action: the operator creates the
+// Restoring a bundle into the tenant it was taken of (data-lifecycle.md §4).
+// An action: the operator creates the
 // TenantRestore, as it creates the TenantExport of a backup, and nothing is
 // committed. The tenant stays as git declares it; only its data is replaced.
 //

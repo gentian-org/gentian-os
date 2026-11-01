@@ -352,7 +352,7 @@ func (r *TenantReconciler) tenantMailMode(ctx context.Context, tenant *gentianov
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	// Mail is a function the Cluster claim composes (system-mail and its
-	// DMZ, namespace-cleanup.md §2). A cluster that has not composed it has
+	// DMZ, kernel.md §6.1). A cluster that has not composed it has
 	// no relay to register a tenant in and no store to give it a mailbox in;
 	// the tenant is not held for a function the cluster does not run.
 	if present, err := r.mailFunctionPresent(ctx); err != nil {

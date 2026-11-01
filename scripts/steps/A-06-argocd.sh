@@ -37,7 +37,7 @@ check() {
         [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]] &&
         # And the versions: a cluster behind the pin is upgraded by a re-run,
         # which is the whole of how a cluster takes a newer release
-        # (docs/plans/versioning.md). Argo CD's own by the server's image,
+        # (docs/design/versioning.md). Argo CD's own by the server's image,
         # since the manifests carry no release record; the updater's by its
         # Helm release, like every other pinned chart.
         _a06_versions_current &&

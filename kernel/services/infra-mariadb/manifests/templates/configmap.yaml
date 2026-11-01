@@ -81,7 +81,7 @@ kind: ConfigMap
 metadata:
   {{- /* The cluster's own values. On v4 the name carries the stage,
        because one cluster served several; on v5 a cluster has one stage
-       and the suffix is dropped (namespace-cleanup.md §2.2), which is
+       and the suffix is dropped (kernel.md §6.2), which is
        also what lets the Cluster composition name this ConfigMap in the
        Release's valuesFrom without knowing the stage -- the claim does
        not carry one. */}}

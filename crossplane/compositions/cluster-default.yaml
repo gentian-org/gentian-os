@@ -87,7 +87,7 @@ spec:
             {{- /* ── System namespaces ──────────────────────────────────────────
                  The data plane tenants are served from: one namespace per
                  engine, named by the function a component's requires.services
-                 entry asks for (namespace-cleanup.md §2.2).
+                 entry asks for (kernel.md §7).
 
                  Composed here rather than created by the installer, which is
                  what kernel/namespaces.yaml says and the reason is the claim:
@@ -200,10 +200,10 @@ spec:
                  kernel-postgres.
 
                  Bitnami postgresql is retired rather than moved
-                 (namespace-cleanup.md §2.2): it held only kernel databases,
+                 (kernel.md §7): it held only kernel databases,
                  and those are on kernel-postgres in kernel-data now. */}}
             {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
-            {{- /* Which engines run (app-authorization.md §3). SeaweedFS
+            {{- /* Which engines run (kernel.md §7). SeaweedFS
                  always: it is the platform's own object store, where every
                  backup, bundle and export is written whether or not an app
                  takes a bucket. MariaDB and Redis on demand: composed when
@@ -226,7 +226,7 @@ spec:
                  is the engine itself. */}}
 
             {{- /* The ConfigMap names below carry no stage. A cluster has one
-                 stage (namespace-cleanup.md §2.2) and the Cluster claim does
+                 stage (kernel.md §6.2) and the Cluster claim does
                  not carry it, so a name with a stage in it could only ever be
                  right on a dev cluster -- and would fail as a Release that
                  cannot find its values. */}}

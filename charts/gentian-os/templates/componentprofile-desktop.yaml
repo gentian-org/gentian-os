@@ -1,5 +1,5 @@
 {{- /*
-  The desktop: the one component the OS ships itself (ui-restructure.md §1).
+  The desktop: the one component the OS ships itself (admin-console.md §1.2).
   Every tenant gets one from this profile, the platform tenant included --
   its desktop is the platform console, in the kernel zone (AD-10). The
   profile is what the desktop is: a tenant component of platform trust, a

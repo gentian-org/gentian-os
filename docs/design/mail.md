@@ -684,11 +684,12 @@ a read-only filesystem. `mail.<kernelDomain>` and `imap.<kernelDomain>` both
 resolve to its load balancer; the operator publishes both from that Service's
 address.
 
-**A proxy, not a second mail server.** The networking plan places Postfix
-itself in the DMZ. That is a mail server with a queue — stored mail — in the
-namespace that faces the internet, and it would need the tenant maps, the relay
-credential and a path to the signing keys there. AD-9 asks for a stateless edge,
-and a TCP proxy is one: Postfix stays the only MTA, in `system-mail`.
+**A proxy, not a second mail server.** Postfix and the DKIM signer run in
+`system-mail`; the DMZ holds a proxy. Postfix in the DMZ would be a mail server
+with a queue — stored mail — in the namespace that faces the internet, and it
+would need the tenant maps, the relay credential and a path to the signing keys
+there. AD-9 asks for a stateless edge, and a TCP proxy is one: Postfix stays
+the only MTA, in `system-mail`.
 
 **HAProxy, not the platform's Envoy.** Envoy Gateway can route TCP and send a
 PROXY header upstream (`BackendTrafficPolicy.proxyProtocol`), but by its API

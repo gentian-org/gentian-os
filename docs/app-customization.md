@@ -1,6 +1,6 @@
 # App Customization Framework — the Gentian Customization Ladder
 
-**Companion to:** [design/app-catalogue.md](design/app-catalogue.md), [design/app-profiles.md](design/app-profiles.md),
+**Companion to:** [design/app-catalogue.md](design/app-catalogue.md), [design/app-catalogue.md §12 and §17.3](design/app-catalogue.md),
 [design/multi-tenancy.md](design/multi-tenancy.md), [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md)
 
 ---
@@ -308,7 +308,7 @@ realm (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`,
 `assertion=…`, the same client assertion) and acts as the account the answer
 names. A person not linked yet is answered 401 with `WWW-Authenticate:
 Partner link="<address>"`, which the calling app shows them
-([plans/cross-cluster-identity.md](plans/cross-cluster-identity.md) §4–5).
+([design/partners.md](design/partners.md) §4–5).
 
 **An authorization store of the app's own.** An app that decides with
 relations (who may see which project, who administers which company)

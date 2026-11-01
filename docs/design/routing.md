@@ -1,3 +1,8 @@
+---
+audience: architect, operator
+type: design
+---
+
 # Routing and the Edge
 
 **Companion to:** [architecture.md](../architecture.md)
@@ -654,6 +659,62 @@ Keycloak's realm endpoints on `id.<kernelDomain>` carry a separate policy,
 reconciled from tenant and domain state, naming the hosts whose pages embed
 its session frames.
 
+**A frame on a tenant's own domain.** The desktop shows an app in a frame.
+The first time an app's address is opened, the frame is sent to the realm and
+back for the edge's session (§4.1), and a second time when the app starts its
+own sign-in. Both trips are silent only if the browser sends the realm's
+cookie from inside the frame.
+
+- Tenant under the cluster's domain: the desktop is
+  `desktop.acme.example.org`, the app `files.acme.example.org`, the realm
+  `id.example.org`. All three are one site. Every browser sends the cookie.
+- Tenant on its own domain: the desktop is `desktop.acme.com`, the app
+  `files.acme.com`, the realm still `id.example.org`. The desktop and the
+  app are one site, so the edge's cookie works; but inside the frame the
+  realm is a *third party*, a site other than the one in the address bar,
+  and browsers restrict cookies for third parties.
+
+What the browsers do with a third-party cookie in a frame, by default, and
+what follows from each vendor's documented rule:
+
+| Browser | Default | A framed sign-in on a tenant's own domain |
+| --- | --- | --- |
+| Chrome | Third-party cookies allowed, except in Incognito windows and where the person or their organization's policy blocks them | Works, except in those situations |
+| Edge | Blocks third-party cookies only for sites on its list of trackers | Works, as long as the identity provider is not on such a list |
+| Firefox | A separate cookie store per site in the address bar (Total Cookie Protection) | The realm's cookie from the desktop's sign-in is not visible in the frame; the realm shows its sign-in form inside the window |
+| Safari | Blocks all third-party cookies | The realm cannot keep any cookie in the frame; its form appears and the sign-in cannot be completed there |
+| Brave | Blocks third-party cookies and storage | As Safari |
+
+Two mechanisms exist that could lift the restriction, and neither applies
+here. The Storage Access API lets a framed page ask the browser for its
+cookies; it needs a click inside the frame, in Safari also a prompt, and
+Keycloak's pages do not call it. Partitioned cookies (CHIPS) are kept per site
+in the address bar by design, so they cannot carry the desktop's sign-in into
+the frame; Keycloak does not set them. The same trips made in a browser tab
+of their own are not affected: there the realm is the page in the address
+bar for a moment, which makes it a first party, and every browser sends its
+cookie.
+
+So on a tenant with its own domain, an app in a frame cannot be relied on to
+sign in silently; opened in a new tab, it can. A cluster whose own domain is a
+public suffix has the same problem for every tenant, which is the reason
+above to use a domain below one.
+
+A silent trip through the realm needs none of the frame policy above: the
+realm answers such a trip with a redirect, not a page, and a redirect is not
+subject to framing rules. The relaxation of the realm's frame headers matters
+only when the realm has to show its form inside a frame, for example after
+its session ran out while the desktop stayed open.
+
+**A "continue" page in the middle.** Some apps do not start their sign-in on
+a plain link: they show a page with a button first, as a protection against
+other sites starting a sign-in behind the person's back. `django-allauth`
+does this unless `SOCIALACCOUNT_LOGIN_ON_GET` is on, and Synapse shows a
+"continue to your account" page unless the client's address is on its
+`sso.client_whitelist`. Where such a page exists, a tile that points at the
+sign-in address still costs a click; the profile's chart values are where the
+setting that removes it belongs.
+
 ### 4.4 Versions
 
 Envoy Gateway and its chart are pinned in `versions.yaml`. Envoy Gateway 1.9
@@ -1048,3 +1109,103 @@ runs it with `--dns01-recursive-nameservers-only` against the resolvers in the
 Cluster claim's `certificates.dns01RecursiveNameservers` (public resolvers by
 default; `cluster` keeps cluster DNS for zones only an internal server knows).
 A-05 reconciles those flags on an existing Helm release as well as a new one.
+
+---
+
+## 11. Two policy domains on one fleet
+
+The cluster has one external address (`networkMode: static-ip`) or one
+tunnel (`tunnel`), and every hostname resolves to it. §2.1 records why that
+forces one Envoy deployment: two Gateway Services contend for the address and
+TLS handshakes fail on whichever loses. So the two Gateways are two **policy
+domains** served by one Envoy fleet, not two fleets:
+
+| Gateway | Serves | Policy | Backends |
+| --- | --- | --- | --- |
+| `authenticated` | every `surface: gateway` entry | the zone's session (§4.1), then the bouncer: may this person reach this app | services in `tenant-<t>`, `tenant-platform`, and the kernel's own consoles |
+| `perimeter` | the realm endpoints of the identity provider, the ACME path and the `https` redirect on port 80, and each published host on a listener of its own | no session; the entry's `authMode`; the publishing proxy's limits per client address ([security.md §2.14](security.md)) | publishing proxies in `tenant-<t>-dmz`; the identity provider |
+
+In Gateway API terms: two `Gateway` objects in `kernel-edge`, with Envoy
+Gateway's `mergeGateways`, so they share the one deployment and address.
+Listener uniqueness is then class-wide, which gives the split its shape: a
+published host is a listener on the `perimeter` Gateway naming that host
+exactly, and the exact name is the more specific match, so that one host
+leaves the session and the rest of the zone stays behind it (§2.1). Both
+Gateways are kernel resources the operator writes from the Cluster claim; a
+tenant owns `HTTPRoute`s, never a `Gateway`.
+
+The compromise this leaves -- one Envoy process serving both -- is bounded by
+Envoy's own model: a policy attaches to a route, and the route to a DMZ proxy
+has no session, no ext-auth and no reach beyond one backend. What does not
+pass this fleet at all: mail, whose TCP proxy in `system-mail-dmz` has a load
+balancer of its own ([mail.md](mail.md)), and real-time media, whose TURN edge
+has one too ([networking.md §7](networking.md)). A TCP listener on the shared
+fleet has no limit per client address and would open a path from the edge
+namespace to those servers. Tunnel mode changes nothing above for HTTP:
+cloudflared publishes hostnames to the same Envoy Service. It carries no TCP
+and no UDP, so a cluster behind a tunnel has no inbound mail and no TURN.
+
+### 11.1 Route classes
+
+Nothing is routable without a class. A hostname with no entry behind it
+answers 404 at the listener.
+
+| Class | Hostname | Entry | L1 | L2 | Backend |
+| --- | --- | --- | --- | --- | --- |
+| Tenant app, browser | `<app>.<effectiveDomain>` | `surface: gateway`, `authMode: oidc` | tenant-realm session | `can_use` on the app: the same relation the desktop's tiles resolve, so the route cannot be more open than the tile | the app in `tenant-<t>` |
+| Tenant app, caller pinned | the same | `surface: gateway`, `source`: who may call the entry is decided before `authMode` is considered | the session where the entry also says `oidc`; otherwise none | the same | the app |
+| Tenant desktop | `desktop.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | `can_enter` on the tenant: members and administrators both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | the desktop in `tenant-<t>` |
+| Tenant administration console | `admin.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | as the desktop's | the console in `tenant-<t>`; a relay to the director with the person's token |
+| Platform desktop and console | `platform.<kernelDomain>`, `admin.platform.<kernelDomain>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | the platform tenant's desktop and console in `tenant-platform` (AD-10), on the `*.platform.<kernelDomain>` listener with a wildcard of its own |
+| The user tenant of a single-tenancy cluster | `desktop.<kernelDomain>`, `admin.<kernelDomain>`, `<app>.<kernelDomain>` | `oidc` | session in realm `user` | as a tenant's | components in `tenant-user`, on the catch-all listener and the cluster's own certificate; the kernel's own labels at that level are refused to it (`HostReserved`, §3.1) |
+| Kernel console | `argocd.<kernelDomain>`, `headlamp.<kernelDomain>`, Keycloak's administration at `id.<kernelDomain>/auth/admin/*` | `oidc` | **kernel**-realm session | `can_configure`; `can_open_kernel_tools` for Headlamp | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor |
+| Identity provider | `id.<kernelDomain>` | none: it *is* the issuer | -- | -- | Keycloak in `kernel-authentication`, on the `perimeter` Gateway: `/auth/realms/*` and `/auth/resources/*` only; `/auth/realms/master/*` refused by a route of its own; the realm's brute-force detection and the sign-in post limit at L0 |
+| Published entry | `<label>.<effectiveDomain>`, the bare domain (`apex`, §5), or an alias under the cluster's domain (§7) | `surface: perimeter`, `authMode: none` or `app`, once approved | -- | -- | the publishing proxy in `tenant-<t>-dmz`, on a listener for exactly that host. `jwt`, `bearer`, `basic` and `signature` are refused on a perimeter entry by the schema |
+| ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | none | -- | -- | cert-manager's solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned surfaces without a session |
+
+A gateway entry is behind the zone's session (`authMode: oidc`) or pins its
+caller (`source`); the schema admits nothing else there. What needs neither
+is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
+component has one policy for all its hosts (§4.1).
+
+**Keycloak's administration console shares the issuer's hostname**, and this
+is not a preference. With `KC_HOSTNAME` and `KC_HOSTNAME_ADMIN` set to
+different names, the console obtains a token stamped with the issuer's
+hostname and then calls the Admin REST API on the admin hostname, where
+Keycloak refuses it with 401 and the console never finishes loading; a new
+browser tab fails in exactly the same way as a frame. So `id.<kernelDomain>`
+carries two classes of route on one hostname, the one place where that
+happens, and the path allowlist is what keeps it honest: `/auth/realms/*` and
+`/auth/resources/*` public on the `perimeter` Gateway, `/auth/admin/*` behind
+the kernel-realm session and `can_configure`, `/auth/realms/master/*` refused.
+Each is one route with one policy.
+
+**An app being restored is held back.** While a `TenantRestore` names an app
+in `status.heldBack` and has not ended, each route of the app -- its entries,
+its sign-in sidecar's and its published surfaces -- keeps its host, matches,
+policy and annotations, and every rule answers `503` with `Retry-After` from
+the `restore-hold` `HTTPRouteFilter` in the route's namespace instead of a
+backend; the rules it had are kept on the route
+(`gentianos.io/restore-held-rules`). L1 and L2 still run first. No kernel
+route, no other component's and no other tenant's is touched, and the ACME
+solver's routes are cert-manager's own ([operations.md §9.4](operations.md)).
+
+### 11.2 Worked example: a public website on a tenant's own domain
+
+Tenant `acme`, bound to `acme.com` (§3), installs an app whose profile
+declares a perimeter entry `website` with `subDomain: www`, `authMode: none`,
+the paths a visitor may reach -- say `/`, `/shop` and `/blog` -- and the
+paths nobody may, such as `/web`, `/xmlrpc` and `/jsonrpc`.
+
+| Piece | Declared | Derived by the operator |
+| --- | --- | --- |
+| The site | the profile's entry; the tenant's perimeter approver publishes it (`can_expose`), with owner, publish date and review date in the registry | a listener `perimeter-www-acme-com` on the `perimeter` Gateway for exactly `www.acme.com`, with the tenant's wildcard certificate (`*.acme.com`, issued by DNS-01 with the zone listed in `certificates.dnsZones`); a proxy in `tenant-acme-dmz` forwarding the declared prefixes by whole segments, 404 for the denied paths and everything else, every identity header and cookie removed ([security.md §2.14](security.md)); an `HTTPRoute` in the DMZ pinned to that listener |
+| DNS | the zone is the tenant's; where external-dns's credential covers it the record follows from the route, otherwise the tenant creates `www.acme.com` pointing at the cluster's address | nothing further |
+| Editing | nothing new: editors use the app's host behind sign-in, `erp.acme.com` (`surface: gateway`, `authMode: oidc`), and the app's editor switches to the public site | no backend path is reachable anonymously on either host |
+| A customer login on the site | a second entry, if the author declares one and the approver publishes it, with the app's own sign-in paths under `authMode: none` or `app`: a declared choice, off until approved | the same proxy, a wider allowlist |
+
+Under `www` on a tenant's own domain no reserved name is taken: `www` is the
+kernel's only where the tenant's domain is the cluster's (§3.1). The whole
+host `www.acme.com` leaves the session: an exact-hostname listener is
+preferred over the zone's wildcard, so the app's paths behind sign-in stay on
+their own host and are not declared on this one.

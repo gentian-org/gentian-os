@@ -38,8 +38,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// Importing a bundle: the operator's three verbs under sovereignty-concept.md
-// §4.3. UPLOAD takes a .gentian file and lays it out as a prefix in the
+// Importing a bundle: the operator's three verbs under data-lifecycle.md §4
+// (Import). UPLOAD takes a .gentian file and lays it out as a prefix in the
 // cluster's own storage, so that every later step works on a bundle the
 // capture Jobs could have written. INSPECT opens the manifest with the key
 // the person supplied and says what the bundle holds. RESTORE starts a

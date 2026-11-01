@@ -2,9 +2,9 @@
 # One vocabulary: the relations the documents name, the relations the code
 # checks, and the relations the model defines are the same set.
 #
-#   documents → model   a can_* in docs/plans or the security principles that the
-#                       model does not define is a promise nothing keeps
-#   model → documents   a can_* the model defines that authorization-model.md
+#   documents → model   a can_* in docs/design or the security principles that
+#                       the model does not define is a promise nothing keeps
+#   model → documents   a can_* the model defines that docs/design/authorization.md
 #                       never mentions is a permission nobody decided on
 #   code → model        a can_* the director names that the model does not define
 #                       is a check that can only ever deny
@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="${AUTHZ_MODEL_VERSION:-v1}"
 MODEL="${ROOT}/authz/model/${VERSION}/model.fga"
 PLANNED="${ROOT}/authz/model/${VERSION}/planned.txt"
-VOCABULARY_DOC="${ROOT}/docs/plans/authorization-model.md"
+VOCABULARY_DOC="${ROOT}/docs/design/authorization.md"
 
 [[ -f "${MODEL}" ]] || { echo "FAIL — no model at ${MODEL}" >&2; exit 1; }
 
@@ -25,7 +25,7 @@ model="$(grep -oE '^[[:space:]]+define[[:space:]]+[a-z_]+' "${MODEL}" | awk '{pr
 planned="$(grep -vE '^[[:space:]]*(#|$)' "${PLANNED}" 2>/dev/null | awk '{print $1}' | sort -u || true)"
 
 documents=()
-while IFS= read -r f; do documents+=("$f"); done < <(find "${ROOT}/docs/plans" -maxdepth 1 -name '*.md' | sort)
+while IFS= read -r f; do documents+=("$f"); done < <(find "${ROOT}/docs/design" -maxdepth 1 -name '*.md' | sort)
 documents+=("${ROOT}/docs/security-principles.md")
 
 status=0
@@ -39,7 +39,7 @@ while IFS= read -r rel; do
 done < <(grep -ohE '\bcan_[a-z_]+\b' "${documents[@]}" | sort -u)
 
 while IFS= read -r rel; do
-  grep -qE "\b${rel}\b" "${VOCABULARY_DOC}" || fail "${rel} is defined in model ${VERSION} but docs/plans/authorization-model.md never mentions it"
+  grep -qE "\b${rel}\b" "${VOCABULARY_DOC}" || fail "${rel} is defined in model ${VERSION} but docs/design/authorization.md never mentions it"
 done < <(grep -E '^can_' <<<"${model}")
 
 for rel in ${planned}; do

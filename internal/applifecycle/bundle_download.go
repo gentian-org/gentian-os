@@ -29,7 +29,7 @@ import (
 )
 
 // A bundle, downloaded: the artifacts under its S3 prefix streamed as one tar,
-// which is the single-file container of sovereignty-concept.md §1.3. The
+// which is the single-file container of sovereignty.md §3.3. The
 // artifacts are age-encrypted already, so what leaves here is what sits in
 // the bucket; nothing is decrypted and nothing is re-packed.
 //

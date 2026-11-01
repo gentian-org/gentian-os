@@ -55,7 +55,7 @@ func componentNetworkPolicyName(comp *gentianov1alpha1.Component) string {
 // issuer is reached through the edge (the baseline's 443 allow names a CIDR,
 // which Calico matches against the Envoy pod's own port, never 443); and for
 // the desktop the
-// director's, which the BFF relays to (ui-restructure.md §1).
+// director's, which the BFF relays to (admin-console.md §1.2).
 func (r *ComponentReconciler) componentEgressNamespaces(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) []string {
 	var out []string
 	seen := map[string]struct{}{}

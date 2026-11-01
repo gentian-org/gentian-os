@@ -44,8 +44,9 @@ L1 drop-ins are reconciled by `internal/controller/dropin_reconciler.go`.
 
 ## Documentation
 
-* Documentation outside `docs/plans` and `docs/releases` describes the present: no dates of
-  past work and no future work. The past is in git and the future in issues.
+* Documentation outside `docs/releases` describes the present: no dates of past work and no
+  future work. The past is in git and the future in issues. Two structures are described as
+  planned by decision: class `shared-app` and class `service` (`docs/design/app-catalogue.md`).
 
 ## Security & licensing
 

@@ -73,7 +73,7 @@ smtpHost: ""
 llmEnabled: "false"
 
 # The desktop -- a component every tenant gets from the profile the operator
-# chart ships (ui-restructure.md §1). What the bootstrap decides is which
+# chart ships (admin-console.md §1.2). What the bootstrap decides is which
 # branch's chart that profile names: a prerelease per branch on a dev cluster,
 # and only some branches publish.
 desktop:

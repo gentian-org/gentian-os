@@ -408,12 +408,9 @@ runs both back to back, which is why they are listed together.
    `image.tag | default .Chart.AppVersion`, so `appVersion` is the image a
    cluster pulls where no tag is set. It must match what CI publishes —
    `docker/metadata-action` strips the `v`, so tag `vX.Y.Z` becomes image
-   `:X.Y.Z`. Between releases the tree carries the next-dev number
-   ([versioning.md §1.1](plans/versioning.md)): the commit after the tag
-   sets `X.(Y+1).0-dev`, so a build from `develop` is never mistaken for a
-   release. A patch to a released line is made on `release-X.Y`, branched
-   from the release's tag, and tagged `vX.Y.Z` there; `develop` never
-   carries a patch number.
+   `:X.Y.Z`. Between releases the tree carries the next-dev number (§5.5):
+   the commit after the tag sets `X.(Y+1).0-dev`, so a build from `develop`
+   is never mistaken for a release.
 2. Merge `develop` → `main`.
 3. Write the release notes as `docs/releases/vX.Y.md` — what the release
    contains, and what an operator must do differently after it. Create an
@@ -444,6 +441,28 @@ runs both back to back, which is why they are listed together.
 - Run the install with `GENTIAN_DEPLOYMENTS_STAGE=prod`; make sure
   `profiles/prod.yaml` exists in the deployments repository first.
 - Create the tenants afterwards (§5.3).
+
+### 5.5 Release numbering
+
+A tree that is not a release never carries a release's bare number. The
+commit that cuts a release sets `version` in `charts/gentian-os/Chart.yaml`
+to `X.Y.0` and is tagged; the next commit on `develop` sets it to
+`X.(Y+1).0-dev`, and it stays there until the next release commit. The tree
+always says which release it is heading for, and a build from it cannot be
+mistaken for one. The pre-release suffix is SemVer's: `0.5.0-dev` sorts below
+`0.5.0` and above every `0.4.x`.
+
+The platform version line is the major and minor of that number. The
+constant the operator and the director compare profiles' floors and backup
+bundles against is generated from the chart
+(`make gen-platform-version`, `scripts/gen/gen-platform-version.py` →
+`internal/platformversion/line.go`), so the chart and the binary cannot
+disagree ([design/versioning.md §2](design/versioning.md)).
+
+A profile build follows the same rule: `spec.version` on the apps
+repository's `develop` carries the `-dev` suffix with a counter per change
+(`0.5.1-dev.4`), and is set to the bare number when the catalog is released
+from `main`. The apps repository's CI holds every profile to it.
 
 ---
 

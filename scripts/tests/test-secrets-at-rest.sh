@@ -3,9 +3,9 @@
 # scripts/tests/test-secrets-at-rest.sh
 # =============================================================================
 # Pre-flight says whether Kubernetes Secrets are encrypted at rest (roadmap
-# 1.18, certification plan C9). Where it can see the API server it reads the
-# flags; where it cannot -- a managed control plane -- it reads the Cluster
-# claim's controlPlane.secretsAtRest. Held here:
+# 1.18, docs/compliance/controls.md K15). Where it can see the API server it
+# reads the flags; where it cannot -- a managed control plane -- it reads the
+# Cluster claim's controlPlane.secretsAtRest. Held here:
 #
 #   - a visible API server with --encryption-provider-config, or k3s/rke2 node
 #     arguments with --secrets-encryption, is reported encrypted whatever the

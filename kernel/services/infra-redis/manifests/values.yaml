@@ -11,7 +11,7 @@ storageClass: ""
 # The ApplicationSet passes the system-tier namespace the
 # Cluster claim composed -- one namespace per engine, so a quota, a backup
 # policy and a network policy can differ per engine without separating a
-# stateful service after the fact (namespace-cleanup.md §2.2).
+# stateful service after the fact (kernel.md §6.2).
 namespace: ""
 # Pull secrets for a private registry, by name; none for the public images.
 imagePullSecrets: []

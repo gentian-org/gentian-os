@@ -45,8 +45,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
-// The desktop is the one component the OS ships itself (ui-restructure.md
-// §1): every tenant gets one from the same profile, the platform tenant
+// The desktop is the one component the OS ships itself (admin-console.md
+// §1.2): every tenant gets one from the same profile, the platform tenant
 // included, and its values are the platform's facts -- which realm, which
 // director, which zone client -- that no profile author can know.
 const (
@@ -258,7 +258,7 @@ func splitDots(s string) []string {
 // database on the shared store of its engine, made by the tenant's stores.
 // The desktop's is on the kernel's data plane for the platform tenant, and
 // on the tenant postgres of the system tier for every other
-// (namespace-cleanup.md §2).
+// (kernel.md §6.1).
 func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile) string {
 	if !operatorPlaced(profile) {
 		if provisioner.DatabaseEngineOf(profile) == gentianov1alpha1.DatabaseEngineMariaDB {
@@ -275,7 +275,7 @@ func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha
 // ensureDatabaseRequirement fulfils a component's database requirement with
 // a credential Secret in its namespace.
 //
-// The platform tenant's data plane is the kernel's (namespace-cleanup.md §2):
+// The platform tenant's data plane is the kernel's (kernel.md §6.1):
 // its desktop's database is the portal_shell database kernel-data declares
 // on kernel-postgres, under a role of its own whose password the installer
 // seeds at the tenant's own path. Every other tenant's desktop database

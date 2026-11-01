@@ -252,7 +252,7 @@ installed by command.
 
 **For whoever receives it.** The request above is also written down as a
 machine-readable format,
-[usage-statistics.openapi.yaml](../plans/artefacts/usage-statistics.openapi.yaml).
+[usage-statistics.openapi.yaml](../reference/store-api/usage-statistics.openapi.yaml).
 It describes what the operator sends and changes nothing about it.
 
 ## 7. Image Updates via ArgoCD Image Updater
@@ -271,7 +271,7 @@ Argo CD, and so is every build any tenant installed, as a `ProfileBuild`
 newer build -- the platform inside the cluster's window, the cluster's
 administrator, or the tenant's -- is its update mode's to say, and the move
 itself exports first, verifies after and rolls back by itself
-([versioning.md](../plans/versioning.md)).
+([versioning.md](versioning.md)).
 
 The platform this cluster runs is on the Cluster claim's status
 (`status.platform`): the version line and the build the operator runs, and
@@ -632,7 +632,7 @@ every route of the app is held: its entries, its sign-in sidecar's route and
 its published surfaces in the DMZ answer `503` with `Retry-After: 60` from an
 Envoy Gateway `HTTPRouteFilter` (`restore-hold`) instead of reaching the app,
 behind the same session and bouncer as before
-([networking.md §3](../plans/networking.md)). An edge that has not held it
+([routing.md §11.1](routing.md)). An edge that has not held it
 within 2 minutes fails the restore with nothing of the app changed. The hold
 lasts until the restore ends, `Ready` or `Failed`, or is deleted — past the
 app's own `restore.post` and rollout and past the realm, which comes back
@@ -848,4 +848,25 @@ The limits that matter to a person running the platform are in
   another name where the tenant's database prefix here is not the one it had
   where the bundle was taken (§9.1). The app's own settings may still name
   the old one, as far as its `restore.post` commands do not rewrite it.
+- **Bundle containers.** A bundle is stored as a prefix in object storage:
+  one age file per artifact, `manifest.json.age` written last, the signature
+  and `bundle-info.json` in the clear beside it. The single file
+  `<tenant>-<export>.gentian` is a tar of that prefix, streamed as the objects
+  are read — nothing is decrypted and nothing is re-packed — and is what a
+  download hands out and an import upload takes; an upload is laid out as a
+  prefix in the import bucket again before anything reads it. A bundle is
+  read where it is: from the tenant's own backup bucket, from the import
+  bucket, or from a declared bundle source outside the cluster
+  ([data-lifecycle.md](data-lifecycle.md) §4).
+- **Encryption modes.** Every artifact is an ordinary age file, and both
+  modes open with `age -d` and no platform tooling. `recipient`, the
+  default, encrypts to age public keys: with none named, to the cluster's
+  configured recipients, whose identity is escrowed with the recovery kit so
+  the platform can read the bundle when the person who took it is
+  unreachable; with keys named, to those alone, which the platform has no
+  identity for. `passphrase` encrypts under a passphrase from a Secret in
+  the tenant's namespace, copied beside the capture Job and removed when the
+  export finishes; the platform keeps no copy, so a lost passphrase is a
+  lost bundle. The mode and the public keys used are recorded on the
+  export's status and in `bundle-info.json`, with the command that opens it.
 
