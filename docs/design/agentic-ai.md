@@ -56,7 +56,7 @@ Two of the four layers are built; two are design only:
 | **Service requirements** (`spec.requires.services`) | Identity, database, storage, cache, mail, model gateway | Fulfilled by the platform | Built |
 | **App contracts** (`spec.provides` / `spec.integrations`) | App-to-app integration (e.g., OpenProject ↔ Nextcloud), granted per tenant with an `AppGrant` and wired as an `IntegrationBinding` | Other apps | Built |
 | **MCP** (`spec.requires.services.mcp`) | Agent-readable operations | AI agents, the desktop's assistant | The declaration exists; nothing acts on it (§3) |
-| **Automation hooks** | Event-driven workflow triggers and actions | Workflow engines (ActivePieces, future n8n, …) | Not built; no such field (§5) |
+| **Automation hooks** | Event-driven workflow triggers and actions | Workflow engines | Not built; no such field (§5) |
 
 Contracts are machine-to-machine via stable APIs; MCP is agent-to-machine via a
 discoverable interface; automation hooks would bring event-driven workflows
@@ -131,7 +131,7 @@ MCP and workflow automation serve genuinely different roles:
 
 | | MCP (`requires.services.mcp`) | Automation Hooks (`spec.automationHooks`) |
 |---|---|---|
-| **Consumer** | AI agents / LLMs | Workflow engines (ActivePieces, …) |
+| **Consumer** | AI agents / LLMs | Workflow engines |
 | **Interaction** | Agent-initiated, pull (request/response) | Event-driven, push (webhooks / CloudEvents) |
 | **Triggers** | Agent decides when to call | App fires when something happens |
 | **Execution** | Stateless tool call | Stateful multi-step flow (branching, retries, schedules) |
@@ -193,7 +193,7 @@ use the same `name` for overlapping capabilities (e.g.
 
 ### 5.4 IntegrationBinding flow
 
-When a **workflow engine** (e.g. ActivePieces) and an app that
+When a **workflow engine** and an app that
 declares `automationHooks` are both installed for the same tenant,
 the operator generates an `IntegrationBinding` via the existing
 contract system:
@@ -202,16 +202,16 @@ contract system:
 sequenceDiagram
     participant OP as gentian-os operator
     participant OB as OpenBao
-    participant AP as ActivePieces
+    participant WE as Workflow engine
     participant App as OpenProject
 
-    Note over OP: Tenant has both activepieces + openproject installed
-    OP->>OP: Match: activepieces consumes 'automation',<br/>openproject provides automationHooks
-    OP->>OP: Create IntegrationBinding<br/>(activepieces ↔ openproject, contract: automation)
+    Note over OP: Tenant has a workflow engine + openproject installed
+    OP->>OP: Match: the engine consumes 'automation',<br/>openproject provides automationHooks
+    OP->>OP: Create IntegrationBinding<br/>(engine ↔ openproject, contract: automation)
     OP->>OB: Provision OIDC token-exchange<br/>client credentials
-    OP->>AP: POST /api/v1/connections<br/>(pre-configured "OpenProject" connection<br/>with internal service URL + token-exchange creds)
-    OP->>App: POST /api/v3/webhooks<br/>(register AP webhook URL for declared events)
-    Note over AP: User sees OpenProject triggers/actions<br/>ready to use — no manual setup
+    OP->>WE: POST /api/v1/connections<br/>(pre-configured "OpenProject" connection<br/>with internal service URL + token-exchange creds)
+    OP->>App: POST /api/v3/webhooks<br/>(register the engine's webhook URL for declared events)
+    Note over WE: User sees OpenProject triggers/actions<br/>ready to use — no manual setup
 ```
 
 The workflow engine's `ComponentProfile` declares the consumer side:
@@ -337,9 +337,9 @@ Automation hooks milestones:
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **Phase 1** | ActivePieces profile (PostgreSQL, Redis, SAML SSO, desktop tile). Manual connection config in the AP UI. | SAML sign-in (`requires.services.identity.saml`) |
+| **Phase 1** | A workflow engine profile (PostgreSQL, Redis, single sign-on, desktop tile). Manual connection config in the engine's UI. | The engine's sign-in |
 | **Phase 2** | `automationHooks` schema on the `ComponentProfile` CRD. Existing apps (OpenProject, Nextcloud, XWiki) declare hooks. Operator generates `IntegrationBinding` when a workflow engine is co-installed. | Generic operator work (not app-specific) |
-| **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. Ship `@gentian/activepieces-piece`. | OIDC token exchange ([#546](https://github.com/gentian-org/gentian-os/issues/546), [#572](https://github.com/gentian-org/gentian-os/issues/572)) |
+| **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. | OIDC token exchange ([#546](https://github.com/gentian-org/gentian-os/issues/546), [#572](https://github.com/gentian-org/gentian-os/issues/572)) |
 | **Phase 4** | CloudEvents / NATS delivery mode. Workflow engine subscribes via NATS instead of webhook registration. | NATS deployment ([#574](https://github.com/gentian-org/gentian-os/issues/574)) |
 | **Phase 5** | Unified `spec.capabilities` block. MCP + automationHooks merge with per-capability `deliveryModes`. | MCP registry ([#599](https://github.com/gentian-org/gentian-os/issues/599)) + Phase 4 |
 
@@ -377,7 +377,7 @@ capability.
   their own MCP servers; the platform provides the registry,
   identity, and tenant-scoping.
 - Not a workflow engine. The platform declares the hooks; workflow
-  engines (ActivePieces, n8n, …) execute the flows. The platform
+  engines execute the flows. The platform
   is the substrate, not the orchestrator.
 - Not magic: apps that don't expose MCP or `automationHooks` remain
   opaque to agents and workflow engines. The value scales with

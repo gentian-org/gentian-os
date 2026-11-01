@@ -17,7 +17,6 @@ copy the affected files again; do not edit them here.
 
 | Bundle | Beside the profile |
 |---|---|
-| `activepieces-me` | a ConfigMap (the sign-in handler), two Customizations |
 | `docmost-ce` | a ConfigMap (the sign-in handler), a Customization; the profile has a post-install job |
 | `element-ce` | a Composition, a ConfigMap, an OIDCPackCatalog |
 | `nextcloud-base-ce` | a ConfigMap, an OIDCPackCatalog |

@@ -689,7 +689,6 @@ func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 		host, appURL string
 		secrets      int
 	}{
-		"activepieces-me": {"auto.acme.k.example", "http://activepieces-me.tenant-acme.svc.cluster.local:8080", 1},
 		"docmost-ce":      {"docs.acme.k.example", "http://docmost-ce.tenant-acme.svc.cluster.local:3000", 1},
 		// Its key and the password of its own service account: its handler
 		// has the app make the account and the session itself.

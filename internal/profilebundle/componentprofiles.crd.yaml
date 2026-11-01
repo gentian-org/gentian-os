@@ -459,7 +459,7 @@ spec:
                       id:
                         description: |-
                           ID is what the hosting app's own addon system calls this addon: an Odoo
-                          module name, a Nextcloud app id, an Activepieces piece name. The operator
+                          module name, a Nextcloud app id, an XWiki extension. The operator
                           passes it to the composition, which renders the app-native activation.
                         maxLength: 128
                         minLength: 1
@@ -665,7 +665,7 @@ spec:
                       mechanism:
                         description: |-
                           Mechanism names the app's extension system (for example "odoo-addon",
-                          "nextcloud-app", "xwiki-extension", "activepieces-piece").
+                          "nextcloud-app", "xwiki-extension").
                         pattern: ^[a-z][a-z0-9-]*$
                         type: string
                       perTenantAddons:
@@ -2265,7 +2265,7 @@ spec:
                       id:
                         description: |-
                           ID is what the hosting component's own addon system calls this addon:
-                          an Odoo module name, a Nextcloud app id, an Activepieces piece name.
+                          an Odoo module name, a Nextcloud app id, an XWiki extension.
                         maxLength: 128
                         minLength: 1
                         pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$

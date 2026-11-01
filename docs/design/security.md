@@ -446,7 +446,7 @@ anybody in: the path makes no session.
 | The handler is given only what the profile declared, of the app's own | Built |
 | The sidecar's image is one build, named by tag and digest | Built |
 | An app session lasts at most an hour and no longer than its realm session | Built in the sidecar; the handler has to give its token that lifetime |
-| A sign-out at the realm ends the person's sessions in the app, on a request the realm signed and addressed to the sidecar inside the cluster | Built; tests in the sidecar, against Keycloak 26.8.0, and against Docmost and OpenProject. Activepieces 0.28.0 cannot end a session and keeps the hour |
+| A sign-out at the realm ends the person's sessions in the app, on a request the realm signed and addressed to the sidecar inside the cluster | Built; tests in the sidecar, against Keycloak 26.8.0, and against Docmost and OpenProject. |
 | Who administers the app is read from the signed assertion alone; given and withdrawn at sign-in | Built; tests in the sidecar, against Keycloak 26.8.0, and against each of the three apps |
 
 **What remains weak.**
@@ -466,8 +466,7 @@ anybody in: the path makes no session.
 - **Within the hour, the app can show the previous person — where the sign-out did not end the
   session.** Anna signs out, Ben signs in at the same browser and opens a page of the app that is
   not an entry path: an app that still has Anna's session shows it. Docmost and OpenProject end
-  it when the realm tells the sidecar. It is left in three cases: Activepieces, whose handler
-  has nothing to end a session with; a sidecar that was not running at the moment the realm told
+  it when the realm tells the sidecar. It is left in two cases: a sidecar that was not running at the moment the realm told
   it, because the realm tells once; and a realm session that ran out without a sign-out. Opening
   the app from its tile goes through the sign-in and gives Ben his own.
 - **The sign-out request arrives over plain HTTP inside the cluster,** like the realm's
@@ -758,7 +757,7 @@ the code does.
 | `AppGrant` → tuples | **Not built** | A grant opens the network path of a contract and gives the consumer a key (§3.4). It does not reach the rights store: `app_grant_reconciler.go` records the object and writes no tuple, the model's `contract` type has no writer, and nothing asks about it |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | Implemented | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | Implemented | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](routing.md)) |
-| Sign-out reaching the apps | **Implemented where an app can be told; otherwise bounded by the app** | Sign-out ends the realm session and the edge's cookies. The realm then tells an app inside the cluster: an app with its own OIDC client at the path its profile declares (`backchannelLogout`), at an address the platform builds from the entry's own Service (`internal/apprender`); an app behind the sign-in sidecar through the sidecar's `/sso/logout` (`signin_sidecar.go`). Shown end to end for Nextcloud (`nextcloud-base-ce`), XWiki, Docmost and OpenProject. Not told, or told to no effect: Activepieces (an hour at most), Open WebUI, Element, Mathesar, Odoo, and `nextcloud-base-od` until it is shown — their sessions last as long as the app keeps them, though the front door refuses the person's next request. The realm tells once and not when a session only runs out (§2.15, [iam.md §1.12](iam.md)) |
+| Sign-out reaching the apps | **Implemented where an app can be told; otherwise bounded by the app** | Sign-out ends the realm session and the edge's cookies. The realm then tells an app inside the cluster: an app with its own OIDC client at the path its profile declares (`backchannelLogout`), at an address the platform builds from the entry's own Service (`internal/apprender`); an app behind the sign-in sidecar through the sidecar's `/sso/logout` (`signin_sidecar.go`). Shown end to end for Nextcloud (`nextcloud-base-ce`), XWiki, Docmost and OpenProject. Not told, or told to no effect: Open WebUI, Element, Mathesar, Odoo, and `nextcloud-base-od` until it is shown — their sessions last as long as the app keeps them, though the front door refuses the person's next request. The realm tells once and not when a session only runs out (§2.15, [iam.md §1.12](iam.md)) |
 | Identity headers to a backend, signed | **Target** | `x-gentian-*` are plain headers. What makes them the bouncer's word is that only the Gateway's Envoy pods reach the backend: a NetworkPolicy, and for the kernel side one that is off by default (§2.13). The same holds for a sign-in sidecar's `/sso/login` (§2.12) |
 | An app's own bearer token through the front door | Implemented, **on approval** | An entry that declares `clientAuthorization: app` keeps the header once the tenant's perimeter approver approved it; the session and the bouncer's check stay required and no platform token reaches the app (`approvedClientAuthorization`, `internal/bouncer`; [routing.md §4.1](routing.md)). Every other session route still drops it, but for two kernel consoles that keep theirs by the kernel's own rule: Keycloak's administration console, and the model gateway's where the claim switches it on (§2.9). A client with no browser session cannot use a session route at all: it needs a public entry of `authMode: app` |
 | The session's tokens stop at the edge: a backend gets its own cookies, the identity headers, and a bearer only where its exposure says `forwardToken` | Implemented | `internal/bouncer/cookies.go` rewrites the `Cookie` header without the edge's cookies on every allowed request of a session route; the names come from the route table ([routing.md §4.1](routing.md)) |
@@ -1997,7 +1996,7 @@ nowhere else (`tenant_apps_helm.go`). The role allows ConfigMaps, Secrets,
 Services, ServiceAccounts, PersistentVolumeClaims, Deployments,
 StatefulSets, Jobs, Ingresses, Roles and RoleBindings, and reads Pods and
 ReplicaSets for Helm's wait: what the catalog's tenant charts render
-(Activepieces, Docmost, Element's Synapse, Mathesar, Nextcloud and its MCP
+(Docmost, Element's Synapse, Mathesar, Nextcloud and its MCP
 server, Odoo, Open WebUI, OpenProject, XWiki). None renders anything at
 cluster scope or in another namespace. A chart's own Roles are held by
 escalation prevention to a subset of that role. So a tenant chart cannot
