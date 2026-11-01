@@ -170,6 +170,11 @@ verify: verify-gen lint validate-steps test test-unit
 
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
+# The documentation site, built as CI builds it; GENTIAN_APPS_DIR and
+# GENTIAN_UI_DIR name local checkouts of the other repositories (optional).
+docs-site:
+	cd site && npm ci --no-audit --no-fund && python3 prepare.py && npm run build
+
 lint-docs:
 	python3 scripts/lint/lint-docs.py
 
