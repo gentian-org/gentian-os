@@ -1144,7 +1144,7 @@ spec:
 
             {{- /* ── The director's identity at the vault: repository credentials ─
                  A catalogue may be an OCI artifact read with the credential
-                 of a repository its owner declared (docs/custom-catalogues.md
+                 of a repository its owner declared (docs/guides/custom-catalogs.md
                  §4.5), so the director reads that credential when it pulls
                  one. This is all it may read: the credential of a
                  repository, a tenant's or the cluster's, at the one path each
@@ -1883,7 +1883,7 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- /* ── The log forwarder (docs/design/audit-events.md §4) ─────────
+            {{- /* ── The log forwarder (docs/security/audit-events.md §4) ─────────
                  Vector as a DaemonSet in the observability namespace, while
                  the claim names a destination, and gone when it names none:
                  the Application's finalizer has Argo CD take the DaemonSet
@@ -2182,7 +2182,7 @@ spec:
               providerConfigRef:
                 name: kubernetes
             {{- end }}
-            {{- /* ── The platform's metrics and alerts (docs/design/audit-events.md §5) ──
+            {{- /* ── The platform's metrics and alerts (docs/security/audit-events.md §5) ──
                  kube-prometheus-stack in the observability namespace, while
                  the claim's monitoring.enabled says so, and gone when it does
                  not: a cluster that does not ask for it carries none of it.
@@ -2364,7 +2364,7 @@ spec:
                             {{- end }}
                           # The platform's rules on its own audit records, counted by the log
                           # forwarder (gentian_audit_records_total, by source, kind, outcome
-                          # and tenant) and on the forwarder itself (docs/design/audit-events.md
+                          # and tenant) and on the forwarder itself (docs/security/audit-events.md
                           # §5). Always present: the forwarder follows the claim through the
                           # Cluster Composition, and without it these series do not exist and
                           # no rule fires.

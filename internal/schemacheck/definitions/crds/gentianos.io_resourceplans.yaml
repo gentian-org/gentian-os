@@ -46,7 +46,7 @@ spec:
           it owns no namespace, workload or quota of its own: it exists so that a
           tenant's ceiling is chosen from a catalog rather than typed. Selecting one
           writes its quantities into that tenant's `spec.quotas` — see
-          docs/design/resource-plans.md.
+          docs/concepts/resource-plans.md.
 
           Why a catalog at all, when Tenant.spec.quotas already accepts any quantity:
           a quota that can be any number can be any number that was never sold. The

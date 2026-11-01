@@ -17,11 +17,11 @@ needs regardless of which apps run on it. It does **not** contain:
   (sidecar templates).
 - Proprietary profiles, or any private catalog: published by whoever maintains
   them, at an address a cluster or a tenant adds as a catalog
-  ([docs/custom-catalogues.md](docs/custom-catalogues.md)).
+  ([docs/guides/custom-catalogs.md](docs/guides/custom-catalogs.md)).
 - Any license gate. Editions (`ce · me · ie · pe · ee`) say who maintains and
   supports an app; the OS gates none of them. Whether a paid app arrives is
   decided at the repository it is pulled from, by the credential a tenant
-  holds for it ([docs/design/store-contract.md](docs/design/store-contract.md) §2).
+  holds for it ([docs/concepts/store-contract.md](docs/concepts/store-contract.md) §2).
 - Cluster-specific GitOps manifests (tenant instances, per-cluster config) — see
   [gentian-deployments](https://github.com/gentian-org/gentian-deployments).
 - The user interfaces (the desktop, the administration console, the App Store app, the
@@ -34,17 +34,16 @@ bootstrap via `install.sh`.
 
 ## Documentation
 
+[docs/index.md](docs/index.md) lists every document by section and audience.
+
 - [AGENTS.md](AGENTS.md) — repo rules for coding agents
-- [docs/architecture.md](docs/architecture.md) — system architecture overview
-- [docs/commands.md](docs/commands.md) — `kubectl gentian` commands
-- [docs/install-reference.md](docs/install-reference.md) — installer steps, flags and configuration
-- [docs/deployment.md](docs/deployment.md) — deployment model
-- [docs/custom-catalogues.md](docs/custom-catalogues.md) — publishing your own apps
-- [docs/app-customization.md](docs/app-customization.md) — customizing an installed app
-- [docs/security-principles.md](docs/security-principles.md) — the security rules
-- [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavor
-- [docs/faq.md](docs/faq.md) — frequently asked questions
-- [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)
+- [docs/overview/architecture.md](docs/overview/architecture.md) — system architecture overview
+- [docs/guides/](docs/guides/) — deployment, app customization, custom catalogs, identity brokering, backup and recovery, node-pool migration
+- [docs/reference/](docs/reference/) — the installer, the `kubectl gentian` commands, the store API
+- [docs/concepts/](docs/concepts/) — how each part is designed: kernel, control plane, multi-tenancy, routing, IAM, authorization, app catalog, versioning, mail, operations, ...
+- [docs/decisions/](docs/decisions/index.md) — the architectural decisions, AD-1 onward
+- [docs/security/](docs/security/) — the security principles, design, audit events and controls
+- [docs/releases/](docs/releases/) — release notes
 
 ## License
 

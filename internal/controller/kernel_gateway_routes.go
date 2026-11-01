@@ -614,7 +614,7 @@ func kernelHTTPRouteSpecs(
 	// system service has no public route, and nothing the platform does needs
 	// this one: apps and the desktop reach the gateway inside the cluster,
 	// and so does the operator. Tenants get no route of their own either way
-	// (docs/design/llms.md).
+	// (docs/concepts/llms.md).
 	//
 	// Only once the kernel zone exists, like the other consoles: before it
 	// there is no session to put the route behind, and a console that is not

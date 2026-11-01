@@ -45,7 +45,7 @@ import (
 // The operator's own role carries no permission on RBAC objects while the
 // platform's set is empty, and with an empty set nothing here asks the API
 // server for one. The permissions arrive with the first role, and the
-// permission to bind is held to the names of the set (docs/design/security.md
+// permission to bind is held to the names of the set (docs/security/design.md
 // says how a role is added).
 
 const (

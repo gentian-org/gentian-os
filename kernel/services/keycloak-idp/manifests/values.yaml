@@ -217,7 +217,7 @@ keycloakx:
     # The database connection is encrypted; CloudNativePG serves TLS.
     - name: KC_DB_URL_PROPERTIES
       value: "?sslmode=require"
-    # Audit events (docs/design/audit-events.md §3.2): every line as JSON, so
+    # Audit events (docs/security/audit-events.md §3.2): every line as JSON, so
     # a forwarder keeps fields rather than text, and the jboss-logging event
     # listener's success events at info, where they reach stdout at all. At
     # the default (debug) only errors were ever written.

@@ -17,7 +17,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// The platform's own mover: what "latest" means (docs/design/versioning.md
+// The platform's own mover: what "latest" means (docs/concepts/versioning.md
 // §4.1). Inside the cluster's window it moves apps in latest mode, and their
 // pinned add-ons, to the newest build their catalog offers, one tenant
 // first, the rest once that one's move has ended well. A move that is rolled back or fails holds every

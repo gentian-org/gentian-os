@@ -22,7 +22,7 @@ depths, and they must agree:
 |---|---|
 | [store-api.openapi.yaml](store-api.openapi.yaml) | The machine-readable definition (OpenAPI 3.1). **It wins**: where this document or the contract differs from it, the difference is a defect in the prose |
 | this document | The same definition in full, in prose, with annotated examples |
-| [store-contract.md](../../design/store-contract.md) | Why it is shaped this way: who trusts whom, and what the cluster does with each answer |
+| [store-contract.md](../../concepts/store-contract.md) | Why it is shaped this way: who trusts whom, and what the cluster does with each answer |
 
 The version of the definition is the `info.version` of the OpenAPI file. A
 field or operation added in a later minor version is marked with that
@@ -31,7 +31,7 @@ every answer as before.
 
 The report a cluster sends about itself, which a store depends on (§4), is a
 separate format: [usage-statistics.openapi.yaml](usage-statistics.openapi.yaml),
-spelled out in [operations.md §6.2](../../design/operations.md).
+spelled out in [operations.md §6.2](../../concepts/operations.md).
 
 ## 1. Ground rules
 
@@ -186,7 +186,7 @@ support request — carries a **partner
 assertion** as `Authorization: Bearer`. Browsing needs none.
 
 The store's realm is a partner of the tenant's realm (AD-17,
-[partners.md](../../design/partners.md)). For each
+[partners.md](../../concepts/partners.md)). For each
 call the App Store app makes one request to its own realm's token endpoint,
 OAuth 2.0 Token Exchange (RFC 8693), with the person's token as
 `subject_token`, `scope=partner-<name>` and its service account token as
@@ -259,7 +259,7 @@ cacheable for the `max-age` it states.
 | `mediaOrigins` | origin[] | yes | Where image URLs may point. The app fixes its content security policy from it |
 | `checkoutOrigins` | origin[] | yes | Where a `checkoutUrl` may point |
 | `features` | string[] | yes | Open. `reviews`, `reports`, `checkout` (an acquisition may answer `202`), `support` (apps carry support offers, and one may be requested; 1.3). Unknown values are ignored |
-| `catalogues` | `{name, url, displayName?}[]` | no | The catalog sources the store's entries come from. `name` is the first half of the coordinates from that source; `url` its https address (`index.yaml` and `profiles/` beneath it); `displayName` plain text ≤ 80. A cluster's installer adds each one the cluster has no source of that name for, and changes or removes none ([store-contract.md](../../design/store-contract.md) §9). Added in 1.5 |
+| `catalogues` | `{name, url, displayName?}[]` | no | The catalog sources the store's entries come from. `name` is the first half of the coordinates from that source; `url` its https address (`index.yaml` and `profiles/` beneath it); `displayName` plain text ≤ 80. A cluster's installer adds each one the cluster has no source of that name for, and changes or removes none ([store-contract.md](../../concepts/store-contract.md) §9). Added in 1.5 |
 | `links` | object | no | `terms`, `privacy`, `support`, `account`: pages of the store's, each a URL |
 
 ## 4. Tenant standing
@@ -1019,7 +1019,7 @@ there, because the readable part alone is ambiguous — tenant `a-b` with
 `oci://c.example` and tenant `a` with `oci://b.c.example` both read
 `a-b-c-example`, and are `a-b-c-example-559df09f` and
 `a-b-c-example-67520272`. Why 40, and what the cluster derives from the
-name, is in [store-contract.md](../../design/store-contract.md) §6.4.
+name, is in [store-contract.md](../../concepts/store-contract.md) §6.4.
 
 **What the App Store app does with it**, in this order, each step under the
 signed-in person's own cluster token and the cluster's own checks:

@@ -49,7 +49,7 @@ var dropInFileNamePattern = regexp.MustCompile(`^9[0-9]-[a-zA-Z0-9._-]+$`)
 // ensureTenantDropIns materializes tenant-authored L1 drop-in content into
 // ConfigMaps in the tenant namespace, one per (profile, drop-in) pair.
 //
-// This is rung L1 at tenant scope (see docs/app-customization.md §2.2.1): the
+// This is rung L1 at tenant scope (see docs/guides/app-customization.md §2.2.1): the
 // highest rung a tenant admin may reach unaided. A tenant may supply content —
 // a logo, a locale bundle, a config fragment — into a directory the ComponentProfile
 // has explicitly declared as tenantEditable. It may not introduce code, invent

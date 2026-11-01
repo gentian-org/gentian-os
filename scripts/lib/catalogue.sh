@@ -760,7 +760,7 @@ preview_default_profiles() {
 }
 
 # =============================================================================
-# The store's catalogs (store API 1.5, docs/design/store-contract.md §9).
+# The store's catalogs (store API 1.5, docs/concepts/store-contract.md §9).
 #
 # A store lists in GET /v1/meta the catalog sources its entries come from.
 # An app bought there is installed from the catalog its coordinate names,

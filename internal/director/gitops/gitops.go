@@ -73,7 +73,7 @@ type GitOps struct {
 }
 
 // AuditTo has every commit this helper pushes written as an audit record on
-// log (docs/design/audit-events.md §3): who, under which request and which
+// log (docs/security/audit-events.md §3): who, under which request and which
 // decision, which commit and which files.
 func (g *GitOps) AuditTo(log *slog.Logger) {
 	g.auditLog = log
@@ -403,7 +403,7 @@ func (g *GitOps) tenantFileWithin(ctx context.Context, tenant string, maxAge tim
 
 	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/).
 	// No stage segment: a cluster has exactly one stage for its whole lifetime
-	// (docs/deployment.md §1), so encoding it again under this cluster's own
+	// (docs/guides/deployment.md §1), so encoding it again under this cluster's own
 	// tenants/ tree would be redundant.
 	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, "tenant.yaml")
 	if _, err := os.Stat(preferred); err == nil {
@@ -618,7 +618,7 @@ func (g *GitOps) InstallFrom(
 // RetryMove asks again for a move the platform rolled back or could not
 // start: the app stays pinned to digest, and its entry records a fresh move
 // (movedAt, movedBy), which is what the operator takes as a request to try
-// once more (docs/design/versioning.md §5). Whether the last move to digest
+// once more (docs/concepts/versioning.md §5). Whether the last move to digest
 // did end badly is the caller's to have read from the cluster; this only
 // refuses an entry that is not pinned to digest, so a retry can never move a
 // pin. The status is "retried".

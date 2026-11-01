@@ -594,7 +594,7 @@ data:
 # Proven outside a cluster, against this image and HAProxy: mail on 25 with
 # STARTTLS and authenticated submission on 587 through the proxy are logged
 # with the client's address, and a connection to either port without the
-# header gets no greeting (make test-mail-edge-lab; docs/design/mail.md §9b).
+# header gets no greeting (make test-mail-edge-lab; docs/concepts/mail.md §9b).
 apiVersion: v1
 kind: ConfigMap
 metadata:

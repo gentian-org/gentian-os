@@ -472,7 +472,7 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # them out of the scaffold; the OS installs and runs the same either way.
 GENTIAN_DISABLE_API_EXTENSIONS="${GENTIAN_DISABLE_API_EXTENSIONS:-0}"
 # A vanilla installation reports what it runs to the usage statistics report address,
-# once a day (docs/design/operations.md). 1 turns that off: nothing is sent,
+# once a day (docs/concepts/operations.md). 1 turns that off: nothing is sent,
 # and the App Store is not offered. The address itself is the bootstrap
 # chart's default (kernel/bootstrap/chart/values.yaml) unless
 # GENTIAN_USAGE_STATISTICS_URL names another.
@@ -707,7 +707,7 @@ validate_config() {
             echo "  [MISSING]  KERNEL_DOMAIN  — platform-wide DNS suffix; not resolvable from claims/cluster.yaml (cluster not bootstrapped yet) and GENTIAN_NONINTERACTIVE=1 (export KERNEL_DOMAIN or set it in ${INSTALL_CONFIG_FILE})"
             (( errors++ )) || true
         else
-            echo "  [PENDING]  KERNEL_DOMAIN  — not yet bootstrapped; no claims/cluster.yaml for this cluster yet. Will be prompted for interactively during install (see gentian-os/docs/deployment.md §1)."
+            echo "  [PENDING]  KERNEL_DOMAIN  — not yet bootstrapped; no claims/cluster.yaml for this cluster yet. Will be prompted for interactively during install (see gentian-os/docs/guides/deployment.md §1)."
         fi
     elif [[ ! "${KERNEL_DOMAIN}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
         echo "  [INVALID]  KERNEL_DOMAIN=${KERNEL_DOMAIN}  — must match ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\$"
@@ -1216,7 +1216,7 @@ load_deployments_cluster_settings() {
 # Prompt for the cluster's kernel domain (the single platform-wide domain on
 # which all kernel UIs — Keycloak, Gentian portal, and Argo CD — are served, and
 # which tenant app zones are derived from
-# (shape depends on TENANCY_MODE — see docs/design/multi-tenancy.md §3).
+# (shape depends on TENANCY_MODE — see docs/concepts/multi-tenancy.md §3).
 #
 # Persisted via cluster-settings.env in gentian-deployments when set there;
 # prompts only run when the value is still missing after load_deployments_cluster_settings.
@@ -1416,7 +1416,7 @@ prompt_mail_mode() {
             echo ""
             info "  The name outbound mail leaves from, e.g. mail-egress.${KERNEL_DOMAIN:-example.com}."
             info "  It needs a floating IP of your own attached to one node, with its"
-            info "  reverse DNS set to this name — docs/design/mail.md §9c says how."
+            info "  reverse DNS set to this name — docs/concepts/mail.md §9c says how."
             info "  Blank sends from the provider's shared address: most receivers"
             info "  then treat the cluster's mail as spam."
             while true; do
@@ -1737,7 +1737,7 @@ _prompt_node_ip() {
 #     KERNEL_DOMAIN's zone. Used to solve DNS-01 ACME challenges for the
 #     kernel wildcard *.${KERNEL_DOMAIN} (platform UIs only). Tenant apps
 #     use per-tenant DNS-01 wildcards via TENANT_DNS01_CLUSTER_ISSUER.
-#     Optional — see docs/design/multi-tenancy.md §3.
+#     Optional — see docs/concepts/multi-tenancy.md §3.
 #
 # Declared in credentials.yaml as acme-dns-cloudflare; collected and validated
 # by collect_bootstrap_credentials. Never written to local disk.
@@ -2262,7 +2262,7 @@ check_prereqs() {
 #
 # Only for a cluster that runs its own mail and names mail.egressHost. Two
 # things have to be true, and both are made true at the provider, outside
-# anything this repository applies (docs/design/mail.md §9c):
+# anything this repository applies (docs/concepts/mail.md §9c):
 #
 #   - exactly one node reports an ExternalIP: the floating IP attached to that
 #     node's port, which is the address its pods then leave from. The operator
@@ -2298,7 +2298,7 @@ check_mail_egress() {
     if [[ -z "${host}" ]]; then
         warn "mail.egressHost is not set: outbound mail leaves from the provider's shared address,"
         warn "  whose reverse DNS is not yours. Most receivers will treat it as spam."
-        warn "  docs/design/mail.md §9c says what a sending address of your own takes."
+        warn "  docs/concepts/mail.md §9c says what a sending address of your own takes."
         return 0
     fi
 
@@ -2310,7 +2310,7 @@ check_mail_egress() {
     if [[ "${count}" == "0" ]]; then
         error "mail.egressHost is ${host}, and no node reports an external address."
         error "  Outbound mail leaves from a floating IP attached to one node. Attach it"
-        error "  (docs/design/mail.md §9c) and run this again once kubectl get nodes -o wide"
+        error "  (docs/concepts/mail.md §9c) and run this again once kubectl get nodes -o wide"
         error "  shows it as that node's EXTERNAL-IP."
         error "  Without it Postfix has no node it may run on, and the install would wait"
         error "  for the tenant's mail until it timed out."
@@ -2331,7 +2331,7 @@ check_mail_egress() {
     if [[ "$(printf '%s' "${reverse}" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')" ]]; then
         error "mail.egressHost is ${host}, and ${addrs} resolves back to ${reverse:-nothing}."
         error "  Set the reverse DNS (PTR) of ${addrs} to ${host} at the provider that"
-        error "  hands the address out (docs/design/mail.md §9c), and run this again."
+        error "  hands the address out (docs/concepts/mail.md §9c), and run this again."
         error "  Receivers check it, and bin mail from an address that says otherwise."
         return 1
     fi

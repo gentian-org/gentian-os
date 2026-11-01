@@ -31,7 +31,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// Partners (Tenant spec.partners, docs/identity-brokering.md,
+// Partners (Tenant spec.partners, docs/guides/identity-brokering.md,
 // AD-17): realms of other clusters a tenant's realm links its people's
 // accounts with. The operator decides which entries reach the composite --
 // the tenant's own and the Cluster claim's defaults, within the claim's

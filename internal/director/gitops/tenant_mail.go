@@ -32,7 +32,7 @@ var MailModes = []string{
 
 // SetTenantMailMode writes spec.mail.mode into the tenant's manifest: one
 // commit, or "unchanged" where it says so already. What the mode means is
-// the operator's (docs/design/mail.md §2); the director only puts the word
+// the operator's (docs/concepts/mail.md §2); the director only puts the word
 // where the operator reads it. A tenant that names no mode gets the cluster's
 // default, so a mode is written rather than removed: the manifest then says
 // what was decided.

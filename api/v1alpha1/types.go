@@ -37,7 +37,7 @@ const (
 	// MailModeSelfhosted registers the tenant in the SHARED kernel Postfix and
 	// Dovecot — one stack per cluster, tenant-scoped by domain and maildir path.
 	// It does not deploy anything per tenant; whether Dovecot exists at all is
-	// the cluster's mail.serviceMode, not this field. See docs/design/mail.md §8.
+	// the cluster's mail.serviceMode, not this field. See docs/concepts/mail.md §8.
 	MailModeSelfhosted MailMode = "selfhosted"
 	// MailModeExternal relays through the tenant's own provider, whose credentials
 	// it supplies as spec.mail.smtpCredentialsSecret. Required for this mode.

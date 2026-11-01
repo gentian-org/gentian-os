@@ -30,7 +30,7 @@ import (
 // just what was changed but why nothing cheaper would do, whether upstream was
 // offered the change, and when the deviation should be reconsidered.
 //
-// See docs/app-customization.md §5.
+// See docs/guides/app-customization.md §5.
 
 // CustomizationScope is the blast radius of a customization. It is independent
 // of the rung: both are minimized separately.

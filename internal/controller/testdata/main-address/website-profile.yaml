@@ -4,7 +4,7 @@
 #
 # apex: true is the author saying "this surface is a website for the bare
 # domain". It publishes nothing. The tenant's perimeter approver publishes
-# it, and has to say apex too (docs/app-customization.md).
+# it, and has to say apex too (docs/guides/app-customization.md).
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:

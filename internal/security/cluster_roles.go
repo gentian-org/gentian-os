@@ -35,7 +35,7 @@ type ClusterRoleSet map[string]string
 
 // PlatformClusterRoles is the set this build of the platform ships. Empty: no
 // profile of the catalog asks for a cluster role, so there is none to
-// define yet. docs/design/security.md says how one is added.
+// define yet. docs/security/design.md says how one is added.
 var PlatformClusterRoles = ClusterRoleSet{}
 
 // ClusterRoleObjectPrefix starts the name of every ClusterRole of the set, so

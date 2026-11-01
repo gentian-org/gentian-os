@@ -15,4 +15,4 @@ anything.
 To move the version: `helm pull keycloakx --repo <source> --version <v>
 --untar`, replace the directory, update this table and `keycloakx.image.tag`
 in `values.yaml` if the image moves with it (the chart trails Keycloak; see
-docs/design/iam.md §1.10).
+docs/concepts/iam.md §1.10).

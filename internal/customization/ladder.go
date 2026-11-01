@@ -14,7 +14,7 @@ SPDX-License-Identifier: MPL-2.0
 //
 // The package is deliberately app-neutral. It knows about rungs and scopes, never
 // about individual catalog entries — per-app behavior comes from the
-// ComponentProfile's declared customization surface. See docs/app-customization.md.
+// ComponentProfile's declared customization surface. See docs/guides/app-customization.md.
 package customization
 
 import (

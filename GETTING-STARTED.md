@@ -19,7 +19,7 @@ console asks for. It sees the sign-in, finishes handover itself, and prints
 
 For flags, troubleshooting and the non-default installs — internal domains,
 mirrors, uninstalling — see
-[docs/install-reference.md](docs/install-reference.md).
+[docs/reference/install.md](docs/reference/install.md).
 
 The steps, in the order you do them:
 
@@ -187,7 +187,7 @@ until it is done.
     (on MicroK8s the add-on `metallb`, given that address), or the cloud's
     load balancer. The platform's own mail needs this mode, and a few
     things at your provider before you install: an address to send from, its
-    reverse DNS, outbound port 25. [mail.md §9c](docs/design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)
+    reverse DNS, outbound port 25. [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)
     has the list. Skip it if the cluster relays its mail.
 - **A token with write access to `gentian-deployments`.** The installer pushes
   this cluster's definition with it, and the director on the cluster pushes
@@ -221,7 +221,7 @@ them quietly gives you the earlier cluster instead of the one you mean:
    without the profile. Delete the line; unset, step 0 places the Operations
    Console from the catalog `GENTIAN_STORE_CATALOGUE_URL` names, only if the file hashes to the
    digest that catalog's index lists
-   ([install-reference.md §4](docs/install-reference.md)).
+   ([reference/install.md §4](docs/reference/install.md)).
 4. **The cluster's definition in the deployments repository.** If
    `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
    nothing: the domain, the tenancy mode, the catalog and the store are the
@@ -250,7 +250,7 @@ them quietly gives you the earlier cluster instead of the one you mean:
    writing anything: run `./install.sh --recover <kit>` there first, or
    install from the machine that has the key. Only when the key is lost for
    good, `./install.sh --rotate-break-glass-key` records a new one
-   ([install-reference.md §9](docs/install-reference.md)).
+   ([reference/install.md §9](docs/reference/install.md)).
 
 ---
 
@@ -353,7 +353,7 @@ or `self-signed` (internal domains) at the issuer question in step 4 if you do
 not want to supply one. On a tunnel cluster the installer asks for the tunnel
 token as well. One Cloudflare token may hold both permissions; it is then
 entered twice, once at each question — see
-[design/routing.md](docs/design/routing.md) §3a for what to grant it.
+[routing.md](docs/concepts/routing.md) §3a for what to grant it.
 
 If a value is rejected, the installer names where it came from and asks for a
 replacement rather than aborting.
@@ -375,18 +375,18 @@ one. Every question shows its default; Enter takes it.
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). Not asked on a tunnel cluster, which is always `external`. A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
-| `mail.egressHost` | unset | `system` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/design/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
+| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). Not asked on a tunnel cluster, which is always `external`. A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
+| `mail.egressHost` | unset | `system` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
 | `mail.host` | unset | `external` mode: the relay's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
 | `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `desktop.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`desktop.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
 | Second factor for the platform admin | `true` | The platform admin should activate the account without enrolling one |
-| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password: with `random`, the credentials the platform generates, the kernel's and each app's, are drawn at random and kept only in OpenBao; two kernel credentials stay derived. An app's own secrets are carried in the tenant's backups, encrypted, so that restored data stays readable. Choose it at the first install; a later change leaves every existing credential as it is. Tenant backups work the same in both modes, but nothing backs up OpenBao: if its storage is lost on a `random` cluster, every service and app is locked out of its store, so such a cluster has to snapshot OpenBao itself ([security.md §6](docs/design/security.md)) |
+| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password: with `random`, the credentials the platform generates, the kernel's and each app's, are drawn at random and kept only in OpenBao; two kernel credentials stay derived. An app's own secrets are carried in the tenant's backups, encrypted, so that restored data stays readable. Choose it at the first install; a later change leaves every existing credential as it is. Tenant backups work the same in both modes, but nothing backs up OpenBao: if its storage is lost on a `random` cluster, every service and app is locked out of its store, so such a cluster has to snapshot OpenBao itself ([security/design.md §6](docs/security/design.md)) |
 | `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
 | `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
 | `llm.console.enabled` | `false` | Not asked; set it in the claim. Platform administrators should have the model gateway's own console at `llm.<kernel-domain>`. Off, there is no such address and the gateway is reached from inside the cluster only. A cluster installed before this setting existed has it off after its next run, and the install says so |
-| `llm.providers`, `llm.instances` | none | Not asked; set them in the claim. The models the gateway offers: external OpenAI-compatible providers' models, and the models a cluster with GPUs serves itself. A commit to the claim changes the gateway's model list, with no run of the install. A provider's token is a credential, entered in the administration console; it appears there with the run after the claim first names the provider. An instance is offered by the gateway and not started by the platform ([install-reference.md](docs/install-reference.md), [llms.md](docs/design/llms.md)) |
+| `llm.providers`, `llm.instances` | none | Not asked; set them in the claim. The models the gateway offers: external OpenAI-compatible providers' models, and the models a cluster with GPUs serves itself. A commit to the claim changes the gateway's model list, with no run of the install. A provider's token is a credential, entered in the administration console; it appears there with the run after the claim first names the provider. An instance is offered by the gateway and not started by the platform ([reference/install.md](docs/reference/install.md), [llms.md](docs/concepts/llms.md)) |
 
 Two common installs answer like this; everything not listed takes its
 default:
@@ -648,7 +648,7 @@ asked for (`tenancyMode` on the Cluster claim).
 
 | | Multi-tenancy (`multi`, the default) | Single-tenancy (`single`) |
 |---|---|---|
-| Tenants for users | any number; you create them. One may be a tenant people sign up to themselves (`--self-sign-up`, for customers of apps that serve the public: [commands.md](docs/commands.md)) | exactly one, named `user`; the install creates it (step 5) |
+| Tenants for users | any number; you create them. One may be a tenant people sign up to themselves (`--self-sign-up`, for customers of apps that serve the public: [commands.md](docs/reference/commands.md)) | exactly one, named `user`; the install creates it (step 5) |
 | Its desktop | `https://desktop.<tenant>.<kernel-domain>/` | `https://desktop.<kernel-domain>/` |
 | Its admin console and apps | `admin.<tenant>.<kernel-domain>`, `<app>.<tenant>.<kernel-domain>` | `admin.<kernel-domain>`, `<app>.<kernel-domain>` |
 | In charge of it | a **tenant admin**, `admin@<tenant>.<kernel-domain>` | the **user admin**, `user-admin@<kernel-domain>` |
@@ -761,7 +761,7 @@ It never changes or removes a source: a name you have at another address is
 kept and warned about, and one the store stops listing stays until you remove
 it. A store that does not answer is a warning. This trusts the store's list
 of addresses; every bundle is still held to the digest of its install
-([docs/custom-catalogues.md](docs/custom-catalogues.md) §1).
+([docs/guides/custom-catalogs.md](docs/guides/custom-catalogs.md) §1).
 
 **When the tile is missing, or the App Store lists nothing**, check in this
 order:
@@ -818,11 +818,11 @@ kubectl gentian apps list --tenant acme                       # what the tenant 
 ```
 
 `install` takes the entry from a catalog the tenant sees and pins it to the
-digest that catalog lists; see [docs/commands.md](docs/commands.md) §6 for
+digest that catalog lists; see [docs/reference/commands.md](docs/reference/commands.md) §6 for
 `--from` and `--digest`. A new cluster has one catalog, `gentian`, for every
 tenant: the released one when the cluster is installed from a release, the
 development one (`…/gentian-apps/develop`) when it is installed from a branch
-([docs/custom-catalogues.md](docs/custom-catalogues.md) §3). To offer your own apps, publish a catalog and add it for the cluster
+([docs/guides/custom-catalogs.md](docs/guides/custom-catalogs.md) §3). To offer your own apps, publish a catalog and add it for the cluster
 or for one tenant:
 
 ```bash
@@ -842,7 +842,7 @@ A catalog for the whole cluster can also be declared before the install,
 as one more entry under `spec.catalogue.sources` in `claims/cluster.yaml`
 (a `name`, and an https `url` or an `oci` artifact with its `repository`).
 
-[docs/custom-catalogues.md](docs/custom-catalogues.md) explains how to build
+[docs/guides/custom-catalogs.md](docs/guides/custom-catalogs.md) explains how to build
 one, step by step.
 
 To remove a tenant, `kubectl gentian tenants retire acme` (or **Retire** in the
@@ -907,14 +907,14 @@ differs is listed here, in the order you meet it.
    tenant whose directory is already there.
 3. **Make your profiles a catalog.** A catalog is `index.yaml` and
    `profiles/<name>.yaml`, as
-   [docs/custom-catalogues.md](docs/custom-catalogues.md) §4 describes, with
+   [docs/guides/custom-catalogs.md](docs/guides/custom-catalogs.md) §4 describes, with
    the index generated by `scripts/tools/build-catalogue-index.py`. A cluster
    reads one from two places and from nowhere else:
 
    - *An OCI artifact*, for profiles that must not be public: the same files
      packed into one layer and pushed to a registry, read with the
      credential of a repository declared for the tenant (5)
-     ([custom-catalogues.md §4.4](docs/custom-catalogues.md)). Never a
+     ([custom-catalogs.md §4.4](docs/guides/custom-catalogs.md)). Never a
      directory of the deployments repository, which holds the cluster's
      state only.
    - *A public https address*, without a login and without a redirect. The
@@ -941,7 +941,7 @@ differs is listed here, in the order you meet it.
 5. **Let the tenant pull your private charts and images.** Declare the
    registry for the tenant and set its password, once: **Credentials** →
    *Add a repository* in the tenant's admin console
-   ([docs/custom-catalogues.md](docs/custom-catalogues.md) §8). A chart whose
+   ([docs/guides/custom-catalogs.md](docs/guides/custom-catalogs.md) §8). A chart whose
    address lies inside the declared registry is then pulled with it. Without
    this the install is committed and the app never arrives.
 6. **Install the service:**
@@ -986,7 +986,7 @@ differs is listed here, in the order you meet it.
    ```
 
    Publishing the entry is two commands, for whoever may publish in the
-   tenant ([docs/app-customization.md](docs/app-customization.md) §2.10).
+   tenant ([docs/guides/app-customization.md](docs/guides/app-customization.md) §2.10).
    That is the platform admin, in every tenant the cluster operates, and the
    perimeter approvers the platform admin names on the Cluster claim: an
    administrator of the tenant, for that tenant, or a person of the platform
@@ -1058,7 +1058,7 @@ instead of the prompt:
 The kernel namespaces' NetworkPolicies are on by default, and step `A-01`
 refuses a cluster whose CNI does not enforce them. They restrict what may
 connect into a kernel namespace and nothing a pod connects out to
-([install-reference.md §9](docs/install-reference.md)).
+([reference/install.md §9](docs/reference/install.md)).
 
 Step 0's questions take their defaults unattended, and an environment value
 answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
@@ -1135,7 +1135,7 @@ settings it loaded, and says what to do: usually open a new terminal, or
 `unset` what it lists, or `kubectl config use-context <context>`.
 `--dry-run`, `--validate` and `--status` report the same and exit 1.
 `--force` does not get past any of it. The checks and the two confirmations
-are in [install-reference.md §4](docs/install-reference.md), *One run, one
+are in [reference/install.md §4](docs/reference/install.md), *One run, one
 cluster*.
 
 ### Exporting a recovery kit from a job
@@ -1157,7 +1157,7 @@ Store — no personal data. `./install.sh --no-usage-statistics` (or
 sent, and there are no extra services: no App Store, Operations Console or
 Aluvian Center (as with `--no-extra-services`) — for people who manage
 their own cluster at their own risk. What is sent, and where to read the
-last report, is in [docs/design/operations.md §6.2](docs/design/operations.md).
+last report, is in [docs/concepts/operations.md §6.2](docs/concepts/operations.md).
 
 ### Which Crossplane resource types exist
 
@@ -1172,7 +1172,7 @@ If a fresh install stops in `B-05` naming a type that did not appear, or a
 composite waits on a kind the API server does not know, set
 `CROSSPLANE_ACTIVATE_ALL=true` in `install.env` and run the installer again:
 that installs every type. The list, and how to add a
-type to it, are in [docs/install-reference.md §4](docs/install-reference.md).
+type to it, are in [docs/reference/install.md §4](docs/reference/install.md).
 
 ### Running one step, or stopping early
 
@@ -1194,15 +1194,15 @@ what is already done, so convergence and update are the same operation.
 ## Next steps
 
 - **Add more tenants** (multi-tenancy) — repeat step 7. Day-to-day operations
-  are in [docs/commands.md](docs/commands.md).
-- **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
+  are in [docs/reference/commands.md](docs/reference/commands.md).
+- **Configure mail** — [docs/concepts/mail.md](docs/concepts/mail.md). Mail between
   users of this cluster works once the cluster's own mail stack is deployed
   (`mail.serviceMode: system`). Mail to and from the internet arrives on the
   load balancer of the mail edge in `system-mail-dmz` — a proxy that passes
   ports 25, 587 and 993 on to Postfix and Dovecot with TLS untouched,
-  [§9b](docs/design/mail.md#9b-the-mail-edge) — and additionally needs the MX,
+  [§9b](docs/concepts/mail.md#9b-the-mail-edge) — and additionally needs the MX,
   SPF, DKIM, DMARC and PTR records described in
-  [§10 DNS for real mail](docs/design/mail.md#10-dns-for-real-mail) — including
+  [§10 DNS for real mail](docs/concepts/mail.md#10-dns-for-real-mail) — including
   the Cloudflare rule that MX records must stay DNS-only, never proxied. With
   a DNS provider the cluster publishes `mail.<kernel-domain>` and
   `imap.<kernel-domain>` from that load balancer's address, and the MX, SPF,
@@ -1210,9 +1210,9 @@ what is already done, so convergence and update are the same operation.
 - **Change this cluster's configuration** — edit `claims/cluster.yaml` in your
   deployments checkout and run `./install.sh`: step 0 commits the edit signed
   and pushes it, and the cluster reconciles.
-  [docs/deployment.md](docs/deployment.md) explains the layering.
-- **Understand the architecture** — [docs/architecture.md](docs/architecture.md)
-  and [docs/design/kernel.md](docs/design/kernel.md).
+  [docs/guides/deployment.md](docs/guides/deployment.md) explains the layering.
+- **Understand the architecture** — [docs/overview/architecture.md](docs/overview/architecture.md)
+  and [docs/concepts/kernel.md](docs/concepts/kernel.md).
 - **Back up the data** — the recovery kit covers credentials, not
   databases or object storage.
 

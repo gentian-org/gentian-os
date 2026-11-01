@@ -255,7 +255,7 @@ func TestEntriesWithNoHostOfTheirOwnAreNotAsked(t *testing.T) {
 	}
 }
 
-// docsTable is the table docs/design/routing.md carries, row for row.
+// docsTable is the table docs/concepts/routing.md carries, row for row.
 func docsTable(tier []Reserved, owners bool) []string {
 	rows := make([]string, 0, len(tier))
 	for _, r := range tier {

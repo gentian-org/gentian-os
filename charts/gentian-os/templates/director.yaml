@@ -285,7 +285,7 @@ spec:
             {{- if .Values.openbao.address }}
             # The vault, for one thing: the credential of a repository a
             # catalog kept as an OCI artifact is read with
-            # (docs/custom-catalogues.md §4.5). The director logs in as
+            # (docs/guides/custom-catalogs.md §4.5). The director logs in as
             # itself, with a token issued for the vault's audience alone, to
             # a role that reads repository credentials and nothing else
             # (cluster-default, director-repository-read).

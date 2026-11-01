@@ -19,7 +19,7 @@ info:
     minutes after its operator starts and one every 24 hours after that.
     This file is the format of that request, for whoever receives it. It
     describes what the cluster already does (`internal/usagestatistics`,
-    `docs/design/operations.md` §6.2); it changes nothing about it. Where
+    `docs/concepts/operations.md` §6.2); it changes nothing about it. Where
     this file and the code disagree, the code is what clusters send and
     this file is the defect.
 

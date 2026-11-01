@@ -156,7 +156,7 @@ spec:
                       Each entry must name a declared, tenantEditable drop-in; filenames are
                       restricted to the 90-99 range so platform and profile files keep priority.
                       Content lands in a ConfigMap and is therefore not secret material.
-                      See docs/app-customization.md §2.2.1.
+                      See docs/guides/app-customization.md §2.2.1.
                     items:
                       description: TenantAppDropIn is tenant-authored content for
                         one declared drop-in directory.

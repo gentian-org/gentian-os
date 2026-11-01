@@ -125,7 +125,7 @@ namespaceTier:
   # DeploymentRuntimeConfig pins (crossplane/providers/providers.yaml).
   providerKubernetesServiceAccount: provider-kubernetes
 
-# The usage statistics report (docs/design/operations.md): once a day the operator
+# The usage statistics report (docs/concepts/operations.md): once a day the operator
 # tells an address what this cluster runs -- its tenants, counts of accounts,
 # and the apps installed through the App Store. No personal data, and nothing
 # on the cluster depends on the answer.

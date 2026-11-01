@@ -8,7 +8,7 @@ stage: dev
 
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. example.domain).
 # Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
-# Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
+# Plumbed as KERNEL_DOMAIN. See docs/concepts/multi-tenancy.md §3.
 kernelDomain: ""
 
 # tenancyMode is who the cluster is for, and with it where a user tenant's hosts are
@@ -346,7 +346,7 @@ usher:
 # ${MYSQL_HOST}, ${REDIS_HOST}, ${SMTP_HOST} and ${TURN_*} were, and each handed
 # an app a hostname with nothing to authenticate with — an app declares
 # requires.services and maps its own chart keys instead (P9 in
-# docs/app-customization.md). The values below are still read by the operator
+# docs/guides/app-customization.md). The values below are still read by the operator
 # and by compositions; they are simply no longer expanded into app values.
 #   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path), for apps whose
 #                           server-side OIDC calls (token/userinfo/JWKS) must not
@@ -840,7 +840,7 @@ grafana:
 #
 # Off and with no address by default: this chart and the operator build and
 # run without one, and then nothing is sent, ever. The installer is what turns
-# it on and names an address (docs/design/operations.md). Off also withholds
+# it on and names an address (docs/concepts/operations.md). Off also withholds
 # the App Store, whose installs are what the report lists.
 usageStatistics:
   enabled: false

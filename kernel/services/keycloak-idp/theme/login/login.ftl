@@ -54,7 +54,7 @@
 
       <#-- The identity providers an administrator added to this realm and
            left visible: another realm, or another cluster, whose people
-           sign in here with their own account (docs/identity-brokering.md).
+           sign in here with their own account (docs/guides/identity-brokering.md).
            Keycloak lists only those not set to "Hide on login page", which
            is how the platform's own brokers (the kernel realm, vouching)
            stay off this page. -->

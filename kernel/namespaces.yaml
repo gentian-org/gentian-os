@@ -48,7 +48,7 @@ kernel:
 # One namespace per engine, named by the function a component's
 # requires.services entry asks for — quotas, backup policies and future
 # managed-service claims differ per engine, and separating stateful services
-# after the fact is a data migration (docs/design/kernel.md §6.2).
+# after the fact is a data migration (docs/concepts/kernel.md §6.2).
 #
 # Composed from the Cluster claim, not created by the installer: WHICH of
 # these a cluster runs depends on what the claim declares, and the installer

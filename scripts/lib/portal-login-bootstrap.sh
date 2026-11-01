@@ -1596,7 +1596,7 @@ ${refresh_shell}
                 # live in separate per-tenant realms), so a flat hardcoded
                 # litellm_role=proxy_admin claim is safe for now — LLM admin
                 # stays a platform-admin-only capability until per-tenant access
-                # is designed (see docs/design/llms.md).
+                # is designed (see docs/concepts/llms.md).
                 LITELLM_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=litellm-dashboard" \\
                   | jq -r '.[0].id // empty')

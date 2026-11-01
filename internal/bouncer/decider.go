@@ -216,7 +216,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	return dec
 }
 
-// record writes the decision's audit line (docs/design/audit-events.md §3):
+// record writes the decision's audit line (docs/security/audit-events.md §3):
 // every allow and every refusal, the reason as a code and not as the text a
 // refusal carries, which can quote a verifier's error.
 func (d *Decider) record(ctx context.Context, req Request, dec Decision) {

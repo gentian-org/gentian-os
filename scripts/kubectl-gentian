@@ -1539,7 +1539,7 @@ cmd_settings() {
 }
 
 # tenants mail-mode: what the operator provisions for a tenant's mail
-# (docs/design/mail.md §2). A name alone shows what git declares; with a mode
+# (docs/concepts/mail.md §2). A name alone shows what git declares; with a mode
 # it is one commit. The decision that matters most is disabled for a tenant on
 # a domain of its own whose mail is elsewhere: on a cluster with its own mail
 # the operator otherwise publishes MX records for that domain, over the ones

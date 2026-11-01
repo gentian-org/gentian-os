@@ -466,7 +466,7 @@ if [ "${SECRET_MODE}" = "random" ]; then
     _kept=$(_llm_kept litellm_ui_password);    [ -n "${_kept}" ] && LITELLM_UI_PASSWORD="${_kept}"
     unset _llm_read _llm_have _kept
 fi
-# Admin console SSO (platform-admin only; see docs/design/llms.md and the
+# Admin console SSO (platform-admin only; see docs/concepts/llms.md and the
 # litellm-dashboard Keycloak client provisioned by portal-login-bootstrap.sh).
 LITELLM_PROXY_BASE_URL="https://llm.${KERNEL_DOMAIN}"
 LITELLM_SSO_AUTH_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/auth"
