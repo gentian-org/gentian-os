@@ -25,6 +25,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      # Named, not left out: a live install upgrading from the Bitnami chart
+      # keeps its service account otherwise, through the deprecated
+      # serviceAccount field, and that account is gone with the old chart.
+      serviceAccountName: default
       automountServiceAccountToken: false
       {{- with $global.imagePullSecrets }}
       imagePullSecrets:

@@ -5,7 +5,7 @@ type: application
 # Version 19 replaced the vendored Bitnami chart. The name, the release and
 # every object a live install holds stayed: a StatefulSet's selector, service
 # name and volume claim cannot be changed in place.
-version: 19.0.0
+version: 19.0.1
 appVersion: 8.1.11
 home: https://valkey.io
 sources:
