@@ -293,6 +293,20 @@ func (g *GitOps) platformSecurityDoc(ctx context.Context) (platformSecurityDoc, 
 	return doc, err
 }
 
+// updatePlatformSecurity changes one list and carries the other as the remote
+// holds it: read from the checkout of a moment ago, that other list could
+// bring back what somebody has just removed.
+func (g *GitOps) updatePlatformSecurity(ctx context.Context, message string, meta Meta, change func(*platformSecurityDoc)) (Result, error) {
+	return g.updateClaimsFile(ctx, PlatformSecurityFile, message, meta, func(existing []byte) (string, error) {
+		var doc platformSecurityDoc
+		if err := yaml.Unmarshal(existing, &doc); err != nil {
+			return "", err
+		}
+		change(&doc)
+		return renderPlatformSecurity(doc.Spec.AllowedMacWaivers, doc.Spec.AllowedClusterRoles), nil
+	})
+}
+
 // SetPlatformSecurity writes the cluster's waiver allowlist and commits it.
 //
 // An allowlist and not a request: a profile asks for a waiver in its own
@@ -306,12 +320,9 @@ func (g *GitOps) SetPlatformSecurity(ctx context.Context, waivers []MacWaiver, m
 			return Result{}, fmt.Errorf("%w: a waiver needs a profile, a policy and a scope", ErrInvalidName)
 		}
 	}
-	doc, err := g.platformSecurityDoc(ctx)
-	if err != nil {
-		return Result{}, err
-	}
-	return g.writeClaimsFile(ctx, PlatformSecurityFile, renderPlatformSecurity(waivers, doc.Spec.AllowedClusterRoles),
-		"Set which MAC waivers this cluster permits", meta)
+	return g.updatePlatformSecurity(ctx, "Set which MAC waivers this cluster permits", meta, func(doc *platformSecurityDoc) {
+		doc.Spec.AllowedMacWaivers = waivers
+	})
 }
 
 // SetPlatformClusterRoles writes which of the platform's cluster roles this
@@ -326,12 +337,9 @@ func (g *GitOps) SetPlatformClusterRoles(ctx context.Context, roles []ClusterRol
 			return Result{}, fmt.Errorf("%w: a permitted cluster role needs a profile and a role, each a lower-case name", ErrInvalidName)
 		}
 	}
-	doc, err := g.platformSecurityDoc(ctx)
-	if err != nil {
-		return Result{}, err
-	}
-	return g.writeClaimsFile(ctx, PlatformSecurityFile, renderPlatformSecurity(doc.Spec.AllowedMacWaivers, roles),
-		"Set which cluster roles this cluster permits", meta)
+	return g.updatePlatformSecurity(ctx, "Set which cluster roles this cluster permits", meta, func(doc *platformSecurityDoc) {
+		doc.Spec.AllowedClusterRoles = roles
+	})
 }
 
 // SeedPlatformSecurity starts the cluster's allowlist from the deployment's

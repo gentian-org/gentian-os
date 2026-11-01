@@ -160,7 +160,7 @@ does `forwardToken`. Unchanged.
 
 An addon is a catalog entry that is not deployed. It flips a switch inside
 another component's addon system: an Odoo module name, a Nextcloud app id, an
-Activepieces piece name. That is the statement `api` makes — this entry is not
+XWiki extension. That is the statement `api` makes — this entry is not
 run here — so it belongs in the same field.
 
 ```yaml

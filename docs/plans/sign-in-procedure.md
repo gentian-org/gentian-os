@@ -171,9 +171,9 @@ Where the catalog's apps fall today:
 | Case | Apps |
 | --- | --- |
 | OIDC | Nextcloud (both editions in the catalog) and its nine add-ons, XWiki, Mathesar, Open WebUI, Element, Odoo and its eleven add-ons; of the platform's tools, Argo CD and Headlamp |
-| SAML | None directly. Docmost and Activepieces use a SAML helper in front of a password sign-in; they are listed under "user name and password only" |
+| SAML | None directly. Docmost uses a SAML helper in front of a password sign-in; it is listed under "user name and password only" |
 | Trusts the front door | None |
-| User name and password only | OpenProject (single sign-on needs the paid edition), Docmost and Activepieces (the same; both use a helper today), the LiteLLM console |
+| User name and password only | OpenProject (single sign-on needs the paid edition), Docmost (the same; it uses a helper today), the LiteLLM console |
 | No sign-in in the app | The document editor Collabora, which Nextcloud opens |
 | The platform's own pages | Desktop, admin console, App Store app, Keycloak's administration console |
 | Link to an outside service | Subscriptions |
@@ -251,7 +251,7 @@ Which apps could act on the notice, according to their vendors:
 | Mathesar 0.12 | None found | |
 | Odoo 19 (`auth_oauth`) | No | The module has no sign-out handling |
 | Argo CD 3.5, Headlamp 0.45 | No | |
-| Docmost, Activepieces (free editions) | No | They have no single sign-on at all |
+| Docmost (free edition) | No | It has no single sign-on at all |
 
 ### 4.2 A frame, and a tenant on its own domain
 
@@ -606,7 +606,7 @@ No app in the catalog uses this today. Which ones could:
 | OpenProject 16 | A header with a shared secret exists (`OPENPROJECT_AUTH__SOURCE__SSO`). The vendor documents it under a paid feature; the code path itself shows no license check. Not verified which holds | |
 | XWiki | Through an extension for header authentication. Seen in search results only, not verified | |
 | LiteLLM console | Only with the vendor's paid license | |
-| Odoo 19, Mathesar, Docmost, Activepieces | None found | |
+| Odoo 19, Mathesar, Docmost | None found | |
 
 **What the person experiences**
 
@@ -718,7 +718,6 @@ Apps in the catalog where this applies:
 | --- | --- |
 | OpenProject 16 | OIDC and SAML are an add-on of the paid edition. Without its token the app ignores every configured provider |
 | Docmost 0.95 | SAML, OIDC and LDAP are in the paid tiers. The free edition has e-mail and password |
-| Activepieces | Single sign-on is a paid feature. The free edition has e-mail and password |
 | LiteLLM console | Single sign-on is free for up to five users and paid beyond. The platform configures a user name and password |
 
 ### 8.1 Option a: the front door, then the app's own sign-in
@@ -795,18 +794,6 @@ sequenceDiagram
   H->>A: Create a session for this person, by the app's own means
   H-->>P: The app's session cookie, then go to the app
 ```
-
-**Activepieces.** The profile's code connects to the app's database, inserts
-the person as a user if they are new, and signs a session token itself with
-the app's signing key. It hands the token to the browser as a cookie and in
-the browser's storage. What stands out:
-
-- The helper holds the database login and the signing key of the app.
-- Every person it creates gets the role of administrator of the whole
-  Activepieces installation.
-- The token is valid for seven days and nothing ends it earlier.
-- It writes rows into tables of the app directly. A new version of the app
-  that changes those tables breaks it.
 
 **Docmost.** The helper is kept free of secrets. It passes the person's
 e-mail address to a second small program, which runs beside Docmost itself.
@@ -895,7 +882,7 @@ in.
   | --- | --- |
   | Open WebUI 0.10 | Yes (`ENABLE_SCIM`, `SCIM_TOKEN`); the vendor states no license requirement |
   | OpenProject 16.2 and later | Yes, in the top paid plan only |
-  | Activepieces, Docmost, LiteLLM | Paid editions only |
+  | Docmost, LiteLLM | Paid editions only |
   | Nextcloud | No server found. Its `scim_client` app goes the other way |
   | Odoo, Mathesar, XWiki | None found |
 
@@ -985,8 +972,8 @@ Option b (8.2) was approved for apps that can do neither OIDC nor SAML, and
 built as an option any profile can declare:
 `requires.services.identity.sidecar`. The platform runs the helper, registers
 it at the realm and routes it; the profile brings only the code for its own
-app. Docmost and Activepieces use it. What 8.2 describes of those two is how
-they were before: nobody has a password in either now, nobody is made an
+app. Docmost uses it. What 8.2 describes of it is how it was before:
+nobody has a password in it now, nobody is made an
 administrator, and the second program in Docmost's pod is gone.
 
 One correction to the diagram in 8.2: the assertion is not posted through the
@@ -1490,7 +1477,7 @@ Each is a question for the owner, with a recommendation.
    *Recommendation: the second sign-in, with accounts created and removed
    by the platform. A helper only per app after review, recorded as a
    customization. Stored passwords not at all.* This also decides whether
-   the two existing helpers (Activepieces, Docmost) stay; if they do, their
+   the existing helper (Docmost) stays; if it does, its
    open issues in Appendix A should be fixed first.
 
 4. **May an app that cannot tie a session to a person be in the
@@ -1578,8 +1565,6 @@ Each is a question for the owner, with a recommendation.
 - Nextcloud: that `user_oidc` returns the person to an add-on's address
   after signing in; the exact settings of `user_saml`'s sign-in by
   environment variable.
-- Activepieces was checked on the vendor's current source, not on the old
-  version the catalog's record names (0.28).
 - Docmost, Mathesar, Odoo, XWiki: "none found" for back-channel logout,
   header sign-in or SCIM means the files and pages read did not show one,
   not that the whole code was searched.
@@ -1610,7 +1595,6 @@ back-channel logout address, Keycloak has it, and the notice does not arrive
 | Mathesar (`mathesar-ce`), 0.12.0 | OIDC | `/auth/oidc/keycloak/login/` on `data.` | Its own OIDC sign-in. Administrators' accounts are created ahead by a job of the profile | None found in the app | The password form stays available beside single sign-on |
 | Open WebUI (`open-webui`), 0.10.2 | OIDC | The front page of `ai-chat.` (two tiles, same address) | Its own OIDC sign-in, started automatically. Roles from Keycloak groups | Declared, not delivered, and the app's switch for it (`ENABLE_OAUTH_BACKCHANNEL_LOGOUT`) is not set | The switch. Both tiles lead to the same page |
 | Docmost (`docmost-ce`), 0.95.0 | User name and password, with a helper | The front page of `docs.` | A helper signs in at Keycloak by SAML; a second program signs in at Docmost with a password derived for the person | None | The route to the helper and the front-page redirect are not acted on by the operator on this branch (read from the code). The second program asks its caller for no proof |
-| Activepieces (`activepieces-me`) | User name and password, with a helper | The front page of `auto.` | A helper signs in at Keycloak by SAML, writes the user into the app's database and signs a session token itself | None. The token lasts seven days | Everybody becomes an administrator of the installation. The helper holds the database login and the signing key |
 | LiteLLM console (the model gateway's own; no catalogue profile) | User name and password, with a form | No tile. The console is at `llm.<cluster's domain>`, for platform administrators, where the claim switches it on (`llm.console.enabled`, off by default) | Its own form, with a user name and password from the vault | None | — |
 | Subscriptions (`gentian-subscriptions-me`) | Link to an outside service | An address outside the cluster, with the tenant's domain in it | The outside service's own sign-in | Not the platform's | None |
 
@@ -1740,9 +1724,6 @@ Apps:
 - Docmost 0.95.0, sign-in of the free edition:
   <https://github.com/docmost/docmost/blob/v0.95.0/apps/server/src/core/auth/auth.controller.ts>;
   editions: <https://docmost.com/pricing>
-- Activepieces, single sign-on and its editions:
-  <https://www.activepieces.com/docs/admin-guide/guides/sso>,
-  <https://github.com/activepieces/activepieces/blob/main/packages/server/api/src/app/app.ts>
 - LiteLLM, console sign-in:
   <https://docs.litellm.ai/docs/proxy/admin_ui_sso>,
   <https://docs.litellm.ai/docs/proxy/ui>

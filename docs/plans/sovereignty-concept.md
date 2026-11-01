@@ -295,7 +295,7 @@ An add-on uses the OS the way every other client does:
 **Scheduling is not the OS's.** The OS takes an export when it is asked to
 (`TenantExport`). When exports are taken without anyone asking, where else
 they are kept and when old ones are removed is an add-on's to decide, with a
-controller and resource kinds of its own (§5.2). The line is at *scheduling*,
+controller and resource kinds of its own. The line is at *scheduling*,
 not at *where the bundle goes*: a cluster with no such add-on takes no export
 on its own, and every export a person asks for works as before.
 
@@ -326,8 +326,7 @@ surfaces the OS already has, and the OS installs and runs without them.
 - **The switch.** `./install.sh --disable-api-extensions`
   (`GENTIAN_DISABLE_API_EXTENSIONS=1`) places no default profile. Nothing
   else changes: export, import, purge and the bundle are the OS's and need no
-  extension. The switch is also to leave out the API-extension grant of §5.2
-  once that exists; today the scaffold only records the choice.
+  extension.
 
 ## 7. Order of work
 
@@ -356,13 +355,6 @@ materialises the default profiles into `clusters/<id>/catalogue/`
 3. **Offboard** flow and console action.
 4. **Scheduling leaves the tree** (§9.2): the order of that work, and what
    breaks at each step, is in [#608](https://github.com/gentian-org/gentian-os/issues/608).
-
-## 8. Open questions
-
-- Whether `apiExtensions` grants should carry an expiry like the other
-  privilege kinds. A CRD that expires is a cluster that loses objects; the
-  grant probably has no `expiresAt`, and §4.3 of the component structure
-  should say so for this kind.
 
 ## 9. What exists today
 

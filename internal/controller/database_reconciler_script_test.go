@@ -40,8 +40,8 @@ func TestBuildRoleScript_SchemaPreference(t *testing.T) {
 		t.Fatalf("app-schema preference did not put the app schema first:\n%s", appFirst)
 	}
 
-	// Opting into public first is what Activepieces needs: its migrations create
-	// tables in public and then look them up unqualified.
+	// Opting into public first is for an app whose migrations create tables in
+	// public and then look them up unqualified.
 	publicFirst := buildRoleScript("demo_ap", "demo_ap", gentianov1alpha1.SchemaPreferencePublic, false)
 	if !strings.Contains(publicFirst, `search_path TO public, \"demo_ap\"`) {
 		t.Fatalf("public preference did not put public first:\n%s", publicFirst)

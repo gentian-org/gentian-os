@@ -12,6 +12,7 @@ package gitops
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -28,5 +29,13 @@ func TestGitDoesItsHousekeepingBeforeItReturns(t *testing.T) {
 		if err != nil || strings.TrimSpace(string(out)) != "false" {
 			t.Errorf("%s = %q (%v), want false", key, strings.TrimSpace(string(out)), err)
 		}
+	}
+}
+
+// A write with no retry of its own answers a lost race as contention, which
+// the API turns into 409 with Retry-After.
+func TestALostPushIsContention(t *testing.T) {
+	if !errors.Is(errPushRejected, ErrPushContended) {
+		t.Fatal("a rejected push is not reported as contention")
 	}
 }

@@ -665,7 +665,7 @@ request.
 
 A handler without `onLogout` is one for an app whose session cannot be ended from outside: the
 sidecar answers the realm, logs `no-sign-out-handling`, and the app's session lasts what is left
-of its hour. Say so in the app's customization record, as Activepieces' does.
+of its hour. Say so in the app's customization record.
 
 **Before reaching for it.** It is the last of three ways to sign people in ([iam.md §1.11](design/iam.md)),
 and the only one in which a program beside the app holds the app's keys. Use it when the edition
@@ -676,7 +676,7 @@ the handler writes itself that the app's own interface would not have done.
 ### 2.4 L3 — Extension (in-app addon)
 
 Use the app's **own extension system**. Odoo addons (`_inherit`, view `xpath`/`inherit_id`),
-Nextcloud apps, XWiki extensions, Activepieces pieces, Keycloak SPIs, Collabora — none.
+Nextcloud apps, XWiki extensions, Keycloak SPIs, Collabora — none.
 
 `spec.customization.extension.delivery` names how an addon arrives:
 
@@ -1204,7 +1204,7 @@ answer to "the way to do it depends on the app".
 
 | Grade | Meaning | Reachable rungs | Examples |
 |---|---|---|---|
-| **A** | Plugin API that is **documented and versioned**, plus declared drop-in dirs and a published API for companions | L0–L3 | Odoo, Nextcloud, XWiki, Keycloak, Activepieces |
+| **A** | Plugin API that is **documented and versioned**, plus declared drop-in dirs and a published API for companions | L0–L3 | Odoo, Nextcloud, XWiki, Keycloak |
 | **B** | A plugin system exists, but it is **undocumented, unversioned, or ABI-unstable**. Config, drop-ins and a published API as well. | L0–L3, at the risk `extension.apiStability` records | Element/Synapse (`synapse-module`), OpenProject (`openproject-plugin`), LiteLLM (`litellm-callback`) |
 | **C** | Config only; monolithic; **no** extension surface at all | L0, then L2 or L4 | Collabora, many appliance images |
 | **D** | Anything beyond a value change requires touching source | L0, then L5/L6 | unmaintained or hostile upstreams |

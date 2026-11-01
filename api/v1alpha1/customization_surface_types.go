@@ -247,7 +247,7 @@ const (
 // CustomizationExtension describes the L3 (in-app addon) surface.
 type CustomizationExtension struct {
 	// Mechanism names the app's extension system (for example "odoo-addon",
-	// "nextcloud-app", "xwiki-extension", "activepieces-piece").
+	// "nextcloud-app", "xwiki-extension").
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 	Mechanism string `json:"mechanism"`
@@ -406,7 +406,7 @@ type CustomizationFork struct {
 // gentian-apps/docs/app-profile-guide.md).
 type CustomizationAddon struct {
 	// ID is what the hosting app's own addon system calls this addon: an Odoo
-	// module name, a Nextcloud app id, an Activepieces piece name. The operator
+	// module name, a Nextcloud app id, an XWiki extension. The operator
 	// passes it to the composition, which renders the app-native activation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1

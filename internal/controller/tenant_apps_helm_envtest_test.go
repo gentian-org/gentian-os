@@ -188,7 +188,7 @@ func TestTheTenantAppsAccountCanInstallTenantChartsAndNothingElse(t *testing.T) 
 	allowed("watch its pods come up", err)
 	_, err = helm.AppsV1().ReplicaSets(in).List(ctx, metav1.ListOptions{})
 	allowed("watch its replica sets", err)
-	// Synapse's signing-key Job role, and Activepieces' role.
+	// Synapse's signing-key Job role.
 	_, err = helm.RbacV1().Roles(in).Create(ctx, &rbacv1.Role{ObjectMeta: om("signingkey"), Rules: []rbacv1.PolicyRule{{
 		APIGroups: []string{""}, Resources: []string{"secrets"}, ResourceNames: []string{"app-release-signingkey"}, Verbs: []string{"get", "update", "patch"},
 	}}}, metav1.CreateOptions{})

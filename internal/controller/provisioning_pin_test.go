@@ -85,7 +85,9 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// store's signing Secret.
 		"bucket":         {makeS3BucketJob(tenant, "wiki", true, backup.ObjectStorageOptions{}), "b8b6bda18925bf9da9324ce60f1e574280306f454068d0a337d44573311c28b2"},
 		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false, backup.ObjectStorageOptions{}), "56ebf6847888baa1559a5429f977c4c1bb81c6fbd8267282480dcd42419cda2a"},
-		"cache user":     {makeRedisACLJob(tenant, "wiki", true), "e69e2958d1a57f59a3e92f20f07af87036ada08858c580d218ec13c358caabeb"},
+		// Moved deliberately with the move to Valkey: the user is held to its
+		// prefix and saved, so every cache user is made again on the new server.
+		"cache user": {makeRedisACLJob(tenant, "wiki", true), "194ee456921cb6d90d2e116eb26740c521f26adcd7a051c3142799baa5acf304"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {
 			t.Errorf("%s: the Job provisioning creates has changed (digest %s, pinned %s)", name, got, c.want)
