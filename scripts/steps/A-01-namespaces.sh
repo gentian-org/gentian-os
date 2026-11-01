@@ -50,7 +50,7 @@ apply() {
     if ns_kernel_policies_wanted; then
         success "kernel NetworkPolicies applied (ingress refused unless listed; anything but KERNEL_NETWORK_POLICIES=true removes them)"
     else
-        info "kernel NetworkPolicies are off (KERNEL_NETWORK_POLICIES=false; docs/install-reference.md)"
+        info "kernel NetworkPolicies are off (KERNEL_NETWORK_POLICIES=false; docs/reference/install.md)"
     fi
 }
 

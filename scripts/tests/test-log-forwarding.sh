@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/tests/test-log-forwarding.sh
 # =============================================================================
-# The log forwarder (docs/design/audit-events.md §4) and the alert rules on
+# The log forwarder (docs/security/audit-events.md §4) and the alert rules on
 # what it counts. The forwarder is the Cluster Composition's; this reads it
 # from the render fixtures, which make test-unit-render holds to the
 # Composition:

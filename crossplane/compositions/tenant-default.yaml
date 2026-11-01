@@ -2459,7 +2459,7 @@ spec:
                  Realms of other clusters this realm links its people's
                  accounts with (spec.partners, projected by the operator
                  with the Cluster claim's defaults, within its allowed
-                 issuers; AD-17, docs/identity-brokering.md). Each direction
+                 issuers; AD-17, docs/guides/identity-brokering.md). Each direction
                  is one switch.
 
                  issue -- this tenant's people towards the partner: the scope

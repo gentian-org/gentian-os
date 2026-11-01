@@ -79,7 +79,7 @@ spec:
                     composes an Argo CD repository and nothing else, because
                     profiles no longer arrive by syncing one (a catalogue is
                     an address the director fetches from, declared on the
-                    Cluster claim or the tenant; docs/custom-catalogues.md).
+                    Cluster claim or the tenant; docs/guides/custom-catalogs.md).
                     deployments is a source of truth: repointing it
                     changes what everything reconciles from, which is why the
                     API makes that a confirmed operation rather than an edit.

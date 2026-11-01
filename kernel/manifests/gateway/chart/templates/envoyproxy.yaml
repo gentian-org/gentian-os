@@ -68,7 +68,7 @@ spec:
     - name: envoy.filters.http.oauth2
       before: envoy.filters.http.ext_authz
   # The access log as JSON, one line per request on stdout, so a forwarder
-  # keeps fields rather than text (docs/design/audit-events.md §3.2). What is
+  # keeps fields rather than text (docs/security/audit-events.md §3.2). What is
   # left out is left out on purpose: the query string, which carries sign-in
   # codes; cookies and the Authorization header, which carry sessions. The
   # person is the subject the bouncer set, an issuer UUID, and only on a

@@ -425,7 +425,7 @@ spec:
                  repository into the cluster and followed its branch. A profile
                  now arrives one at a time, through the director, from a
                  catalogue source and at the digest the install names
-                 (docs/custom-catalogues.md), so a claim of that shape yields the
+                 (docs/guides/custom-catalogs.md), so a claim of that shape yields the
                  Argo CD repository and the AppProject source above and nothing
                  that puts a ComponentProfile on the cluster. */}}
 

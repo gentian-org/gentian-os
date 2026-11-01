@@ -99,7 +99,7 @@ server:
   # namespace for that, runs as the pod's uid (the same as bao's, which is
   # what lets it signal without any capability), and has no service account
   # token and no API rights. A change here reaches a running vault only when
-  # its pod is next restarted (docs/design/operations.md §8.2).
+  # its pod is next restarted (docs/concepts/operations.md §8.2).
   shareProcessNamespace: true
   extraContainers:
     - name: tls-reload

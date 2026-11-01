@@ -91,7 +91,7 @@ jobs:
 
       # Every bundle the published catalogs serve, held to this build's
       # install and rollout checks: a platform change that breaks a published
-      # profile fails here, not at a tenant's install (docs/design/versioning.md).
+      # profile fails here, not at a tenant's install (docs/concepts/versioning.md).
       - name: Published catalogues conform to this platform
         env:
           GENTIAN_CONFORMANCE_CATALOGUES: https://gentian-org.github.io/gentian-apps,https://gentian-org.github.io/gentian-apps/develop
@@ -346,7 +346,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
-          # (docs/compliance/controls.md K3).
+          # (docs/security/controls.md K3).
           sbom: true
           provenance: mode=max
           context: .
@@ -367,7 +367,7 @@ jobs:
             || 'type=cacheonly' }}
 
       # The published image, signed with this workflow's identity and scanned
-      # (docs/compliance/controls.md K3, K5). Only where the build pushed: a
+      # (docs/security/controls.md K3, K5). Only where the build pushed: a
       # pull request's image exists nowhere to be signed. The scan is advisory
       # until the backlog it finds is triaged; dropping continue-on-error makes
       # it block.
@@ -398,7 +398,7 @@ jobs:
   # Known vulnerabilities in the Go dependency graph, from the Go vulnerability
   # database, reported against the symbols the code actually reaches. Advisory:
   # it reports and does not fail the run until what it finds on its first runs
-  # is triaged (docs/compliance/controls.md K4); dropping continue-on-error
+  # is triaged (docs/security/controls.md K4); dropping continue-on-error
   # makes it block.
   govulncheck:
     name: Go — govulncheck
@@ -517,7 +517,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
-          # (docs/compliance/controls.md K3).
+          # (docs/security/controls.md K3).
           sbom: true
           provenance: mode=max
           context: kernel/extensions/keycloak-event-listener
@@ -531,7 +531,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # The published image, signed with this workflow's identity and scanned
-      # (docs/compliance/controls.md K3, K5). Only where the build pushed: a
+      # (docs/security/controls.md K3, K5). Only where the build pushed: a
       # pull request's image exists nowhere to be signed. The scan is advisory
       # until the backlog it finds is triaged; dropping continue-on-error makes
       # it block.
@@ -604,7 +604,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
-          # (docs/compliance/controls.md K3).
+          # (docs/security/controls.md K3).
           sbom: true
           provenance: mode=max
           context: kernel/images/storage-tools
@@ -618,7 +618,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # The published image, signed with this workflow's identity and scanned
-      # (docs/compliance/controls.md K3, K5). Only where the build pushed: a
+      # (docs/security/controls.md K3, K5). Only where the build pushed: a
       # pull request's image exists nowhere to be signed. The scan is advisory
       # until the backlog it finds is triaged; dropping continue-on-error makes
       # it block.

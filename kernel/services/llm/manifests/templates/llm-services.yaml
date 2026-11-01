@@ -226,7 +226,7 @@ spec:
             secretKeyRef:
               name: llm-sensitive-values
               key: litellm_ui_password
-        # Admin console SSO — platform-admin only (see docs/design/llms.md).
+        # Admin console SSO — platform-admin only (see docs/concepts/llms.md).
         # Free for <=5 users on LiteLLM OSS (v1.76.0+); the litellm-dashboard
         # Keycloak client only exists in the kernel realm, so tenant users
         # cannot authenticate here.

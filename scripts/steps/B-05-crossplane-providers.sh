@@ -181,7 +181,7 @@ _b05_tenant_apps_apply() {
 # runs the package it declares. The health checks below say the packages
 # are up, not which they are: a pin bumped in providers.yaml was otherwise
 # never applied to a cluster that already had healthy providers, and the
-# cluster stayed on the old package for good (docs/design/versioning.md).
+# cluster stayed on the old package for good (docs/concepts/versioning.md).
 # Read off the file itself (_b05_declared_packages), so no YAML tool is
 # needed: the file is this repository's and has one shape.
 _b05_declared_packages() {

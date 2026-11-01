@@ -10,7 +10,7 @@ SPDX-License-Identifier: MPL-2.0
 
 // Package audit writes the platform's audit records: one JSON line per
 // decision, change or identity event, in one envelope, on the service's own
-// logger (docs/design/audit-events.md §3).
+// logger (docs/security/audit-events.md §3).
 //
 // The envelope is what a forwarder routes on and a destination keeps, so its
 // field names are a contract. The line is an ordinary slog record: the JSON

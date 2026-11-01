@@ -890,7 +890,7 @@ seed_internal_ca() {
 # (kernel/services/infra-seaweedfs/manifests/templates/externalsecret.yaml
 # says what each one signs). Not derived from the master password: nothing
 # else the cluster holds should reproduce them. Rotating one is writing a new
-# value here and restarting the store (docs/design/operations.md).
+# value here and restarting the store (docs/concepts/operations.md).
 # =============================================================================
 seed_object_store_signing_keys() {
     local path="gentian-os/kernel/storage/s3/jwt" dir key ok=1
@@ -969,7 +969,7 @@ seed_usage_statistics_key() {
 # derives an Ed25519 key pair from them (internal/backup/signature.go), signs
 # every bundle's manifest with it, and checks a bundle it restores with it:
 # only a bundle this cluster signed, of a tenant of the same name, brings back
-# the rights granted in the tenant (docs/design/security.md).
+# the rights granted in the tenant (docs/security/design.md).
 #
 # Its own key, not the director's git signing key: that one signs commits to
 # the deployments repository and is the director's, and a key that signs two
@@ -1508,7 +1508,7 @@ print_handover_summary() {
 # portal-login-bootstrap.sh) and applied straight to the cluster, never
 # committed to gentian-deployments. Their content varies only by the cluster
 # and stage the chart is rendered with, so there's nothing cluster-specific
-# worth persisting as a file — see docs/deployment.md §3.1.
+# worth persisting as a file — see docs/guides/deployment.md §3.1.
 # =============================================================================
 # The cluster's settings, written into the claim explicitly.
 #
@@ -1758,7 +1758,7 @@ _claim_cluster_fields() {
         printf '    # egressHost:               the name outbound mail leaves from, e.g.\n'
         printf '    #                           mail-egress.%s — required for SPF to pass.\n' "${KERNEL_DOMAIN:-example.com}"
         printf '    #                           Needs a floating IP on one node whose\n'
-        printf '    #                           reverse DNS is this name (docs/design/mail.md\n'
+        printf '    #                           reverse DNS is this name (docs/concepts/mail.md\n'
         printf '    #                           9c); without it the SPF record names the\n'
         printf '    #                           inbound load balancer and fails.\n'
     else
@@ -2911,7 +2911,7 @@ EOF
     # removed here so that a fresh install from it declares no such claim.
     # Claims are synced without pruning, so on a cluster that already applied
     # it the Repository stays until it is deleted there; it composes no
-    # ApplicationSet any more either way (docs/install-reference.md).
+    # ApplicationSet any more either way (docs/reference/install.md).
     _remove_retired_apps_repository_claim "${kernel_dir}" && generated=1
     local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_auth_var
     for _repo_role in gentian-os gentian-ui; do
@@ -3272,7 +3272,7 @@ EOF
 # =============================================================================
 # The user tenant of a single-tenancy cluster.
 #
-# A cluster has one of two tenancy modes (docs/design/multi-tenancy.md §3).
+# A cluster has one of two tenancy modes (docs/concepts/multi-tenancy.md §3).
 # multi: the platform tenant plus any number of user tenants, each created
 # through the director after the install. single: the platform tenant plus
 # exactly one user tenant, always named "user", which lives on the cluster's

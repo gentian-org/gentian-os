@@ -4,13 +4,13 @@
 # seed-openbao has populated `secret/gentian-os/kernel/dns/cloudflare`.
 # Covers kernel UIs only (*.<KERNEL_DOMAIN>). Tenant app TLS uses a
 # separate per-tenant wildcard in each tenant-* namespace — see
-# internal/controller/tenant_edge_tls.go and docs/design/multi-tenancy.md §3.
+# internal/controller/tenant_edge_tls.go and docs/concepts/multi-tenancy.md §3.
 #
 # Templated on:
 #   {{ .Values.kernelDomain }}           — single platform-wide DNS suffix (e.g. platform.example.com)
 #   {{ .Values.dns01ClusterIssuer }}    — ClusterIssuer name (production or staging DNS-01)
 #
-# See docs/architecture.md §2.5.
+# See docs/overview/architecture.md §2.5.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

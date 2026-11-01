@@ -2,7 +2,7 @@ model
   schema 1.1
 
 # Authorization model, v1. The single vocabulary every document is checked
-# against — see docs/design/authorization.md for the rules behind it.
+# against — see docs/concepts/authorization.md for the rules behind it.
 #
 # Conventions
 #   type            one per CRD kind; object id = the CR's name, namespaced

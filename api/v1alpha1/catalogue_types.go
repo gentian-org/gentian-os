@@ -86,7 +86,7 @@ const (
 // technically interchangeable and the platform gates none of them: whether a
 // paid entry arrives is decided at the repository it is pulled from, by the
 // credential the tenant holds for it. Addon/base compatibility is managed by
-// version. See gentian-os/docs/app-customization.md §4.2.
+// version. See gentian-os/docs/guides/app-customization.md §4.2.
 //
 // An me entry packages the community edition's code and is named -ce like
 // it: the edition is what the profile's gentianos.io/profile-edition label

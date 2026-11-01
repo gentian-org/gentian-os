@@ -60,7 +60,7 @@ type TenantSignUp struct {
 }
 
 // TenantPartner is another realm -- usually of another cluster -- this
-// tenant's realm has a declared relation with (docs/identity-brokering.md,
+// tenant's realm has a declared relation with (docs/guides/identity-brokering.md,
 // AD-17). Per direction it is one switch: Issue, this tenant's people towards
 // the partner; Accept, the partner's people here. A person links their two
 // accounts once, by signing in at the partner through this realm; apps then
@@ -1019,7 +1019,7 @@ type TenantApp struct {
 	// one is chosen, then editable afterwards. Every entry that resolves is
 	// activated, whatever its edition: the platform gates none, and a paid
 	// addon arrives only where the tenant holds a credential for the
-	// repository it is pulled from. See gentian-os/docs/app-customization.md §4.2.
+	// repository it is pulled from. See gentian-os/docs/guides/app-customization.md §4.2.
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
@@ -1156,7 +1156,7 @@ type TenantAppConfig struct {
 	// Each entry must name a declared, tenantEditable drop-in; filenames are
 	// restricted to the 90-99 range so platform and profile files keep priority.
 	// Content lands in a ConfigMap and is therefore not secret material.
-	// See docs/app-customization.md §2.2.1.
+	// See docs/guides/app-customization.md §2.2.1.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -1490,7 +1490,7 @@ func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
 // a custom domain returns the empty string — callers must treat that as a
 // configuration error and skip ingress provisioning.
 //
-// See docs/design/multi-tenancy.md §3.
+// See docs/concepts/multi-tenancy.md §3.
 func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
 	if t.Status.Domain != "" {
 		return t.Status.Domain

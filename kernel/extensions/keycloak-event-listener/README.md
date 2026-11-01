@@ -82,7 +82,7 @@ halves to the same arithmetic.
 `io.gentianos.keycloak.binding` holds two providers for a client whose one
 registration serves many places, each with its own callback address computed
 from a parameter of the authorization request
-(`requires.services.identity.oidc.requestParameter`; docs/app-customization.md).
+(`requires.services.identity.oidc.requestParameter`; docs/guides/app-customization.md).
 Both read the binding from the client's attributes, which the operator
 writes when it renders the app, and from nowhere else (`RequestBinding`):
 

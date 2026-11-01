@@ -143,7 +143,7 @@ ns_declined() {
 #
 # KERNEL_NETWORK_POLICIES=true applies them, and unset means true. Anything
 # else removes every one of them and applies none.
-# (docs/install-reference.md), and off again the same way if a component
+# (docs/reference/install.md), and off again the same way if a component
 # then times out reaching another.
 #
 # Each policy carries the digest of the file it came from as a label, which

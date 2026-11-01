@@ -276,7 +276,7 @@ type rule struct {
 }
 
 // rules is the list: every kind a bundle may hold beside its profile, by
-// apiVersion and kind. docs/custom-catalogues.md states it for a person; a
+// apiVersion and kind. docs/guides/custom-catalogs.md states it for a person; a
 // kind is added in both or in neither.
 var rules = map[string]rule{
 	compositionAPIVersion + "/" + KindComposition: {kind: KindComposition, body: "spec", check: checkComposition},

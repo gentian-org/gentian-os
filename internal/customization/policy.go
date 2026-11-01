@@ -41,7 +41,7 @@ func ValidateRecord(record *gentianov1alpha1.Customization) []error {
 	if spec.Scope == gentianov1alpha1.ScopeTenant && AtOrAbove(spec.Rung, gentianov1alpha1.RungPatch) {
 		errs = append(errs, fmt.Errorf(
 			"spec.rung %s is not permitted at spec.scope tenant: patching or forking for one tenant "+
-				"produces a divergence with no upgrade path (docs/app-customization.md §3)",
+				"produces a divergence with no upgrade path (docs/guides/app-customization.md §3)",
 			spec.Rung))
 	}
 
@@ -59,7 +59,7 @@ func ValidateRecord(record *gentianov1alpha1.Customization) []error {
 		if spec.UpstreamFirst == nil || !spec.UpstreamFirst.Attempted {
 			errs = append(errs, fmt.Errorf(
 				"spec.upstreamFirst.attempted must be true for rung %s "+
-					"(docs/app-customization.md P3)", spec.Rung))
+					"(docs/guides/app-customization.md P3)", spec.Rung))
 		} else if spec.UpstreamFirst.Forwarded == gentianov1alpha1.CustomizationForwarded("no") &&
 			strings.TrimSpace(spec.UpstreamFirst.Reason) == "" {
 			errs = append(errs, fmt.Errorf(
@@ -188,6 +188,6 @@ func ValidateNamespaceScoping(
 	return fmt.Errorf(
 		"rung L3 at tenant scope requires the app to run in the tenant's own namespace, "+
 			"but %q resolved to namespace %q: per-tenant modules in a shared runtime are "+
-			"forbidden (docs/app-customization.md §2.4)",
+			"forbidden (docs/guides/app-customization.md §2.4)",
 		record.Spec.Target.Profile, resolvedNamespace)
 }

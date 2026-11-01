@@ -291,7 +291,7 @@ type TenantReconciler struct {
 	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
 	// Tenant app domains derive from it by tenancy mode unless a
 	// TenantDomain binds a custom one. Sourced from KERNEL_DOMAIN at startup.
-	// See docs/design/multi-tenancy.md §3.
+	// See docs/concepts/multi-tenancy.md §3.
 	KernelDomain string
 	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
 	// single → {sub}.{kernel}. Sourced from TENANCY_MODE (default multi).

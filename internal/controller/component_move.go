@@ -31,7 +31,7 @@ import (
 )
 
 // A move is the one guarded operation that takes an installed app from the
-// build it runs to the build it is pinned to (docs/design/versioning.md §5).
+// build it runs to the build it is pinned to (docs/concepts/versioning.md §5).
 // The pin is git's: the director commits it, the tenant reconciler copies it
 // onto the Component. What this file decides is WHEN the pinned build is
 // rendered, and what happens when it does not come up:

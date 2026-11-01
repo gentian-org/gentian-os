@@ -215,7 +215,7 @@ spec:
                       type: object
                       description: >
                         How installed apps move to newer builds
-                        (docs/design/versioning.md §4). The cluster's
+                        (docs/concepts/versioning.md §4). The cluster's
                         administrator sets a mode for every app and may name
                         another per app; a tenant's entry may carry an
                         override the cluster's administrator wrote. latest:
@@ -502,7 +502,7 @@ spec:
                 logForwarding:
                   type: object
                   description: >
-                    Where the platform's logs go (docs/design/audit-events.md
+                    Where the platform's logs go (docs/security/audit-events.md
                     §4). The Composition renders a log forwarder in the
                     observability namespace while a destination is named, and
                     removes it when none is; the director may set both fields.
@@ -532,7 +532,7 @@ spec:
                   type: object
                   description: >
                     The platform's own metrics and alerts
-                    (docs/design/audit-events.md §5). The Cluster Composition
+                    (docs/security/audit-events.md §5). The Cluster Composition
                     composes kube-prometheus-stack into the observability
                     namespace while enabled, and removes it when not.
                   properties:
@@ -1235,7 +1235,7 @@ spec:
 
                         Public resolvers by default, because the cluster's own
                         DNS cannot answer for the zone: the CoreDNS hairpin
-                        (docs/design/routing.md) serves the kernel domain from a
+                        (docs/concepts/routing.md) serves the kernel domain from a
                         hosts block, and a hosts entry answers every query type
                         for its name — the zone apex's SOA and NS come back
                         empty, cert-manager finds no authoritative nameservers,

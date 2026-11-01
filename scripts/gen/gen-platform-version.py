@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the platform's version line from the chart's version.
 
-The chart's version is the platform's number (docs/deployment.md §5.5):
+The chart's version is the platform's number (docs/guides/deployment.md §5.5):
 X.Y.0 on the release commit, X.(Y+1).0-dev on the commit after it. The
 operator and the director compare profiles' floors and backup bundles with
 the LINE of that number, its major and minor, and used to carry it as a

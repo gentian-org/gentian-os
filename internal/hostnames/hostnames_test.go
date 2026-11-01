@@ -255,7 +255,7 @@ func TestEntriesWithNoHostOfTheirOwnAreNotAsked(t *testing.T) {
 	}
 }
 
-// docsTable is the table docs/design/routing.md carries, row for row.
+// docsTable is the table docs/concepts/routing.md carries, row for row.
 func docsTable(tier []Reserved, owners bool) []string {
 	rows := make([]string, 0, len(tier))
 	for _, r := range tier {
@@ -275,7 +275,7 @@ func docsTable(tier []Reserved, owners bool) []string {
 // The documents state the list for a person; a name is added in both or in
 // neither.
 func TestTheDocumentsCarryTheList(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "design", "routing.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "concepts", "routing.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestTheDocumentsCarryTheList(t *testing.T) {
 		}
 	}
 	// The other documents name every platform label too.
-	for _, file := range []string{"custom-catalogues.md", "app-customization.md"} {
+	for _, file := range []string{"guides/custom-catalogs.md", "guides/app-customization.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "docs", file))
 		if err != nil {
 			t.Fatal(err)

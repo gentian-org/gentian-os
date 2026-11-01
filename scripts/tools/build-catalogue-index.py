@@ -24,7 +24,7 @@ the digest that governs arrives from the store over the store's TLS, and the
 director drops this one before anybody sees it.
 
 This tool indexes; it does not assemble or vet a bundle. What a bundle may
-hold is decided on the cluster (docs/custom-catalogues.md §2,
+hold is decided on the cluster (docs/guides/custom-catalogs.md §2,
 internal/profilebundle/bundle.go), which refuses the install otherwise. Three
 things that can be told from here without knowing those rules are told: a
 file whose first document is not the profile it is named after, a companion

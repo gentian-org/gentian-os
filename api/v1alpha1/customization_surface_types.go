@@ -23,7 +23,7 @@ import "k8s.io/apimachinery/pkg/runtime"
 // Types in this file describe the customization surface of a catalog app —
 // which rungs of the Gentian customization ladder the app supports, and by which
 // mechanism. They are deliberately app-neutral: no per-app fields, no profile
-// names. See docs/app-customization.md.
+// names. See docs/guides/app-customization.md.
 
 // CustomizationRung identifies a rung of the customization ladder.
 // Rungs are ordered by how much of the app's own delivery artifact Gentian owns,
@@ -332,7 +332,7 @@ type CustomizationPublishedAPI struct {
 // "patched" is the correct destination for a chart that needs template changes:
 // it carries the delta rather than a copy, so upstream bumps surface as patch
 // conflicts instead of silently diverging. "vendored" is a review signal, not a
-// normal state — see docs/app-customization.md §6.2.
+// normal state — see docs/guides/app-customization.md §6.2.
 // +kubebuilder:validation:Enum=upstream;patched;gentian-owned;vendored
 type CustomizationChartOwnership string
 

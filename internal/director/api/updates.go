@@ -27,7 +27,7 @@ import (
 )
 
 // The report of outdated apps, and the moves it leads to
-// (docs/design/versioning.md §4.2, §5).
+// (docs/concepts/versioning.md §4.2, §5).
 //
 // Three things are read together and nothing is stored: what git says each
 // tenant has installed and at which build; what the cluster runs and how
