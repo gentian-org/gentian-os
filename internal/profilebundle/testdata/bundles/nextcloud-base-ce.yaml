@@ -269,8 +269,8 @@ spec:
           runAsGroup: 33
         # Without fsGroup, a freshly-provisioned nfs-csi PVC isn't writable
         # by uid 33 (www-data) -- crashes on startup with "Permission
-        # denied" creating nextcloud-init-sync.lock. See activepieces-me/
-        # xwiki-ce profiles for the same pattern on the same storage class.
+        # denied" creating nextcloud-init-sync.lock. See the xwiki-ce
+        # profile for the same pattern on the same storage class.
           fsGroup: 33
           seccompProfile:
             type: RuntimeDefault

@@ -302,7 +302,6 @@ func TestTheLargestBundleFitsItsCarrier(t *testing.T) {
 // where kubectl is to be had: that is the reading the cluster receives.
 func TestTheBuiltBundlesAreAcceptedAndVerify(t *testing.T) {
 	want := map[string]string{
-		"activepieces-me":       "ConfigMap activepieces-me.sign-in-handler, Customization activepieces-me.nginx-sso-routing, Customization activepieces-me.sign-in-sidecar",
 		"docmost-ce":            "ConfigMap docmost-ce.sign-in-handler, Customization docmost-ce.sign-in-sidecar",
 		"element-ce":            "Composition app-element-ce, ConfigMap element-ce.jitsi-oidc-overlays, OIDCPackCatalog element-ce-oidc",
 		"nextcloud-base-ce":     "ConfigMap nextcloud-base-ce.portal-bridge-sso, OIDCPackCatalog nextcloud-base-ce-oidc",

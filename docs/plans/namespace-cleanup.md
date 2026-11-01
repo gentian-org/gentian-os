@@ -132,7 +132,7 @@ in `kernel-edge`, never in a tenant namespace. Two exceptions, both in the opera
 the realm is adopted rather than created, and the tenant cannot be deleted
 (a realm-disable Job against the kernel realm would lock every admin out).
 
-Catalogue apps today, by family: activepieces, docmost, element (with
+Catalogue apps today, by family: docmost, element (with
 Matrix), mathesar, nextcloud (base-ce, base-od, nine addons), odoo (base,
 twelve addons), openproject, open-webui, xwiki, gentian-subscriptions (API
 profile). All tenant-scoped.

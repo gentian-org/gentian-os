@@ -282,7 +282,7 @@ kubectl get volumeattachment -o json | jq -r \
 ```
 
 The durable fix is to stop splitting them — run the sidecar as a container in the
-app's own pod, as the Odoo git-sync and Activepieces git content already do.
+app's own pod, as the Odoo git-sync already does.
 
 ### 5.5 The Cinder CSI controller restarts noisily
 

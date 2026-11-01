@@ -732,7 +732,6 @@ real image and Keycloak 26.8.0):
 | Nextcloud (`nextcloud-base-ce`) | yes, its own client | ends for the browser that signed out |
 | XWiki (`xwiki-ce`) | yes, its own client | ends, every session of that person |
 | Docmost, OpenProject | yes, through the sidecar | ends, every session of that person |
-| Activepieces 0.28.0 | the sidecar is told; the app has nothing to end a session with | lasts what is left of its hour |
 | Nextcloud (`nextcloud-base-od`) | declared, not shown with its own image | unknown until it is |
 | Open WebUI 0.10.2 | declared, not in effect: needs a switch and Redis ([gentian-apps#211](https://github.com/gentian-org/gentian-apps/issues/211)) | lasts as long as its own token |
 | Element (Synapse) | no: nothing registers an address, and Synapse's switch is off | lasts as long as Synapse keeps it |

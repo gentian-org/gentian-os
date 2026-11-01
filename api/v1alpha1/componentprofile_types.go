@@ -411,7 +411,7 @@ type PackageSpec struct {
 // PackageAddon is a component that rides on another component's addon system.
 type PackageAddon struct {
 	// ID is what the hosting component's own addon system calls this addon:
-	// an Odoo module name, a Nextcloud app id, an Activepieces piece name.
+	// an Odoo module name, a Nextcloud app id, an XWiki extension.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
