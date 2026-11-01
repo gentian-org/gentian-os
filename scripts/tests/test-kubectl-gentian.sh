@@ -1070,7 +1070,13 @@ fresh
 reply GET /v1/clusters/c1/updates 200 '{"cluster":"c1","policy":{"mode":"latest"},"windowOpen":true,"entries":[{"tenant":"acme","profile":"notes","pinned":"'"${PINNED}"'","running":"'"${OLD}"'","newest":"'"${PINNED}"'","outdated":false,"mode":"latest","modeFrom":"cluster","rollout":{"target":"'"${PINNED}"'","phase":"RolledBack","message":"the build did not come up within 15m0s"},"ready":true}]}'
 gentian apps outdated
 has "outdated says the move was rolled back" "${OUT}" "rolled back: the build did not come up within 15m0s"
-has "... and how to try it again" "${OUT}" "kubectl gentian apps install notes --tenant acme retries the move to ${PINNED:0:19}"
+has "... and how to try it again, whether a catalog lists it or not" "${OUT}" "kubectl gentian apps move-outdated --tenant acme --app notes retries the move to ${PINNED:0:19}"
+
+# Where the tenant moves its own apps, its administrator retries by installing.
+fresh
+reply GET /v1/clusters/c1/updates 200 '{"cluster":"c1","policy":{"mode":"tenant"},"windowOpen":true,"entries":[{"tenant":"acme","profile":"notes","pinned":"'"${PINNED}"'","running":"'"${OLD}"'","newest":"'"${PINNED}"'","outdated":false,"mode":"tenant","modeFrom":"cluster","rollout":{"target":"'"${PINNED}"'","phase":"RolledBack","message":"the build did not come up within 15m0s"},"ready":true}]}'
+gentian apps outdated
+has "outdated gives a tenant-moved app the install" "${OUT}" "kubectl gentian apps install notes --tenant acme retries the move to ${PINNED:0:19}"
 
 echo ""
 echo ""
