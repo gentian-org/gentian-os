@@ -99,7 +99,7 @@ func TestCache_NoCacheApps(t *testing.T) {
 }
 
 // TestCache_CreatesRedisACLJob verifies that a Tenant with a Redis-requiring app
-// creates the redis-cli ACL SETUSER Job in the kernel namespace with correct labels.
+// creates the valkey-cli ACL SETUSER Job in the kernel namespace with correct labels.
 func TestCache_CreatesRedisACLJob(t *testing.T) {
 	t.Parallel()
 	profile := newRedisProfile("redis-app1")

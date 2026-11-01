@@ -534,7 +534,7 @@ argocd:
 provisioners:
   postgres: "postgres:17-alpine"
   mariadb: "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
-  redis: "redis:7-alpine"
+  redis: "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
   keycloak: "alpine:3.20"
   # Empty: ghcr.io/gentian-org/storage-tools at the operator's own image tag
   # (image.tag, else the chart's appVersion), which CI publishes beside it.

@@ -295,7 +295,7 @@ func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 // profile. The system namespaces these Jobs run in enforce exactly that, and a
 // Job whose pod is refused there never gets a pod at all -- it sits Running
 // with nothing behind it, and whatever waits on it waits for ever. A psql, a
-// mariadb, a redis-cli and an mc need none of what this takes away.
+// mariadb, a valkey-cli and an mc need none of what this takes away.
 func provisioningSecurityContext() *corev1.SecurityContext {
 	no := false
 	return &corev1.SecurityContext{

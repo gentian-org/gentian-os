@@ -223,6 +223,9 @@ func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
 			t.Errorf("the object-storage script is missing %q", want)
 		}
 	}
+	if !strings.Contains(scripts["redis"], "ACL SAVE") {
+		t.Errorf("a removed cache user is not saved, and comes back at the next restart:\n%s", scripts["redis"])
+	}
 	if !strings.Contains(scripts["redis"], "ACL DELUSER 'demo-wiki'") || !strings.Contains(scripts["redis"], "ACL LIST") {
 		t.Error("the cache script does not remove the user and then look for it")
 	}

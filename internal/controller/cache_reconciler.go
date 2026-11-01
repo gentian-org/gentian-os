@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -42,7 +43,7 @@ const (
 	memcachedPort           = provisioner.MemcachedPort
 )
 
-// ensureCache provisions per-app Redis ACL users (via redis-cli Job) and per-tenant
+// ensureCache provisions per-app Redis ACL users (via valkey-cli Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
 // to True once all Jobs complete and Memcached reports ready replicas.
 func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -176,7 +177,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 
 // --- Job constructors --------------------------------------------------------
 
-// makeRedisACLJob creates a redis-cli Job that provisions a per-app Redis ACL user.
+// makeRedisACLJob creates a valkey-cli Job that provisions a per-app Redis ACL user.
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
 // When withPassword is set the pod reads the user's password from the Secret
 // of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
@@ -308,7 +309,7 @@ func makeMemcachedService(tenant *gentianov1alpha1.Tenant) *corev1.Service {
 
 // --- Container constructor ---------------------------------------------------
 
-// redisContainer returns a Container running redis:7-alpine with admin credentials
+// redisContainer returns a Container running valkey-cli with admin credentials
 // injected from redis-admin Secret and user-specific values as literal env vars.
 func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 	return corev1.Container{
@@ -327,17 +328,35 @@ func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 
 // --- Shell scripts -----------------------------------------------------------
 
+// cacheUserCommands is what an app may ask of the shared cache. A key pattern
+// does not hold the commands that take no key: FLUSHALL, SWAPDB and KEYS are in
+// @write and @read and reach every tenant, so @dangerous comes off, with the two
+// that list or sample other tenants' key names outside it. An app's scripts run
+// under these same rules.
+const cacheUserCommands = `+@read +@write +@connection +eval +evalsha +@pubsub +@transaction -@dangerous +info -randomkey -scan`
+
 // redisSetUserScript returns an idempotent ACL SETUSER script.
-// ACL SETUSER is safe to re-run — it resets the ACL entry to the given rules.
-// allkeys is required when session keys are not scoped to a single key prefix (some PHP apps).
-func redisSetUserScript(username, _ string) string {
+// reset takes the user back to nothing first, so what a Job leaves is these
+// rules and no earlier ones. The server answers an error with exit code 0, so
+// every answer is read.
+//
+// ACL SAVE comes first as well as last: a server that has no file to save to
+// loses its users on a restart, and this Job fails there without changing
+// anything, and is run again until the server that keeps them is up.
+func redisSetUserScript(username, keyPrefix string) string {
 	return fmt.Sprintf(
-		`set -euo pipefail
+		`set -eu
 USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
-redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$USER_PW" allkeys allchannels "+@read" "+@write" "+@connection" "+eval" "+evalsha" "+@pubsub" "+info" "+@transaction"
-echo "ACL user %s provisioned"`,
-		username, username,
+cli() { valkey-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
+expect_ok() {
+  answer="$(cli "$@")"
+  [ "$answer" = OK ] || { echo "ERROR: $1 $2: $answer" >&2; exit 1; }
+}
+expect_ok ACL SAVE
+expect_ok ACL SETUSER %[1]s reset on ">$USER_PW" "~%[2]s*" "&%[2]s*" "&%[3]s" %[4]s
+expect_ok ACL SAVE
+echo "ACL user %[1]s provisioned"`,
+		username, keyPrefix, strings.TrimSuffix(keyPrefix, ":"), cacheUserCommands,
 	)
 }
 
@@ -379,7 +398,9 @@ func redisACLUsername(tenantName, appName string) string {
 
 // redisKeyPrefix returns the Redis key prefix scoped to a tenant + app.
 // ACL key patterns use glob syntax; the trailing * is part of the ACL rule,
-// not the prefix value stored here.
+// not the prefix value stored here. A profile writes it as
+// ${TENANT_ID}:${APP_ID}: and may use the same text without the colon as a
+// channel.
 func redisKeyPrefix(tenantName, appName string) string {
 	return fmt.Sprintf("%s:%s:", tenantName, appName)
 }

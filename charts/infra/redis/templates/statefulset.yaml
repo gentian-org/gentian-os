@@ -1,0 +1,104 @@
+{{- $image := .Values.image -}}
+{{- /* The env values ConfigMap writes an empty `global:` on a cluster that
+     names neither a storage class nor a pull secret, and null replaces the
+     whole map. */ -}}
+{{- $global := .Values.global | default dict -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-master
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "redis.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ .Release.Name }}-headless
+  selector:
+    matchLabels:
+      {{- include "redis.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "redis.labels" . | nindent 8 }}
+      {{- with .Values.master.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with $global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.master.podSecurityContext | nindent 8 }}
+      containers:
+        - name: redis
+          image: {{ printf "%s/%s:%s@%s" $image.registry $image.repository $image.tag $image.digest }}
+          imagePullPolicy: {{ $image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          # The users are the ones the operator's Jobs saved (ACL SAVE). The
+          # default user is left out of what is loaded: a file naming it wins
+          # over --requirepass, and a rotated password would never take.
+          #
+          # A directory of its own: a volume that served Redis 7.4 holds files
+          # Valkey cannot read, and refuses to start on.
+          args:
+            - |
+              set -eu
+              mkdir -p /data/valkey
+              touch /data/valkey/users.acl
+              sed -i '/^user default /d' /data/valkey/users.acl
+              exec valkey-server --port {{ .Values.master.containerPorts.redis }} --dir /data/valkey \
+                --aclfile /data/valkey/users.acl \
+                --requirepass "$VALKEYCLI_AUTH" \
+                --appendonly yes --save ''
+          env:
+            - name: VALKEYCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.existingSecret" .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.existingSecretPasswordKey }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.master.containerPorts.redis }}
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", 'valkey-cli ping | grep -qE "PONG|LOADING"']
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 6
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", 'valkey-cli ping | grep -q PONG']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 5
+          {{- with .Values.master.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.master.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          {{- include "redis.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with $global.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.master.persistence.size }}
