@@ -868,7 +868,7 @@ echo "object storage for %[1]s purged"
 
 // cacheDestroyScript removes the app's ACL user.
 //
-// redis-cli exits 0 when the server answers with an error, so the exit code
+// valkey-cli exits 0 when the server answers with an error, so the exit code
 // says nothing. The script asks for the user list afterwards and passes only
 // if the list could be read -- it always names the default user -- and the
 // app's user is not in it.
@@ -878,7 +878,7 @@ echo "object storage for %[1]s purged"
 // app's.
 func cacheDestroyScript(user string) string {
 	return fmt.Sprintf(`set -eu
-cli() { redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
+cli() { valkey-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
 cli ACL DELUSER '%[1]s'
 users="$(cli ACL LIST)"
 case "${users}" in
@@ -888,6 +888,8 @@ esac
 if printf '%%s\n' "${users}" | grep -q '^user %[1]s '; then
   echo "ERROR: cache user %[1]s is still there" >&2; exit 1
 fi
+saved="$(cli ACL SAVE)"
+[ "${saved}" = OK ] || { echo "ERROR: the cache did not save its users: ${saved}" >&2; exit 1; }
 echo "cache user %[1]s is gone"
 `, user)
 }

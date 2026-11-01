@@ -28,7 +28,7 @@ const (
 	// server refuses (SET ... NOTE_VERBOSITY): each dump was taken and none
 	// could be loaded again. Bump the two together; a test holds them equal.
 	DefaultMariaDBProvisionerImage  = "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
-	DefaultRedisProvisionerImage    = "redis:7-alpine"
+	DefaultRedisProvisionerImage    = "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
 	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
 	DefaultKeycloakProvisionerImage = "alpine:3.20"
 

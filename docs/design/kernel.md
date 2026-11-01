@@ -18,7 +18,7 @@ OS kernel does the same for cloud-native applications.
 | Process execution | Scheduler, init | K8s scheduling + GitOps deployment | v1 |
 | Secrets keyring | Keychain | Centralized secret store with tenant-scoped policies | v1 |
 | Database services | — | Shared SQL clusters with per-app-per-tenant isolation | v1 |
-| Cache | Page cache, tmpfs | Shared Redis / Memcached with per-app isolation | v1 |
+| Cache | Page cache, tmpfs | Shared Valkey / Memcached with per-app isolation | v1 |
 | Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage (optional kernel extension; no spam filter) | v1 |
 | Package manager | apt, App Store | Catalogs of `ComponentProfile` bundles, installed through the director; rendered by the operator | v1 |
 | App-to-app permissions | Capabilities, Android intents | Contracts between apps: an `AppGrant` by the tenant's administrator opens the network path and gives the consumer a key of its own ([multi-tenancy.md §4](multi-tenancy.md)) | v1 |
