@@ -206,7 +206,7 @@ A profile cannot choose an issuer for its own hosts: `ComponentProfile` has no s
 
 When traffic is **proxied** (e.g. Cloudflare orange cloud), the CSP must also present a valid certificate for each hostname. Universal SSL on `*.platform.example.com` does **not** cover `meet.demo.platform.example.com`.
 
-Optional operator integration (Cloudflare today): proxied CNAME `*.<effectiveDomain>` → tunnel target so **Total TLS** issues `*.<effectiveDomain>` at the edge. If disabled, use DNS-only (grey cloud) or TLS passthrough to the cluster origin cert.
+Optional operator integration (Cloudflare): proxied CNAME `*.<effectiveDomain>` → tunnel target so **Total TLS** issues `*.<effectiveDomain>` at the edge. If disabled, use DNS-only (grey cloud) or TLS passthrough to the cluster origin cert.
 
 Origin and edge are separate: cert-manager in the tenant namespace is the portable contract; Cloudflare/ACM/Front Door adapters are deployment options.
 
@@ -243,7 +243,7 @@ cluster's list of customers is not published.
 
 - **OIDC issuer** stays at `https://id.<kernel_domain>/realms/<tenant>` — app URL changes do not invalidate tokens.
 - **DNS:** Customer points `*.acme.com` (or per-host records) at the platform edge proxy/tunnel.
-- **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token). If the customer will not grant DNS API access, a future tier can use HTTP-01 per hostname or BYO certificates — still the same HTTPRoute host naming.
+- **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token).
 
 ### Kernel DNS credential
 
@@ -375,12 +375,7 @@ to declared state (an install, a plan, a policy) is a commit to the
 deployments repository made by the director as the person who asked; nobody
 edits a Tenant manifest by pull request. See [commands.md](../commands.md) §5 and §6.
 
-## 9. Future: Capability Enforcement at Runtime
+## 9. Capability Enforcement at Runtime
 
-Today contracts between apps are trust-based: an app declaring
-`webdav:read` is trusted not to attempt `webdav:write`. Future
-versions may enforce capabilities at the network layer using a service
-mesh (Istio AuthorizationPolicy) or an API gateway that inspects
-requests against declared capabilities — the cloud-OS equivalent of
-SELinux/seccomp adding mandatory access control on top of POSIX
-discretionary permissions.
+Contracts between apps are trust-based: an app declaring
+`webdav:read` is trusted not to attempt `webdav:write`.

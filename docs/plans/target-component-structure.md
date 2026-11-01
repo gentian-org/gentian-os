@@ -86,6 +86,13 @@ spec:
 
 `service` is exclusive: a component may not be both a service and an app.
 
+Class `service` is an option and is not implemented: today engines are
+delivered as Argo apps (`kernel/appsets`,
+`internal/controller/system_engines.go`), and the operator refuses the class
+with `ClassUnsupported` (`internal/controller/component_reconciler.go`). Class
+`shared-app` is a planned structure, explained in §7, and is not yet
+implemented.
+
 **Changed from `tenancy: system | shared | tenant`.** Those values mix a
 placement word, a bare adjective and a scope word for one question. `system`
 names the namespace, not the role: its own doc comment defines it as *"serves
@@ -233,7 +240,7 @@ realm without it simply cannot send invitations.
 | where | `spec.requires.services` | `spec.provides`, `spec.integrations` |
 | shape | closed set, one typed struct per member | open set, a name and a protocol |
 | members | identity, database, storage, cache, mail, MCP | `wiki`, `project-management`, `erp-core`, `central-navigation` |
-| fulfilled by | a component of class `service`, or something outside the cluster | another component |
+| fulfilled by | a system engine, delivered as an Argo app today; a component of class `service` as an option (§2); or something outside the cluster | another component |
 
 ```yaml
 spec:
@@ -251,7 +258,7 @@ spec:
 ```
 
 **Changed from `kernelRequirements`**, which names a fulfiller that is not the
-fulfiller. A database comes from a component of class `service`. Mail may be a
+fulfiller. A database comes from a system engine. Mail may be a
 relay outside the cluster. Object storage may be a bucket at a cloud provider.
 
 **And changed from `requires.contracts`**, where it landed on
@@ -260,8 +267,8 @@ the second column. That rename also only half happened — the Go type behind
 `requires.contracts` is still `KernelRequirements`.
 
 `services` pairs with class `service`, so the model reads consistently: a
-component of class `service` fulfils `requires.services`. Go type
-`ServiceRequirements`.
+component of class `service` would fulfill `requires.services`, an option that
+is not implemented (§2). Go type `ServiceRequirements`.
 
 `resources` was the alternative, and is what Backstage, Radius and Score use.
 Rejected because *resources* already means quota here: `ResourcePlan`,
@@ -379,9 +386,15 @@ the derivation salt. Generated and stored is the more robust default.
 Nothing here is a new field. The class reinterprets the scope of declarations
 the profile already makes.
 
+The `service` column describes the option of §2: today engines are delivered
+as Argo apps, and the operator refuses the class with `ClassUnsupported`. The
+`shared-app` column describes the plan of §7.
+
 ---
 
 ## 7. Shared instances: offered, then installed
+
+This is a planned structure and is not yet implemented.
 
 A shared instance existing is not the same as a tenant having the app. Two
 steps, two people:

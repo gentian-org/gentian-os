@@ -1,11 +1,9 @@
 # Audit events, log forwarding and monitoring — design
 
-**Status:** v1
 **Scope:** what the platform records about who decided, changed, signed in
 and was refused; how those records leave the nodes; and the platform's own
 metrics and alerts. Not where the records are kept long term: that is a
-destination the cluster names, such as the Aluvian Operations Console's
-evidence store.
+destination the cluster names.
 **Companion docs:** [security.md](security.md) (§3.0 rows *Record of
 administrative changes*, *Decision log*), [operations.md](operations.md) §6,
 [../security-principles.md](../security-principles.md) §7,
@@ -24,8 +22,8 @@ auditor can follow one request from the edge to the commit.
 
 Three parts, each independent of the others:
 
-1. **Sources** (§3): every service whose decisions matter writes one JSON
-   line per decision, change or identity event, in one envelope.
+1. **Sources** (§3): the bouncer and the director write one JSON line per
+   decision or change, in one envelope; the other sources are in §3.2.
 2. **Forwarder** (§4): an optional DaemonSet that collects those lines and
    the pods' other output and ships them to a destination the Cluster claim
    names. Off until a destination is set.
@@ -34,12 +32,12 @@ Three parts, each independent of the others:
 
 The platform installs and runs with none of 2 and 3 switched on. A cluster
 without a destination still has the change log in git, the registrar's
-record and the issuer's events, as today.
+record and the issuer's events.
 
 ## 2. Principles
 
 1. **Write as it happens, in one shape.** One JSON line per event, the
-   envelope in §3.1, on stdout. No source keeps its own audit file.
+   envelope in §3.1, on stdout.
 2. **People are UUIDs.** The issuer's `sub`, never a name or an address. The
    mapping lives in Keycloak and the registrar and goes when the person
    goes.
@@ -82,19 +80,16 @@ is empty rather than writing it empty. `kind` is one of `decision`, `change`,
 
 ### 3.2 What writes it
 
-| Source | Today | Change |
-| --- | --- | --- |
-| bouncer | only a cache miss reaches the store client's `authz decision` line; the edge path writes nothing | one envelope per decision in `internal/bouncer/decider.go`, allows and refusals, with the reason (no-session, unpublished, refused, allowed) and whether it was cached |
-| director | `authz decision` per check; commits logged on some paths | one envelope per commit after the write in `internal/director/gitops`: request id, subject, relation, object, commit, files |
-| registrar | identity actions in its record table and on stdout | the stdout line takes the envelope |
-| custodian, usher | JSON with `request_id` | decisions and writes take the envelope |
-| operator | reconcile logs | backup, restore, purge, deletion, privilege and waiver outcomes take the envelope |
-| Keycloak | events in its database, success events at debug in text | `KC_LOG_CONSOLE_OUTPUT=json`, the jboss-logging listener's success level at `info`; `eventsExpiration` thirty days on every realm |
-| Envoy edge | Envoy Gateway's default access log | a JSON format on the `gentian-edge` EnvoyProxy: time, request id, method, host, path without query, status, flags, duration, upstream, client address, and the subject header the bouncer sets |
-| perimeter proxy | nginx default | the same JSON fields, without subject |
-
-Keycloak's events carry the request id once the event listener reads the
-`X-Gentian-Request-Id` header the registrar already sends.
+| Source | What it writes |
+| --- | --- |
+| bouncer | one envelope per decision in `internal/bouncer/decider.go`, allows and refusals, with the reason (no-session, unpublished, refused, allowed) and whether it was cached |
+| director | one envelope per commit after the write in `internal/director/gitops`: request id, subject, relation, object, commit, files |
+| registrar | identity actions in its record table |
+| custodian, usher | JSON logs with `request_id` |
+| operator | reconcile logs |
+| Keycloak | events in its database and, as JSON, on stdout: `KC_LOG_CONSOLE_OUTPUT=json`, the jboss-logging listener's success level at `info`; `eventsExpiration` thirty days on every tenant realm |
+| Envoy edge | a JSON format on the `gentian-edge` EnvoyProxy: time, request id, method, host, path without query, status, flags, duration, upstream, client address, and the subject header the bouncer sets |
+| perimeter proxy | the same JSON fields, without subject |
 
 ## 4. Forwarder
 
@@ -192,7 +187,5 @@ A destination may bring rules of its own as `PrometheusRule` objects.
 
 Keeping the records for a period, locking them against change, signing
 what was kept, searching them, exporting them for an auditor or a
-data-subject request, and the screens for all of it. The Aluvian
-Operations Console offers this as its evidence store, with an on-cluster or
-external locked bucket; any other system that accepts NDJSON or OTLP over
-HTTPS can take its place.
+data-subject request, and the screens for all of it. Any system that
+accepts newline-delimited JSON over HTTPS can serve as the destination.

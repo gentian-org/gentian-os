@@ -201,9 +201,7 @@ one hour. No failure stops anything else.
 - Apps are sorted by `digest`, and an app's add-ons by `digest` and then by
   name, so a cluster whose state has not changed says the same thing again.
 
-`addons`, `uid` and `issuer` were added without raising `version`: the format does not forbid
-members a receiver does not know, and a receiver that reads only the members
-it knows reads a report with them exactly as it read one without.
+The format does not forbid members a receiver does not know.
 
 **What is not sent.** No names, e-mail addresses, user ids, group names, tenant
 display names or administrators' addresses, and nothing about apps or add-ons
@@ -360,38 +358,6 @@ waited for; it holds only the reconciler that writes that kind. On a fresh
 install this does not arise in the normal order: B-06 applies the XRDs and
 waits for them to be established, and the operator arrives at D-01.
 
-Delivering the XRDs and Compositions through Argo CD as well, so that one sync
-moved every definition together, is a possible later step. It is not built.
-
-### 7.5 Upgrading Envoy Gateway on an existing cluster
-
-A fresh install needs nothing from this section. A cluster that already runs
-an earlier Envoy Gateway is brought forward by re-running step A-05
-(`./install.sh --only A-05`) from a checkout of the new release, and then
-letting Argo CD roll the operator and the bouncer. In that order:
-
-1. **Kubernetes 1.33 or newer.** Pre-flight checks it.
-2. **CRDs first.** A-05 applies the pinned chart's CRDs — Envoy Gateway's own
-   and the Gateway API's — server-side before it upgrades the chart. Helm
-   never upgrades CRDs, and a controller on older definitions has the fields
-   it does not know dropped from every policy. The chart then installs an
-   admission policy that refuses Gateway API CRDs older than v1.5, so going
-   back means deleting that policy first.
-3. **The proxies are rebuilt.** The new controller replaces the Envoy pods
-   (new image, changed pod template). With two replicas this is a rolling
-   replacement; connections are cut once.
-4. **The order at the front door.** A-05 re-applies the edge `EnvoyProxy`
-   with `filterOrder`. Until the new operator has rewritten the session
-   policies and the new bouncer is running, sign-in fails closed: an old
-   bouncer behind the new order, or a new one in front of old policies,
-   refuses.
-5. **Everyone signs in again.** Expect session cookies written by the
-   earlier version not to be accepted: they were not encrypted, and the way
-   the cookies are sealed changed in between. Keycloak sessions survive, so
-   this is one silent redirect per host, not a password prompt.
-6. **The zone clients' post-logout addresses** change to each host's front
-   page; `./install.sh --only B-06` delivers the Composition.
-
 ## 8. Safety Guards
 
 - **The vault's Argo CD Applications** (`openbao`, `openbao-transit`) deploy
@@ -446,12 +412,6 @@ letting Argo CD roll the operator and the bouncer. In that order:
   The vault reads its certificate only at start or on `SIGHUP`; the sidecar
   `tls-reload` in its pod sends the signal within a minute of the renewed
   file reaching the pod, and `B-01` (`./install.sh --only B-01`) does too.
-  The StatefulSet updates `OnDelete`, so a vault pod started before the
-  sidecar was added has none until it is next restarted, and nothing
-  restarts it for that: a restart seals it until the seal unseals it. Until
-  then run `B-01` within 30 days of a renewal, or signal it by hand
-  (`kubectl exec -n kernel-secrets openbao-0 -c openbao -- pkill -HUP -x
-  bao`).
 - **Replacing `openbao-ca`** (ten years; renewed by cert-manager with the
   same key): delete its Secret `openbao-ca-tls` in `kernel-secrets` and the
   Certificate is issued again with a new key; then re-run `B-01`, which
@@ -465,7 +425,7 @@ letting Argo CD roll the operator and the bouncer. In that order:
 What creating, backing up, restoring, importing, uninstalling, purging,
 retiring and deleting do with each kind of thing a tenant and an app own is in
 **[data-lifecycle.md](data-lifecycle.md)**: one table, the order, what a
-bundle does not hold, how each act fails, and the known gaps. Read that first.
+bundle does not hold, how each act fails, and its limits. Read that first.
 This section is the reference under it: detail that page leaves out, and
 nothing that page already says.
 
@@ -535,8 +495,8 @@ fine print:
 - **The realm.** Never deleted or disabled when it is the kernel realm, which
   a tenant only adopts.
 - **The client a realm signed in to the kernel realm as** (`broker-<realm>`),
-  and the mapper on it. It is no longer made ([iam.md §1.7](iam.md)); one
-  left from before is removed from the kernel realm by the Job that deletes
+  and the mapper on it. The platform makes none ([iam.md §1.7](iam.md)); one
+  that exists is removed from the kernel realm by the Job that deletes
   the realm.
 - **The vault subtree.** An operator with no vault that was not told to run
   without one (`GENTIAN_WITHOUT_VAULT=true`) fails the deletion here.
@@ -633,7 +593,7 @@ anything is changed; the plan is in the restore's status.
 **What is guaranteed.** The platform guarantees the round trip: a bundle
 restored by a platform of the version line that wrote it (`operatorVersion`),
 into the tenant it was taken of, on the same domain. A bundle of an older
-line, or one that records none (written before the field was), is restored as
+line, or one that records none, is restored as
 far as this platform reads it and nothing in it is converted; one taken on
 another domain is
 restored, and the apps' data still names the old domain where their
@@ -683,16 +643,13 @@ route held; `status.heldBack` is emptied when the restore ends.
 
 **The bundle format.** The manifest (`manifest.json`, encrypted like every
 artifact) carries `schemaVersion`. Format 1 named each app and the kinds
-captured, nothing else. **Format 2**, written since the restore went by the
-manifest, adds per app one `stores` entry per artifact — `kind` (`postgres`,
+captured, nothing else. **Format 2** adds per app one `stores` entry per artifact — `kind` (`postgres`,
 `postgresOwned`, `mariadb`, `mariadbOwned`, `s3`, `volume`), `name` (what it was captured
 from), `path` (where in the bundle), and for a volume the Helm `release` it
 recorded — and the app's `digest`, `databaseEngine` and `releases`; the
-tenant-wide captures are no longer listed among the apps. Fields were added
-and none renamed. A format 1 bundle still restores: the names are derived from
+tenant-wide captures are not listed among the apps. A format 1 bundle still restores: the names are derived from
 the tenant's prefixes the manifest records and the volume claims are the ones the apps
-have now, and the result says `nameDerivation: derived`. **Format 3** adds
-what a format 2 bundle did not hold, and again renames nothing: `retained` on
+have now, and the result says `nameDerivation: derived`. **Format 3** adds `retained` on
 an app that was uninstalled with its data kept when the bundle was taken, and
 on each of its volumes the `claim` it was captured from (size, access modes,
 and the labels and annotations that say whose it is), from which the claim is
@@ -704,8 +661,8 @@ them and restores as before. **Format 4** adds to an app's `stores` an entry
 of `kind: secrets`, `name` the app, `path` `secrets/<app>.json`: the app's own
 secrets, a JSON document of `secrets` (name to value), `extensions`
 (extension, then name to value) and `derived` (the keys the profile declares
-under `secrets.derived`, key to value), with no path in it. `derived` was
-added within format 4; a document without it reads as before. A format 3 bundle has
+under `secrets.derived`, key to value), with no path in it. A document
+without `derived` is read too. A format 3 bundle has
 none and restores as before, changing no stored secret
 ([security.md §6.4](security.md)). Also within format 4, and optional, the
 manifest says by what and where it was written: `operatorVersion`, the
@@ -828,7 +785,7 @@ For every other namespace a run has a step in, the operator stages one Secret
 holding both (`tx-<tenant>-<run>-run-creds`, `…-rcreds` for a restore) and
 removes it when the run ends: completed, failed or deleted. For a bundle on
 the platform's own storage the staged credential is the object store's
-administrator's, as it always was for volume steps.
+administrator's.
 
 The names of a run's Jobs and Secrets carry the tenant's name: those
 namespaces are shared, and a run's name is unique in its tenant only. A Job
@@ -863,7 +820,7 @@ deleting one that runs stops its Jobs and starts the app again.
 
 ### 9.6 Known limits
 
-The gaps that matter to a person running the platform are in
+The limits that matter to a person running the platform are in
 [data-lifecycle.md](data-lifecycle.md) §7. The technical limits behind them:
 
 - **Cache keys.** The cache is one shared instance and an app's user may touch
@@ -877,10 +834,7 @@ The gaps that matter to a person running the platform are in
   namespace of another name is not supported end to end; an export or restore
   created for one is refused.
 - **MariaDB databases an app creates for itself** are the app's by their name
-  (§9.3). `mariadbOwned` was added to format 2 without a new format number: a
-  platform from before it refuses an app whose bundle holds one ("an artifact
-  of kind … which this platform does not know how to restore") and restores
-  nothing of that app. Each database is dumped at one instant of its own; an
+  (§9.3). Each database is dumped at one instant of its own; an
   export is consistent across an app's databases only because the app is
   paused. A database whose name has a control character in it fails the
   export. The read of what uninstalled apps hold reports the database kind as

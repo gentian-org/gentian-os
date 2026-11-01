@@ -21,7 +21,7 @@ server.
 | Runs in | `kernel-authorization` | `system-authorization` |
 | Asked by | the enforcement points: bouncer, director, usher, custodian, registrar, the operator | the arbiter, and nothing else |
 | Written by | the operator's projection and the membership listener | the arbiter, for the component that holds the store |
-| Its data | rebuilt from git and the Cluster claim; nothing to back up | tenant data: exported, restored and purged with the tenant |
+| Its data | structure rebuilt from git and the Cluster claim; memberships return from Keycloak as each person's groups next change (#642) | tenant data: exported, restored and purged with the tenant |
 | Database | `kernel-postgres` | the tenants' data plane, `system-postgresql` |
 
 OpenFGA's credential opens every store on its server, so a key that reached

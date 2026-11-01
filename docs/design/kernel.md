@@ -10,26 +10,22 @@ A traditional OS kernel mediates between hardware and applications by
 providing a small, stable set of services every app needs. The Gentian
 OS kernel does the same for cloud-native applications.
 
-| OS Function | Traditional OS | Gentian OS Equivalent | Scope |
-|---|---|---|---|
-| Identity & permissions | UID/GID, PAM | **Keycloak** (OIDC/SSO) + **OpenFGA** (ReBAC) | v1 |
-| Filesystem | VFS, ext4 | S3 object storage (SeaweedFS); hierarchical files via installable apps (e.g. Nextcloud WebDAV) | v1 |
-| Networking | TCP/IP stack | K8s CNI + Gateway API edge + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) | v1 |
-| Process execution | Scheduler, init | K8s scheduling + GitOps deployment | v1 |
-| Secrets keyring | Keychain | Centralized secret store with tenant-scoped policies | v1 |
-| Database services | — | Shared SQL clusters with per-app-per-tenant isolation | v1 |
-| Cache | Page cache, tmpfs | Shared Valkey / Memcached with per-app isolation | v1 |
-| Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage (optional kernel extension; no spam filter) | v1 |
-| Package manager | apt, App Store | Catalogs of `ComponentProfile` bundles, installed through the director; rendered by the operator | v1 |
-| App-to-app permissions | Capabilities, Android intents | Contracts between apps: an `AppGrant` by the tenant's administrator opens the network path and gives the consumer a key of its own ([multi-tenancy.md §4](multi-tenancy.md)) | v1 |
-| Window manager | Desktop env | The tenant desktop: tiles for what a person may open, opened in a frame or a tab, on one session | v1 |
-| Notifications | Notification daemon | Notices an administrator publishes to a tenant's people, shown on the desktop. Notifications from apps are not built | v1 (notices) |
-| Init / lifecycle | systemd | Crossplane Compositions + Argo CD | v1 |
-| Resource quotas | cgroups, ulimits | K8s ResourceQuotas + LimitRanges, per-tenant policies | v1 |
-| IPC bus | D-Bus, sockets | Message broker with per-tenant subjects (CloudEvents) | Future |
-| Clipboard / intents | X11 clipboard | Share-to intent system | Future |
-| Config store | dconf, registry | Per-tenant, per-app key-value config service | Future |
-| Capability enforcement | SELinux, seccomp | Runtime checks via service mesh / API gateway | Future |
+| OS Function | Traditional OS | Gentian OS Equivalent |
+|---|---|---|
+| Identity & permissions | UID/GID, PAM | **Keycloak** (OIDC/SSO) + **OpenFGA** (ReBAC) |
+| Filesystem | VFS, ext4 | S3 object storage (SeaweedFS); hierarchical files via installable apps (e.g. Nextcloud WebDAV) |
+| Networking | TCP/IP stack | K8s CNI + Gateway API edge + NetworkPolicies + kernel wildcard + per-tenant zone wildcards (DNS-01) |
+| Process execution | Scheduler, init | K8s scheduling + GitOps deployment |
+| Secrets keyring | Keychain | Centralized secret store with tenant-scoped policies |
+| Database services | — | Shared SQL clusters with per-app-per-tenant isolation |
+| Cache | Page cache, tmpfs | Shared Valkey / Memcached with per-app isolation |
+| Mail (extension) | sendmail, Maildir | SMTP transport + IMAP storage (optional kernel extension; no spam filter) |
+| Package manager | apt, App Store | Catalogs of `ComponentProfile` bundles, installed through the director; rendered by the operator |
+| App-to-app permissions | Capabilities, Android intents | Contracts between apps: an `AppGrant` by the tenant's administrator opens the network path and gives the consumer a key of its own ([multi-tenancy.md §4](multi-tenancy.md)) |
+| Window manager | Desktop env | The tenant desktop: tiles for what a person may open, opened in a frame or a tab, on one session |
+| Notifications | Notification daemon | Notices an administrator publishes to a tenant's people, shown on the desktop |
+| Init / lifecycle | systemd | Crossplane Compositions + Argo CD |
+| Resource quotas | cgroups, ulimits | K8s ResourceQuotas + LimitRanges, per-tenant policies |
 
 ## 2. The OS Analogy in Detail
 
@@ -97,7 +93,7 @@ managed resources that must be Ready before any `Tenant` claim can
 reach Ready. They are the **kernel devices** the syscall layer assumes
 are present — formatted, mounted, addressable — at boot.
 
-A tenant can later swap implementations (e.g. external S3 instead of
+A tenant can swap implementations (e.g. external S3 instead of
 SeaweedFS) without breaking apps that program against the contract,
 the way a desktop user can replace `C:` without breaking
 `CreateFile()`.
@@ -108,18 +104,13 @@ Some kernel functions are **optional** — not every deployment needs
 them. These are modeled as **kernel extensions**: shared
 infrastructure with tenant-scoped configuration, enableable per cluster.
 
-The primary extension today is **mail**. Not every tenant runs
+The primary extension is **mail**. Not every tenant runs
 self-hosted mail; some use Gmail, others only need outbound SMTP for
 notifications. Mail is therefore not part of the core kernel but a
 deployable extension. See [mail.md](mail.md) for the configuration
 modes, isolation guarantees, and trade-offs.
 
-## 5. Capability Enforcement (Future)
+## 5. Capability Enforcement
 
-Today, contracts between apps are **trust-based** — an app that
+Contracts between apps are **trust-based** — an app that
 declares `webdav:read` is trusted not to attempt `webdav:write`.
-Future versions may enforce capabilities at the network layer using a
-service mesh (Istio authorization policies) or an API gateway that
-inspects requests against declared capabilities. This would move from
-an Android-style "declared permissions" model to runtime enforcement,
-the same way SELinux extended Linux's discretionary file permissions.

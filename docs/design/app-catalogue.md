@@ -193,7 +193,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 platform's: the reserved host labels are admitted only for the profiles the
 chart ships.
 
-Not built: nothing refuses an `experimental` entry, and no admission policy
+Nothing refuses an `experimental` entry, and no admission policy
 restricts chart registries by tier.
 
 ---

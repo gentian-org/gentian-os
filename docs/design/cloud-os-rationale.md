@@ -9,7 +9,7 @@
 Open-source business software is excellent — Nextcloud, OpenProject,
 Element/Matrix, OX App Suite, XWiki, Jitsi each rival or surpass their
 proprietary competitors in their own domain. But assembling them into a
-**coherent workplace** that an organization can actually adopt is, today,
+**coherent workplace** that an organization can actually adopt is
 a project measured in person-months:
 
 - Each app brings its own identity model, its own database, its own
@@ -75,8 +75,7 @@ analogy seriously rather than as a slogan. See
 
 ## 4. Why Now
 
-Two enablers make this possible today that were not possible five
-years ago:
+Two enablers make this possible:
 
 - **Kubernetes operator ecosystem.** Identity (Keycloak), databases
   (CloudNativePG), object storage (SeaweedFS), secrets (External Secrets),

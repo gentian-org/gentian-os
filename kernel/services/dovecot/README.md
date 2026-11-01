@@ -3,7 +3,7 @@
 Inbound MDA for `MAIL_SERVICE_MODE=system`: accepts mail from Postfix over LMTP,
 files it per tenant domain, and authenticates IMAP against Keycloak with XOAUTH2.
 
-No maintained public Dovecot Helm chart was available, so this is a raw Deployment
+No maintained public Dovecot Helm chart is available, so this is a raw Deployment
 with a self-contained `dovecot.conf` in a ConfigMap.
 
 ## Authentication

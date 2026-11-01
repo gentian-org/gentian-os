@@ -42,6 +42,11 @@ The `Customization` CRD records deviations at L2+; the operator computes debt si
 status (review overdue, upstream stale, version drift, cheaper rung available). Tenant-scoped
 L1 drop-ins are reconciled by `internal/controller/dropin_reconciler.go`.
 
+## Documentation
+
+* Documentation outside `docs/plans` and `docs/releases` describes the present: no dates of
+  past work and no future work. The past is in git and the future in issues.
+
 ## Security & licensing
 
 * **Never commit secrets.** `MASTER_PASSWORD`, SMTP credentials, and all derived kernel/app

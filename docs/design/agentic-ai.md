@@ -48,19 +48,15 @@ contract apps participate in, owned by the OS.
 
 ## 2. Contracts, MCP and Automation Hooks
 
-A `ComponentProfile` declares what a component needs and offers in one place.
-Two of the four layers are built; two are design only:
+A `ComponentProfile` declares what a component needs and offers in one place:
 
-| Layer | Purpose | Consumer | State |
-|---|---|---|---|
-| **Service requirements** (`spec.requires.services`) | Identity, database, storage, cache, mail, model gateway | Fulfilled by the platform | Built |
-| **App contracts** (`spec.provides` / `spec.integrations`) | App-to-app integration (e.g., OpenProject ↔ Nextcloud), granted per tenant with an `AppGrant` and wired as an `IntegrationBinding` | Other apps | Built |
-| **MCP** (`spec.requires.services.mcp`) | Agent-readable operations | AI agents, the desktop's assistant | The declaration exists; nothing acts on it (§3) |
-| **Automation hooks** | Event-driven workflow triggers and actions | Workflow engines | Not built; no such field (§5) |
+| Layer | Purpose | Consumer |
+|---|---|---|
+| **Service requirements** (`spec.requires.services`) | Identity, database, storage, cache, mail, model gateway | Fulfilled by the platform |
+| **App contracts** (`spec.provides` / `spec.integrations`) | App-to-app integration (e.g., OpenProject ↔ Nextcloud), granted per tenant with an `AppGrant` and wired as an `IntegrationBinding` | Other apps |
+| **MCP** (`spec.requires.services.mcp`) | Agent-readable operations | The declaration only (§3) |
 
-Contracts are machine-to-machine via stable APIs; MCP is agent-to-machine via a
-discoverable interface; automation hooks would bring event-driven workflows
-into the same contract system.
+Contracts are machine-to-machine via stable APIs; MCP is agent-to-machine.
 
 ## 3. MCP as a Kernel Requirement
 
@@ -76,20 +72,7 @@ spec:
         auth: oidc                  # oidc | none
 ```
 
-That is all that exists. The operator accepts the declaration and does nothing
-with it: there is no MCP registry, no list of capabilities with scopes in the
-profile, and no `mcpcapabilities` resource. The design is that, when an app is
-installed, the platform:
-
-1. Registers the app's MCP endpoint with the **MCP registry**
-   (a kernel service exposing the catalog of all live MCP
-   endpoints in the cluster, scoped per tenant).
-2. Leaves who is calling to the caller's side of the call. How a call
-   through MCP reaches an app as one particular person is not settled here:
-   no app is handed a person's token (AD-13), and the identity provider is
-   not configured to exchange one.
-3. Publishes the capability list (name, description, and a `read` / `write` /
-   `admin` scope each) under the tenant's namespace.
+The operator accepts the declaration and does nothing with it.
 
 Apps without MCP support simply omit the `mcp:` block; the platform
 treats them as agent-opaque but still useful.
@@ -100,290 +83,24 @@ The desktop has an assistant: a person asks, a language model behind the
 model gateway answers. It works **while the person is at the desktop** and
 ends with their session.
 
-Giving it tools is the planned next step: the assistant queries the MCP
-registry for the tenant's `read`-scope capabilities and calls them to
-answer a question such as "where is retention configured" from the
-documentation an app exposes. It reads; it does not change anything, it
-keeps no permission between sessions, and it never has a privilege the
-person lacks. Cross-tenant queries are structurally impossible because the
-registry, the issuer and the network policies are all tenant-scoped.
+Acting while the person is away, changing data unattended and running on a
+trigger are not the assistant's and not the kernel's (see Scope).
 
-Anything beyond that — acting while the person is away, changing data
-unattended, running on a trigger — is not the assistant's and not the
-kernel's (see Scope).
+## 5. Security Model
 
-## 5. Automation Hooks (`spec.automationHooks`)
+A component that acts for a person who is away holds itself to that person's
+privileges with the rights check: the person's own right to use the app is
+asked on every call, of the same store the edge asks.
 
-**Design only.** `ComponentProfile` has no `automationHooks` field, and the
-operator creates no binding, connection or webhook registration from one.
-`IntegrationBinding` exists for app contracts (§2) only. The rest of this
-section is the design.
-
-MCP (§3) is pull-based: an AI agent decides when to call an app.
-Workflow automation engines need the inverse — **push-based event
-delivery** ("when X happens, trigger Y"). The `automationHooks`
-block on `ComponentProfile` would bridge this gap without coupling to any
-specific workflow engine.
-
-### 5.1 Why a separate block (not MCP)
-
-MCP and workflow automation serve genuinely different roles:
-
-| | MCP (`requires.services.mcp`) | Automation Hooks (`spec.automationHooks`) |
-|---|---|---|
-| **Consumer** | AI agents / LLMs | Workflow engines |
-| **Interaction** | Agent-initiated, pull (request/response) | Event-driven, push (webhooks / CloudEvents) |
-| **Triggers** | Agent decides when to call | App fires when something happens |
-| **Execution** | Stateless tool call | Stateful multi-step flow (branching, retries, schedules) |
-| **Protocol** | MCP (JSON-RPC over stdio/SSE) | HTTP webhooks, CloudEvents over NATS (future) |
-
-The **metadata** overlaps: both describe "what can this app do?" with
-names, descriptions, scopes, and endpoints. The **consumption
-protocols** differ. `automationHooks` would live alongside `mcp` on the
-same `ComponentProfile`; a future unification merges them into a single
-`spec.capabilities` block with per-capability delivery modes (§5.6).
-
-### 5.2 Schema
-
-Apps declare two kinds of automation surface:
-
-```yaml
-spec:
-  automationHooks:
-    events:                              # things the app can emit
-      - name: task.created
-        description: "Fired when a new work package is created"
-        deliveryMode: webhook            # webhook | cloudevents-nats (future)
-        registrationEndpoint: /api/v3/webhooks
-      - name: task.statusChanged
-        description: "Fired when a task status changes"
-        deliveryMode: webhook
-        registrationEndpoint: /api/v3/webhooks
-    actions:                             # things the app can be told to do
-      - name: createTask
-        description: "Create a new work package"
-        endpoint: /api/v3/work_packages
-        method: POST
-        scope: write
-      - name: listProjects
-        description: "List all projects"
-        endpoint: /api/v3/projects
-        method: GET
-        scope: read
-```
-
-### 5.3 Shared metadata with MCP
-
-`automationHooks.actions` and the MCP capability list (§3) use the **same field
-names** so one can be derived from the other:
-
-| Field | MCP capability | Automation action | Automation event |
-|---|---|---|---|
-| `name` | ✓ | ✓ | ✓ |
-| `description` | ✓ | ✓ | ✓ |
-| `scope` | ✓ (`read`/`write`/`admin`) | ✓ | — |
-| `endpoint` | — (MCP server path) | ✓ (REST path) | — |
-| `method` | — (MCP JSON-RPC) | ✓ (`GET`/`POST`/…) | — |
-| `deliveryMode` | — | — | ✓ (`webhook`/`cloudevents-nats`) |
-| `registrationEndpoint` | — | — | ✓ |
-
-Profile authors who declare both `mcp` and `automationHooks` should
-use the same `name` for overlapping capabilities (e.g.
-`createTask` appears in both). Tooling can validate consistency.
-
-### 5.4 IntegrationBinding flow
-
-When a **workflow engine** and an app that
-declares `automationHooks` are both installed for the same tenant,
-the operator generates an `IntegrationBinding` via the existing
-contract system:
-
-```mermaid
-sequenceDiagram
-    participant OP as gentian-os operator
-    participant OB as OpenBao
-    participant WE as Workflow engine
-    participant App as OpenProject
-
-    Note over OP: Tenant has a workflow engine + openproject installed
-    OP->>OP: Match: the engine consumes 'automation',<br/>openproject provides automationHooks
-    OP->>OP: Create IntegrationBinding<br/>(engine ↔ openproject, contract: automation)
-    OP->>OB: Provision OIDC token-exchange<br/>client credentials
-    OP->>WE: POST /api/v1/connections<br/>(pre-configured "OpenProject" connection<br/>with internal service URL + token-exchange creds)
-    OP->>App: POST /api/v3/webhooks<br/>(register the engine's webhook URL for declared events)
-    Note over WE: User sees OpenProject triggers/actions<br/>ready to use — no manual setup
-```
-
-The workflow engine's `ComponentProfile` declares the consumer side:
-
-```yaml
-spec:
-  integrations:
-    - contract: automation
-      capabilities:
-        - webhook:subscribe      # can register webhook URLs with apps
-        - action:invoke          # can call app REST actions
-```
-
-**Key properties:**
-
-- **No app-specific hardcoding in gentian-os.** The operator
-  processes `automationHooks` identically for any app that declares
-  them — the same generic `IntegrationBinding` reconciler handles
-  OpenProject, Nextcloud, XWiki, or any future app.
-- **Secrets never in Git.** Token-exchange credentials flow through
-  OpenBao → ESO → the workflow engine's connection store.
-- **Tenant isolation.** Bindings, connections, and webhook
-  registrations are namespace-scoped. A workflow engine can only
-  reach apps in its own tenant.
-- **Internal service URLs.** The operator wires connections to
-  `http://{service}.tenant-{t}.svc.cluster.local:{port}`, not public
-  hostnames.
-
-### 5.5 Cross-app workflow examples
-
-With `automationHooks` and a workflow engine, tenant users build
-workflows that span apps without bespoke integration code:
-
-- **"Invoice arrived in OX Mail → create task in OpenProject →
-  notify finance channel in Element."** Three apps, three automation
-  hooks (`mail.received` event, `createTask` action, `sendMessage`
-  action), composed visually in the workflow editor.
-- **"Customer signed contract in Nextcloud Sign → provision their
-  account in OpenProject + invite them to a Jitsi room."** The
-  `document.signed` event triggers downstream actions — all
-  pre-wired by `IntegrationBinding`.
-- **"Daily summary: open issues, calendar conflicts, pending docs
-  needing review."** A scheduled flow walks `read`-scope actions
-  across installed apps and publishes a digest.
-
-These workflows are tenant-defined (live in the tenant's own
-namespace, use the tenant's identity, scoped to that tenant's apps)
-— the platform provides the substrate, not the workflows.
-
-### 5.6 Future unification with MCP
-
-The long-term target is a single `spec.capabilities` block:
-
-```yaml
-# Future (not implemented yet)
-spec:
-  capabilities:
-    - name: createTask
-      description: "Create a new work package"
-      scope: write
-      endpoint: /api/v3/work_packages
-      method: POST
-      deliveryModes:
-        - mcp          # available to AI agents
-        - action        # available to workflow engines
-    - name: task.created
-      description: "Fired when a new work package is created"
-      deliveryModes:
-        - webhook       # push to workflow engines
-        - cloudevents   # push to NATS subscribers
-      registrationEndpoint: /api/v3/webhooks
-```
-
-This collapses the MCP capability list and `automationHooks` into one
-declaration with multiple delivery modes per capability. The
-operator provisions each mode independently (MCP registry
-registration, webhook subscription, NATS subject binding). The
-consumer (AI agent or workflow engine) sees only the modes it
-understands.
-
-The unification depends on:
-
-- MCP registry deployment ([#599](https://github.com/gentian-org/gentian-os/issues/599))
-- NATS / CloudEvents infrastructure ([#574](https://github.com/gentian-org/gentian-os/issues/574))
-- At least two apps declaring both `mcp` and `automationHooks` to
-  validate the shared schema in practice
-
-## 6. AI-Assisted Platform Operations
-
-None of this is built. The same MCP fabric is meant to serve operator-side
-automation:
-
-- **Profile generation:** an agent reads a Helm chart's
-  `values.yaml`, infers the service requirements (does it need OIDC?
-  S3? mail?), and proposes a `ComponentProfile` — a human reviews and
-  commits to `gentian-apps`. For building new first-party apps, agents should
-  follow [gentian-apps/docs/custom-app-guide.md](../../../gentian-apps/docs/custom-app-guide.md)
-  and [gentian-apps/AGENTS.md](../../../gentian-apps/AGENTS.md).
-- **Tenant provisioning assistant:** "spin up a new tenant for ACME
-  Corp with Nextcloud, OpenProject, Element, mail mode external,
-  isolation namespace" — produces the Tenant CR for review.
-- **Health monitoring agent:** continuously walks
-  `kubectl get tenants,integrationbindings,applications` outputs,
-  correlates with metrics (see [operations.md](operations.md)), and
-  raises summaries in the operator chat — "tenant `beta-inc` has
-  binding `nextcloud↔openproject` degraded for 12m; root cause:
-  Nextcloud OIDC client secret rotation didn't roll OpenProject pods
-  (Reloader annotation missing)".
-- **Migration planner:** for kernel version upgrades, an agent walks
-  the diff between two kernel versions and predicts which tenants
-  need attention.
-
-These are agents that the **platform team** runs against the
-cluster's read-scope MCP surface. They are bound by the same OIDC
-identity and RBAC model as any human operator.
-
-## 7. Planned Capabilities
-
-MCP registry, the assistant's tools, workflow agents, and profile generator
-milestones are tracked as [issues](https://github.com/gentian-org/gentian-os/issues).
-
-Automation hooks milestones:
-
-| Phase | Scope | Depends on |
-|---|---|---|
-| **Phase 1** | A workflow engine profile (PostgreSQL, Redis, single sign-on, desktop tile). Manual connection config in the engine's UI. | The engine's sign-in |
-| **Phase 2** | `automationHooks` schema on the `ComponentProfile` CRD. Existing apps (OpenProject, Nextcloud, XWiki) declare hooks. Operator generates `IntegrationBinding` when a workflow engine is co-installed. | Generic operator work (not app-specific) |
-| **Phase 3** | Auto-provisioned connections. Operator calls workflow engine admin API to inject connections for bound apps. | OIDC token exchange ([#546](https://github.com/gentian-org/gentian-os/issues/546), [#572](https://github.com/gentian-org/gentian-os/issues/572)) |
-| **Phase 4** | CloudEvents / NATS delivery mode. Workflow engine subscribes via NATS instead of webhook registration. | NATS deployment ([#574](https://github.com/gentian-org/gentian-os/issues/574)) |
-| **Phase 5** | Unified `spec.capabilities` block. MCP + automationHooks merge with per-capability `deliveryModes`. | MCP registry ([#599](https://github.com/gentian-org/gentian-os/issues/599)) + Phase 4 |
-
-## 8. Security Model
-
-The rights check in the first point is built. The other points describe the
-design for MCP and automation hooks, neither of which is built: there is no
-capability scope to validate, no log of MCP calls, and no rate limit per
-capability.
-
-- **No agent or workflow has privileges the calling user lacks.** For a
-  component that acts for a person who is away, the rights check is how it
-  holds itself to that: the person's own right to use the app is asked on
-  every call, of the same store the edge asks.
-- **Capability scopes** (`read` / `write` / `admin`) are declared
-  per capability and enforced by the app, with the platform validating
-  the declaration matches the underlying API surface.
-- **Audit log:** every MCP call and automation action is logged with
-  (user, app, capability, agent/flow identity, tenant) — the same
-  audit pipeline that records human API calls.
-- **Tenant isolation:** the MCP registry and automation bindings are
-  per-tenant; agents and workflow engines cannot discover or call
-  endpoints in other tenants.
-- **Rate limits** apply per (user, capability) — an out-of-control
-  agent or runaway flow cannot DoS an app for other users.
-- **Webhook URLs** are scoped to the tenant's workflow engine
-  service; the operator registers them via the app's declared
-  `registrationEndpoint`, not a user-supplied URL.
-
-## 9. What This Is Not
+## 6. What This Is Not
 
 - Not a runtime for AI models. Models live wherever the user/tenant
   chooses (cloud LLM, on-prem inference, etc.).
-- Not a competitor to MCP server implementations. Apps still bring
-  their own MCP servers; the platform provides the registry,
-  identity, and tenant-scoping.
-- Not a workflow engine. The platform declares the hooks; workflow
-  engines execute the flows. The platform
-  is the substrate, not the orchestrator.
-- Not magic: apps that don't expose MCP or `automationHooks` remain
-  opaque to agents and workflow engines. The value scales with
-  catalog adoption.
+- Not a competitor to MCP server implementations. Apps bring their own
+  MCP servers.
+- Not a workflow engine.
 
-## 10. LLM Serving: Admin Console & vLLM Operations
+## 7. LLM Serving: Admin Console & vLLM Operations
 
 The model gateway ([llms.md](llms.md)) has its own
 platform-admin console, separate from the tenant-facing MCP/agent
@@ -393,7 +110,7 @@ the cluster admin, not an architecture doc — see
 [llm-integration-research.md](../research/llm-integration-research.md)
 for backend sizing/quantization research.
 
-### 10.1 LiteLLM admin console
+### 7.1 LiteLLM admin console
 
 `https://llm.<KERNEL_DOMAIN>` exists only where the Cluster claim switches the
 console on (`spec.llm.console.enabled`, off by default; see
@@ -402,7 +119,7 @@ console on (`spec.llm.console.enabled`, off by default; see
 behind the kernel sign-in. Login is Keycloak OIDC SSO via a
 `litellm-dashboard` client that only exists in the **kernel realm** —
 tenant users (separate per-tenant realms) structurally cannot reach it,
-which is what keeps LLM administration platform-admin-only for now.
+which is what keeps LLM administration platform-admin-only.
 LiteLLM's native SSO is free for ≤5 users on OSS (v1.76.0+); the
 JWT/OIDC/SCIM/`enforce_rbac` features that require an Enterprise license
 are a different feature (`enable_jwt_auth`, for authenticating
@@ -418,7 +135,7 @@ the step is non-fatal and retries on the next reconcile.
 
 Tenant administrators have no console of the shared gateway.
 
-### 10.2 Configuring vLLM
+### 7.2 Configuring vLLM
 
 **Chat UIs (Open WebUI included) cannot install or reconfigure vLLM —
 this isolation is structural, not a permission we grant/deny.** Open
@@ -456,7 +173,7 @@ guide in
 | `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
 | `--enable-auto-tool-choice` / `--tool-call-parser <parser>` | Required for `tool_choice="auto"` (Open WebUI's native tool support, agentic clients) — omitted by default, so tool-calling requests 400 clearly instead of silently misparsing. `<parser>` is model-family-specific (`hermes` for Qwen2/Qwen2.5/Hermes-family, `mistral` for Mistral, `llama3_json` for Llama 3) — the instance's `toolCallParser` |
 
-**In gentian-os today:** the namespace `system-llm` runs the gateway and, with
+**In gentian-os:** the namespace `system-llm` runs the gateway and, with
 `spec.llm.gpuAcceleration` false (the default), a mock OpenAI-compatible
 server (`vllm-inference`, `kernel/services/llm/manifests/templates/vllm-mock.yaml`),
 both delivered by the `gentian-llm` ApplicationSet.

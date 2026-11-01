@@ -2,9 +2,7 @@
 
 This document details the architecture for integrating Large Language Model (LLM) serving capabilities into Gentian OS.
 
-## What is built
-
-§1–§4 are the original design and its first-stage plan. What runs today differs:
+## What runs
 
 *   **The model gateway** is LiteLLM (`litellm-proxy`), with its own PostgreSQL
     (`litellm-db`) and Redis (`redis-llm`), in the namespace `system-llm`, which
@@ -13,9 +11,8 @@ This document details the architecture for integrating Large Language Model (LLM
     ApplicationSet). On a cluster without GPUs the same chart runs a mock
     model server (`vllm-inference`).
 *   **No request passes the edge.** The gateway has no public address unless the
-    console is switched on (§5, "Operator access"). There is no Envoy AI
-    Gateway, no token validation in front of the gateway and no per-model
-    check in OpenFGA: an app presents its key to LiteLLM, and that is the
+    console is switched on (§5, "Operator access"). There is no token
+    validation in front of the gateway and no per-model check in OpenFGA: an app presents its key to LiteLLM, and that is the
     whole check.
 *   **A component gets access by declaring it** (`requires.services.llm` in its
     `ComponentProfile`). The operator then generates a key for that tenant and
@@ -36,8 +33,7 @@ This document details the architecture for integrating Large Language Model (LLM
     request over it is refused with 429. The budget is the gateway's, under
     the id `gentian-person`, written by a Job of the gateway's chart after
     every sync (`kernel/services/llm/manifests/templates/person-budget.yaml`).
-    One budget for every person on the cluster; a person's own is not built.
-    An app that names no person is held to nothing per person.
+    One budget holds for every person on the cluster. An app that names no person is held to nothing per person.
 *   **The gateway's models are the Cluster claim's** (§5). The gateway's chart
     writes its configuration file from `spec.llm.instances` and
     `spec.llm.providers`, and the claim reaches the chart as a values file of
@@ -56,145 +52,9 @@ This document details the architecture for integrating Large Language Model (LLM
     `placement: {tenants: users, while: llm}`, and a cluster catalog's index
     repeats it as `placedWith: llm`; the App Store does not offer it, and an
     uninstall by hand is refused.
-*   **Built:** the vLLM instances. Each entry of `spec.llm.instances` is a
+*   **The vLLM instances.** Each entry of `spec.llm.instances` is a
     model of the gateway and a `vllm-<name>-inference` Deployment, Service,
     PVC and NetworkPolicy in `system-llm`, from the same chart (§6).
-*   **Not built:** LocalAI was never added.
-
----
-
-## 1. Architectural Overview
-
-To deliver high-performance, cost-effective, and secure AI capabilities, Gentian OS splits the LLM serving stack between the shared system **Kernel** and isolated **Tenant Land**.
-
-```mermaid
-flowchart TB
-    classDef client  fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
-    classDef kernel  fill:#f1f5f9,stroke:#94a3b8,color:#1e293b
-    classDef gateway fill:#ede9fe,stroke:#7c3aed,color:#3b0764
-    classDef engine  fill:#fef9c3,stroke:#ca8a04,color:#713f12
-    classDef tenant  fill:#dcfce7,stroke:#16a34a,color:#14532d
-
-    subgraph Client [User Space / Tenant Land]
-        App[Tenant App<br/>Nextcloud / OpenProject]:::client
-    end
-
-    subgraph Edge [Kernel Space / Ingress]
-        EAG["Envoy AI Gateway v1.0<br/>JWT Auth & Ext Authz"]:::gateway
-    end
-
-    subgraph Auth [Kernel Space / Identity]
-        KC[Keycloak]:::kernel
-        OFG[OpenFGA]:::kernel
-    end
-
-    subgraph Serving [Kernel Space / LLM Infrastructure]
-        LLP["LiteLLM Router Proxy<br/>virtual keys & budgets"]:::gateway
-        vLLM["vLLM GPU Engine<br/>High-perf FP16/AWQ"]:::engine
-        LAI["LocalAI CPU Engine<br/>GGUF Fallback"]:::engine
-    end
-
-    App -->|1. Bearer JWT / API Request| EAG
-    EAG <-->|2. Validate OIDC Token| KC
-    EAG <-->|3. Model Access Check| OFG
-    EAG -->|4. Forward to Proxy| LLP
-    LLP -->|5. Multi-Tenant Route| vLLM
-    LLP -->|5. Fallback Route| LAI
-```
-
----
-
-## 2. Kernel vs. Tenant Land Split
-
-The components are allocated as follows:
-
-### Kernel Space (Shared Infrastructure)
-*   **Ingress Security (Envoy AI Gateway):** Runs as a cluster-wide service in the `envoy-gateway-system` namespace. By upgrading Envoy Gateway to the AI Gateway edition, the platform terminates TLS, performs JWT validation via Keycloak, and executes per-model access checks before requests leave the ingress boundary.
-*   **Inference Engines (vLLM & LocalAI):** Deployed in a shared namespace (e.g., `gentian-llm`). Because GPUs are costly and model weights (10GB–70GB+) require massive storage, running centralized engines with shared PVC weight storage allows the platform to use NVIDIA GPU Operator time-slicing or MIG (Multi-Instance GPU) to multiplex compute safely.
-*   **Router & Budgeting (LiteLLM Proxy):** Runs as a central service in the kernel backed by shared kernel Postgres (CloudNativePG) and Redis. It translates calls, routes to the appropriate model engine, handles fallback routing, and manages Virtual Keys to enforce tenant-level token budgets and rate limits.
-
-### Tenant Land (Isolated Workspaces)
-*   **Tenant Applications:** Downstream applications (e.g., Nextcloud) run in isolated tenant namespaces. When it renders an application's release, the operator injects the base URL of the Envoy Gateway and a tenant-specific virtual key as standard credentials (`OPENAI_API_BASE` and `OPENAI_API_KEY`).
-*   **Optional Tenant Proxies:** If a specific tenant requires custom model endpoints or private caching, they can install a local LiteLLM instance in their own namespace that redirects requests to the shared kernel engines.
-
----
-
-## 3. Authentication & Request Lifecycle
-
-```mermaid
-sequenceDiagram
-    actor App as Tenant Application
-    participant EAG as Envoy AI Gateway
-    participant KC as Keycloak
-    participant OFG as OpenFGA
-    participant LLP as LiteLLM Proxy
-    participant Backend as vLLM / LocalAI
-
-    App->>EAG: 1. Send Request (Bearer JWT)
-    EAG->>KC: 2. Validate JWT (JWKS signature)
-    KC-->>EAG: Token claims returned
-    EAG->>OFG: 3. Check model permission (User, Model, Tenant)
-    OFG-->>EAG: Allowed / Denied
-
-    alt Denied
-        EAG-->>App: 403 Forbidden
-    else Allowed
-        EAG->>LLP: 4. Forward Request + Virtual-Key Header
-        LLP->>LLP: 5. Apply Token Rate Limits & Spend Budgets
-        LLP->>Backend: 6. Inference Request (OpenAI-compatible)
-        Backend-->>LLP: Return Streamed Tokens
-        LLP-->>App: Return Streamed Response
-    end
-```
-
----
-
-## 4. Stage 1 Rollout Plan: Single-GPU Authenticated Endpoint
-
-Stage 1 focuses on establishing the core loop: running a single-GPU server, securing the endpoint via Envoy AI Gateway, and routing requests through LiteLLM.
-
-### Task 1: Setup GPU Infrastructure & Inference
-*   **Action:** Install the **NVIDIA GPU Operator** via Helm into the cluster.
-*   **Configuration:** For A100/H100 instances, configure MIG partition profiles. For lower-tier cards (A10G, L4), enable time-slicing in the operator configuration:
-    ```yaml
-    # gpu-sharing-config.yaml
-    sharing:
-      timeSlicing:
-        resources:
-        - name: nvidia.com/gpu
-          replicas: 4
-    ```
-*   **Deployment:** Deploy a vLLM instance serving a lightweight model (e.g., `Qwen/Qwen2.5-7B-Instruct` or `meta-llama/Llama-3.1-8B-Instruct`) in the `gentian-llm` namespace, mapping standard model weights to a shared PersistentVolumeClaim (PVC).
-
-### Task 2: Deploy LiteLLM Router & State Store
-*   **Action:** Deploy the LiteLLM Proxy using the official Helm chart (`deploy/charts/litellm-helm`).
-*   **State Stores:**
-    *   **PostgreSQL:** Use the existing **CloudNativePG** operator in the kernel to spin up a dedicated database cluster (`litellm-db`) to store virtual keys, audit logs, and budgets.
-    *   **Redis:** Deploy a lightweight Redis cluster for query caching and cluster-wide rate limiting.
-*   **Configuration:** Mount the vLLM backend address in the LiteLLM `config.yaml` mapping.
-
-### Task 3: Upgrade Ingress to Envoy AI Gateway v1.0
-*   **Action:** Update the Helm chart version for Envoy Gateway in [certs.sh](https://github.com/gentian-org/gentian-os/blob/develop/scripts/lib/certs.sh) to target version `v1.0.0` of the Envoy AI Gateway.
-*   **Extension Policy Configuration:** Define an `EnvoyExtensionPolicy` targeting the external auth endpoint (`openfga/openfga-envoy`) to handle token parsing and OIDC enforcement:
-    ```yaml
-    apiVersion: gateway.envoyproxy.io/v1alpha1
-    kind: EnvoyExtensionPolicy
-    metadata:
-      name: llm-gateway-auth
-      namespace: envoy-gateway-system
-    spec:
-      targetRefs:
-        - group: gateway.networking.k8s.io
-          kind: HTTPRoute
-          name: llm-route
-      extAuthz:
-        - grpc:
-            authority: openfga-envoy.kernel-authorization.svc.cluster.local
-            port: 50051
-    ```
-
-### Task 4: Integration with Tenant Provisioning
-*   **Action:** Update the `App` composition files in the operator to support injection of LLM environment variables for any catalog application that requests the `ai-assistant` integration contract.
 
 ---
 
@@ -308,9 +168,7 @@ serves models, the credential requirement `llm-provider-<name>` and its probe
 for its token to have a place on the console's Credentials tab: no edit of
 `credentials.yaml`, no installer step. It appears once the cluster has applied
 the claim; a provider removed from the claim loses the requirement, and a
-token stored for it stays in OpenBao. A cluster gets this with the
-composition, which the installer applies: a cluster installed before it
-declares nothing from the claim until the installer has run once.
+token stored for it stays in OpenBao.
 
 ### Whether a model works
 
@@ -327,12 +185,6 @@ The console shows it per model, and asks neither the gateway nor any pod of
 | A provider's, whose token is there | **Token supplied** | The same list. Not "works": nothing probes the token or the address |
 
 `kubectl gentian models list` shows the director's part only.
-
-A status that says a model answers would need somebody to ask the gateway
-(its `/health` or `/v1/models` with a key) or to read the instance's
-Deployment, and to publish the answer where the usher can read it. Nothing
-does: the operator registers keys at the gateway and reads no model state.
-That reader would be a new path into `system-llm` and is not built.
 
 ### Seeing what the gateway was given
 
@@ -417,7 +269,7 @@ an empty model list. That asymmetry is the design: the gateway is what holds the
 credential.
 
 > Adding an egress NetworkPolicy to `system-llm` to "allow 443" would be a
-> regression, not a hardening: the namespace has no egress policy today, and the
+> regression, not a hardening: the namespace has no egress policy, and the
 > first one switches the selected pods to deny-by-default, breaking LiteLLM's
 > DNS, Postgres and Redis unless all of it is enumerated in the same policy.
 
@@ -460,7 +312,7 @@ once Argo CD syncs its Application. The two are separate syncs of one commit;
 between them a route without the rule answers nothing, and a rule without the
 route admits pods that have nothing to route.
 
-Three things to know before switching it on:
+Two things to know before switching it on:
 
 - **It is a departure from "system services have no public route"**, taken by
   the cluster's owner for this cluster. The route forwards `/`, so the
@@ -472,13 +324,7 @@ Three things to know before switching it on:
   and its pages send the key that gives them in the `Authorization` header.
   The edge leaves that header alone on this route, as it does on Keycloak's
   administration console, and passes no token of the platform's to LiteLLM
-  ([routing.md §4.1](routing.md)). This is held by tests of the rendered policy
-  and the bouncer's table, not by a run against a live LiteLLM.
-- **An upgrade takes the console away.** A claim written before the setting
-  existed does not state it and reads as off, so a cluster that had the console
-  loses the route on its next run. The installer says so in one line whenever
-  the cluster serves models and the console is off. The NetworkPolicy rule
-  goes with it: the gateway's chart reads the same field of the claim.
+  ([routing.md §4.1](routing.md)).
 
 ---
 
@@ -509,8 +355,8 @@ read from the same claim: per entry a Deployment on a node with
 weights that is kept when the entry is removed. The pod runs as a user that is
 not root with the kernel's admission baseline, its caches under the PVC
 (`HOME`, `HF_HOME`), and the NetworkPolicy `llm-vllm-ingress` admits the
-gateway alone. Still open: where the Hugging Face token for gated models
-comes from; the optional Secret `vllm-hf-token` is created by hand.
+gateway alone. The optional Secret `vllm-hf-token`, which holds the Hugging
+Face token for gated models, is created by hand.
 
 With `gpuAcceleration` true the mock model server is not started. With it
 false the mock runs, and the gateway does not offer it as a model: a cluster

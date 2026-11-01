@@ -431,10 +431,11 @@ Both are rotated after every use (step 6).
    `AppProject/gentian` directly with `kubectl` (a kernel object; this is
    what break-glass `kubectl` on `kernel-*` is for) and restore the policy
    as part of the same incident.
-5. **Bring the director back.** On start it reconciles the OpenFGA store
-   from git (the store is a projection, rule R9 of the authorization
-   model), so a change to roles or grants made in step 3 is
-   reflected without a second manual step.
+5. **Bring the director back.** The operator reconciles the OpenFGA store
+   from git, so a change to roles or grants made in step 3 is reflected
+   without a second manual step. Group memberships do not come from git: if
+   the store itself was lost, they return from Keycloak as each person's
+   groups next change (#642).
 6. **Rotate and close.** Revoke `break-glass-push` at the git host and issue
    a new one; retire the signing key id from the `sourceIntegrity` policy
    and add the replacement; re-seal both into the kit; remove yourself from
