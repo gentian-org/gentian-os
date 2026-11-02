@@ -1297,6 +1297,20 @@ spec:
                       items:
                         type: string
                         pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$'
+                    dnsRecords:
+                      type: array
+                      description: >
+                        Records external-dns publishes with nothing on the
+                        cluster behind them, such as a CNAME to a site hosted
+                        elsewhere, each as "<name> <type> <target>":
+                        docs.example.org CNAME example.github.io. The type is
+                        A or CNAME, and the name lies in the kernel domain's
+                        zone or one under dnsZones. Published unproxied. Read
+                        by the installer when it installs external-dns (step
+                        B-01); removing an entry removes the record.
+                      items:
+                        type: string
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,} (A|CNAME) [a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
                     caBundleSecretRef:
                       type: object
                       description: >

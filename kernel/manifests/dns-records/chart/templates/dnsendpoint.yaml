@@ -1,0 +1,20 @@
+{{- /*
+One DNSEndpoint for the records a person declared. Nothing when there are none,
+so taking the last one off the claim prunes the object and external-dns removes
+the record. Unproxied: external-dns writes a record as DNS only unless a record
+asks otherwise.
+*/ -}}
+{{- if .Values.records }}
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: dns-records
+spec:
+  endpoints:
+  {{- range .Values.records }}
+  - dnsName: {{ .name | quote }}
+    recordType: {{ .type | quote }}
+    targets:
+    - {{ .target | quote }}
+  {{- end }}
+{{- end }}

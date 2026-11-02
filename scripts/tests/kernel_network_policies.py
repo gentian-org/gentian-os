@@ -201,6 +201,7 @@ def chart():
 NO_PODS = {
     "kyverno-policies": "ClusterPolicy objects only",
     "gentian-appsets": "ApplicationSet objects only",
+    "dns-records": "one DNSEndpoint object only",
 }
 
 

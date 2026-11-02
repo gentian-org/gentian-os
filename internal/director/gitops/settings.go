@@ -51,6 +51,10 @@ var ErrNotScalar = errors.New("setting takes a scalar value")
 // registrable domain, the pattern the Cluster XRD declares for the item.
 var zoneName = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`)
 
+// dnsRecord is one entry of certificates.dnsRecords, the pattern the Cluster
+// XRD declares for the item.
+var dnsRecord = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,} (A|CNAME) [a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
+
 // httpsURL is a log destination as the Cluster XRD takes it: an HTTPS URL, or
 // nothing, which removes the forwarder.
 var httpsURL = regexp.MustCompile(`^(https://\S+)?$`)
@@ -101,6 +105,7 @@ var clusterSettings = []ClusterSetting{
 	{Path: "certificates.acmeEnv", Doc: "Which Let's Encrypt environment issues certificates.", OneOf: []string{"staging", "production"}},
 	{Path: "certificates.issuerMode", Doc: "How control of the domain is proved.", OneOf: []string{"acme-dns01", "acme-http01", "self-signed", "private-ca"}},
 	{Path: "certificates.dnsZones", Doc: "Zones external-dns may write besides the kernel domain's: the zones of tenants served on a domain of their own. Comma-separated; the DNS credential has to cover them. Read when the installer installs external-dns (step B-01).", List: true, Each: zoneName, Shape: "zone names such as example.org", InstallStep: "B-01"},
+	{Path: "certificates.dnsRecords", Doc: "Records external-dns publishes with nothing on the cluster behind them, each \"<name> <A|CNAME> <target>\", unproxied. Comma-separated; a name lies in the kernel domain's zone or one under certificates.dnsZones. Read when the installer installs external-dns (step B-01).", List: true, Each: dnsRecord, Shape: "records such as docs.example.org CNAME example.github.io", InstallStep: "B-01"},
 	{Path: "certManager.letsencryptEmail", Doc: "Where Let's Encrypt sends expiry warnings."},
 	{Path: "llm.enabled", Doc: "Whether this cluster serves language models.", OneOf: []string{"true", "false"}},
 	{Path: "llm.gpuAcceleration", Doc: "Whether model serving uses a GPU.", OneOf: []string{"true", "false"}},

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: dns-records
+description: Records of the cluster's zones with nothing on the cluster behind them, for external-dns to publish
+type: application
+version: 0.1.0

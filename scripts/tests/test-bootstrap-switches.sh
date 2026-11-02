@@ -95,6 +95,25 @@ filter_empty="$(zones_of "$(render true true true --set-string dnsProvider=cloud
 check "external-dns: an empty dnsZones list is the walk alone" \
     "$([[ "${filter_empty}" == "k.example " ]] && echo 1 || echo 0)"
 
+# Declared records (certificates.dnsRecords) reach the dns-records Application
+# as data; a name outside every zone stops the render, since external-dns would
+# skip it without a word. The Application is there with none, so that emptying
+# the list prunes the object.
+records_render() { render true true true --set-string dnsProvider=cloudflare "$@"; }
+check "dnsRecords: the Application is rendered with none" \
+    "$(has "$(records_render)" 'records: \[\]$' && echo 1 || echo 0)"
+rec="$(records_render --set-string 'dnsZones[0]=gentian.org' --set-string 'dnsRecords[0]=docs.gentian.org CNAME gentian-org.github.io')"
+check "dnsRecords: a record reaches the Application as name, type and target" \
+    "$(has "${rec}" '"name":"docs\.gentian\.org"' && has "${rec}" '"target":"gentian-org\.github\.io"' && has "${rec}" '"type":"CNAME"' && echo 1 || echo 0)"
+outside="$(records_render --set-string 'dnsRecords[0]=docs.gentian.org CNAME gentian-org.github.io')"
+check "dnsRecords: a name in no zone stops the render, naming the setting" \
+    "$(has "${outside}" 'lies in no zone' && has "${outside}" 'certificates\.dnsZones' && echo 1 || echo 0)"
+endpoint="$(helm template d kernel/manifests/dns-records/chart --set 'records[0].name=docs.gentian.org' --set 'records[0].type=CNAME' --set 'records[0].target=gentian-org.github.io' 2>&1)"
+check "dnsRecords: the chart renders the DNSEndpoint" \
+    "$(has "${endpoint}" 'kind: DNSEndpoint' && has "${endpoint}" 'dnsName: "docs\.gentian\.org"' && echo 1 || echo 0)"
+check "dnsRecords: no records, no object" \
+    "$(has "$(helm template d kernel/manifests/dns-records/chart 2>&1)" 'kind: DNSEndpoint' && echo 0 || echo 1)"
+
 # The model gateway's console (llm.<kernelDomain>) is a claim decision, off
 # unless the claim says true. The installer reads the claim's answer, passes
 # it on as it is, and says so once where the cluster serves models and the

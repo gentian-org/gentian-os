@@ -15,6 +15,10 @@ kernelDomain: ""
 # certificates.dnsZones): the zones of tenants served on a domain of their
 # own. A list; B-01 writes it from the claim. Empty is the kernel domain alone.
 dnsZones: []
+# Records external-dns publishes with nothing on the cluster behind them (the
+# claim's certificates.dnsRecords), each "<name> <A|CNAME> <target>". B-01
+# writes the list.
+dnsRecords: []
 # The cluster's id in gentian-deployments: what external-dns owns records as,
 # so two clusters never fight over one zone.
 cluster: ""

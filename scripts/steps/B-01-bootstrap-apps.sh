@@ -172,6 +172,13 @@ _v5_render() {
             # pipeline -- and with it the install.
             if [[ -n "${_zone}" ]]; then printf '  - "%s"\n' "${_zone}"; fi
         done
+        # The records external-dns publishes with nothing on the cluster
+        # behind them (certificates.dnsRecords), the same way. Each holds
+        # spaces, which the chart splits; only the empty line is dropped.
+        echo "dnsRecords:"
+        printf '%s\n' "${DNS_RECORDS:-}" | tr ',' '\n' | while IFS= read -r _zone; do
+            if [[ -n "${_zone}" ]]; then printf '  - "%s"\n' "${_zone}"; fi
+        done
     } > "${dns_zones_values}"
 
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
