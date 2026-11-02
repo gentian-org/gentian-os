@@ -52,3 +52,11 @@ backup-key*
 # populate, and the entry goes stale on every commit made in the worktree, so
 # the repo reports a modification that has nothing to do with the work.
 .claude/worktrees/
+
+# The documentation site (site/): dependencies, the assembled content and the build
+site/node_modules/
+site/content/
+site/external/
+site/build/
+site/.docusaurus/
+site/static/llms.txt

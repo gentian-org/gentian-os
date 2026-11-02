@@ -1,0 +1,22 @@
+/* Gentian OS documentation: Docusaurus defaults with a gentian-blue primary. */
+:root {
+  --ifm-color-primary: #3b4fa0;
+  --ifm-color-primary-dark: #35478f;
+  --ifm-color-primary-darker: #324388;
+  --ifm-color-primary-darkest: #293770;
+  --ifm-color-primary-light: #4157b1;
+  --ifm-color-primary-lighter: #485db7;
+  --ifm-color-primary-lightest: #6476c3;
+  --ifm-code-font-size: 90%;
+  --ifm-table-cell-padding: 0.4rem 0.6rem;
+}
+[data-theme='dark'] {
+  --ifm-color-primary: #8e9ee0;
+  --ifm-color-primary-dark: #7488d9;
+  --ifm-color-primary-darker: #677dd5;
+  --ifm-color-primary-darkest: #405bc8;
+  --ifm-color-primary-light: #a8b4e7;
+  --ifm-color-primary-lighter: #b5bfeb;
+  --ifm-color-primary-lightest: #dbe0f5;
+}
+.markdown table { display: table; width: 100%; font-size: 0.9rem; }

@@ -86,3 +86,13 @@ that `scripts/gen/gen-docs.py` writes and fails when a committed copy differs.
 the pages name and the ones the model defines are the same set. The render
 fixtures under `crossplane/tests/unit/render/` are byte-identical copies of the
 compositions, so a citation changed in a composition is changed in every copy.
+
+## 8. The site
+
+docs.gentian.org is built by Docusaurus from `site/`. Nothing there is a
+page: `site/prepare.py` copies the pages of this repository, gentian-apps and
+gentian-ui into `site/content/` and rewrites their links, and the site is
+built from that copy. The workflow `.github/workflows/docs-site.yaml` builds
+every pull request that touches a page and deploys the `develop` branch to
+GitHub Pages; `make docs-site` builds it locally. A section without an index
+page gets a generated one, and a `<placeholder>` in prose is shown as written.
