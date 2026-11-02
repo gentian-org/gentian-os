@@ -357,7 +357,8 @@ own (`TenantDomain`), which the DNS credential has to cover; set with
 `kubectl gentian settings set` and applied by `./install.sh --only B-01` --
 from two sources it is already configured with: `gateway-httproute` for every hostname the operator
 routes, and `crd` (`DNSEndpoint`) for records with no HTTP object behind them,
-which is how mail publishes. There is no per-provider DNS code in the operator.
+which is how mail publishes and how the claim's `certificates.dnsRecords`
+reach a zone. There is no per-provider DNS code in the operator.
 
 What a tunnel actually lacks is not a writer but a **target**. external-dns
 publishes what a Gateway resolves to, and a tunneled Gateway has no address:

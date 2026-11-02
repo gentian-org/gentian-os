@@ -1710,6 +1710,8 @@ _claim_cluster_fields() {
             printf '    #                           this one: tenants served on a domain of\n'
             printf '    #                           their own; the credential must cover them\n'
         fi
+        printf '    # dnsRecords:               records with nothing on the cluster behind\n'
+        printf '    #                           them: "docs.example.org CNAME x.example.net"\n'
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
     fi

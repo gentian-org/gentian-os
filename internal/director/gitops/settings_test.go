@@ -232,6 +232,33 @@ func TestACommentedListPlaceholderBecomesTheList(t *testing.T) {
 	}
 }
 
+// A record is three words, and its type is one the setting offers.
+func TestADNSRecordSettingTakesARecord(t *testing.T) {
+	t.Parallel()
+	s, ok := settingByPath("certificates.dnsRecords")
+	if !ok || !s.List || s.InstallStep != "B-01" {
+		t.Fatalf("certificates.dnsRecords should be a list the installer reads at B-01: %+v", s)
+	}
+	for _, good := range []string{"docs.gentian.org CNAME gentian-org.github.io", "a.example.org A 192.0.2.1, b.example.org CNAME c.example.net", ""} {
+		if err := validateSetting(s, good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"docs.gentian.org", "docs.gentian.org MX mail.example.org", "docs.gentian.org CNAME", "Docs.gentian.org CNAME x.example.org"} {
+		if err := validateSetting(s, bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	out, changed, err := setClaimList(claimFixture, s.Path, splitItems("docs.gentian.org CNAME gentian-org.github.io"))
+	if err != nil || !changed || !strings.Contains(out, "      - docs.gentian.org CNAME gentian-org.github.io\n") {
+		t.Fatalf("changed=%v err=%v\n%s", changed, err, out)
+	}
+	var probe map[string]any
+	if err := yaml.Unmarshal([]byte(out), &probe); err != nil {
+		t.Fatalf("result is not YAML: %v", err)
+	}
+}
+
 // What a list setting takes: zone names, each checked, and nothing else.
 func TestAListSettingChecksEveryItem(t *testing.T) {
 	t.Parallel()

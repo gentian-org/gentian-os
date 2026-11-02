@@ -884,6 +884,7 @@ checkout and running `./install.sh`, without the checkout.
 kubectl gentian settings show                                   # the claim's settings, as JSON
 kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
 kubectl gentian settings set certificates.dnsZones=gentian.org  # a list: comma-separated
+kubectl gentian settings set "certificates.dnsRecords=docs.gentian.org CNAME gentian-org.github.io"   # quoted: an item holds spaces
 kubectl gentian settings set logForwarding.destination.endpoint=https://evidence.example.org/ingest   # empty removes the forwarder
 ```
 
@@ -893,13 +894,21 @@ tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the
 tenants' addresses ([§3](#3-provision-a-tenant)); nothing else here restarts
 anything.
 
-One setting is the installer's rather than the operator's:
+Two settings are the installer's rather than the operator's:
 `certificates.dnsZones`, the zones external-dns may write besides the kernel
 domain's, for tenants served on a domain of their own
-([§3](#3-provision-a-tenant)). The commit lands like any other,
-and the cluster takes it when the step that installs external-dns runs
-again, which the command says: `./install.sh --only B-01` on the install
-host. The DNS credential has to cover every zone listed.
+([§3](#3-provision-a-tenant)), and `certificates.dnsRecords`, records with
+nothing on the cluster behind them, such as a CNAME to a site hosted elsewhere.
+A record is `<name> <A|CNAME> <target>`, published unproxied, and its name lies
+in a zone external-dns may write; the installer refuses one that does not.
+Removing an entry removes the record. The commit lands like any other, and the
+cluster takes it when the step that installs external-dns runs again, which the
+command says: `./install.sh --only B-01` on the install host. The DNS credential
+has to cover every zone listed.
+
+external-dns creates nothing at a name that already holds a record it does not
+own, and says so only at debug level. A record declared here for a name made by
+hand stays unpublished until the hand-made one is removed.
 
 ## 7. Administrator Accounts
 

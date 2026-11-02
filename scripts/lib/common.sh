@@ -1106,7 +1106,7 @@ load_deployments_cluster_settings() {
     local v
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
-             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES \
+             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES DNS_RECORDS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
              LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
@@ -1197,6 +1197,7 @@ load_deployments_cluster_settings() {
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
         claim_list_setting DNS_ZONES      certificates.dnsZones    "${claim_file}"
+        claim_list_setting DNS_RECORDS    certificates.dnsRecords  "${claim_file}"
 
         # lbProvider was PLATFORM's name while the edge load balancer was the
         # only thing it selected. Kept readable so a claim written before the

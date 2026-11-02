@@ -282,6 +282,70 @@ spec:
       selfHeal: true
     syncOptions:
     - ServerSideApply=true
+---
+{{- /*
+The records a person declared on the claim (certificates.dnsRecords), for names
+with nothing on the cluster behind them. An Application and not an object of
+this chart: the DNSEndpoint CRD arrives with the external-dns chart when Argo CD
+syncs it, so on a fresh install an object applied here would find no such kind.
+Rendered with no records too, so that emptying the list prunes the object.
+
+A name outside every zone external-dns may write would be skipped without a
+word, so it stops here instead.
+*/ -}}
+{{- $zones := list -}}
+{{- range $i, $_ := $labels -}}
+  {{- $suffix := join "." (slice $labels $i) -}}
+  {{- if ge (len (splitList "." $suffix)) 2 -}}{{- $zones = append $zones $suffix -}}{{- end -}}
+{{- end -}}
+{{- $zones = concat $zones (.Values.dnsZones | default list) -}}
+{{- $records := list -}}
+{{- range $record := (.Values.dnsRecords | default list) -}}
+  {{- $fields := splitList " " $record -}}
+  {{- if ne (len $fields) 3 -}}
+    {{- fail (printf "dnsRecords: %q is not \"<name> <type> <target>\"" $record) -}}
+  {{- end -}}
+  {{- $name := index $fields 0 -}}
+  {{- $inZone := false -}}
+  {{- range $zone := $zones -}}
+    {{- if or (eq $name $zone) (hasSuffix (printf ".%s" $zone) $name) -}}{{- $inZone = true -}}{{- end -}}
+  {{- end -}}
+  {{- if not $inZone -}}
+    {{- fail (printf "dnsRecords: %s lies in no zone external-dns may write (%s); list its zone under certificates.dnsZones" $name (join ", " $zones)) -}}
+  {{- end -}}
+  {{- $records = append $records (dict "name" $name "type" (index $fields 1) "target" (index $fields 2)) -}}
+{{- end }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dns-records
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  source:
+    repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/manifests/dns-records/chart
+    helm:
+      valuesObject:
+        records: {{ $records | toJson }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "edge") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    # Until the external-dns Application has brought the CRD; the retry takes it.
+    - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
 {{- else }}
 {{- /*
 No DNS provider, or one whose records are not managed from the cluster. Emitting
