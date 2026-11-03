@@ -258,15 +258,22 @@ _v5_bootstrap_apps_current() {
     command -v python3 >/dev/null 2>&1 || { warn "python3 is not on this host: bootstrap Applications are not compared with their templates."; return 0; }
     tmp="$(mktemp -d)"
     if ! _v5_render > "${tmp}/rendered.yaml" 2>/dev/null; then rm -rf "${tmp}"; return 0; fi
-    names="$(kubectl apply --dry-run=client -o json -f "${tmp}/rendered.yaml" 2>/dev/null \
-        | jq -r '(if .kind == "List" then .items[] else . end) | select(.kind == "Application") | .metadata.name')"
+    # The rendered file itself, never `kubectl apply --dry-run=client -o json`
+    # of it: for an Application that exists, that output carries the live
+    # values, and a value changed in the template (a dnsRecords entry in
+    # dns-records) compared as unchanged, so the step skipped.
+    if ! names="$(python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" --names "${tmp}/rendered.yaml" 2>/dev/null)"; then
+        if [[ -z "${_V5_DRIFT_WARNED:-}" ]]; then
+            _V5_DRIFT_WARNED=1
+            warn "bootstrap Applications could not be compared with their templates (python3 without PyYAML?); run with --force to re-apply them."
+        fi
+        rm -rf "${tmp}"
+        return 0
+    fi
     for name in ${names}; do
         live="${tmp}/${name}.json"
         kubectl get application "${name}" -n "${ns}" -o json > "${live}" 2>/dev/null || { drift=1; break; }
-        # One rendered Application per comparison: the tool compares exactly one.
-        kubectl apply --dry-run=client -o json -f "${tmp}/rendered.yaml" 2>/dev/null \
-            | jq --arg n "${name}" '(if .kind == "List" then .items[] else . end) | select(.kind == "Application" and .metadata.name == $n)' > "${tmp}/${name}.rendered.json"
-        python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${tmp}/${name}.rendered.json" "${live}" >/dev/null 2>&1
+        python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${tmp}/rendered.yaml" "${live}" "${name}" >/dev/null 2>&1
         rc=$?
         if [[ ${rc} -eq 1 ]]; then drift=1; break; fi
         if [[ ${rc} -eq 2 && -z "${_V5_DRIFT_WARNED:-}" ]]; then
