@@ -12,7 +12,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	goerrors "errors"
 	"fmt"
 	"os"
@@ -46,12 +45,10 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
-	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
-	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
@@ -1360,80 +1357,11 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		spec["realmMail"] = xtenantRealmMail(mail)
 	}
 
-	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
-	if err != nil {
-		return nil, fmt.Errorf("load ComponentProfile index: %w", err)
-	}
-
-	// The installed apps. A component the platform places is installed by
-	// its own Component; in the XTenant it would be composed a second time.
-	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
-	if err != nil {
-		return nil, err
-	}
-	apps := make([]interface{}, 0, len(installed))
-	for _, app := range installed {
-		entry := map[string]interface{}{"profile": app.Profile}
-		profile, exists := appProfileForApp(profileIndex, app)
-		if exists {
-			// ApiProfiles run no workload; keep them out of the XTenant so the
-			// composition creates no App claim / Helm release for them.
-			if profile.IsAPI() {
-				continue
-			}
-			// Which Composition renders this app, for a profile that brings one.
-			// package.composition beside package.chart: the chart is what is
-			// installed and the Composition is what else is created beside it.
-			if variant := strings.TrimSpace(profile.Spec.Package.Composition); variant != "" {
-				entry["variant"] = strings.TrimPrefix(variant, "app-")
-			}
-		} else {
-			log.FromContext(ctx).Info("ComponentProfile not found in index in buildXTenant", "profile", app.Profile)
-		}
-		if app.Config != nil {
-			cfg := map[string]interface{}{}
-			if app.Config.Replicas != nil {
-				cfg["replicas"] = int64(*app.Config.Replicas)
-			}
-			if app.Config.ExtraValues != nil && len(app.Config.ExtraValues.Raw) > 0 {
-				var extra map[string]interface{}
-				if err := json.Unmarshal(app.Config.ExtraValues.Raw, &extra); err == nil && len(extra) > 0 {
-					cfg["extraValues"] = extra
-				}
-			}
-			if len(cfg) > 0 {
-				entry["config"] = cfg
-			}
-		}
-
-		// Resolve selected addons to the identifiers the hosting app understands, so
-		// the composition renders app-native activation without the operator knowing
-		// anything app-specific. Invalid selections are reported on the Tenant and
-		// dropped rather than failing the whole reconcile — one bad addon must not
-		// block the app itself, or every other app in the tenant.
-		if exists && len(app.Addons) > 0 {
-			resolved, addonErrs := customization.ResolveAddons(profile, app.Addons, profileIndex)
-			for _, addonErr := range addonErrs {
-				log.FromContext(ctx).Error(addonErr, "skipping invalid addon selection",
-					"tenant", tenant.Name, "app", app.Profile)
-			}
-			// Every resolved addon is activated like any other. Whether a
-			// paid one arrives is decided where it is pulled from, by the
-			// repository credential the tenant holds.
-			if ids := customization.AddonIDs(resolved); len(ids) > 0 {
-				entry["addons"] = toInterfaceSlice(ids)
-			}
-		}
-
-		apps = append(apps, entry)
-	}
-	spec["apps"] = apps
-
 	_ = unstructured.SetNestedField(xr.Object, spec, "spec")
 	return xr, nil
 }
 
-// toInterfaceSlice converts a string slice for embedding in an unstructured XR spec,
+// toInterfaceSlice converts a string slice for embedding in an unstructured spec,
 // which requires []interface{} rather than []string.
 func toInterfaceSlice(in []string) []interface{} {
 	out := make([]interface{}, 0, len(in))

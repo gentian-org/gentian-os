@@ -5,8 +5,7 @@
 # desktop and admin are what the base list already has, so the zone's client
 # is what it was without this. exchangeProfiles is what this fixture is for:
 # "notes" and "wiki" each get a client scope that names them as a token's
-# audience, and catalogue-test-app -- installed, on spec.apps, and not asking
-# -- gets none.
+# audience, and no other profile gets one.
 #
 # vouchingProfiles is the components that vouch for people at the realm
 # (requires.services.vouching), one line each: profile, Service, port, path.

@@ -19,9 +19,6 @@ spec:
       redirectURI: https://id.evil.example/x
       jwksURL: https://id.evil.example/certs
   kernelDomain: platform.example.test
-  apps:
-    - name: catalogue-test-app
-      profile: catalogue-test-app
   # Every field of TenantQuotas, set so the ResourceQuota is rendered and every
   # key of it compared. Without quotas the Composition skips that Object
   # entirely and the mapping from plan quantities to quota keys goes untested.

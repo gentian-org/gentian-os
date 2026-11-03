@@ -101,7 +101,6 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 			createIfMissing(ctx, c, rq)
 		}
 		createIfMissing(ctx, c, tenantshell.NetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts))
-		simulateAppClaims(ctx, c, tenantName, nsName, spec)
 		patchXTenantReady(ctx, c, xr)
 	}
 	simulateXTenantDeletionCascade(ctx, c, list.Items)
@@ -251,80 +250,6 @@ func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
 		ts.Quotas = q
 	}
 	return ts
-}
-
-func simulateAppClaims(ctx context.Context, c client.Client, tenantName, nsName string, spec map[string]interface{}) {
-	apps, _, _ := unstructured.NestedSlice(spec, "apps")
-	desired := make(map[string]struct{}, len(apps))
-	kd, _, _ := unstructured.NestedString(spec, "kernelDomain")
-	domain, ok, _ := unstructured.NestedString(spec, "domain")
-	if !ok || domain == "" {
-		domain = tenantName + "." + kd
-	}
-	for _, raw := range apps {
-		app, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		profile, _ := app["profile"].(string)
-		if profile == "" {
-			continue
-		}
-		desired[profile] = struct{}{}
-		key := types.NamespacedName{Name: profile, Namespace: nsName}
-		existing := &unstructured.Unstructured{}
-		existing.SetGroupVersionKind(appClaimGVK)
-		err := c.Get(ctx, key, existing)
-		if err == nil {
-			continue
-		}
-		if !errors.IsNotFound(err) {
-			continue
-		}
-		claim := &unstructured.Unstructured{}
-		claim.SetGroupVersionKind(appClaimGVK)
-		claim.SetName(profile)
-		claim.SetNamespace(nsName)
-		claim.SetLabels(map[string]string{
-			tenantshell.TenantLabel:    tenantName,
-			"gentianos.io/app":         profile,
-			tenantshell.ManagedByLabel: tenantshell.ManagedByValue,
-			"gentianos.io/managed-by":  "crossplane",
-		})
-		_ = unstructured.SetNestedField(claim.Object, profile, "spec", "profileRef", "name")
-		_ = unstructured.SetNestedField(claim.Object, nsName, "spec", "tenantNamespace")
-		_ = unstructured.SetNestedField(claim.Object, domain, "spec", "domain")
-		_ = unstructured.SetNestedField(claim.Object, "Automatic", "spec", "compositionUpdatePolicy")
-		if variant, ok := app["variant"].(string); ok && variant != "" {
-			_ = unstructured.SetNestedField(claim.Object, "app-"+variant, "spec", "compositionRef", "name")
-		}
-		_ = unstructured.SetNestedSlice(claim.Object, []interface{}{
-			map[string]interface{}{"type": "Ready", "status": "True", "reason": "Simulated", "message": "envtest"},
-		}, "status", "conditions")
-		_ = c.Create(ctx, claim)
-	}
-
-	claimList := &unstructured.UnstructuredList{}
-	claimList.SetGroupVersionKind(appClaimListGVK)
-	if err := c.List(ctx, claimList,
-		client.InNamespace(nsName),
-		client.MatchingLabels{
-			tenantshell.TenantLabel:   tenantName,
-			"gentianos.io/managed-by": "crossplane",
-		},
-	); err != nil {
-		return
-	}
-	for i := range claimList.Items {
-		claim := &claimList.Items[i]
-		appName := claim.GetLabels()["gentianos.io/app"]
-		if appName == "" {
-			continue
-		}
-		if _, ok := desired[appName]; !ok {
-			_ = client.IgnoreNotFound(c.Delete(ctx, claim))
-		}
-	}
 }
 
 func createIfMissing(ctx context.Context, c client.Client, obj client.Object) {

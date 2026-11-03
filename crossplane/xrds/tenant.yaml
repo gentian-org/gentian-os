@@ -353,42 +353,6 @@ spec:
                   enum:
                     - Retain
                     - Delete
-                apps:
-                  type: array
-                  description: Applications to install for this tenant.
-                  items:
-                    type: object
-                    required:
-                      - profile
-                    properties:
-                      profile:
-                        type: string
-                        description: Name of the ComponentProfile to install.
-                      variant:
-                        type: string
-                        description: >
-                          Optional Composition variant selector.  When set, the generated
-                          App claim uses spec.compositionRef.name: app-{variant} instead
-                          of the cluster default Composition.  Example: "ox" selects the
-                          app-ox Composition for OX App Suite.
-                      config:
-                        type: object
-                        description: Per-tenant overrides for this app.
-                        x-kubernetes-preserve-unknown-fields: true
-                      addons:
-                        type: array
-                        description: |
-                          Addon identifiers to activate inside this app, already
-                          resolved by the operator from the tenant's selected addon
-                          ComponentProfiles to whatever the hosting app's own addon system
-                          calls them (an Odoo module name, a Nextcloud app id).
-
-                          Resolving in the operator keeps compositions free of
-                          catalogue lookups; the mapping itself is declared per addon
-                          in spec.customization.addon.id, so app-specific knowledge
-                          stays in gentian-apps.
-                        items:
-                          type: string
             status:
               type: object
               properties:

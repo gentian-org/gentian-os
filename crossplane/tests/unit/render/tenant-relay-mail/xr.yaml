@@ -18,7 +18,6 @@ spec:
     databasePrefix: user_
     s3Prefix: user-
   deletionPolicy: Retain
-  apps: []
   realmMail:
     host: relay.example.test
     port: "465"

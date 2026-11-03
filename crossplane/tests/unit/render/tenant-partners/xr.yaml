@@ -52,9 +52,6 @@ spec:
         accounts: create
   serviceAccountIssuer: https://kubernetes.default.svc.cluster.local
   kernelDomain: platform.example.test
-  apps:
-    - name: catalogue-test-app
-      profile: catalogue-test-app
   # Every field of TenantQuotas, set so the ResourceQuota is rendered and every
   # key of it compared. Without quotas the Composition skips that Object
   # entirely and the mapping from plan quantities to quota keys goes untested.
