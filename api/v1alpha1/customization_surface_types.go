@@ -456,9 +456,9 @@ type CustomizationAddonValues struct {
 //
 // The platform must not know that Nextcloud enables apps with `occ app:enable` or
 // that Odoo installs modules with `-i`. So the base profile — which lives in
-// gentian-apps alongside the app — supplies the recipe, and the composition only
-// renders it. Apps whose activation cannot be expressed as chart values (Odoo needs
-// a database-side install) ship their own composition instead and leave this unset.
+// gentian-apps alongside the app — supplies the recipe, and the platform only
+// renders it. An app whose activation cannot be expressed as chart values ships its
+// own composition instead and leaves this unset.
 type CustomizationAddonActivation struct {
 	// ValuesPath is the dot-separated Helm values path the rendered Script is
 	// written to, e.g. "nextcloud.hooks.before-starting". Path segments may not

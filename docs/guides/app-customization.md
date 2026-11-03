@@ -704,8 +704,8 @@ Activation itself has two shapes, and which one an app uses is a property of the
 
 | Shape | Declared by | Used when |
 |---|---|---|
-| **Values** | `spec.customization.addonActivation` on the *base* profile: a Helm values path and a script, with `__GENTIAN_ADDON_IDS__` substituted | the chart exposes a hook that runs inside the app container (Nextcloud's `hooks.before-starting`). Preferred — no Job, and the script runs with the app's config, data volume and secrets already mounted |
-| **Composition** | the app's own `composition.yaml` renders a Job | activation is not expressible as chart values. Odoo installs database-side via `odoo-bin -i`, so it needs a Job that reaches the database |
+| **Values** | `spec.customization.addonActivation` on the *base* profile: a Helm values path and a script, with `__GENTIAN_ADDON_IDS__` substituted | the chart exposes a hook that runs inside the app container (Nextcloud's `hooks.before-starting`), or a value its start script reads (Odoo's `gentian.addonModules`, installed with `odoo-bin -i` before the server starts). Preferred — no Job, and the script runs with the app's config, data volume and secrets already mounted |
+| **Composition** | the app's own `composition.yaml` renders a Job | activation is not expressible as chart values. A profile may bring its own Composition only at `trustTier: platform` |
 
 **Write the script to reconcile, not to add.** It re-runs on every pod start, which is what makes
 a changed selection converge with no migration step — and it is the only way deselection can work
@@ -1164,7 +1164,6 @@ spec:
 
     repackage:                             # L4
       chartOwnership: gentian-owned        # upstream | patched | gentian-owned | vendored
-      compositionRef: app-odoo
 
     patch:                                 # L5
       allowed: true
