@@ -366,7 +366,7 @@ func TestNoHostBothKeepsItsHeaderAndExchangesAToken(t *testing.T) {
 		"kept":          {relation: "can_use", object: "app:acme/flows", keepClientToken: true},
 		"beside a kept": {relation: "can_use", object: "app:acme/flows", idTokenSession: true},
 	} {
-		route := buildExposureRoute(comp, "flows-web", "flows.acme.example", zone, e, authz, "k.example", nil)
+		route := buildExposureRoute(comp, defaultTenantName(comp), "flows-web", "flows.acme.example", zone, e, authz, "k.example", nil)
 		if scope := route.Annotations[bouncerExchangeScopeAnnotation]; scope != "" {
 			t.Errorf("%s: the route asks for an exchange of the client's own header: %q", what, scope)
 		}
@@ -441,7 +441,7 @@ func TestEveryRouteStatesWhetherItsHeaderIsKept(t *testing.T) {
 		"beside a kept":  {routeAuthz{relation: "can_use", object: "app:acme/flows", idTokenSession: true}, "gentian-edge-acme", ""},
 		"forwards token": {routeAuthz{relation: "can_use", object: "app:acme/flows", forwardToken: true}, "", ""},
 	} {
-		route := buildExposureRoute(comp, "flows-web", "flows.acme.example", zone, e, tc.authz, "k.example", nil)
+		route := buildExposureRoute(comp, defaultTenantName(comp), "flows-web", "flows.acme.example", zone, e, tc.authz, "k.example", nil)
 		audience, said := route.Annotations[bouncerIDTokenAudienceAnnotation]
 		keep, saidKeep := route.Annotations[bouncerClientAuthorizationAnnotation]
 		if !said || !saidKeep || audience != tc.audience || keep != tc.keep {
@@ -451,7 +451,7 @@ func TestEveryRouteStatesWhetherItsHeaderIsKept(t *testing.T) {
 	// The table takes the header for the app's only from a route that also
 	// says whose ID token proves the session, and only on a session route.
 	scheme := perimeterScheme()
-	stray := buildExposureRoute(comp, "stray", "stray.acme.example", zone, e, routeAuthz{relation: "can_use", object: "app:acme/flows"}, "k.example", nil)
+	stray := buildExposureRoute(comp, defaultTenantName(comp), "stray", "stray.acme.example", zone, e, routeAuthz{relation: "can_use", object: "app:acme/flows"}, "k.example", nil)
 	stray.Annotations[bouncerClientAuthorizationAnnotation] = "app"
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stray).Build()
 	entries, err := componentRouteTableEntries(context.Background(), c)

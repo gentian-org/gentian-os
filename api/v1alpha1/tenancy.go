@@ -83,3 +83,16 @@ func (t *Tenant) NamespaceName() string {
 	}
 	return "tenant-" + t.Name
 }
+
+// TenantInNamespace is the tenant among tenants whose workloads run in
+// namespace (NamespaceName), or nil when none of them does. It is the way
+// back from a namespace to its tenant: the namespace's name says whose it is
+// only for a tenant that leaves spec.isolation.namespace unset.
+func TenantInNamespace(tenants []Tenant, namespace string) *Tenant {
+	for i := range tenants {
+		if tenants[i].NamespaceName() == namespace {
+			return &tenants[i]
+		}
+	}
+	return nil
+}

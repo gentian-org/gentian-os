@@ -195,16 +195,21 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// written before there was an inventory.
 			// A handoff begun and not finished is finished first, so that
 			// what was taken over from the composite is in the inventory.
-			if done, err := r.handOffOnDelete(ctx, comp); err != nil {
+			tenant, err := r.tenantOf(ctx, comp.Namespace)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			tenantName := componentTenant(tenant, comp.Namespace)
+			if done, err := r.handOffOnDelete(ctx, comp, tenantName); err != nil {
 				return ctrl.Result{}, err
 			} else if !done {
 				return ctrl.Result{RequeueAfter: componentRequeue}, nil
 			}
-			rendered, err := r.deleteRendered(ctx, comp)
+			rendered, err := r.deleteRendered(ctx, comp, tenantName)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			gone, err := r.deleteDirectRelease(ctx, comp)
+			gone, err := r.deleteDirectRelease(ctx, comp, tenantName)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -562,18 +567,18 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// the chart runs so that its pods find the Secret they are told to read.
 	// Whichever way the chart is delivered: the Secret is this reconciler's,
 	// and a chart reads it by its name.
-	if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
+	if err := r.ensureRightsCheck(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("rights check: %w", err)
 	}
 	// The key for its authorization store, for a component that declares
 	// one, for the same reason and in the same way.
-	if err := r.ensureAuthorization(ctx, comp, profile); err != nil {
+	if err := r.ensureAuthorization(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("authorization: %w", err)
 	}
 	// The TURN edge's address and secret, for a component that declares it
 	// or activates an addon that does, for the same reason and in the same
 	// way.
-	if err := r.ensureTURNCredentials(ctx, comp, profile, addons); err != nil {
+	if err := r.ensureTURNCredentials(ctx, comp, tenant.Name, profile, addons); err != nil {
 		return ctrl.Result{}, fmt.Errorf("turn credentials: %w", err)
 	}
 	// What the platform tells any component about itself, where its profile
@@ -596,11 +601,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The certificate and the way in for the platform's log forwarder, for
 	// the component of the platform tenant that declares it, before the chart
 	// runs so that its pods find the Secret they serve with.
-	if err := r.ensureLogDestination(ctx, comp, profile); err != nil {
+	if err := r.ensureLogDestination(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("log destination: %w", err)
 	}
 	// The way to the desktop's API, for a component that asked where it is.
-	if err := r.ensureDesktopAccess(ctx, comp, profile); err != nil {
+	if err := r.ensureDesktopAccess(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("desktop access: %w", err)
 	}
 
@@ -665,7 +670,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	case profile.Spec.Package.Chart != nil:
 		// An app the platform's former app Composition installed is taken
 		// over from it first, in place (component_handoff.go).
-		if waiting, err := r.handOff(ctx, comp); err != nil {
+		if waiting, err := r.handOff(ctx, comp, tenant.Name); err != nil {
 			return ctrl.Result{}, fmt.Errorf("handoff: %w", err)
 		} else if waiting != "" {
 			return r.status(ctx, comp, metav1.ConditionFalse, "Installing", waiting, componentRequeue)
@@ -687,7 +692,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err != nil {
 			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", err.Error(), 0)
 		}
-		ready, reason, message, err := r.applyRendered(ctx, comp, rendered)
+		ready, reason, message, err := r.applyRendered(ctx, comp, tenant.Name, rendered)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -777,10 +782,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return r.status(ctx, comp, metav1.ConditionFalse, "ZoneNotReady",
 				fmt.Sprintf("the zone's client secret %s/%s does not exist yet; nothing is routed until it does", servicesNamespace, zone.secretName), componentRequeue)
 		}
-		if err := r.ensureZoneGrant(ctx, comp); err != nil {
+		if err := r.ensureZoneGrant(ctx, comp, tenant.Name); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.ensureZoneSecret(ctx, comp, zone); err != nil {
+		if err := r.ensureZoneSecret(ctx, comp, tenant.Name, zone); err != nil {
 			return ctrl.Result{}, fmt.Errorf("zone secret: %w", err)
 		}
 		var oidcRoutes []string
@@ -794,7 +799,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				authz.keepClientToken = kept[e.Name]
 				authz.idTokenSession = !kept[e.Name]
 			}
-			routeName, err := r.ensureExposureRoute(ctx, comp, profile, zone, e, authz, signIn, held)
+			routeName, err := r.ensureExposureRoute(ctx, comp, tenant.Name, profile, zone, e, authz, signIn, held)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -812,7 +817,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if len(oidcRoutes) > 0 {
 			authz := exposureAuthz(tenant, comp, profile, r.Cluster, forward)
 			authz.idTokenSession = len(kept) > 0
-			if err := r.ensureZonePolicy(ctx, comp, zone, oidcRoutes, authz); err != nil {
+			if err := r.ensureZonePolicy(ctx, comp, tenant.Name, zone, oidcRoutes, authz); err != nil {
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
 			}
 		}
@@ -822,7 +827,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Asked only of a component that routes anything: one that publishes
 	// nothing on the Gateway never had such a route.
 	if signIn != nil || len(routable) > 0 {
-		if err := r.ensureSignInACSRoute(ctx, comp, zone, signIn, held); err != nil {
+		if err := r.ensureSignInACSRoute(ctx, comp, tenant.Name, zone, signIn, held); err != nil {
 			return ctrl.Result{}, fmt.Errorf("sign-in route: %w", err)
 		}
 	}
@@ -1045,16 +1050,17 @@ func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1
 
 // tenantOf finds the Tenant whose namespace this is.
 func (r *ComponentReconciler) tenantOf(ctx context.Context, namespace string) (*gentianov1alpha1.Tenant, error) {
+	return tenantInNamespace(ctx, r.Client, namespace)
+}
+
+// tenantInNamespace finds the Tenant whose workloads run in a namespace, or
+// nil when there is none.
+func tenantInNamespace(ctx context.Context, c client.Reader, namespace string) (*gentianov1alpha1.Tenant, error) {
 	list := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, list); err != nil {
+	if err := c.List(ctx, list); err != nil {
 		return nil, err
 	}
-	for i := range list.Items {
-		if list.Items[i].NamespaceName() == namespace {
-			return &list.Items[i], nil
-		}
-	}
-	return nil, nil
+	return gentianov1alpha1.TenantInNamespace(list.Items, namespace), nil
 }
 
 // edgeZone is the session a component's routes live under: one confidential
@@ -1253,7 +1259,7 @@ func keepVolumesName(comp *gentianov1alpha1.Component) string {
 // Workloads only. What the release leaves behind is decided by the keep rule
 // it was rendered with, and nothing here touches a volume, a database or a
 // secret.
-func (r *ComponentReconciler) deleteDirectRelease(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+func (r *ComponentReconciler) deleteDirectRelease(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string) (bool, error) {
 	release := &unstructured.Unstructured{}
 	release.SetGroupVersionKind(helmReleaseGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: releaseName(comp)}, release)
@@ -1267,7 +1273,7 @@ func (r *ComponentReconciler) deleteDirectRelease(ctx context.Context, comp *gen
 	// deterministic, but a Release is not namespaced and a name is a weak
 	// reason to delete one.
 	labels := release.GetLabels()
-	if labels[componentLabel] != comp.Name || labels[tenantLabel] != componentLabels(comp)[tenantLabel] ||
+	if labels[componentLabel] != comp.Name || labels[tenantLabel] != tenantName ||
 		labels[managedByLabel] != managedByValue {
 		return true, nil
 	}
@@ -1387,12 +1393,25 @@ func quotaWarning(resource, requested, used, limit string) string {
 		"the install goes on by itself once there is room)", requested, what, used, limit)
 }
 
-func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
+// componentLabels are the labels of everything written for a component, by
+// the name of the tenant it belongs to (componentTenant).
+func componentLabels(comp *gentianov1alpha1.Component, tenantName string) map[string]string {
 	return map[string]string{
 		managedByLabel: managedByValue,
 		componentLabel: comp.Name,
-		tenantLabel:    strings.TrimPrefix(comp.Namespace, "tenant-"),
+		tenantLabel:    tenantName,
 	}
+}
+
+// componentTenant is the name of the tenant a component belongs to: the
+// Tenant's whose workloads run in the component's namespace. A component
+// whose Tenant is gone ahead of it is taken to be in the namespace a tenant
+// that names none of its own is given.
+func componentTenant(tenant *gentianov1alpha1.Tenant, namespace string) string {
+	if tenant != nil {
+		return tenant.Name
+	}
+	return strings.TrimPrefix(namespace, "tenant-")
 }
 
 // ensureExposureRoute keeps one gateway exposure's route.
@@ -1400,11 +1419,11 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 // The entry a sign-in sidecar stands on carries its rules as well: the login
 // path, and the paths that lead to it. They are rules of this route and of
 // no other, so the session and the question of the route are theirs too.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool) (string, error) {
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
 	framers := componentFramers(zone, comp, profile, host)
-	route := buildExposureRoute(comp, routeName, host, zone, e, authz, r.KernelDomain, framers)
+	route := buildExposureRoute(comp, tenantName, routeName, host, zone, e, authz, r.KernelDomain, framers)
 	if signIn != nil && signIn.exposure.Name == e.Name {
 		route.Spec.Rules = append(signInRouteRules(comp.Namespace, signIn, frameAncestorsFilters(framers)...), route.Spec.Rules...)
 	}
@@ -1419,7 +1438,7 @@ func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gen
 
 // ensureZonePolicy keeps the component's one SecurityPolicy: the zone's
 // session and the bouncer, over every oidc route the component has.
-func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone, routes []string, authz routeAuthz) error {
+func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, zone edgeZone, routes []string, authz routeAuthz) error {
 	spec := zoneSecurityPolicySpec(r.KernelDomain, zone, routes[0], authz, servicesNamespace, r.bouncerService())
 	targets := make([]interface{}, 0, len(routes))
 	for _, name := range routes {
@@ -1430,7 +1449,7 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 	policy.SetGroupVersionKind(securityPolicyGVK)
 	policy.SetName("sp-" + comp.Name)
 	policy.SetNamespace(comp.Namespace)
-	policy.SetLabels(componentLabels(comp))
+	policy.SetLabels(componentLabels(comp, tenantName))
 	if err := unstructured.SetNestedField(policy.Object, spec, "spec"); err != nil {
 		return err
 	}
@@ -1720,7 +1739,7 @@ func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *
 // has to admit exactly that and no more. It is not the component's to choose:
 // a component that answered X-Frame-Options: DENY would silently break its
 // own tile.
-func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string, framers []string) *gatewayv1.HTTPRoute {
+func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string, framers []string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	parent.Namespace = &ns
@@ -1741,7 +1760,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	if e.AuthMode == gentianov1alpha1.AuthModeOIDC && !wholeHost {
 		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, edgeOAuth2Prefix, frame...))
 	}
-	labels := componentLabels(comp)
+	labels := componentLabels(comp, tenantName)
 	labels[bouncerRouteLabel] = "true"
 	mode := string(e.AuthMode)
 	if e.AuthMode == gentianov1alpha1.AuthModeJWT || e.AuthMode == gentianov1alpha1.AuthModeBearer {
@@ -1805,7 +1824,7 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 // the bouncer's Service.
 func zoneGrantName(namespace string) string { return "allow-zone-policy-" + namespace }
 
-func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentianov1alpha1.Component) error {
+func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string) error {
 	spec := map[string]interface{}{
 		"from": []interface{}{
 			map[string]interface{}{"group": "gateway.envoyproxy.io", "kind": "SecurityPolicy", "namespace": comp.Namespace},
@@ -1818,7 +1837,7 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 	}
 	desired := buildReferenceGrantObject(servicesNamespace, zoneGrantName(comp.Namespace), spec, map[string]string{
 		managedByLabel: managedByValue,
-		tenantLabel:    strings.TrimPrefix(comp.Namespace, "tenant-"),
+		tenantLabel:    tenantName,
 	})
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(referenceGrantGVK)
@@ -1843,7 +1862,7 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 // component's namespace, under the same name the policy uses. The zone is
 // the tenant's own (the kernel's for the platform tenant), so its secret in
 // the tenant's namespace crosses no trust boundary.
-func (r *ComponentReconciler) ensureZoneSecret(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone) error {
+func (r *ComponentReconciler) ensureZoneSecret(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, zone edgeZone) error {
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: zone.secretName, Namespace: servicesNamespace}, source); err != nil {
 		return err
@@ -1854,7 +1873,7 @@ func (r *ComponentReconciler) ensureZoneSecret(ctx context.Context, comp *gentia
 			Namespace: comp.Namespace,
 			Labels: map[string]string{
 				managedByLabel: managedByValue,
-				tenantLabel:    strings.TrimPrefix(comp.Namespace, "tenant-"),
+				tenantLabel:    tenantName,
 			},
 		},
 		Type: source.Type,

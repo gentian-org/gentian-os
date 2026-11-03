@@ -94,6 +94,7 @@ func (r *ComponentReconciler) renderInput(
 	in := &apprender.Input{
 		App:                comp.Name,
 		Namespace:          comp.Namespace,
+		TenantName:         tenant.Name,
 		Realm:              keycloakRealmName(tenant),
 		Domain:             zone.domain,
 		ReleaseObject:      releaseObject,
@@ -369,7 +370,7 @@ func isRelease(obj *unstructured.Unstructured) bool {
 // it no longer is. The releases come last, once the Secret their values read
 // has arrived: a set entry naming a Secret that is not there yet fails the
 // release rather than waiting for it.
-func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov1alpha1.Component, rendered *apprender.Rendered) (ready bool, reason, message string, err error) {
+func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, rendered *apprender.Rendered) (ready bool, reason, message string, err error) {
 	var releases, rest []*unstructured.Unstructured
 	for _, obj := range rendered.Objects {
 		if isRelease(obj) {
@@ -392,7 +393,7 @@ func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov
 		return false, "", "", err
 	}
 	for _, obj := range rest {
-		if _, err := r.applyObject(ctx, comp, obj); err != nil {
+		if _, err := r.applyObject(ctx, comp, tenantName, obj); err != nil {
 			return false, "", "", fmt.Errorf("%s %s: %w", obj.GetKind(), obj.GetName(), err)
 		}
 	}
@@ -403,7 +404,7 @@ func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov
 	// whatever it reported before.
 	var written string
 	for _, obj := range releases {
-		changed, err := r.applyObject(ctx, comp, obj)
+		changed, err := r.applyObject(ctx, comp, tenantName, obj)
 		if err != nil {
 			return false, "", "", fmt.Errorf("%s %s: %w", obj.GetKind(), obj.GetName(), err)
 		}
@@ -420,11 +421,11 @@ func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov
 		if keep[k] {
 			continue
 		}
-		if err := r.deleteInventoried(ctx, comp, k); err != nil {
+		if err := r.deleteInventoried(ctx, comp, tenantName, k); err != nil {
 			return false, "", "", err
 		}
 	}
-	if err := r.pruneOwned(ctx, comp, rendered.Objects); err != nil {
+	if err := r.pruneOwned(ctx, comp, tenantName, rendered.Objects); err != nil {
 		return false, "", "", err
 	}
 	if err := r.recordInventory(ctx, comp, current); err != nil {
@@ -449,7 +450,7 @@ func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov
 // Its labels, annotations and owner are the component's, and are written on
 // their own: an object taken over from the app Composition holds what is
 // rendered and lacks only those, and is not rewritten for them.
-func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1alpha1.Component, rendered *unstructured.Unstructured) (bool, error) {
+func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, rendered *unstructured.Unstructured) (bool, error) {
 	desired, err := jsonNormalized(rendered.Object)
 	if err != nil {
 		return false, err
@@ -459,7 +460,7 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	for k, v := range componentLabels(comp) {
+	for k, v := range componentLabels(comp, tenantName) {
 		labels[k] = v
 	}
 	if ownedHere(comp, obj) {
@@ -485,7 +486,7 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 	if err != nil {
 		return false, err
 	}
-	if !r.mayWrite(comp, existing) {
+	if !r.mayWrite(comp, tenantName, existing) {
 		return false, fmt.Errorf("already exists and is not this component's")
 	}
 	last := existing.GetAnnotations()[renderHashAnnotation]
@@ -619,9 +620,9 @@ func equalOwners(have, want []metav1.OwnerReference) bool {
 // one it rendered, or one its handoff took over from the composite it was
 // installed as. An object of the same name that is neither is somebody
 // else's, and is not taken.
-func (r *ComponentReconciler) mayWrite(comp *gentianov1alpha1.Component, existing *unstructured.Unstructured) bool {
+func (r *ComponentReconciler) mayWrite(comp *gentianov1alpha1.Component, tenantName string, existing *unstructured.Unstructured) bool {
 	labels := existing.GetLabels()
-	if labels[componentLabel] == comp.Name && labels[tenantLabel] == componentLabels(comp)[tenantLabel] {
+	if labels[componentLabel] == comp.Name && labels[tenantLabel] == tenantName {
 		return true
 	}
 	if ownedBy(existing, comp) {
@@ -629,7 +630,7 @@ func (r *ComponentReconciler) mayWrite(comp *gentianov1alpha1.Component, existin
 	}
 	// A supplied credential's declaration as this reconciler wrote it before
 	// it rendered it: named for the component as the provider.
-	if labels[suppliedProviderLabel] == comp.Name && labels[tenantLabel] == componentLabels(comp)[tenantLabel] &&
+	if labels[suppliedProviderLabel] == comp.Name && labels[tenantLabel] == tenantName &&
 		labels[managedByLabel] == managedByValue {
 		return true
 	}
@@ -698,7 +699,7 @@ func waitedFor(obj *unstructured.Unstructured) bool {
 
 // deleteInventoried deletes one object of the inventory, if it is still
 // this component's.
-func (r *ComponentReconciler) deleteInventoried(ctx context.Context, comp *gentianov1alpha1.Component, key string) error {
+func (r *ComponentReconciler) deleteInventoried(ctx context.Context, comp *gentianov1alpha1.Component, tenantName, key string) error {
 	ref, ok := inventoryObject(key)
 	if !ok {
 		return nil
@@ -707,7 +708,7 @@ func (r *ComponentReconciler) deleteInventoried(ctx context.Context, comp *genti
 	if err != nil || live == nil {
 		return err
 	}
-	if !r.mayWrite(comp, live) || !live.GetDeletionTimestamp().IsZero() {
+	if !r.mayWrite(comp, tenantName, live) || !live.GetDeletionTimestamp().IsZero() {
 		return nil
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, live))
@@ -715,7 +716,7 @@ func (r *ComponentReconciler) deleteInventoried(ctx context.Context, comp *genti
 
 // pruneOwned removes what is owned by the component in its namespace, was
 // rendered for it, and is not rendered now. Only the kinds a render makes.
-func (r *ComponentReconciler) pruneOwned(ctx context.Context, comp *gentianov1alpha1.Component, objs []*unstructured.Unstructured) error {
+func (r *ComponentReconciler) pruneOwned(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, objs []*unstructured.Unstructured) error {
 	keep := map[string]bool{}
 	for _, obj := range objs {
 		if ownedHere(comp, obj) {
@@ -725,7 +726,7 @@ func (r *ComponentReconciler) pruneOwned(ctx context.Context, comp *gentianov1al
 	for _, gvk := range apprender.NamespacedKinds {
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(gvk.GroupVersion().WithKind(gvk.Kind + "List"))
-		if err := r.List(ctx, list, client.InNamespace(comp.Namespace), client.MatchingLabels(componentLabels(comp))); err != nil {
+		if err := r.List(ctx, list, client.InNamespace(comp.Namespace), client.MatchingLabels(componentLabels(comp, tenantName))); err != nil {
 			if apimeta.IsNoMatchError(err) {
 				continue
 			}
@@ -752,7 +753,7 @@ func (r *ComponentReconciler) pruneOwned(ctx context.Context, comp *gentianov1al
 // namespace's owner references, and reports whether it is all gone. The
 // releases are waited for: "the component is gone" is what a purge waits
 // for before it drops a database.
-func (r *ComponentReconciler) deleteRendered(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+func (r *ComponentReconciler) deleteRendered(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string) (bool, error) {
 	gone := true
 	var left []string
 	for _, k := range compactStrings(sortedUnion(inventoryOf(comp), takenOf(comp))) {
@@ -764,7 +765,7 @@ func (r *ComponentReconciler) deleteRendered(ctx context.Context, comp *gentiano
 		if err != nil {
 			return false, err
 		}
-		if live == nil || !r.mayWrite(comp, live) {
+		if live == nil || !r.mayWrite(comp, tenantName, live) {
 			continue
 		}
 		left = append(left, k)

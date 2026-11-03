@@ -1053,12 +1053,12 @@ func TestTheSidecarsRoutesAreAdmittedByTheGatewayAPI(t *testing.T) {
 
 	host := exposureHost(zone, comp, sidecar.exposure)
 	framers := componentFramers(zone, comp, profile, host)
-	app := buildExposureRoute(comp, "notes-web", host, zone, sidecar.exposure,
+	app := buildExposureRoute(comp, defaultTenantName(comp), "notes-web", host, zone, sidecar.exposure,
 		exposureAuthz(tenant, comp, profile, "c1", false), r.KernelDomain, framers)
 	app.Spec.Rules = append(signInRouteRules(comp.Namespace, sidecar, frameAncestorsFilters(framers)...), app.Spec.Rules...)
 	for what, route := range map[string]*gatewayv1.HTTPRoute{
 		"the app's route with the sidecar's rules": app,
-		"the route for the realm's answer":         buildSignInACSRoute(comp, zone, sidecar, r.KernelDomain),
+		"the route for the realm's answer":         buildSignInACSRoute(comp, defaultTenantName(comp), zone, sidecar, r.KernelDomain),
 	} {
 		if err := c.Create(ctx, route, client.FieldValidation(metav1.FieldValidationStrict)); err != nil {
 			t.Errorf("%s is refused: %v", what, err)

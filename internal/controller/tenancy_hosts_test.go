@@ -120,7 +120,7 @@ func TestARouteIsOnTheListenerWhoseCertificateNamesItsHost(t *testing.T) {
 		entry.Surface, entry.AuthMode = gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeOIDC
 		entry.Backend.Service, entry.Backend.Port = "svc", 8080
 		host := exposureHost(zone, comp, &entry)
-		route := buildExposureRoute(comp, component+"-web", host, zone, &entry, routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name}, kd, nil)
+		route := buildExposureRoute(comp, defaultTenantName(comp), component+"-web", host, zone, &entry, routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name}, kd, nil)
 		return string(route.Spec.Hostnames[0]), string(*route.Spec.ParentRefs[0].SectionName)
 	}
 	for _, c := range []struct {
@@ -663,7 +663,7 @@ func TestAComponentIsFramedByItsOwnTenantsDesktopAndNobodyElses(t *testing.T) {
 			t.Errorf("%s: host %s, want %s", c.what, host, c.host)
 			continue
 		}
-		route := buildExposureRoute(comp, c.component+"-"+e.Name, host, zone, e,
+		route := buildExposureRoute(comp, defaultTenantName(comp), c.component+"-"+e.Name, host, zone, e,
 			exposureAuthz(c.tenant, comp, c.profile, "c1", false), kd, componentFramers(zone, comp, c.profile, host))
 		for _, rule := range route.Spec.Rules {
 			if len(rule.Filters) != 1 || rule.Filters[0].ResponseHeaderModifier == nil {

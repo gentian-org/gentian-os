@@ -265,7 +265,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		SubDomain: "desktop", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "desktop.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", e.ForwardToken), "k.example", []string{"platform.k.example"})
+	route := buildExposureRoute(comp, defaultTenantName(comp), "desktop-api", "desktop.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", e.ForwardToken), "k.example", []string{"platform.k.example"})
 	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
 		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -280,7 +280,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		t.Fatalf("rules = %+v", route.Spec.Rules)
 	}
 	// A second route on the same host folds into the same table entry.
-	web := buildExposureRoute(comp, "desktop-web", "desktop.k.example", zone,
+	web := buildExposureRoute(comp, defaultTenantName(comp), "desktop-web", "desktop.k.example", zone,
 		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "desktop",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
 		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", false), "k.example", []string{"platform.k.example"})
@@ -331,7 +331,7 @@ func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
 			SubDomain: sub, DenyPaths: deny,
 			Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 80},
 		}
-		return buildExposureRoute(comp, "odoo-"+name, sub+".k.example", zone, e,
+		return buildExposureRoute(comp, defaultTenantName(comp), "odoo-"+name, sub+".k.example", zone, e,
 			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", false), "k.example", nil)
 	}
 	web := build("web", "shop", []string{"/web/database"})

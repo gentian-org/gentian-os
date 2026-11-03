@@ -195,8 +195,8 @@ func signInLogoutURL(component, namespace string) string {
 // pods, and none of the app's network paths are its as well.
 const signInSidecarLabel = "gentianos.io/sign-in-sidecar"
 
-func signInSidecarLabels(comp *gentianov1alpha1.Component) map[string]string {
-	labels := componentLabels(comp)
+func signInSidecarLabels(comp *gentianov1alpha1.Component, tenantName string) map[string]string {
+	labels := componentLabels(comp, tenantName)
 	labels[signInSidecarLabel] = comp.Name
 	labels["app.kubernetes.io/name"] = "sign-in-sidecar"
 	return labels
@@ -454,7 +454,7 @@ func signInEntryRule(path string) gatewayv1.HTTPRouteRule {
 // No frame policy either. The sidecar answers this path with a redirect, or
 // with a page that carries a policy of its own, and the route's would replace
 // that one.
-func buildSignInACSRoute(comp *gentianov1alpha1.Component, zone edgeZone, s *signInSidecar, kernelDomain string) *gatewayv1.HTTPRoute {
+func buildSignInACSRoute(comp *gentianov1alpha1.Component, tenantName string, zone edgeZone, s *signInSidecar, kernelDomain string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	parent.Namespace = &ns
@@ -469,7 +469,7 @@ func buildSignInACSRoute(comp *gentianov1alpha1.Component, zone edgeZone, s *sig
 		RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{Remove: frontDoorIdentityHeaders},
 	})
 
-	labels := componentLabels(comp)
+	labels := componentLabels(comp, tenantName)
 	labels[signInRouteLabel] = "acs"
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -488,10 +488,10 @@ func buildSignInACSRoute(comp *gentianov1alpha1.Component, zone edgeZone, s *sig
 // ensureSignInACSRoute keeps the session-less route of a component's sidecar,
 // and removes any such route the component no longer has a sidecar for: one
 // whose profile stopped declaring it, or whose entry was renamed.
-func (r *ComponentReconciler) ensureSignInACSRoute(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone, s *signInSidecar, held bool) error {
+func (r *ComponentReconciler) ensureSignInACSRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, zone edgeZone, s *signInSidecar, held bool) error {
 	keep := ""
 	if s != nil {
-		route := buildSignInACSRoute(comp, zone, s, r.KernelDomain)
+		route := buildSignInACSRoute(comp, tenantName, zone, s, r.KernelDomain)
 		if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 			return err
 		}
@@ -597,7 +597,7 @@ func (r *ComponentReconciler) ensureSignInSidecar(
 	if s == nil {
 		return r.removeSignInSidecar(ctx, comp)
 	}
-	labels := signInSidecarLabels(comp)
+	labels := signInSidecarLabels(comp, tenant.Name)
 	owned := func(obj client.Object) error { return controllerutil.SetControllerReference(comp, obj, r.Scheme) }
 
 	// The handler: the reviewed file, and nothing the cluster holds under

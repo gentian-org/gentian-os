@@ -211,7 +211,7 @@ func TestAnAppTheCompositionInstalledIsTakenOverInPlace(t *testing.T) {
 	if err := h.c.Get(ctx, types.NamespacedName{Name: "wiki-release-keep-volumes", Namespace: "tenant-acme"}, wrapped); err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range componentLabels(h.comp) {
+	for k, v := range componentLabels(h.comp, defaultTenantName(h.comp)) {
 		if wrapped.Labels[k] != v {
 			t.Errorf("the wrapped ConfigMap's labels %v lack %s=%s", wrapped.Labels, k, v)
 		}
@@ -457,7 +457,7 @@ func TestATakenOverJobIsNotRewritten(t *testing.T) {
 	_ = unstructured.SetNestedField(rendered.Object, map[string]interface{}{"spec": map[string]interface{}{"restartPolicy": "Never"}}, "spec", "template")
 	rendered.SetLabels(nil)
 	stored := h.reconciledComponent()
-	if _, err := h.r.applyObject(ctx, stored, rendered); err != nil {
+	if _, err := h.r.applyObject(ctx, stored, defaultTenantName(stored), rendered); err != nil {
 		t.Fatal(err)
 	}
 	live := h.live(job, job.GetName(), "tenant-acme")

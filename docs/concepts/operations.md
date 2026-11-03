@@ -833,10 +833,9 @@ The limits that matter to a person running the platform are in
 - **`spec.isolation.namespace`.** Export, restore, purge and the retained read
   take a tenant's namespace from the Tenant, as provisioning does. The rest of
   the platform does not: an export or a restore finds its tenant by stripping
-  `tenant-` from its namespace, the app renderer (`internal/apprender`) derives
-  the tenant's name the same way, and the director never sets the field. A tenant placed in a
-  namespace of another name is not supported end to end; an export or restore
-  created for one is refused.
+  `tenant-` from its namespace, and the director never sets the field. A
+  tenant placed in a namespace of another name is not supported end to end;
+  an export or restore created for one is refused.
 - **MariaDB databases an app creates for itself** are the app's by their name
   (§9.3). Each database is dumped at one instant of its own; an
   export is consistent across an app's databases only because the app is

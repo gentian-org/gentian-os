@@ -114,7 +114,7 @@ func policyName(name string) string {
 // the desktop's API. The port is the Service's, which is the API container's
 // own: a policy matches the port a pod listens on, and the desktop chart
 // serves its API on the port its Service names.
-func buildDesktopAccessPolicies(comp *gentianov1alpha1.Component, componentRelease string, api desktopAPI) []*networkingv1.NetworkPolicy {
+func buildDesktopAccessPolicies(comp *gentianov1alpha1.Component, tenantName, componentRelease string, api desktopAPI) []*networkingv1.NetworkPolicy {
 	tcp := corev1.ProtocolTCP
 	port := intstr.FromInt32(api.port)
 	ports := []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}}
@@ -122,7 +122,7 @@ func buildDesktopAccessPolicies(comp *gentianov1alpha1.Component, componentRelea
 	desktopPods := metav1.LabelSelector{MatchLabels: map[string]string{componentInstanceLabel: api.release}}
 	return []*networkingv1.NetworkPolicy{
 		{
-			ObjectMeta: metav1.ObjectMeta{Name: desktopAccessEgressName(comp), Namespace: comp.Namespace, Labels: componentLabels(comp)},
+			ObjectMeta: metav1.ObjectMeta{Name: desktopAccessEgressName(comp), Namespace: comp.Namespace, Labels: componentLabels(comp, tenantName)},
 			Spec: networkingv1.NetworkPolicySpec{
 				PodSelector: componentPods,
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
@@ -133,7 +133,7 @@ func buildDesktopAccessPolicies(comp *gentianov1alpha1.Component, componentRelea
 			},
 		},
 		{
-			ObjectMeta: metav1.ObjectMeta{Name: desktopAccessIngressName(comp), Namespace: comp.Namespace, Labels: componentLabels(comp)},
+			ObjectMeta: metav1.ObjectMeta{Name: desktopAccessIngressName(comp), Namespace: comp.Namespace, Labels: componentLabels(comp, tenantName)},
 			Spec: networkingv1.NetworkPolicySpec{
 				PodSelector: desktopPods,
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
@@ -150,7 +150,7 @@ func buildDesktopAccessPolicies(comp *gentianov1alpha1.Component, componentRelea
 // removes it when the component did not ask, may not, or there is no desktop.
 // Whichever way the component is delivered: the pods are selected by the
 // release they belong to (helmReleaseOf).
-func (r *ComponentReconciler) ensureDesktopAccess(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
+func (r *ComponentReconciler) ensureDesktopAccess(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile) error {
 	var desired []*networkingv1.NetworkPolicy
 	if wantsDesktop(profile) {
 		api, ok, err := r.desktopAPIIn(ctx, comp.Namespace)
@@ -158,7 +158,7 @@ func (r *ComponentReconciler) ensureDesktopAccess(ctx context.Context, comp *gen
 			return fmt.Errorf("read where the desktop's API is: %w", err)
 		}
 		if ok {
-			desired = buildDesktopAccessPolicies(comp, helmReleaseOf(comp, profile), api)
+			desired = buildDesktopAccessPolicies(comp, tenantName, helmReleaseOf(comp, profile), api)
 		}
 	}
 	if len(desired) == 0 {

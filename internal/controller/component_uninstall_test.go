@@ -80,13 +80,13 @@ func TestUninstallingADirectlyDeliveredChartRemovesItsRelease(t *testing.T) {
 		Name: "console", Namespace: "tenant-globex",
 		Finalizers: []string{componentFinalizer}, DeletionTimestamp: &deleted,
 	}}
-	own := directRelease(releaseName(comp), componentLabels(comp))
+	own := directRelease(releaseName(comp), componentLabels(comp, defaultTenantName(comp)))
 	// Held by a finalizer, as provider-helm holds a Release while it runs
 	// `helm uninstall`.
 	own.SetFinalizers([]string{"finalizer.managedresource.crossplane.io"})
 	foreign := directRelease(releaseName(other), map[string]string{componentLabel: "something-else"})
 	neighbour := directRelease("tenant-acme-wiki", componentLabels(&gentianov1alpha1.Component{
-		ObjectMeta: metav1.ObjectMeta{Name: "wiki", Namespace: "tenant-acme"}}))
+		ObjectMeta: metav1.ObjectMeta{Name: "wiki", Namespace: "tenant-acme"}}, "acme"))
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, other, own, foreign, neighbour).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
