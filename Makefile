@@ -253,10 +253,8 @@ test-catalogue-default:
 	@bash scripts/tests/test-catalogue-default.sh
 
 ## test-platform-role-groups: a new Cluster claim names a group for admin
-## alone, a claim set up before roles were held by name is carried over to
-## role holders (the members Keycloak holds, the tenant's switch, warnings for
-## whoever cannot be), and the kernel realm's bootstrap Job makes no security
-## officers' group. A stand-in for kubectl and a local fake Keycloak; no cluster.
+## alone, and the kernel realm's bootstrap Job makes no security officers'
+## group. A stand-in for kubectl; no cluster.
 test-platform-role-groups:
 	@bash scripts/tests/test-platform-role-groups.sh
 

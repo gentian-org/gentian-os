@@ -326,7 +326,7 @@ func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm str
 // Kept in the mail namespace, beside the hashes derived from it. Only the
 // operator reads it, so no mount decides where it goes; what decides it is
 // that every mail password of the tenant follows from this value, and the
-// edge namespace -- where it was -- is the one that faces the internet.
+// edge namespace is the one that faces the internet.
 func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([]byte, error) {
 	ns := mailSeedNamespace
 	name := mailAppPasswordSeedName + "-" + tenant
@@ -338,13 +338,6 @@ func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([
 		}
 	} else if !errors.IsNotFound(err) {
 		return nil, err
-	}
-	// A seed written where it used to be is taken over rather than replaced:
-	// a new one would change every password already handed to this tenant.
-	if moved, adoptErr := r.adoptMisplacedMailSeed(ctx, name); adoptErr != nil {
-		return nil, adoptErr
-	} else if len(moved) > 0 {
-		return moved, nil
 	}
 	seed := make([]byte, 32)
 	if _, err := rand.Read(seed); err != nil {
@@ -462,52 +455,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	}); err != nil {
 		return err
 	}
-	// The pre-split shared file — but ONLY once every tenant has its own.
-	//
-	// Removing it as soon as the first tenant reconciled is what broke this in
-	// production: the shared file held the users of whichever tenant wrote it
-	// last, so deleting it took away the credentials of every tenant that had not
-	// yet reconciled under the new scheme. Their logins failed as wrong passwords
-	// until their own reconcile happened to come round, which for a Tenant that
-	// reconciles on a timer can be a long time to be unable to read mail.
-	//
-	// Checking first costs one List and makes the migration order-independent:
-	// whichever tenant reconciles last is the one that clears it away.
-	migrated, err := r.allTenantsHaveOwnPasswdFile(ctx)
-	if err != nil {
-		return err
-	}
-	if migrated {
-		if err := r.deleteSecretKeys(ctx, dovecotAppPasswordsSecret, dovecotNamespace,
-			mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
-			return err
-		}
-	}
 	return r.syncMailSubmissionCredential(ctx, tenant, domain, seed)
-}
-
-// allTenantsHaveOwnPasswdFile reports whether every Tenant now has its own
-// per-tenant passwd-file, which is the condition for retiring the shared one.
-func (r *TenantReconciler) allTenantsHaveOwnPasswdFile(ctx context.Context) (bool, error) {
-	sec := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
-	}, sec); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	tenants := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenants); err != nil {
-		return false, err
-	}
-	for i := range tenants.Items {
-		if _, ok := sec.Data[mailAppPasswordFile(mailAppPasswordApp, tenants.Items[i].Name)+".users"]; !ok {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // mailPasswdFileKeys lists every passdb key one tenant owns, across apps.

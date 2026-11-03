@@ -1801,7 +1801,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.storeTerms.acceptedAt` | string (date-time) | yes | `AcceptedAt` is when they were accepted. |
 | `spec.storeTerms.version` | string | yes | `Version` is the version of the terms the store named when they were accepted. |
 | `status` | object |  | TenantStatus holds the observed state of a Tenant. |
-| `status.addonGrantsInherited` | boolean |  | `AddonGrantsInherited` is set once the addons this tenant had before addons were granted on their own have been given their app's access: each addon whose group… |
 | `status.adminEmail` | string |  | `AdminEmail` is the resolved contact address for this tenant, and the administrator's login: admin@\<effectiveDomain>. |
 | `status.appCount` | integer |  | `AppCount` is the total number of apps requested in spec. |
 | `status.conditions` | []object |  | `Conditions` provides detailed status conditions using the standard metav1.Condition type. |

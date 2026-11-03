@@ -158,14 +158,6 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, tenantName st
 	}
 }
 
-// legacyGrantedEgressPolicyName is the policy that once held, for an app the
-// Composition installs, the rules a person granted on it. Those rules are in
-// the component's own policy now, as for any other component, and this name
-// is only ever removed.
-func legacyGrantedEgressPolicyName(comp *gentianov1alpha1.Component) string {
-	return "granted-egress-" + comp.Name
-}
-
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
 //
@@ -217,16 +209,6 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 		logf.FromContext(ctx).Info("the edge's public address could not be read; the policy leaves it out",
 			"component", comp.Name, "error", err.Error())
 		own = nil
-	}
-	// The policy that held a composed app's granted rules on their own; they
-	// are in this one now.
-	legacy := &networkingv1.NetworkPolicy{}
-	if err := r.Get(ctx, types.NamespacedName{Name: legacyGrantedEgressPolicyName(comp), Namespace: comp.Namespace}, legacy); err == nil {
-		if err := r.Delete(ctx, legacy); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete NetworkPolicy %s: %w", legacy.Name, err)
-		}
-	} else if !errors.IsNotFound(err) {
-		return err
 	}
 	desired := buildComponentNetworkPolicy(comp, tenant.Name, componentPods(comp, profile), r.componentEgressNamespaces(comp, profile, tenant),
 		append(rules, own...))

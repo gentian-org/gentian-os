@@ -7,7 +7,6 @@
 
 # The claim comes from the deployments checkout, written by the installer's
 # own scaffold (step 0 of install.sh) so every cluster's claim has one shape.
-# Its spec.layout must be this installer's; apply_cluster_xr refuses otherwise.
 
 check() {
     local claim xr

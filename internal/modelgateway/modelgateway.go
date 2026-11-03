@@ -77,12 +77,6 @@ func HashKey(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// LegacyKey is the key the platform used to register for an app: text made
-// from the tenant's and the app's names, which anybody who knew the two could
-// write down. Nothing presents it any more. It is spelled here only so that
-// one still registered can be recognized and removed.
-func LegacyKey(tenant, app string) string { return fmt.Sprintf("sk-gentian-%s-%s", tenant, app) }
-
 // KeyAlias is the name the gateway knows an app's key by. Aliases are unique at
 // the gateway, which is what lets a key be found and removed by name.
 func KeyAlias(tenant, app string) string { return fmt.Sprintf("%s-%s", tenant, app) }
@@ -217,23 +211,13 @@ func isKeyHash(s string) bool {
 	return err == nil
 }
 
-// KeyIs reports whether key is registered under alias.
-func (c *Client) KeyIs(ctx context.Context, alias, key string) (bool, error) {
-	registered, err := c.keyHashes(ctx, alias)
-	if err != nil {
-		return false, err
-	}
-	return slices.Contains(registered, HashKey(key)), nil
-}
-
 // EnsureKey makes key the one key registered under alias, and reports
 // whether another was registered there and has been replaced.
 //
 // An alias names one key at the gateway. When it already names this key,
-// nothing is done. When it names another -- the key made from the tenant's
-// and the app's names that the platform registered before keys were random
-// -- that one is deleted and this one registered in its place: the old key
-// stops authenticating in the same pass that the new one starts to.
+// nothing is done. When it names another, that one is deleted and this one
+// registered in its place: the old key stops authenticating in the same pass
+// that the new one starts to.
 func (c *Client) EnsureKey(ctx context.Context, alias, key string) (replaced bool, err error) {
 	registered, err := c.keyHashes(ctx, alias)
 	if err != nil {

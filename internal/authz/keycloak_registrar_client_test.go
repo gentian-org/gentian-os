@@ -40,8 +40,6 @@ type fakeRealm struct {
 	updatedBody map[string]any
 	// noManagement makes the realm answer with no realm-management client.
 	noManagement bool
-	// retired says the realm still has the client the director used to hold.
-	retired bool
 }
 
 func newFakeRealm() *fakeRealm {
@@ -87,16 +85,6 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 				}
 				_ = json.NewEncoder(w).Encode([]keycloakClientRecord{
 					{ID: "mgmt-uuid", ClientID: "realm-management"}})
-			case RetiredDirectorClientID:
-				f.mu.Lock()
-				still := f.retired
-				f.mu.Unlock()
-				if !still {
-					_, _ = w.Write([]byte(`[]`))
-					return
-				}
-				_ = json.NewEncoder(w).Encode([]keycloakClientRecord{
-					{ID: "director-uuid", ClientID: RetiredDirectorClientID, Enabled: true}})
 			default:
 				_, _ = w.Write([]byte(`[]`))
 			}
@@ -177,12 +165,6 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid" && r.Method == http.MethodDelete:
 			f.mu.Lock()
 			f.registrar = nil
-			f.mu.Unlock()
-			w.WriteHeader(http.StatusNoContent)
-
-		case r.URL.Path == "/admin/realms/demo/clients/director-uuid" && r.Method == http.MethodDelete:
-			f.mu.Lock()
-			f.retired = false
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
@@ -431,33 +413,5 @@ func TestDeleteRegistrarRealmClient(t *testing.T) {
 	// reconciled more than once.
 	if err := c.DeleteRegistrarRealmClient(context.Background(), "demo"); err != nil {
 		t.Fatalf("second delete: %v", err)
-	}
-}
-
-// The credential the director held is removed from a realm, and only that
-// one: the registrar's own client is a different client and stays.
-func TestTheDirectorsFormerClientIsRetired(t *testing.T) {
-	t.Parallel()
-	f := newFakeRealm()
-	f.retired = true
-	srv := f.server(t)
-	c := testAdminClient(srv, "admin", "pw")
-
-	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.DeleteRetiredDirectorRealmClient(context.Background(), "demo"); err != nil {
-		t.Fatal(err)
-	}
-	if !f.did(http.MethodDelete, "/admin/realms/demo/clients/director-uuid") {
-		t.Fatal("the director's former client was not deleted")
-	}
-	if f.did(http.MethodDelete, "/admin/realms/demo/clients/registrar-uuid") {
-		t.Fatal("the registrar's own client was deleted")
-	}
-
-	// Gone already, or never there: nothing to do, and not an error.
-	if err := c.DeleteRetiredDirectorRealmClient(context.Background(), "demo"); err != nil {
-		t.Fatalf("a realm without the former client: %v", err)
 	}
 }

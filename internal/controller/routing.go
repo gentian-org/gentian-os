@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -62,10 +61,6 @@ func normalizeRoutingMode(mode string) string {
 
 func isGatewayRoutingMode(string) bool {
 	return true
-}
-
-func tenantGatewayName(tenantName string) string {
-	return fmt.Sprintf("tenant-%s-gateway", tenantName)
 }
 
 // requeueGatewayAfter is the default requeue interval while waiting for Gateway/HTTPRoute status.

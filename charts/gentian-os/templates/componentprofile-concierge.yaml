@@ -30,9 +30,6 @@ spec:
   # The cluster has one, and it is the platform tenant's.
   placement:
     tenants: platform
-  # The same, until every cluster's definition has placement (as the
-  # desktop's profile says).
-  defaultForPlatform: true
   package:
     chart:
       repository: {{ .Values.concierge.chart.repository | quote }}

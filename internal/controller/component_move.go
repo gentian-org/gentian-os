@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
@@ -56,8 +57,9 @@ const (
 	// move is rolled back. Longer than the release's own wait (10 minutes),
 	// so a slow first boot is not mistaken for a broken build.
 	moveDeadline = 15 * time.Minute
-	// moveExportRequeue is how often an export under way is looked at.
-	moveExportRequeue = 30 * time.Second
+	// moveRequeue is how often an export under way, or a build rolling out,
+	// is looked at.
+	moveRequeue = 30 * time.Second
 
 	rolloutReasonExportFailed   = "ExportFailed"
 	rolloutReasonNotReadyInTime = "NotReadyInTime"
@@ -115,7 +117,7 @@ func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alp
 			"component", comp.Name, "namespace", comp.Namespace, "from", profilebundle.Short(ro.Digest), "to", profilebundle.Short(requested))
 		res, err := r.status(ctx, comp, metav1.ConditionFalse, conditionReasonExporting, fmt.Sprintf(
 			"moving from %s to %s: exporting the app's data first (TenantExport %s); the instance still runs %s",
-			profilebundle.Short(ro.Digest), profilebundle.Short(requested), comp.Status.Rollout.Export, profilebundle.Short(ro.Digest)), moveExportRequeue)
+			profilebundle.Short(ro.Digest), profilebundle.Short(requested), comp.Status.Rollout.Export, profilebundle.Short(ro.Digest)), moveRequeue)
 		return ro.Digest, &res, err
 	}
 	switch ro.Phase {
@@ -129,7 +131,7 @@ func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alp
 				return "", nil, err
 			}
 			res, err := r.status(ctx, comp, metav1.ConditionFalse, conditionReasonExporting,
-				"moving to "+profilebundle.Short(requested)+": waiting for the export before it", moveExportRequeue)
+				"moving to "+profilebundle.Short(requested)+": waiting for the export before it", moveRequeue)
 			return ro.Digest, &res, err
 		}
 		switch export.Status.Phase {
@@ -155,7 +157,7 @@ func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alp
 			return ro.Digest, &res, err
 		default:
 			res, err := r.status(ctx, comp, metav1.ConditionFalse, conditionReasonExporting, fmt.Sprintf(
-				"moving to %s: the export before it is %s", profilebundle.Short(requested), orPending(string(export.Status.Phase))), moveExportRequeue)
+				"moving to %s: the export before it is %s", profilebundle.Short(requested), orPending(string(export.Status.Phase))), moveRequeue)
 			return ro.Digest, &res, err
 		}
 	case gentianov1alpha1.RolloutRolling:
@@ -193,15 +195,28 @@ func (r *ComponentReconciler) finishMove(
 	logger := log.FromContext(ctx)
 	switch {
 	case ro.Phase == gentianov1alpha1.RolloutRolling && effective == requested:
+		late := ro.StartedAt != nil && time.Since(ro.StartedAt.Time) > moveDeadline
 		if !releaseReady {
-			if ro.StartedAt != nil && time.Since(ro.StartedAt.Time) > moveDeadline {
+			if late {
 				return r.rollBack(ctx, comp, rolloutReasonNotReadyInTime,
 					fmt.Sprintf("the build did not come up within %s", moveDeadline))
 			}
 			return false, ctrl.Result{}, nil
 		}
+		// Ready right after the render is the release of the build before:
+		// the new build is up once the app's workloads have rolled out to it.
+		pending, err := appRolloutPendingIn(ctx, r.Client, comp.Namespace, comp.Name)
+		if err != nil {
+			return false, ctrl.Result{}, err
+		}
+		if len(pending) > 0 {
+			return r.awaitMove(ctx, comp, late, "waiting for "+strings.Join(pending, ", ")+" to roll out")
+		}
 		if verify := verifyCommand(profile); len(verify) > 0 {
 			out, err := r.runAppCommand(ctx, comp, profile, verify)
+			if stderrors.Is(err, errNoRunningPod) {
+				return r.awaitMove(ctx, comp, late, "waiting for a running pod to verify in")
+			}
 			if err != nil {
 				return r.rollBack(ctx, comp, rolloutReasonVerifyFailed,
 					"the verification command failed: "+strings.TrimSpace(err.Error()+" "+clipOutput(out)))
@@ -232,6 +247,19 @@ func (r *ComponentReconciler) finishMove(
 		return true, res, err
 	}
 	return false, ctrl.Result{}, nil
+}
+
+// awaitMove looks at a rolling build again shortly, until it is up or the
+// deadline has passed.
+func (r *ComponentReconciler) awaitMove(ctx context.Context, comp *gentianov1alpha1.Component, late bool, waiting string) (bool, ctrl.Result, error) {
+	ro := comp.Status.Rollout
+	if late {
+		return r.rollBack(ctx, comp, rolloutReasonNotReadyInTime,
+			fmt.Sprintf("the build did not come up within %s: %s", moveDeadline, waiting))
+	}
+	res, err := r.status(ctx, comp, metav1.ConditionFalse, "Installing", fmt.Sprintf(
+		"moving to %s: %s", profilebundle.Short(ro.Target), waiting), moveRequeue)
+	return true, res, err
 }
 
 // rollBack ends a move on the build the instance ran: the next pass renders

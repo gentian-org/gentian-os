@@ -259,16 +259,6 @@ if grep -qF -- "annotate managedresourceactivationpolicies.apiextensions.crosspl
 else
     bad "B-05: the file's checksum is recorded on the policy" "$(grep annotate "${STATE}/calls.log")"
 fi
-if grep -qF -- 'delete provider.pkg.crossplane.io provider-http' "${STATE}/calls.log"; then
-    ok "B-05: provider-http, which nothing uses, is removed from a cluster that still has it"
-else
-    bad "B-05: provider-http, which nothing uses, is removed from a cluster that still has it"
-fi
-if ! grep -q 'provider-http' "${REPO}/crossplane/providers/providers.yaml"; then
-    ok "providers.yaml no longer installs provider-http"
-else
-    bad "providers.yaml no longer installs provider-http"
-fi
 
 # One activated type never appears.
 new_state; all_crds

@@ -197,9 +197,14 @@ func (r *TenantReconciler) appRolloutPending(ctx context.Context, tenantName, ap
 	if err != nil {
 		return nil, err
 	}
+	return appRolloutPendingIn(ctx, r.Client, ns, appName)
+}
+
+// appRolloutPendingIn is appRolloutPending for the app's own namespace.
+func appRolloutPendingIn(ctx context.Context, c client.Reader, ns, appName string) ([]string, error) {
 	var pending []string
 	deployments := &appsv1.DeploymentList{}
-	if err := r.List(ctx, deployments, client.InNamespace(ns)); err != nil {
+	if err := c.List(ctx, deployments, client.InNamespace(ns)); err != nil {
 		return nil, fmt.Errorf("list deployments in %s: %w", ns, err)
 	}
 	for i := range deployments.Items {
@@ -217,7 +222,7 @@ func (r *TenantReconciler) appRolloutPending(ctx context.Context, tenantName, ap
 		}
 	}
 	statefulSets := &appsv1.StatefulSetList{}
-	if err := r.List(ctx, statefulSets, client.InNamespace(ns)); err != nil {
+	if err := c.List(ctx, statefulSets, client.InNamespace(ns)); err != nil {
 		return nil, fmt.Errorf("list statefulsets in %s: %w", ns, err)
 	}
 	for i := range statefulSets.Items {

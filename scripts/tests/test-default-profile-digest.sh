@@ -613,30 +613,6 @@ else
     bad "a later run with the flag takes a placed one away again: profile, bundle and their lines; the build stays" "${out}"$'\n'"$(cat "${DIR}/kustomization.yaml")"
 fi
 
-# A name the extra services no longer have: the profile an earlier run placed
-# under it from the store's catalog leaves; one from anywhere else stays.
-new_world; publish operations-console-ee 1.0.0
-profile operations-console 0.9.0 > "${CATALOGUE}/profiles/operations-console.yaml"
-run 'mkdir -p "'"${DIR}"'"; gentian_materialise_profile "'"${DIR}"'" operations-console "'"${CATALOGUE}/profiles/operations-console.yaml"'" cluster/cat-example-test' >/dev/null
-out="$(scaffold)"
-if [[ "${out}" == *"rc=0"* && "${out}" == *"Removed operations-console from the cluster's catalogue"* ]] \
-    && [[ ! -e "${DIR}/operations-console.yaml" && ! -e "${DIR}/operations-console.bundle.yaml" && -f "${DIR}/operations-console-ee.yaml" ]] \
-    && ! grep -qx -- '- operations-console.yaml' "${DIR}/kustomization.yaml" \
-    && ! grep -qx -- '- path: operations-console.bundle.yaml' "${DIR}/kustomization.yaml"; then
-    ok "the profile placed under the extra service's old name leaves the catalog, and the new one is placed"
-else
-    bad "the profile placed under the extra service's old name leaves the catalogue, and the new one is placed" "${out}"$'\n'"$(cat "${DIR}/kustomization.yaml")"
-fi
-new_world; publish operations-console-ee 1.0.0
-profile operations-console 0.9.0 > "${CATALOGUE}/profiles/operations-console.yaml"
-run 'mkdir -p "'"${DIR}"'"; gentian_materialise_profile "'"${DIR}"'" operations-console "'"${CATALOGUE}/profiles/operations-console.yaml"'" cluster/in-house' >/dev/null
-out="$(scaffold)"
-if [[ "${out}" == *"rc=0"* && "${out}" != *"Removed operations-console"* && -f "${DIR}/operations-console.yaml" ]]; then
-    ok "one of that name from another catalog stays"
-else
-    bad "one of that name from another catalogue stays" "${out}"
-fi
-
 # --no-usage-statistics says no extra services as well, and is recorded the
 # same way.
 new_world; publish operations-console-ee 1.0.0

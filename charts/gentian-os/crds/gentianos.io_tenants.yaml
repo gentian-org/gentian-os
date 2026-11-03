@@ -1409,16 +1409,6 @@ spec:
           status:
             description: TenantStatus holds the observed state of a Tenant.
             properties:
-              addonGrantsInherited:
-                description: |-
-                  AddonGrantsInherited is set once the addons this tenant had before
-                  addons were granted on their own have been given their app's access:
-                  each addon whose group had nobody in it got the app's grant, the
-                  tenant's members when the app is for everyone and the app's group's
-                  members otherwise. Done once per tenant; an addon added afterwards is
-                  granted as it is installed. A migration, to be removed once every
-                  tenant carries it.
-                type: boolean
               adminEmail:
                 description: |-
                   AdminEmail is the resolved contact address for this tenant, and the

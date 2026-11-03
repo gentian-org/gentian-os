@@ -210,7 +210,7 @@ func TestOnlyAnAppThatDeclaresTheModelGatewayIsGivenAKey(t *testing.T) {
 		t.Errorf("key = %q, want a generated key the gateway accepts", key)
 	}
 	// Nothing about the key follows from the two names.
-	if key == modelgateway.LegacyKey("demo", "chat") || strings.Contains(key, "demo") || strings.Contains(key, "chat") {
+	if strings.Contains(key, "demo") || strings.Contains(key, "chat") {
 		t.Errorf("key %q is made from the tenant's or the app's name", key)
 	}
 	want := litellmProxyBaseURL + "/v1"
@@ -295,37 +295,8 @@ func TestTheModelKeyIsStableAcrossAReinstallAndGoneAfterAPurge(t *testing.T) {
 	}
 }
 
-// An existing cluster: the declaring app holds the key made from names, in
-// its Secret and at the gateway. The next pass replaces it in both, and the
-// old key no longer authenticates.
-func TestTheKeyMadeFromNamesIsReplaced(t *testing.T) {
-	legacy := modelgateway.LegacyKey("demo", "chat")
-	w := newModelAccessWorld(t, []string{"chat"}, operatorModelSecret("demo", "chat", legacy))
-	w.gateway.keys["demo-chat"] = modelgateway.HashKey(legacy)
-	w.gateway.keys["other-chat"] = modelgateway.HashKey(modelgateway.LegacyKey("other", "chat"))
-
-	w.pass(t)
-	key := secretValue(w.secret(t, "chat"), modelCredentialsAPIKey)
-	if key == legacy || key == "" {
-		t.Fatalf("the Secret still holds %q", key)
-	}
-	if w.gateway.keys["demo-chat"] != modelgateway.HashKey(key) {
-		t.Error("the gateway does not hold the generated key under the app's alias")
-	}
-	for alias, hash := range w.gateway.keys {
-		if alias != "other-chat" && hash == modelgateway.HashKey(legacy) {
-			t.Errorf("the key made from names is still registered, as %s", alias)
-		}
-	}
-	// Another tenant's key is that tenant's reconciler's to replace.
-	if w.gateway.keys["other-chat"] != modelgateway.HashKey(modelgateway.LegacyKey("other", "chat")) {
-		t.Error("another tenant's key was touched")
-	}
-}
-
-// An existing cluster, the other way round: an app that never declared the
-// gateway holds a Secret and a key from when every app was given one. Both
-// are taken away, and the record says so. Nothing that is not that app's is
+// An app that does not declare the gateway and holds a Secret and a key:
+// both are taken away, and the record says so. Nothing that is not that app's is
 // touched: not another tenant's key, not a Secret of the same shape somebody
 // else made, not the declaring app beside it.
 func TestWhatAnUndeclaredAppWasGivenIsTakenAway(t *testing.T) {
@@ -341,9 +312,9 @@ func TestWhatAnUndeclaredAppWasGivenIsTakenAway(t *testing.T) {
 		}
 	}
 	w := newModelAccessWorld(t, []string{"chat", "wiki", "notes"},
-		operatorModelSecret("demo", "wiki", modelgateway.LegacyKey("demo", "wiki")), foreign, record)
+		operatorModelSecret("demo", "wiki", "sk-previous-wiki"), foreign, record)
 	for _, alias := range []string{"demo-wiki", "demo-notes", "other-wiki"} {
-		w.gateway.keys[alias] = modelgateway.HashKey("sk-gentian-" + alias)
+		w.gateway.keys[alias] = modelgateway.HashKey("sk-previous-" + alias)
 	}
 
 	state := w.pass(t)
@@ -385,33 +356,25 @@ func TestWhatAnUndeclaredAppWasGivenIsTakenAway(t *testing.T) {
 	}
 }
 
-// An app that is uninstalled keeps its model access -- unless the key on
-// record is still the one made from names, which nothing presents any more
-// and anybody could: that one goes. A generated key of an uninstalled app
-// stays until the app is purged.
-func TestAnUninstalledAppsNamedKeyIsRemovedAndItsGeneratedKeyKept(t *testing.T) {
+// An app that is uninstalled keeps its model access: its key stays until the
+// app is purged.
+func TestAnUninstalledAppsKeyIsKept(t *testing.T) {
 	record := backup.NewProvisionedRecord("demo")
-	for _, app := range []string{"old", "kept"} {
-		if _, err := backup.RecordProvisioned(record, app, backup.Provisioned{ModelKey: "demo-" + app}); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := backup.RecordProvisioned(record, "kept", backup.Provisioned{ModelKey: "demo-kept"}); err != nil {
+		t.Fatal(err)
 	}
 	w := newModelAccessWorld(t, nil, record)
-	w.gateway.keys["demo-old"] = modelgateway.HashKey(modelgateway.LegacyKey("demo", "old"))
 	w.gateway.keys["demo-kept"] = modelgateway.HashKey("sk-0123456789abcdef")
 
 	state := w.pass(t)
-	if len(state.removed) != 1 || state.removed[0] != "old" {
+	if len(state.removed) != 0 {
 		t.Fatalf("state = %+v", state)
 	}
-	if _, there := w.gateway.keys["demo-old"]; there {
-		t.Error("the named key of an uninstalled app is still registered")
-	}
 	if _, there := w.gateway.keys["demo-kept"]; !there {
-		t.Error("the generated key of an uninstalled app was removed; uninstalling keeps it")
+		t.Error("the key of an uninstalled app was removed; uninstalling keeps it")
 	}
 	recorded, _ := w.r.provisionedStores(context.Background(), "demo")
-	if recorded["old"].ModelKey != "" || recorded["kept"].ModelKey != "demo-kept" {
+	if recorded["kept"].ModelKey != "demo-kept" {
 		t.Errorf("record = %+v", recorded)
 	}
 }
@@ -480,8 +443,8 @@ func TestAKeyThatCannotBeRemovedStaysOnRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := newModelAccessWorld(t, []string{"wiki"}, record,
-		operatorModelSecret("demo", "wiki", modelgateway.LegacyKey("demo", "wiki")))
-	w.gateway.keys["demo-wiki"] = modelgateway.HashKey(modelgateway.LegacyKey("demo", "wiki"))
+		operatorModelSecret("demo", "wiki", "sk-previous-wiki"))
+	w.gateway.keys["demo-wiki"] = modelgateway.HashKey("sk-previous-wiki")
 	w.gateway.down = true
 
 	state := w.pass(t)
@@ -508,11 +471,11 @@ func TestAKeyThatCannotBeRemovedStaysOnRecord(t *testing.T) {
 
 // Without a vault the key is still generated, and kept in the app's Secret.
 func TestWithoutAVaultTheKeyIsRandomAndKeptInTheSecret(t *testing.T) {
-	w := newModelAccessWorld(t, []string{"chat"}, operatorModelSecret("demo", "chat", modelgateway.LegacyKey("demo", "chat")))
+	w := newModelAccessWorld(t, []string{"chat"})
 	w.r.Seeder = nil
 	w.pass(t)
 	first := secretValue(w.secret(t, "chat"), modelCredentialsAPIKey)
-	if first == modelgateway.LegacyKey("demo", "chat") || !strings.HasPrefix(first, modelgateway.KeyPrefix) {
+	if !strings.HasPrefix(first, modelgateway.KeyPrefix) {
 		t.Fatalf("key = %q", first)
 	}
 	w.pass(t)

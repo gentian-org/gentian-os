@@ -114,62 +114,6 @@ before="$(cat "${CLAIM}")"
 run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
 is "a claim that names a catalogue is not rewritten" "$(cat "${CLAIM}")" "${before}"
 
-# Two addresses earlier installs wrote never served anything. A claim that
-# still names them is left as it is, and the installer says so.
-if command -v yq >/dev/null 2>&1; then
-    said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
-    is "a claim naming a catalogue that serves is not warned about" \
-        "$(grep -c 'never served' <<<"${said}")" "0"
-    # It says its partners (partners: {}), so the store's vendor is not added
-    # as one (_claim_record_partners) and the file is the claim as written.
-    printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  partners: {}\n  catalogue:\n    storeUrl: https://gentian.org/apps\n    sources:\n      - name: gentian\n        url: https://store.gentian.org/catalogue\n' > "${CLAIM}"
-    before="$(cat "${CLAIM}")"
-    said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
-    is "a claim naming the retired store and catalogue is warned about, once each" \
-        "$(grep -c 'never served' <<<"${said}")" "2"
-    is "the warning names the store a new claim would name" \
-        "$(grep -c 'https://store-service.aluvian.io' <<<"${said}")" "1"
-    is "and the catalogue a new claim would name" \
-        "$(grep -c "${DEVELOP}" <<<"${said}")" "1"
-    is "the claim itself is left as it is" "$(cat "${CLAIM}")" "${before}"
-fi
-
-# certificates.externalDns is no field of the claim any more, and step 0 wrote
-# it into every static-ip claim: it is removed from a claim written before,
-# and nothing else of the claim moves.
-printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  certificates:\n    issuerMode: acme-dns01\n    dnsProvider: cloudflare\n    # Set false where something else already owns these records.\n    externalDns: true\n  catalogue:\n    sources:\n      - name: gentian\n        url: %s\n' "${RELEASED}" > "${CLAIM}"
-want="$(grep -v '^    externalDns: true$' "${CLAIM}")"
-said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
-is "a claim that carries certificates.externalDns loses that line and no other" "$(cat "${CLAIM}")" "${want}"
-is "and the installer says so" "$(grep -c 'removed certificates.externalDns' <<<"${said}")" "1"
-said="$(run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'")"
-is "a second run finds nothing to remove" "$(grep -c 'externalDns' <<<"${said}")" "0"
-printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nspec:\n  certificates:\n    issuerMode: acme-dns01\n    # externalDns: true         let external-dns write this zone.\n  catalogue: {}\n' > "${CLAIM}"
-before="$(cat "${CLAIM}")"
-run GENTIAN_OS_BRANCH=develop -- "ensure_claim_catalogue_section '${CLAIM}'" >/dev/null
-is "a claim that only mentions it in a comment is left as it is" "$(cat "${CLAIM}")" "${before}"
-
-# spec.hideVendorPromotions is no field of the Branding any more. The file is
-# the director's, which leaves the key out the next time it writes it; one
-# written before loses that line and no other, and a run that changes nothing
-# only says so.
-BRAND="${SANDBOX}/branding.yaml"
-printf '# Managed by the director.\napiVersion: gentianos.io/v1alpha1\nkind: Branding\nmetadata:\n  name: default\nspec:\n  hideVendorPromotions: true\n  identity:\n    name: Acme Cloud\n  tokens:\n    color:\n      hideVendorPromotions: true\n' > "${BRAND}"
-want="$(grep -v '^  hideVendorPromotions: true$' "${BRAND}")"
-before="$(cat "${BRAND}")"
-said="$(run GENTIAN_DRY_RUN=1 -- "preview_branding_removed_fields '${BRAND}'")"
-is "a run that changes nothing says the Branding would lose the field" "$(grep -c 'Would remove spec.hideVendorPromotions' <<<"${said}")" "1"
-is "and leaves the file as it is" "$(cat "${BRAND}")" "${before}"
-said="$(run -- "drop_branding_removed_fields '${BRAND}'")"
-is "a Branding that carries hideVendorPromotions loses that line and no other" "$(cat "${BRAND}")" "${want}"
-is "and the installer says so" "$(grep -c 'removed spec.hideVendorPromotions' <<<"${said}")" "1"
-said="$(run -- "drop_branding_removed_fields '${BRAND}'; preview_branding_removed_fields '${BRAND}'")"
-is "a second run finds nothing to remove" "${said}" ""
-printf 'apiVersion: gentianos.io/v1alpha1\nkind: Branding\nmetadata:\n  name: default\nspec:\n  hideVendorPromotions: true\n' > "${BRAND}"
-run -- "drop_branding_removed_fields '${BRAND}'" >/dev/null
-is "a spec that held nothing else is left an empty one" "$(tail -n 1 "${BRAND}")" "spec: {}"
-is "a cluster with no Branding is left without one" "$(run -- "drop_branding_removed_fields '${SANDBOX}/none.yaml'; ls '${SANDBOX}/none.yaml' 2>/dev/null")" ""
-
 echo ""
 if (( fail > 0 )); then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
