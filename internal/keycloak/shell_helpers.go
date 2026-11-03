@@ -17,9 +17,6 @@ import (
 	"strings"
 )
 
-// ProvisionerBootstrap installs curl and jq before provisioner scripts run.
-const ProvisionerBootstrap = "apk add --no-cache --quiet curl jq >/dev/null 2>&1 || { echo 'ERROR: install curl/jq failed' >&2; exit 1; }; "
-
 // ShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
 // field from Keycloak Admin API JSON arrays. jq is preferred; sed/grep fallbacks
 // handle minified arrays and objects with fields between name and id.

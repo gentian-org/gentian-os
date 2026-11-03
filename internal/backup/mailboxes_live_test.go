@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
@@ -26,10 +28,12 @@ import (
 // What a copy of a mailbox holds is decided by doveadm, not by the text of
 // a script, so this runs the backup, destroy and restore scripts the Jobs
 // run, in the mail server's image, as the mail server's user, on a volume
-// laid out as the server lays its own out. It needs docker and is run when
-// asked for:
+// laid out as the server lays its own out; the steps that pack and unpack
+// run in the storage tools image (kernel/images/storage-tools, built locally
+// and named by STORAGE_TOOLS_IMAGE) as the user their Job names. It needs
+// docker and is run when asked for:
 //
-//	GENTIAN_LIVE_DOVECOT=1 go test ./internal/backup -run TestMailboxesAgainstDovecot -v
+//	GENTIAN_LIVE_DOVECOT=1 STORAGE_TOOLS_IMAGE=<image> go test ./internal/backup -run TestMailboxesAgainstDovecot -v
 
 type liveMail struct {
 	t          *testing.T
@@ -46,9 +50,19 @@ func startLiveMail(t *testing.T) *liveMail {
 	// The volume as the cluster hands it to the mail server: the mail user's
 	// (fsGroup), and not empty, so that docker does not lay the image's own
 	// directory over it. The scratch directory as an emptyDir is: anybody's.
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh",
+	m.mustRun(kernel.StorageToolsImage(), "0:0", "sh",
 		"chown 1000:1000 /var/mail && touch /var/mail/.volume && chmod 0777 /work")
 	return m
+}
+
+// userOf is the user and group a Job's container runs as, as docker names
+// them.
+func userOf(c *corev1.Container) string {
+	sc := c.SecurityContext
+	if sc == nil || sc.RunAsUser == nil || sc.RunAsGroup == nil {
+		return "0:0"
+	}
+	return fmt.Sprintf("%d:%d", *sc.RunAsUser, *sc.RunAsGroup)
 }
 
 // run runs a script as a Job's container would: image, user, both volumes.
@@ -137,16 +151,16 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 	if !strings.Contains(out, "copied 2 mailbox(es) of demo.example") {
 		t.Fatalf("the backup did not copy the tenant's two mailboxes:\n%s", out)
 	}
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", containerByName(job, "pack-mailboxes").Args[0])
-	index := m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", "tar xzOf "+workDir+"/mailboxes.tar.gz ./INDEX")
+	m.mustRun(kernel.StorageToolsImage(), userOf(containerByName(job, "pack-mailboxes")), "sh", containerByName(job, "pack-mailboxes").Args[0])
+	index := m.mustRun(kernel.StorageToolsImage(), "0:0", "sh", "tar xzOf "+workDir+"/mailboxes.tar.gz ./INDEX")
 	if index != "alice\nbob\n" {
 		t.Fatalf("the archive lists %q", index)
 	}
 	// The other tenant's mail is nowhere in the archive.
-	if names := m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", "tar tzf "+workDir+"/mailboxes.tar.gz"); strings.Contains(names, "carol") {
+	if names := m.mustRun(kernel.StorageToolsImage(), "0:0", "sh", "tar tzf "+workDir+"/mailboxes.tar.gz"); strings.Contains(names, "carol") {
 		t.Errorf("the archive of demo.example names another tenant's mailbox:\n%s", names)
 	}
-	leaked := m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh",
+	leaked := m.mustRun(kernel.StorageToolsImage(), "0:0", "sh",
 		"mkdir -p /tmp/x && tar xzf "+workDir+"/mailboxes.tar.gz -C /tmp/x && { grep -rl -e to-carol -e to-the-other-alice /tmp/x || true; }")
 	if strings.TrimSpace(leaked) != "" {
 		t.Errorf("the archive of demo.example holds another tenant's mail: %s", leaked)
@@ -183,7 +197,7 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 
 	// --- restore: the Job's unpack and synchronize containers.
 	restore := MailboxRestoreJob(p, d, MailboxesArtefact, "claim", "demo.example")
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", containerByName(restore, "unpack-mailboxes").Args[0])
+	m.mustRun(kernel.StorageToolsImage(), userOf(containerByName(restore, "unpack-mailboxes")), "sh", containerByName(restore, "unpack-mailboxes").Args[0])
 	out = m.mustRun(DovecotImage, "1000:1000", "/bin/bash", containerByName(restore, "mailbox-restore").Args[0], "DOMAIN=demo.example")
 	if !strings.Contains(out, "restored 2 mailbox(es) into demo.example") {
 		t.Fatalf("the restore:\n%s", out)
@@ -216,7 +230,7 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 
 	// --- an archive that names a mailbox outside the domain, or holds a
 	// link, is refused and writes nothing.
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh",
+	m.mustRun(kernel.StorageToolsImage(), "0:0", "sh",
 		"printf '../other.example/carol\\n' > "+workDir+"/mail/INDEX")
 	if out, err := m.run(DovecotImage, "1000:1000", "/bin/bash", containerByName(restore, "mailbox-restore").Args[0], "DOMAIN=demo.example"); err == nil || !strings.Contains(out, "refused") {
 		t.Errorf("a mailbox name that leaves the domain was not refused: %v\n%s", err, out)
@@ -224,9 +238,9 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 	if got := m.contents("other.example", "carol"); got != before["carol@other.example"] {
 		t.Error("a refused restore wrote into another tenant's mailbox")
 	}
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh",
+	m.mustRun(kernel.StorageToolsImage(), "0:0", "sh",
 		"cd "+workDir+" && rm -rf mail && mkdir -p src/0 && printf 'x\\n' > src/INDEX && ln -s "+MailRoot+"/other.example/carol/cur src/0/cur && tar czf mailboxes.tar.gz -C src . && rm -rf src")
-	if out, err := m.run(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", containerByName(restore, "unpack-mailboxes").Args[0]); err == nil || !strings.Contains(out, "refused") {
+	if out, err := m.run(kernel.StorageToolsImage(), userOf(containerByName(restore, "unpack-mailboxes")), "sh", containerByName(restore, "unpack-mailboxes").Args[0]); err == nil || !strings.Contains(out, "refused") {
 		t.Errorf("an archive holding a link was not refused: %v\n%s", err, out)
 	}
 }

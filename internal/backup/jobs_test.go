@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package backup
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -514,12 +515,84 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 	}
 }
 
+// installsAtRuntime matches a script line that installs a package.
+var installsAtRuntime = regexp.MustCompile(`\b(apk|apt-get|apt|yum|dnf|pip3?|npm)\s+(add|install)\b`)
+
+// No Job installs a tool when it runs, and none runs a bare Alpine image to
+// install one into: the realm and archive steps did, on an alpine:3.20 that
+// was named by a tag anyone can move, and fetched curl and jq from the
+// network into every pod. The storage tools image carries them, built,
+// signed and tagged with the operator.
+//
+// Every container of that image says who it runs as. The image's user, under
+// the restricted context, unless it is the step that reads or writes an
+// app's volume, which only root can (volumeToolsContainer), or the one that
+// packs the copies the mail server's user made, which only that user can
+// read.
+func TestTheToolsJobsInstallNothingAndRunAsTheirUser(t *testing.T) {
+	jobs := unitJobs(t)
+	p := params()
+	d := Decryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, SecretName: "key", SecretKey: "identity"}
+	jobs["mailbox backup"] = MailboxBackupJob(p, "mail", "example.org")
+	jobs["mailbox restore"] = MailboxRestoreJob(p, d, MailboxesArtefact, "mail", "example.org")
+	asRoot := map[string]bool{"archive": true, "volume-restore": true}
+	asUser := map[string]int64{"pack-mailboxes": MailUser}
+	tools := 0
+	for name, job := range jobs {
+		containers := append(append([]corev1.Container{},
+			job.Spec.Template.Spec.InitContainers...),
+			job.Spec.Template.Spec.Containers...)
+		for _, c := range containers {
+			where := name + "/" + c.Name
+			for _, word := range append(append([]string{}, c.Command...), c.Args...) {
+				if m := installsAtRuntime.FindString(word); m != "" {
+					t.Errorf("%s installs a package when it runs (%s)", where, m)
+				}
+			}
+			if strings.HasPrefix(c.Image, "alpine:") || strings.HasPrefix(c.Image, "docker.io/library/alpine:") {
+				t.Errorf("%s runs a bare Alpine image: %s", where, c.Image)
+			}
+			if c.Image != kernel.StorageToolsImage() {
+				continue
+			}
+			tools++
+			sc := c.SecurityContext
+			if sc == nil || sc.RunAsUser == nil {
+				t.Errorf("%s: runs the storage tools without saying as whom", where)
+				continue
+			}
+			if asRoot[c.Name] {
+				if *sc.RunAsUser != 0 {
+					t.Errorf("%s: runs as %d, and only root reads and restores every file of a volume", where, *sc.RunAsUser)
+				}
+				continue
+			}
+			want := kernel.StorageToolsUser
+			if u, ok := asUser[c.Name]; ok {
+				want = u
+			}
+			if *sc.RunAsUser != want {
+				t.Errorf("%s: runs as %d, want %d", where, *sc.RunAsUser, want)
+			}
+			if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+				t.Errorf("%s: runAsNonRoot is not true", where)
+			}
+			if sc.Capabilities == nil || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+				t.Errorf("%s: does not drop every capability", where)
+			}
+		}
+	}
+	if tools == 0 {
+		t.Fatal("no container runs the storage tools: the test checks nothing")
+	}
+}
+
 // Every container that archives or unpacks runs an image that has tar: the
 // first live volume capture ran a client image without one and exited 127 on
-// its first command, because this was assumed rather than held. The images
-// the platform runs that have it: the storage tools and the Alpine one.
+// its first command, because this was assumed rather than held. The image
+// the platform runs that has it: the storage tools.
 func TestEveryContainerThatRunsTarHasIt(t *testing.T) {
-	withTar := map[string]bool{kernel.StorageToolsImage(): true, kernel.KeycloakProvisionerImage(): true}
+	withTar := map[string]bool{kernel.StorageToolsImage(): true}
 	for name, job := range unitJobs(t) {
 		containers := append(append([]corev1.Container{},
 			job.Spec.Template.Spec.InitContainers...),
