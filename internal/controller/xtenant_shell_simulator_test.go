@@ -35,12 +35,6 @@ var xTenantListGVK = schema.GroupVersionKind{
 	Kind:    "XTenantList",
 }
 
-var appClaimGVK = schema.GroupVersionKind{
-	Group:   "gentianos.io",
-	Version: "v1alpha1",
-	Kind:    "App",
-}
-
 var appClaimListGVK = schema.GroupVersionKind{
 	Group:   "gentianos.io",
 	Version: "v1alpha1",
