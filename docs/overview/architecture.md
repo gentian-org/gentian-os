@@ -234,7 +234,7 @@ Component then writes an `App` claim that Composition answers. Only a profile
 of `trustTier: platform` may.
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
-documented in [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §2.
+documented in [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §4.3.
 
 ### 3.2 Diffing: server-side
 

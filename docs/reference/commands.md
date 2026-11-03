@@ -1109,7 +1109,7 @@ kubectl get oidcpackcatalog -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}
 ```
 
 An app whose client the operator renders with its release (Odoo, for one)
-needs no pack entry. See [app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §8.
+needs no pack entry. See [app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §5.
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 
