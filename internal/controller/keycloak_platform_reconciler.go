@@ -102,9 +102,7 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant), nil); err != nil {
 			return fmt.Errorf("tenant %s browser security headers: %w", tenant.Name, err)
 		}
-		tr.deleteRetiredJobs(ctx, tenantBrowserSecurityJobName(tenant.Name))
 	}
-	tr.deleteRetiredJobs(ctx, kernelBrowserSecurityJobName())
 	return nil
 }
 

@@ -108,10 +108,6 @@ func newGateway(t *testing.T) (*gateway, *Client) {
 }
 
 func TestTheNamesOfAKeyAndATeam(t *testing.T) {
-	// The key made from names is spelled only to be recognized and removed.
-	if got := LegacyKey("demo", "wiki"); got != "sk-gentian-demo-wiki" {
-		t.Errorf("LegacyKey = %q", got)
-	}
 	if got := KeyAlias("demo", "wiki"); got != "demo-wiki" {
 		t.Errorf("KeyAlias = %q", got)
 	}
@@ -262,20 +258,14 @@ func TestEnsureKeyRegistersOnceAndReplacesAnotherKey(t *testing.T) {
 			t.Errorf("a key already registered cost %v, want one look", got)
 		}
 
-		// The key made from names is registered: it is replaced.
-		g.keys["demo-wiki"] = HashKey(LegacyKey("demo", "wiki"))
-		if is, _ := c.KeyIs(ctx, "demo-wiki", LegacyKey("demo", "wiki")); !is {
-			t.Fatal("the key made from names is not recognized")
-		}
+		// Another key is registered under the alias: it is replaced.
+		g.keys["demo-wiki"] = HashKey("sk-previous")
 		replaced, err = c.EnsureKey(ctx, "demo-wiki", "sk-generated")
 		if err != nil || !replaced {
 			t.Fatalf("replacement: replaced = %v, err = %v", replaced, err)
 		}
 		if g.keys["demo-wiki"] != HashKey("sk-generated") {
 			t.Errorf("the alias names %s, want the generated key", g.keys["demo-wiki"])
-		}
-		if is, _ := c.KeyIs(ctx, "demo-wiki", LegacyKey("demo", "wiki")); is {
-			t.Error("the key made from names is still registered")
 		}
 		if g.keys["other-wiki"] != HashKey("sk-somebody-elses") {
 			t.Error("another alias's key was touched")

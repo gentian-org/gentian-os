@@ -13,8 +13,6 @@ package controller
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
@@ -40,16 +38,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
-// The model gateway as a declared requirement (requires.services.llm).
-//
-// The gateway used to be handed to every app of a cluster that ran one: each
-// got a key and a Secret whether or not it ever called a model, the key was
-// the text sk-gentian-<tenant>-<app>, which anybody who knew the two names
-// could write down, and no network path was opened, so the one app that did
-// call models named the gateway's whole namespace in an annotation.
-//
-// It is a requirement now, served here like a database or a cache is served
-// by its reconciler. An app whose profile declares it gets:
+// The model gateway as a declared requirement (requires.services.llm),
+// served here like a database or a cache is served by its reconciler. An app whose profile declares it gets:
 //
 //   - a key of its own, generated as a database password is (the vault's
 //     seeder: derived from the master for this tenant and app, or random) and
@@ -157,38 +147,14 @@ func (r *TenantReconciler) ensureModelAccess(
 		}
 	}
 
-	// The components an earlier release placed with no entry of spec.apps,
-	// until the placement worker writes theirs: served the same way.
-	placed, err := r.legacyPlacedComponents(ctx, tenant)
-	if err != nil {
-		return state, err
-	}
-	for _, name := range placed {
-		if installed[name] {
-			// An app of this name is the tenant's own install.
-			continue
-		}
-		installed[name] = true
-		profile, ok := appProfileFromIndex(profiles, name)
-		if !ok {
-			continue
-		}
-		if placedModelAccess(profile) && placedModelAccessRefusal(profile) == "" {
-			declaring = append(declaring, name)
-			direct[name] = true
-		} else {
-			undeclared = append(undeclared, name)
-		}
-	}
-
 	recorded, err := r.provisionedStores(ctx, tenant.Name)
 	if err != nil {
 		return state, err
 	}
 
 	// What is there to take away: an installed app that does not declare the
-	// gateway and still holds what an earlier version gave it, and an
-	// uninstalled app whose key on record is still the one made from names.
+	// gateway and still holds a key, and a component the platform placed
+	// that this tenant no longer has.
 	var stale []string
 	for _, app := range undeclared {
 		held, err := r.holdsModelCredentials(ctx, tenant, app)
@@ -199,24 +165,21 @@ func (r *TenantReconciler) ensureModelAccess(
 			stale = append(stale, app)
 		}
 	}
-	var retained []string
 	for app, p := range recorded {
 		if installed[app] || p.ModelKey == "" {
 			continue
 		}
 		// A key on record for a component the platform places, which this
 		// tenant no longer has: the platform took the component away. It was
-		// never the tenant's to uninstall, so nothing of it is retained.
+		// never the tenant's to uninstall, so nothing of it is retained. An
+		// uninstalled app's key is kept.
 		if profile, ok := appProfileFromIndex(profiles, app); ok && operatorPlaced(profile) {
 			stale = append(stale, app)
-			continue
 		}
-		retained = append(retained, app)
 	}
 	sort.Strings(stale)
-	sort.Strings(retained)
 
-	if len(declaring) == 0 && len(stale) == 0 && len(retained) == 0 {
+	if len(declaring) == 0 && len(stale) == 0 {
 		return state, nil
 	}
 
@@ -246,18 +209,6 @@ func (r *TenantReconciler) ensureModelAccess(
 			state.removed = append(state.removed, app)
 		} else {
 			state.waiting = append(state.waiting, app+": "+why)
-		}
-	}
-	if gateway != nil {
-		for _, app := range retained {
-			removed, err := r.removeNamedModelKey(ctx, tenant, app, recorded[app].ModelKey, gateway)
-			if err != nil {
-				state.waiting = append(state.waiting, app+": "+err.Error())
-				continue
-			}
-			if removed {
-				state.removed = append(state.removed, app)
-			}
 		}
 	}
 
@@ -369,7 +320,7 @@ func (r *TenantReconciler) derivedKey(ctx context.Context, tenant *gentianov1alp
 	}
 	if err == nil && ownsModelCredentials(existing, tenant.Name, app) {
 		held := string(existing.Data[key])
-		if held != "" && held != namesOnlyDerivedKey(tenant.Name, app) {
+		if held != "" {
 			return held, "", nil
 		}
 	}
@@ -378,15 +329,6 @@ func (r *TenantReconciler) derivedKey(ctx context.Context, tenant *gentianov1alp
 		return "", "", fmt.Errorf("generate the key %s: %w", key, err)
 	}
 	return hex.EncodeToString(buf), "", nil
-}
-
-// namesOnlyDerivedKey is the value an earlier version delivered for every
-// declared key: a digest of the tenant's and the app's name, which anybody
-// who knew the two could compute. It is here only to be recognized and
-// replaced.
-func namesOnlyDerivedKey(tenantName, appName string) string {
-	h := sha256.Sum256([]byte(tenantName + "-" + appName + "-secret-salt-value"))
-	return base64.URLEncoding.EncodeToString(h[:])
 }
 
 // modelKey is the key an app presents: what the vault holds for it, made
@@ -407,7 +349,7 @@ func (r *TenantReconciler) modelKey(ctx context.Context, tenant *gentianov1alpha
 	}
 	if err == nil && ownsModelCredentials(existing, tenant.Name, app) {
 		held := string(existing.Data[modelCredentialsAPIKey])
-		if held != "" && held != modelgateway.LegacyKey(tenant.Name, app) {
+		if held != "" {
 			return held, "", nil
 		}
 	}
@@ -535,24 +477,6 @@ func (r *TenantReconciler) removeModelAccess(
 	return true, "", nil
 }
 
-// removeNamedModelKey deals with the key of an app that is on record and no
-// longer installed. Uninstalling keeps an app's model access, so a key the
-// platform generated stays. One that is still the text made from the
-// tenant's and the app's names does not: nothing runs that presents it, and
-// whoever knows the two names can. It is deleted at the gateway and taken off
-// the record; an app installed again that declares the gateway is given a
-// generated key then.
-func (r *TenantReconciler) removeNamedModelKey(ctx context.Context, tenant *gentianov1alpha1.Tenant, app, alias string, gateway *modelgateway.Client) (bool, error) {
-	named, err := gateway.KeyIs(ctx, alias, modelgateway.LegacyKey(tenant.Name, app))
-	if err != nil || !named {
-		return false, err
-	}
-	if _, err := gateway.DeleteKey(ctx, alias); err != nil {
-		return false, err
-	}
-	return true, r.forgetModelAccess(ctx, tenant.Name, app)
-}
-
 // forgetModelAccess takes an app's model key off the tenant's record of what
 // was provisioned, once the key is gone.
 func (r *TenantReconciler) forgetModelAccess(ctx context.Context, tenantName, app string) error {
@@ -621,29 +545,6 @@ func placedModelAccessRefusal(profile *gentianov1alpha1.ComponentProfile) string
 // is one its component runs without.
 func modelAccessOptional(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchModelAccessProfile(profile) && profile.Services().LLM.Optional
-}
-
-// legacyPlacedComponents are the names of the Components an earlier release
-// placed on a tenant, still labeled so, that are not on their way out
-// (componentOriginLabel).
-func (r *TenantReconciler) legacyPlacedComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	list := &gentianov1alpha1.ComponentList{}
-	if err := r.List(ctx, list, client.InNamespace(tenantNamespaceName(tenant)),
-		client.MatchingLabels{componentOriginLabel: componentOriginDefault}); err != nil {
-		return nil, fmt.Errorf("list the components the platform placed on %s: %w", tenant.Name, err)
-	}
-	var out []string
-	for i := range list.Items {
-		comp := &list.Items[i]
-		// Named after its profile (ensureComponent); one that is not was
-		// placed by nothing here.
-		if comp.DeletionTimestamp != nil || comp.Spec.ProfileRef.Name != comp.Name {
-			continue
-		}
-		out = append(out, comp.Name)
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 // recordModelAccess writes a placed component's key alias on the tenant's
@@ -716,7 +617,7 @@ func modelAccessFor(ctx context.Context, c client.Client, comp *gentianov1alpha1
 			isApp = true
 		}
 	}
-	v.placed = operatorPlaced(profile) && (isApp || comp.Labels[componentOriginLabel] == componentOriginDefault)
+	v.placed = operatorPlaced(profile) && isApp
 	if v.placed {
 		if refusal := placedModelAccessRefusal(profile); refusal != "" {
 			v.placed = false

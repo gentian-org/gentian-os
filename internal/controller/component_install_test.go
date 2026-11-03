@@ -42,9 +42,7 @@ func componentNames(t *testing.T, c client.Client, namespace string) string {
 }
 
 // Every app a tenant installs is a Component, and so is every addon activated
-// inside one. Removing the entry removes the Component -- and only a
-// Component that was an install, never one an earlier release placed itself
-// (labeled origin default) that has no entry yet.
+// inside one. Removing the entry removes the Component.
 func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -64,15 +62,13 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	ns := tenantNamespaceName(tenant)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
-		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
-		defaultPlaced(tenant, "desktop"),
 	).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 
 	if err := r.ensureAppComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if got := componentNames(t, c, ns); got != "crm-ce desktop odoo-base-ce sales-ce xwiki-ce" {
+	if got := componentNames(t, c, ns); got != "crm-ce odoo-base-ce sales-ce xwiki-ce" {
 		t.Fatalf("components = %q", got)
 	}
 	base := &gentianov1alpha1.Component{}
@@ -129,13 +125,13 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 		t.Fatalf("the component is still pinned to %q", wiki.Spec.ProfileRef.Digest)
 	}
 
-	// An addon is deactivated and an app uninstalled: both go, the base
-	// learns its new list, and the platform's own component is untouched.
+	// An addon is deactivated and an app uninstalled: both go, and the base
+	// learns its new list.
 	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "odoo-base-ce", Addons: []string{"crm-ce"}}}
 	if err := r.ensureAppComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if got := componentNames(t, c, ns); got != "crm-ce desktop odoo-base-ce" {
+	if got := componentNames(t, c, ns); got != "crm-ce odoo-base-ce" {
 		t.Fatalf("after uninstall, components = %q", got)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: "odoo-base-ce", Namespace: ns}, base); err != nil {
@@ -153,7 +149,7 @@ func TestEveryInstalledAppIsAComponent(t *testing.T) {
 	if err := r.ensureAppComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if got := componentNames(t, c, ns); got != "desktop" {
+	if got := componentNames(t, c, ns); got != "" {
 		t.Fatalf("with nothing installed, components = %q", got)
 	}
 }

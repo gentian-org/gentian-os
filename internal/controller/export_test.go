@@ -90,15 +90,6 @@ func WriteRegistrarRealmSecretForTest(ctx context.Context, c client.Client, data
 	return writeRegistrarRealmSecret(ctx, c, data, complete)
 }
 
-// RetireDirectorRealmSecretForTest exposes the removal of the Secret the
-// director used to mount.
-func RetireDirectorRealmSecretForTest(ctx context.Context, c client.Client) error {
-	return retireDirectorRealmSecret(ctx, c)
-}
-
-// ServicesNamespaceForTest is where the hand-over Secret lands.
-func ServicesNamespaceForTest() string { return servicesNamespace }
-
 // RegistrarRealmSecretNamespaceForTest is where the registrar's realm credentials are written.
 func RegistrarRealmSecretNamespaceForTest() string { return registrarRealmSecretNamespace() }
 
@@ -130,12 +121,6 @@ func (r *TenantReconciler) TenantRealmMailForTest(ctx context.Context, tenant *g
 // written to another.
 func (r *TenantReconciler) SyncKernelRealmSubmissionIdentityForTest(ctx context.Context) error {
 	return r.syncKernelRealmSubmissionIdentity(ctx)
-}
-
-// RetireMisplacedMailObjectsForTest exposes the removal of the mail objects an
-// earlier version wrote where nothing read them.
-func (r *TenantReconciler) RetireMisplacedMailObjectsForTest(ctx context.Context) error {
-	return r.retireMisplacedMailObjects(ctx)
 }
 
 // TenantSMTPJobForTest is the Job that configures a tenant realm's mail, for

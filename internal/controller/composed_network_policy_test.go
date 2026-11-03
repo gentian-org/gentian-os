@@ -28,9 +28,8 @@ import (
 // policy every other component gets, selecting its pods by the app label
 // every installed chart's pods are rendered with. Without it the app reached
 // none of what this reconciler wires, the realm first: its token request
-// timed out. Granted rules are in the same policy, the policy that once held
-// them alone goes, and the database stays the tenant's to open
-// (kernel-access-<app>, on its port only).
+// timed out. Granted rules are in the same policy, and the database stays the
+// tenant's to open (kernel-access-<app>, on its port only).
 func TestAnInstalledAppGetsItsComponentPolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
@@ -46,8 +45,7 @@ func TestAnInstalledAppGetsItsComponentPolicy(t *testing.T) {
 		t.Fatal("the fixture is meant to be an installed partner app")
 	}
 	comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "shop", Namespace: "tenant-acme"}}
-	legacy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "granted-egress-shop", Namespace: "tenant-acme"}}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, legacy).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
 	ctx := context.Background()
 	tenant := acmeTenantFixture()
@@ -85,8 +83,5 @@ func TestAnInstalledAppGetsItsComponentPolicy(t *testing.T) {
 	}
 	if !realm || !granted {
 		t.Fatalf("realm %v, granted rule %v, in %+v", realm, granted, np.Spec.Egress)
-	}
-	if err := c.Get(ctx, types.NamespacedName{Name: "granted-egress-shop", Namespace: "tenant-acme"}, &networkingv1.NetworkPolicy{}); err == nil {
-		t.Fatal("the policy that held the granted rules alone is still there")
 	}
 }

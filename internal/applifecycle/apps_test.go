@@ -72,15 +72,14 @@ func byProfile(t *testing.T, states []AppState) map[string]AppState {
 
 // What the platform places in a tenant is listed with origin "default", so
 // a screen can show that it runs and offer nothing to do about it; what the
-// tenant installed is "install", and so is a component the operator did not
-// label at all.
+// tenant installed is "install".
 func TestThePlatformsOwnComponentsAreListedWithTheirOrigin(t *testing.T) {
 	desktop := component("desktop", "Ready", "release deployed", true)
-	desktop.Labels = map[string]string{componentOriginLabel: componentOriginDefault}
+	placed := profile("desktop", nil)
+	placed.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
 	installed := component("wiki", "Ready", "release deployed", true)
-	installed.Labels = map[string]string{componentOriginLabel: "install"}
 	unlabelled := component("notes", "Ready", "release deployed", true)
-	s := appsService(t, demoTenant(), desktop, installed, unlabelled)
+	s := appsService(t, demoTenant(), placed, desktop, installed, unlabelled)
 	states, err := s.AppStates(context.Background(), "demo")
 	if err != nil {
 		t.Fatal(err)

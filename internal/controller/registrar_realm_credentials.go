@@ -41,12 +41,6 @@ import (
 // ServiceAccount may read the tenants and the Cluster claim and no Secret at
 // all. The operator holds the administrative credential, the registrar is
 // given what it may use.
-//
-// The credential was the director's until the registrar took the people
-// routes over (control-plane.md §4.4): the same client under the name
-// gentian-director-admin, in a Secret the director mounted. Nothing reads
-// either any more, and a credential nothing reads is still a credential, so
-// each pass removes what is left of them -- see retireDirectorRealmCredentials.
 
 // registrarRealmSecretNamespace is where the registrar runs and mounts the
 // Secret from: the control namespace. It was servicesNamespace, which the v5
@@ -124,11 +118,6 @@ func (r *KeycloakPlatformReconciler) ensureRegistrarRealmCredentials(ctx context
 			continue
 		}
 		secrets[realm] = []byte(secret)
-		// The client the director used to hold, in the same realm. Only once
-		// the registrar's exists there, so a realm is never left with neither.
-		if err := kc.DeleteRetiredDirectorRealmClient(ctx, realm); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("realm %s: retire %s: %w", realm, authz.RetiredDirectorClientID, err)
-		}
 	}
 	if len(secrets) == 0 {
 		// Nothing to hand over and nothing to correct. Writing an empty
@@ -141,31 +130,7 @@ func (r *KeycloakPlatformReconciler) ensureRegistrarRealmCredentials(ctx context
 	if err := writeRegistrarRealmSecret(ctx, r.Client, secrets, firstErr == nil); err != nil {
 		return err
 	}
-	if err := retireDirectorRealmSecret(ctx, r.Client); err != nil && firstErr == nil {
-		firstErr = err
-	}
 	return firstErr
-}
-
-// retiredDirectorRealmSecretName is the Secret these credentials were handed
-// over in while the director held them.
-const retiredDirectorRealmSecretName = "gentian-director-realms"
-
-// retireDirectorRealmSecret removes the Secret the director used to mount.
-//
-// The director mounts nothing of the kind any more, and the clients whose
-// secrets it holds are deleted in the same pass, so what it contains is
-// already worthless on a cluster that has caught up. It is removed anyway: a
-// Secret named for a credential is something a person reading the namespace
-// takes to be one. Absent is the ordinary case, on every cluster installed
-// since.
-func retireDirectorRealmSecret(ctx context.Context, c client.Client) error {
-	old := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-		Name: retiredDirectorRealmSecretName, Namespace: registrarRealmSecretNamespace()}}
-	if err := c.Delete(ctx, old); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("retire %s/%s: %w", old.Namespace, old.Name, err)
-	}
-	return nil
 }
 
 // writeRegistrarRealmSecret puts the credentials where the registrar mounts them.
