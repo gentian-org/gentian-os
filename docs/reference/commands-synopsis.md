@@ -57,6 +57,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian platform-roles candidates                  who could hold one: the platform tenant's people,
                                                             every other tenant's administrators
   kubectl gentian platform-roles members                     who holds admin and breakGlass through their group
+  kubectl gentian platform-roles review [--next <RFC 3339>]  review both lists and record it on the claim
 
   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]

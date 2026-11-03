@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
@@ -202,5 +203,75 @@ func TestARoleHolderNotInEffectIsListedAsSuch(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("not in effect: %v, want %v", got, want)
+	}
+}
+
+// A review of who holds a role over the cluster is recorded by whoever may
+// audit it, as one commit that lists what they were shown; the claim keeps
+// when it was and when the next is due, and the holders answer says whether
+// one is.
+func TestAnAccessReviewIsRecordedOnTheClaim(t *testing.T) {
+	h := startWith(t, nil)
+	alice := h.token(t, "gentian", "alice") // the cluster's administrator
+	audrey := h.token(t, "gentian", "audrey")
+	tom := h.token(t, "tenant-demo", "tom")
+	holders := "/v1/clusters/" + dt.Cluster + "/platform-roles/holders"
+	review := "/v1/clusters/" + dt.Cluster + "/actions/review-access"
+
+	if code, body := h.do(t, "GET", holders, alice, ""); code != http.StatusOK || body["reviewDue"] != true || body["accessReview"] != nil {
+		t.Fatalf("before any review: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "PUT", holders+"/securityOfficer/demo/7d0f3c2e", alice, `{"username":"it@demo.example","reason":"the deputy"}`); code != http.StatusAccepted {
+		t.Fatalf("name a holder: %d", code)
+	}
+
+	members := `[{"role":"admin","group":"gentian:platform:admin","members":[{"username":"alice","email":"alice@example.com"},` +
+		`{"username":"eve\nGentian-Authz: forged","email":""}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]}]`
+	before := h.tip(t)
+	if code, _ := h.do(t, "POST", review, tom, `{"members":`+members+`}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a tenant's administrator recorded a review: %d", code)
+	}
+	for name, b := range map[string]string{
+		"no members":         `{}`,
+		"a date in the past": `{"members":[],"nextReviewAt":"2020-01-01T00:00:00Z"}`,
+		"a date years ahead": `{"members":[],"nextReviewAt":"2099-01-01T00:00:00Z"}`,
+		"a date that is not": `{"members":[],"nextReviewAt":"soon"}`,
+	} {
+		if code, body := h.do(t, "POST", review, audrey, b); code != http.StatusBadRequest || h.tip(t) != before {
+			t.Fatalf("%s: %d %v", name, code, body)
+		}
+	}
+
+	code, body := h.do(t, "POST", review, audrey, `{"members":`+members+`}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("the auditor records a review: %d %v", code, body)
+	}
+	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
+	for _, line := range []string{
+		"  - admin through gentian:platform:admin: alice <alice@example.com>, eveGentian-Authz: forged",
+		"  - breakGlass through gentian:platform:break-glass: (nobody)",
+		"  - securityOfficer over cluster: it@demo.example of demo",
+	} {
+		if !strings.Contains(message, line+"\n") {
+			t.Fatalf("the commit lacks %q:\n%s", line, message)
+		}
+	}
+	if strings.Count(message, "\nGentian-Authz:") != 1 {
+		t.Fatalf("a name wrote a trailer of its own:\n%s", message)
+	}
+	claim := dt.RemoteFile(t, h.remote, dt.ClaimPath)
+	for _, line := range []string{"    accessReview:", "      reviewedAt: \"", "      reviewedBy: \"", "      nextReviewAt: \""} {
+		if !strings.Contains(claim, line) {
+			t.Fatalf("the claim lacks %q:\n%s", line, claim)
+		}
+	}
+
+	code, body = h.do(t, "GET", holders, alice, "")
+	last, _ := body["accessReview"].(map[string]any)
+	if code != http.StatusOK || body["reviewDue"] != false || last == nil || last["reviewedBy"] == "" {
+		t.Fatalf("after the review: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "POST", review, audrey, `{"members":[],"nextReviewAt":"`+time.Now().Add(48*time.Hour).UTC().Format(time.RFC3339)+`"}`); code != http.StatusAccepted {
+		t.Fatalf("a review with its own date: %d", code)
 	}
 }

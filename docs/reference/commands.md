@@ -955,6 +955,7 @@ token of that person's realm, and used from their tenant's console.
 kubectl gentian platform-roles candidates                               # who could hold one: the platform tenant's people, every other tenant's administrators
 kubectl gentian platform-roles holders                                  # ROLE SCOPE TENANT LOGIN EMAIL EXPIRES REASON IN EFFECT, as the claim declares
 kubectl gentian platform-roles members                                  # who holds admin and breakGlass through their kernel Keycloak group
+kubectl gentian platform-roles review [--next <RFC 3339>]              # show both, type "reviewed", and the review is one commit
 kubectl gentian platform-roles holders add securityOfficer acme it@acme.example --reason "acme's CISO approves waivers"   # one commit
 kubectl gentian platform-roles holders add perimeterApprover acme it@acme.example --reason "acme publishes its shop" --expires 2027-06-30T00:00:00Z
 kubectl gentian platform-roles holders add tenantAuditor platform acme-audit@<kernel-domain> --reason "acme reads its own records" --scope tenant:acme
@@ -976,6 +977,21 @@ The director's routes, all on the Cluster claim:
 | `GET /v1/clusters/{c}/platform-roles/holders` | `can_audit` | | `200 {"cluster", "roles": ["auditor","perimeterApprover","securityOfficer","serviceAdmin","sharedAppsAdmin","tenantAuditor"], "roleHolders": [{"role","scope","tenant","subject","username","email","reason","expiresAt"}]}` |
 | `PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | `{"username", "email", "reason", "expiresAt"?, "scope"?}` -- `scope` `tenant:<t>` required for `tenantAuditor` | `202 {"status":"updated","commit"}`, `200 {"status":"unchanged"}`, `400` without a reason, `422` for a role, tenant or subject that cannot hold one -- a person of another tenant who is not its administrator, or an entry already expired |
 | `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
+
+Who holds a role over the cluster is reviewed on an interval. `review` shows
+the group members and the holders, refuses a list the registrar could not read
+in full, and records the review once you type `reviewed`: the claim's
+`spec.platformAccess.accessReview` keeps who reviewed, when, and when the next
+one is due (a quarter later unless `--next` names a date within the year), and
+the commit lists what was shown. Take away what nobody should hold before you
+confirm. `holders` says when a review is due, and so does the director's
+answer (`reviewDue`), which is true until the first review.
+
+| Route | Relation | Body | Answer |
+|---|---|---|---|
+| `POST /v1/clusters/{c}/actions/review-access` | `can_audit` | `{"members": [the registrar's platform-role-members roles], "nextReviewAt"?}` | `202 {"status":"updated","commit"}`, `400` without members or with a date not within the coming year |
+
+The holders answer carries `"accessReview": {"reviewedAt","reviewedBy","nextReviewAt"}` (null before the first) and `"reviewDue"`.
 
 The candidates are the registrar's: `GET /v1/clusters/{c}/role-candidates`,
 `can_configure`, answers `200 {"cluster", "complete", "tenants": [{"tenant","displayName","realm","platform","people": [...],"unavailable"}]}`.
