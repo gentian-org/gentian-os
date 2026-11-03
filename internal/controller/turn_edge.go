@@ -286,6 +286,9 @@ func turnEdgeConfig(host, secret string, cert, key []byte) ([]byte, error) {
 	return json.Marshal(conf)
 }
 
+// turnEdgeCommand starts the daemon on the file the operator writes.
+var turnEdgeCommand = []string{"stunnerd", "-w", "-c", "file:///etc/stunnerd/" + turnEdgeConfigKey}
+
 func turnEdgeLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/name": turnEdgeName}
 }
@@ -342,8 +345,9 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 						Image: image,
 						// -w: the daemon follows a changed file, so a renewed
 						// certificate is taken without dropping the calls in
-						// progress.
-						Command: []string{"stunnerd", "-w", "-c", "/etc/stunnerd/" + turnEdgeConfigKey},
+						// progress. The origin names its scheme: stunnerd reads
+						// a bare path as the address of a config server.
+						Command: turnEdgeCommand,
 						Env: []corev1.EnvVar{{Name: "STUNNER_ADDR", ValueFrom: &corev1.EnvVarSource{
 							FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"},
 						}}},
