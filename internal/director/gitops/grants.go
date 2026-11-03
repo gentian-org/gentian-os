@@ -13,8 +13,6 @@ package gitops
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -64,10 +62,6 @@ type AllowConsumer struct {
 	Contract string   `json:"contract"`
 	Scope    []string `json:"scope,omitempty"`
 }
-
-// AppGrantFile is where one app's grant was written before grants were a
-// patch of the Tenant; read only to carry it over.
-func AppGrantFile(app string) string { return "grant-" + app + ".yaml" }
 
 type grantsPatch struct {
 	Spec struct {
@@ -157,17 +151,14 @@ func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract st
 	})
 }
 
-// editGrants applies edit to the tenant's grants by app, carries every old
-// grant file over, and commits the patch and the removals together; edit
-// says whether it changed anything.
+// editGrants applies edit to the tenant's grants by app and commits the
+// patch; edit says whether it changed anything.
 func (g *GitOps) editGrants(ctx context.Context, tenant, message string, meta Meta, edit func(map[string]gentianov1alpha1.TenantAppGrant) bool) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	manifest, err := g.tenantFile(ctx, tenant)
-	if err != nil {
+	if _, err := g.tenantFile(ctx, tenant); err != nil {
 		return Result{}, err
 	}
-	dir := filepath.Dir(manifest)
 	var doc grantsPatch
 	if err := g.readTenantPatch(ctx, tenant, GrantsFile, &doc); err != nil {
 		return Result{}, err
@@ -176,29 +167,7 @@ func (g *GitOps) editGrants(ctx context.Context, tenant, message string, meta Me
 	for _, e := range doc.Spec.Grants {
 		byApp[e.App] = e
 	}
-	// The old files: each carried over where the patch has no entry yet.
-	legacy, err := filepath.Glob(filepath.Join(dir, "grant-*.yaml"))
-	if err != nil {
-		return Result{}, err
-	}
-	var writes []tenantFileWrite
-	for _, path := range legacy {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return Result{}, err
-		}
-		var old struct {
-			Spec gentianov1alpha1.AppGrantSpec `json:"spec"`
-		}
-		if err := yaml.Unmarshal(raw, &old); err != nil || !ValidName(old.Spec.App) {
-			return Result{}, fmt.Errorf("read %s: not an app's grant", filepath.Base(path))
-		}
-		if _, ok := byApp[old.Spec.App]; !ok {
-			byApp[old.Spec.App] = gentianov1alpha1.TenantAppGrant{AppGrantSpec: old.Spec}
-		}
-		writes = append(writes, tenantFileWrite{tenant: tenant, name: filepath.Base(path), list: listResource})
-	}
-	if !edit(byApp) && len(writes) == 0 {
+	if !edit(byApp) {
 		return Result{Status: "unchanged"}, nil
 	}
 	apps := make([]string, 0, len(byApp))
@@ -214,11 +183,7 @@ func (g *GitOps) editGrants(ctx context.Context, tenant, message string, meta Me
 	if err != nil {
 		return Result{}, err
 	}
-	writes = append([]tenantFileWrite{{tenant: tenant, name: GrantsFile, body: body, list: listPatch}}, writes...)
-	if len(legacy) > 0 {
-		message += " (grant files carried over into grants.yaml)"
-	}
-	return g.writeTenantFilesLocked(ctx, message, meta, writes...)
+	return g.writeTenantFilesLocked(ctx, message, meta, tenantFileWrite{tenant: tenant, name: GrantsFile, body: body, list: listPatch})
 }
 
 func appGrantSpec(app string, grant AppGrant) gentianov1alpha1.AppGrantSpec {

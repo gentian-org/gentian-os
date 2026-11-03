@@ -615,35 +615,6 @@ func TestAGrantIsCommittedAndWithdrawn(t *testing.T) {
 	}
 }
 
-// A grant file from before grants were a patch of the Tenant -- which Argo
-// CD could not apply -- is carried over into grants.yaml and removed, in the
-// same commit as the next grant.
-func TestAnOldGrantFileIsCarriedOverByTheNextGrant(t *testing.T) {
-	h, _ := startWithOperator(t)
-	tom := h.token(t, "tenant-demo", "tom")
-	dir := "clusters/" + dt.Cluster + "/tenants/demo"
-	kustomization := "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- tenant.yaml\n"
-	dt.Commit(t, h.remote, map[string]string{
-		dir + "/grant-old.yaml": "apiVersion: gentianos.io/v1alpha1\nkind: AppGrant\nmetadata:\n  name: old\n  namespace: tenant-demo\n" +
-			"spec:\n  app: old\n  consume:\n  - contract: files\n    granted:\n      - \"read\"\n",
-		dir + "/kustomization.yaml": strings.Replace(kustomization, "resources:\n", "resources:\n- grant-old.yaml\n", 1),
-	})
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom, `{"consume":[{"contract":"files","granted":["read"]}]}`); code != http.StatusAccepted {
-		t.Fatalf("grant: %d %v", code, body)
-	}
-	grants := dt.RemoteFile(t, h.remote, dir+"/grants.yaml")
-	if !strings.Contains(grants, "app: old") || !strings.Contains(grants, "app: notes") {
-		t.Fatalf("grants.yaml:\n%s", grants)
-	}
-	out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:"+dir)
-	if strings.Contains(out, "grant-old.yaml") {
-		t.Fatalf("the old grant file is still there:\n%s", out)
-	}
-	if k := dt.RemoteFile(t, h.remote, dir+"/kustomization.yaml"); strings.Contains(k, "grant-old.yaml") {
-		t.Fatalf("the kustomization still lists the old file:\n%s", k)
-	}
-}
-
 // The waiver allowlist is the cluster's own security configuration. It is
 // read under can_audit, joined with what the catalog asks of it, and
 // changed under can_set_admission -- which model v1 binds to break-glass and
