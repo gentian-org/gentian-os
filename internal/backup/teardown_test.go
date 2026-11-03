@@ -206,7 +206,7 @@ func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
 	}
 	scripts := destroyScripts()
 	for _, want := range []string{
-		`format('DROP DATABASE IF EXISTS %I', :'db')`, `DROP OWNED BY \"demo_wiki\"`, `DROP ROLE IF EXISTS \"demo_wiki\";`,
+		`format('DROP DATABASE IF EXISTS %I', :'db')`, `DROP OWNED BY :"app_role";`, `DROP ROLE IF EXISTS :"app_role";`,
 		// Which databases are the app's is the inventory's one question.
 		postgresOwnedSQL, `-v app_role="${ROLE}"`, "ROLE='demo_wiki'", "DB='demo_wiki'",
 		"ON_ERROR_STOP=1", "is still there",
@@ -228,6 +228,36 @@ func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
 	}
 	if !strings.Contains(scripts["redis"], "ACL DELUSER 'demo-wiki'") || !strings.Contains(scripts["redis"], "ACL LIST") {
 		t.Error("the cache script does not remove the user and then look for it")
+	}
+}
+
+// The role and the database reach the PostgreSQL script once each, as shell
+// words quoted for the shell, and every SQL statement names them through
+// psql's variables: no name is pasted into SQL, so no name can end a
+// quoted identifier or a literal.
+func TestThePostgresScriptPastesNoNameIntoSQL(t *testing.T) {
+	const role, db = `ro"le'; DROP ROLE x; --`, `da"tab'ase`
+	script := postgresDestroyScript(db, role)
+	assignments := map[string]bool{
+		"ROLE=" + shellSingleQuote(role): true,
+		"DB=" + shellSingleQuote(db):     true,
+	}
+	for _, line := range strings.Split(script, "\n") {
+		if assignments[line] {
+			delete(assignments, line)
+			continue
+		}
+		for _, name := range []string{role, db, `ro"le`, `da"tab`} {
+			if strings.Contains(line, name) {
+				t.Errorf("a name is pasted into %q", line)
+			}
+		}
+	}
+	if len(assignments) != 0 {
+		t.Errorf("the names are not given to the script once each: %v", assignments)
+	}
+	if out, err := exec.Command("bash", "-n", "-c", script).CombinedOutput(); err != nil {
+		t.Errorf("bash -n: %v\n%s", err, out)
 	}
 }
 

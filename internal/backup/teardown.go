@@ -801,13 +801,14 @@ const postgresOwnedSQL = `SELECT d.datname FROM pg_database d JOIN pg_roles r ON
 // databases are read into a file first and read back line by line: a
 // command substitution in a for list does not stop the script when it fails,
 // and it splits a name with a space in it into two names that are not there.
-// Every name is passed to psql as a variable and quoted by the server.
+// Every name reaches psql as a variable, and psql or the server quotes it:
+// a literal as :'name', an identifier as :"name" or through format's %I.
 func postgresDestroyScript(database, role string) string {
 	return fmt.Sprintf(`set -euo pipefail
-ROLE=%[4]s
-DB=%[5]s
+ROLE=%[2]s
+DB=%[3]s
 psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > /tmp/owned <<'PSQL'
-%[3]s
+%[1]s
 PSQL
 printf '%%s\n' "${DB}" >> /tmp/owned
 while IFS= read -r db; do
@@ -819,14 +820,22 @@ SELECT format('DROP DATABASE IF EXISTS %%I', :'db')
 PSQL
   echo "database ${db} dropped"
 done < /tmp/owned
-psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[2]s') THEN EXECUTE 'DROP OWNED BY \"%[2]s\"'; END IF; END \$\$;" postgres
-psql -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS \"%[2]s\";" postgres
-left="$(psql -v ON_ERROR_STOP=1 -tAc "SELECT count(*) FROM pg_database WHERE datname = '%[1]s'" postgres)"
-if [ "${left}" != "0" ]; then
-  echo "ERROR: database %[1]s is still there" >&2; exit 1
+psql -v ON_ERROR_STOP=1 -v app_role="${ROLE}" -d postgres >/dev/null <<'PSQL'
+SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_role') AS role_exists
+\gset
+\if :role_exists
+DROP OWNED BY :"app_role";
+\endif
+DROP ROLE IF EXISTS :"app_role";
+PSQL
+psql -v ON_ERROR_STOP=1 -tA -v app_db="${DB}" -d postgres > /tmp/left <<'PSQL'
+SELECT count(*) FROM pg_database WHERE datname = :'app_db';
+PSQL
+if [ "$(cat /tmp/left)" != "0" ]; then
+  echo "ERROR: database ${DB} is still there" >&2; exit 1
 fi
-echo "role %[2]s dropped"
-`, database, role, postgresOwnedSQL, shellSingleQuote(role), shellSingleQuote(database))
+echo "role ${ROLE} dropped"
+`, postgresOwnedSQL, shellSingleQuote(role), shellSingleQuote(database))
 }
 
 // objectStorageDestroyScript removes the bucket, with every object in it,
