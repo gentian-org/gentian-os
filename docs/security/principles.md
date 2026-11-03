@@ -81,14 +81,14 @@ away, or the person's link, ends what the agent may do.
 This is the single rule that survives heterogeneity — anything new is placed
 in the chain, not beside it.
 
-## 6. Traffic is identity-aware and default-deny at every layer
+## 6. Traffic is identity-aware and closed by default
 
-L3/4: NetworkPolicy default-deny, derived from declared requirements. L7:
-every route declares its `authMode`; `none` is a word someone wrote and a
-reviewer can find, never an absence.
-
-Default-deny holds in tenant namespaces and at L7. The kernel, system and
-shared namespaces have ingress policies, on by default, and no egress policy.
+L3/4: a tenant namespace is closed by default and opens only to the traffic
+its apps declare, through NetworkPolicy derived from those requirements. The
+kernel, system and shared namespaces run the platform's own services: their
+ingress is closed by policy, on by default, and their egress is left to those
+services. L7: every route declares its `authMode`; `none` is a word someone
+wrote and a reviewer can find, never an absence.
 
 ## 7. Audit is three logs joined by one request id
 
