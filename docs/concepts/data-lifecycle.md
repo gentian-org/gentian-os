@@ -71,7 +71,7 @@ of the data" is: a store that a backup copies is a store a deletion
 destroys, and the tests on the inventory hold them to it. Anything further —
 a backup on a timer, a recovery of the newest bundle, a migration from or to
 another product — is a composition of these acts, and whatever builds it
-calls the director like any other client ([sovereignty.md](sovereignty.md)
+calls the director like any other client ([data-ownership.md](data-ownership.md)
 §4, §5).
 
 An app that was **uninstalled with its data kept** is in the table twice: its
@@ -314,7 +314,7 @@ it; only the app's own secrets travel, because the data is unreadable
 without them (§5). The alternative, a recovery kit that is the cluster's
 identity so that a new server importing it *becomes* the old cluster, is not
 taken: it would bind a tenant's portability to its provider's kit, which is
-the dependency the bundle exists to remove ([sovereignty.md](sovereignty.md)
+the dependency the bundle exists to remove ([data-ownership.md](data-ownership.md)
 §2).
 
 **Uninstall and purge.** This is the critical difference. *Uninstalling*

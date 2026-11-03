@@ -5,14 +5,14 @@ type: overview
 
 # Gentian OS documentation
 
-Gentian OS turns a Kubernetes cluster into a sovereign cloud operating system:
+Gentian OS turns a Kubernetes cluster into a cloud operating system:
 tenants, identity, routing, storage, mail and an app catalog, installed and
 upgraded as one. These documents describe the system as it is. The past is in
 git, the future in the issues.
 
-Start with the [README](../README.md) for scope and
-[GETTING-STARTED.md](../GETTING-STARTED.md) to install a cluster. Agents read
-[AGENTS.md](../AGENTS.md) first.
+Start with this page: it lists every document by section and says who it is
+for. [GETTING-STARTED.md](../GETTING-STARTED.md) installs a cluster. Agents
+read [AGENTS.md](../AGENTS.md) first.
 
 ## Overview
 
@@ -80,7 +80,7 @@ How each part is designed and why, for architects, operators and app authors.
 | [mail.md](concepts/mail.md) | The mail kernel extension |
 | [operations.md](concepts/operations.md) | Backup, disaster recovery, observability, image updates |
 | [data-lifecycle.md](concepts/data-lifecycle.md) | What each operation does with a tenant's and an app's data |
-| [sovereignty.md](concepts/sovereignty.md) | What sovereignty means here and what delivers it |
+| [data-ownership.md](concepts/data-ownership.md) | What a tenant owns, the commitments, the bundle that carries it all, and where the OS ends |
 | [agentic-ai.md](concepts/agentic-ai.md) | The agentic AI layer and MCP |
 | [llms.md](concepts/llms.md) | LLM serving |
 

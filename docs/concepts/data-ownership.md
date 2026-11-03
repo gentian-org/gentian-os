@@ -3,7 +3,7 @@ audience: customer, architect
 type: concept
 ---
 
-# Sovereignty: the tenant's data is the tenant's
+# The tenant's data is the tenant's
 
 Gentian OS is open source, and what that gives a tenant is this: at any
 moment a tenant can take all of their data with them, and at any moment they
