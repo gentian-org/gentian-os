@@ -79,6 +79,14 @@ report_unset="$(render true true true --set-string usageStatistics.url=)"
 check "usage statistics report: an empty address from the installer is the default" \
     "$(has "${report_unset}" 'url: "https://statistics\.aluvian\.io/api/v1/usage-statistics"$' && echo 1 || echo 0)"
 
+# The claim's networkMode reaches the operator's values: the operator chooses
+# its edge ingress by it and whether a TURN edge can be reached, and a cluster
+# whose value never arrived read as a tunnel (#749).
+check "networkMode: static-ip from the installer reaches the operator" \
+    "$(has "$(render true true true --set-string networkMode=static-ip)" '^        networkMode: "static-ip"$' && echo 1 || echo 0)"
+check "networkMode: the chart's default (tunnel) reaches the operator" \
+    "$(has "$(render true true true)" '^        networkMode: "tunnel"$' && echo 1 || echo 0)"
+
 # external-dns's zone filter: the kernel domain's walk, then the zones the
 # claim lists (certificates.dnsZones) for tenants served on a domain of
 # their own. Passed as a list, the way B-01 writes its values file; nothing
