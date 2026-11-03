@@ -1513,7 +1513,7 @@ segments.
 
 The rung → repository map is not arbitrary; it falls out of `gentian-apps` being
 a **distribution repo** rather than an application monorepo (the full argument is
-in [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/main/docs/app-profile-guide.md) §0).
+in [gentian-apps/docs/app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §2).
 Three consequences bind this framework directly:
 
 **Artifact types live in separate flat trees, so a rung maps to a tree.** A

@@ -1849,7 +1849,7 @@ func (b *BackupSpec) IsDomainBound() bool {
 // own admin API) that Helm values alone can't express. Kept
 // deliberately narrow — not a general PodSpec pass-through — so this stays a
 // safe, generic platform feature rather than an arbitrary-workload escape
-// hatch. See app-profile-guide.md's "Post-install bootstrap jobs" section.
+// hatch. See gentian-apps docs/app-profile-guide.md §9.
 type AppPostInstallJob struct {
 	// Image is the container image the Job runs.
 	// +kubebuilder:validation:Required
