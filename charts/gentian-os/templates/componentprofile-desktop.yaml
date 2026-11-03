@@ -31,11 +31,6 @@ spec:
   # the same and is placed the same way.
   placement:
     tenants: every
-  # The same, for an operator of the release before placement, or for a
-  # cluster whose ComponentProfile definition does not have placement yet:
-  # without it such a cluster would read the profile as installable and
-  # take the desktop away. Removed one release on.
-  defaultForTenants: true
   package:
     chart:
       repository: {{ .Values.desktop.chart.repository | quote }}
