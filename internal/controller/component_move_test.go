@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,6 +35,14 @@ type failingExec struct{ ran [][]string }
 func (f *failingExec) Exec(_ context.Context, _, _, _ string, argv []string) (string, error) {
 	f.ran = append(f.ran, argv)
 	return "no such table", errors.New("exit status 1")
+}
+
+// recordingExec is an executor whose every command passes.
+type recordingExec struct{ ran [][]string }
+
+func (f *recordingExec) Exec(_ context.Context, _, _, _ string, argv []string) (string, error) {
+	f.ran = append(f.ran, argv)
+	return "", nil
 }
 
 // wikiWithVerify is the wiki profile with a verification command.
@@ -305,6 +314,86 @@ func TestAMoveThatDoesNotComeUpInTimeIsRolledBack(t *testing.T) {
 	}
 	got = h.reconcile()
 	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolledBack || ro.Reason != rolloutReasonNotReadyInTime || ro.Digest != oldDigest {
+		t.Fatalf("after the deadline: %+v", ro)
+	}
+}
+
+// A release reported ready before the app's workloads have rolled out, or
+// with no pod running yet, is the build before: the move waits for the new
+// one instead of verifying in no pod and rolling back.
+func TestAMoveWaitsForTheRolloutBeforeVerifying(t *testing.T) {
+	newer := strings.ReplaceAll(wikiWithVerify, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, _, newDigest := startMove(t, wikiWithVerify, newer)
+	exec := &recordingExec{}
+	h.r.Exec = exec
+	ctx := context.Background()
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "wiki", Namespace: h.comp.Namespace},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "wiki"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "wiki"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "wiki", Image: "wiki"}}},
+			}}}
+	if err := h.c.Create(ctx, deployment); err != nil {
+		t.Fatal(err)
+	}
+
+	got := h.reconcile()
+	h.endExport(got.Status.Rollout.Export, gentianov1alpha1.TenantExportPhaseReady)
+	h.reconcile()
+	h.markReleaseReady()
+	got = h.reconcile()
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolling ||
+		!strings.Contains(componentReadyCondition(got).Message, "deployment/wiki") {
+		t.Fatalf("while the deployment rolls out: %+v %+v", ro, componentReadyCondition(got))
+	}
+
+	// Rolled out, but its pod is not running yet.
+	rollOutWorkloads(t, h.c, h.comp.Namespace)
+	got = h.reconcile()
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolling ||
+		!strings.Contains(componentReadyCondition(got).Message, "running pod") {
+		t.Fatalf("with no running pod: %+v %+v", ro, componentReadyCondition(got))
+	}
+	if len(exec.ran) != 0 {
+		t.Fatalf("verified before the build was up: %v", exec.ran)
+	}
+
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "wiki-0", Namespace: h.comp.Namespace,
+		Labels: map[string]string{"app.kubernetes.io/name": "wiki"}},
+		Spec:   corev1.PodSpec{Containers: []corev1.Container{{Name: "wiki", Image: "wiki"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
+	if err := h.c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	got = h.reconcile()
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutDone || ro.Digest != newDigest || len(exec.ran) != 1 {
+		t.Fatalf("once the pod runs: %+v, verified %v", ro, exec.ran)
+	}
+}
+
+// A move still waiting when the deadline passes is rolled back, and says on
+// what it waited.
+func TestAMoveWaitingPastTheDeadlineIsRolledBack(t *testing.T) {
+	newer := strings.ReplaceAll(wikiWithVerify, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, oldDigest, _ := startMove(t, wikiWithVerify, newer)
+	h.r.Exec = &recordingExec{}
+	got := h.reconcile()
+	h.endExport(got.Status.Rollout.Export, gentianov1alpha1.TenantExportPhaseReady)
+	h.reconcile()
+	h.markReleaseReady()
+	comp := &gentianov1alpha1.Component{}
+	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), comp); err != nil {
+		t.Fatal(err)
+	}
+	late := metav1.NewTime(time.Now().Add(-moveDeadline - time.Minute))
+	comp.Status.Rollout.StartedAt = &late
+	if err := h.c.Status().Update(context.Background(), comp); err != nil {
+		t.Fatal(err)
+	}
+	got = h.reconcile()
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolledBack || ro.Reason != rolloutReasonNotReadyInTime ||
+		ro.Digest != oldDigest || !strings.Contains(ro.Message, "running pod") {
 		t.Fatalf("after the deadline: %+v", ro)
 	}
 }
