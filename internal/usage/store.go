@@ -230,10 +230,8 @@ func (s *Store) Samples(ctx context.Context, from, to time.Time, step time.Durat
 		if err := rows.Scan(&sample.ObservedAt, &sample.Plan, &sample.ProductSku, &hard, &used, &actual); err != nil {
 			return nil, fmt.Errorf("scan usage sample: %w", err)
 		}
-		_ = json.Unmarshal(hard, &sample.Hard)
-		_ = json.Unmarshal(used, &sample.Used)
-		if len(actual) > 0 {
-			_ = json.Unmarshal(actual, &sample.Actual)
+		if err := decodeQuantities(&sample, hard, used, actual); err != nil {
+			return nil, fmt.Errorf("usage sample of %s: %w", sample.ObservedAt.UTC().Format(time.RFC3339), err)
 		}
 		out = append(out, sample)
 	}
@@ -243,6 +241,24 @@ func (s *Store) Samples(ctx context.Context, from, to time.Time, step time.Durat
 	// DISTINCT ON forces an ORDER BY on the bucket, which is already
 	// chronological, so the result arrives oldest first as callers expect.
 	return out, nil
+}
+
+// decodeQuantities reads a sample's stored quantities into it. A column that
+// does not decode is an error: read as nothing, it would be a sample of zero
+// usage, and a report or an invoice would count it as one.
+func decodeQuantities(sample *Sample, hard, used, actual []byte) error {
+	if err := json.Unmarshal(hard, &sample.Hard); err != nil {
+		return fmt.Errorf("decode hard: %w", err)
+	}
+	if err := json.Unmarshal(used, &sample.Used); err != nil {
+		return fmt.Errorf("decode used: %w", err)
+	}
+	if len(actual) > 0 {
+		if err := json.Unmarshal(actual, &sample.Actual); err != nil {
+			return fmt.Errorf("decode actual: %w", err)
+		}
+	}
+	return nil
 }
 
 // PlanEvents returns plan changes in [from, to), oldest first.
