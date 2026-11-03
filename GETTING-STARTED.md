@@ -562,10 +562,7 @@ They are two accounts in two realms, and may or may not be the same person.
 What the user tenant puts on the internet, and its egress, is approved by
 the platform admin; the platform admin can make the user admin its perimeter
 approver too (`kubectl gentian platform-roles holders add perimeterApprover
-user user-admin@<kernel-domain> --reason <why>`). A cluster installed when
-the user admin approved by a switch on the tenant keeps that: the install
-carries it over to such an entry, once, with the reason "carried over at
-upgrade".
+user user-admin@<kernel-domain> --reason <why>`).
 If the tenant is not Ready within the wait, the install says what it is
 waiting for and does not fail: `kubectl get tenant user` shows its state, and
 `./install.sh --only E-04` — or `kubectl gentian tenants activate-admin user`,

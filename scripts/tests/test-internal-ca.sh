@@ -7,11 +7,8 @@
 #
 #   A-09  applies a ClusterIssuer that asks the vault's PKI engine to sign,
 #         and the ServiceAccount it logs in as, in every issuer mode but
-#         private-ca, where gentian-ca stays the person's own CA; it retires
-#         whatever held the CA's key in a Kubernetes object before.
-#   B-08  makes the CA in the vault once (generated there, or imported from
-#         the CA cert-manager made on a self-signed cluster before), writes
-#         the role that says what may be signed, and publishes the CA's
+#         private-ca, where gentian-ca stays the person's own CA.
+#   B-08  makes the CA in the vault once, generated there, writes the role that says what may be signed, and publishes the CA's
 #         certificate -- never a key. It never replaces a CA, never makes one
 #         when it cannot tell, and no key travels as an argument. The object
 #         store's signing keys are seeded beside it, once.
@@ -150,11 +147,6 @@ run() {
                                 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
                                     -subj "/CN=gentian-root-ca" -keyout /dev/null -out "${STATE}/pki/ca.crt" 2>/dev/null
                                 echo generated > "${STATE}/pki/default" ;;
-                            "write -format=json pki-internal/issuers/import/bundle pem_bundle=-")
-                                cat > "${STATE}/pki/bundle"; cat "${STATE}/pki/bundle" >> "${STATE}/bao-stdin.log"
-                                openssl x509 -in "${STATE}/pki/bundle" > "${STATE}/pki/ca.crt"
-                                echo "{\"data\": {\"imported_issuers\": [\"imported\"]}}" ;;
-                            "write pki-internal/config/issuers default="*) a="$*"; echo "${a##*=}" > "${STATE}/pki/default" ;;
                             "write pki-internal/roles/gentian-ca "*) printf "%s\n" "${@:3}" > "${STATE}/pki/role" ;;
                             *) return 1 ;;
                         esac ;;
@@ -208,16 +200,8 @@ check "a gentian-ca that signs from a Secret is not the internal CA" '[[ "${out}
 
 new_state
 internal_ca_objects
-have certificate/kernel-edge/gentian-root-ca; have clusterissuer/_/gentian-selfsigned-bootstrap
-have externalsecret/kernel-edge/gentian-root-ca-tls; have secret/kernel-edge/gentian-root-ca-tls '{}'
 out="$(run A-09-cluster-issuers 'check; echo "rc=$?"' ISSUER_MODE=self-signed)"
-check "self-signed: a CA cert-manager still makes is missing work" '[[ "${out}" == *"rc=1"* ]]' "${out}"
-out="$(run A-09-cluster-issuers 'apply' ISSUER_MODE=self-signed)"
-check "self-signed: that CA's Certificate and bootstrap issuer, and a KV-copying ExternalSecret, are retired" \
-    '[[ "$(calls)" == *"delete certificate gentian-root-ca kernel-edge"* && "$(calls)" == *"delete clusterissuer gentian-selfsigned-bootstrap"* && "$(calls)" == *"delete externalsecret gentian-root-ca-tls kernel-edge"* ]]' "${out}"
-check "self-signed: the CA's Secret stays for B-08 to import" '[[ "$(calls)" != *"delete secret"* ]]' "${out}"
-out="$(run A-09-cluster-issuers 'check; echo "rc=$?"' ISSUER_MODE=self-signed)"
-check "self-signed: satisfied afterwards" '[[ "${out}" == *"rc=0"* ]]' "${out}"
+check "self-signed: satisfied with the internal CA" '[[ "${out}" == *"rc=0"* ]]' "${out}"
 
 new_state
 have secret/kernel-edge/gentian-root-ca-tls '{}'
@@ -258,26 +242,9 @@ check "a vault that cannot answer: nothing is made, and the step fails" \
     '[[ "${out}" == *"rc=1"* && ! -f "${STATE}/pki/ca.crt" && "$(baoargs)" != *"root/generate"* ]]' "${out}"
 
 new_state
-openssl ecparam -name prime256v1 -genkey -noout -out "${SANDBOX}/old.key"
-openssl req -x509 -key "${SANDBOX}/old.key" -days 30 -subj "/CN=gentian-root-ca" \
-    -addext "basicConstraints=critical,CA:TRUE" -out "${SANDBOX}/old.crt" >/dev/null 2>&1
-legacy() {
-    jq -n --arg c "$(base64 -w0 < "${SANDBOX}/old.crt")" --arg k "$(base64 -w0 < "${SANDBOX}/old.key")" --arg cert "$1" \
-        '{metadata: {name: "gentian-root-ca-tls", annotations: {"cert-manager.io/certificate-name": $cert}}, type: "kubernetes.io/tls", data: {"tls.crt": $c, "tls.key": $k}}'
-}
-have secret/kernel-edge/gentian-root-ca-tls "$(legacy gentian-root-ca)"
-out="$(run "" 'seed_internal_ca' ISSUER_MODE=self-signed)"
-check "a self-signed cluster keeps the CA cert-manager made: it is imported, not generated" \
-    '[[ "$(cat "${STATE}/pki/ca.crt")" == "$(cat "${SANDBOX}/old.crt")" && "$(cat "${STATE}/pki/default")" == imported && "$(baoargs)" != *"root/generate"* && "${out}" == *"imported"* ]]' "${out}"
-check "its key reached the vault on stdin, never as an argument" \
-    '[[ "$(cat "${STATE}/bao-stdin.log")" == *"PRIVATE KEY"* ]] && ! grep -q "PRIVATE\|BEGIN" "${STATE}/bao-args.log"'
-check "and the Secret is replaced by one without it" \
-    '[[ "$(calls)" == *"delete secret gentian-root-ca-tls kernel-edge"* && "$(calls)" == *"\"gentianos.io/issuer-role\": \"internal-ca\""* && "$(calls)" != *"PRIVATE KEY"* && "$(calls)" != *"tls.key"* ]]' "$(calls)"
-
-new_state
-have secret/kernel-edge/gentian-root-ca-tls "$(legacy somebody-elses)"
+have secret/kernel-edge/gentian-root-ca-tls '{"metadata": {"name": "gentian-root-ca-tls"}, "type": "kubernetes.io/tls"}'
 out="$(run "" 'seed_internal_ca' ISSUER_MODE=acme-dns01)"
-check "a Secret of that name that cert-manager's CA Certificate did not write is neither read nor replaced" \
+check "a Secret of that name that is not the internal CA's is neither read nor replaced" \
     '[[ "$(cat "${STATE}/pki/default")" == generated && "$(calls)" != *"gentian-root-ca-tls"* && "${out}" == *"left as it is"* ]]' "${out}"
 
 new_state
