@@ -158,7 +158,6 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	// its backups are its own business. Each registrar says which of its
 	// routes the reader's identity admits as well.
 	guarded := &guardedMux{mux: mux, auth: h.authenticated}
-	guarded.HandleFunc("GET /v1/tenants/{tenant}/apps", h.handleList)
 	h.registerAppRoutes(guarded)
 	h.registerResourceRoutes(guarded)
 	h.registerPerimeterRoutes(guarded)
@@ -201,16 +200,6 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
-}
-
-func (h *HTTPServer) handleList(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant")
-	apps, err := h.Service.ListInstalled(r.Context(), tenant)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": tenant, "apps": apps})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
