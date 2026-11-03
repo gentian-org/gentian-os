@@ -572,25 +572,6 @@ func TestAReservedAddressGetsNoPerimeterListener(t *testing.T) {
 	}
 }
 
-// The desktop an app may be framed by is its own tenant's, and not the
-// platform's -- also when the tenant's domain is the cluster's.
-func TestTheDesktopAnAppMayBeFramedBy(t *testing.T) {
-	if got := strings.Join(desktopOrigins("acme.k.example"), " "); got != "https://desktop.acme.k.example" {
-		t.Errorf("a tenant: %s", got)
-	}
-	if got := strings.Join(desktopOrigins("k.example"), " "); got != "https://desktop.k.example" {
-		t.Errorf("the user tenant of a single-tenancy cluster: %s", got)
-	}
-	// The wildcard over the tenant's domain is only for a domain that is the
-	// tenant's alone.
-	if got := computeGatewayFrameAncestorsPolicy("k.example", "k.example", "").Origins; got != "https://desktop.k.example" {
-		t.Errorf("the user tenant's default policy names more than its desktop: %s", got)
-	}
-	if got := computeGatewayFrameAncestorsPolicy("k.example", "acme.k.example", "").Origins; strings.Contains(got, "platform.") {
-		t.Errorf("a tenant's default policy names the platform: %s", got)
-	}
-}
-
 // Who may put a component's page in a frame, in every shape a zone has: the
 // desktop of the component's own tenant and the component's own other hosts.
 // Never the platform's desktop for a tenant's component, never another

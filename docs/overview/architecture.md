@@ -439,8 +439,7 @@ own other hosts. No wildcard is used, and the platform's desktop frames no
 tenant's app. Keycloak's endpoints on `id.<kernelDomain>` carry a separate
 policy naming the hosts whose pages embed its session frames. A frame only
 works where desktop and app are on the same site, because the session cookie
-is `SameSite=Lax`. The rules, the table of who may frame what, and the
-`gentianos.io/gateway-frame-ancestors` annotation are in
+is `SameSite=Lax`. The rules and the table of who may frame what are in
 [routing.md](../concepts/routing.md) §4.3.
 
 ---
