@@ -86,6 +86,33 @@ func TestTheTURNEdgeConfigRelaysOnlyToItsOwnPods(t *testing.T) {
 
 // The policy: the listeners from anywhere, the relay from the edge's own
 // pods, and out to nothing but those pods and the resolver.
+// The daemon reads the file the operator writes. stunnerd takes an origin
+// without a scheme for a config server's address, waits on that forever and
+// runs with no listeners, so the file is named as one.
+func TestTheTURNEdgeReadsItsConfigFile(t *testing.T) {
+	for _, obj := range turnEdgeObjects("img", []byte("{}")) {
+		dep, ok := obj.(*appsv1.Deployment)
+		if !ok {
+			continue
+		}
+		c := dep.Spec.Template.Spec.Containers[0]
+		origin := c.Command[len(c.Command)-1]
+		path, found := strings.CutPrefix(origin, "file://")
+		if !found || c.Command[len(c.Command)-2] != "-c" {
+			t.Fatalf("command = %v, want the config origin as a file:// URL after -c", c.Command)
+		}
+		mounted := false
+		for _, m := range c.VolumeMounts {
+			mounted = mounted || path == m.MountPath+"/"+turnEdgeConfigKey
+		}
+		if !mounted {
+			t.Fatalf("origin %q is not the mounted config file %v", origin, c.VolumeMounts)
+		}
+		return
+	}
+	t.Fatal("no Deployment")
+}
+
 func TestTheTURNEdgeReachesNothingButItself(t *testing.T) {
 	var policy *networkingv1.NetworkPolicy
 	var lb *corev1.Service
