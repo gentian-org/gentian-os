@@ -27,7 +27,13 @@
 # all outside what the template asserts, so they are ignored by construction
 # rather than by a list of exceptions that would need maintaining.
 #
-# Usage: bootstrap-app-drift.py <rendered.yaml> <live.json>
+# Usage: bootstrap-app-drift.py <rendered.yaml> <live.json> [name]
+#        bootstrap-app-drift.py --names <rendered.yaml>
+#   <rendered.yaml> is the chart's output as rendered, not passed through
+#   `kubectl apply --dry-run=client`: for an object that already exists, that
+#   merges in the live values, and a changed value then compares as unchanged.
+#   [name] picks one Application where the file renders several; --names
+#   prints the names of the Applications it renders, one per line.
 #   exit 0  the live object contains everything the template declares
 #   exit 1  it does not — the template has changed, or something overwrote it
 #   exit 2  could not tell (unreadable input); the caller treats this as
@@ -114,8 +120,11 @@ def drifted(want, got, path=""):
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: bootstrap-app-drift.py <rendered.yaml> <live.json>", file=sys.stderr)
+    args = sys.argv[1:]
+    names_only = args[:1] == ["--names"]
+    if not (len(args) == 2 and names_only) and len(args) not in (2, 3):
+        print("usage: bootstrap-app-drift.py <rendered.yaml> <live.json> [name]\n"
+              "       bootstrap-app-drift.py --names <rendered.yaml>", file=sys.stderr)
         return 2
     try:
         import yaml
@@ -126,9 +135,14 @@ def main() -> int:
         return 2
 
     try:
-        with open(sys.argv[1], encoding="utf-8") as fh:
+        with open(args[1] if names_only else args[0], encoding="utf-8") as fh:
             want = [d for d in yaml.safe_load_all(fh) if d]
-        with open(sys.argv[2], encoding="utf-8") as fh:
+        if names_only:
+            for d in want:
+                if d.get("kind") == "Application":
+                    print((d.get("metadata") or {}).get("name", ""))
+            return 0
+        with open(args[1], encoding="utf-8") as fh:
             live = json.load(fh)
     except Exception as exc:  # noqa: BLE001 - any read failure is "cannot tell"
         print(f"cannot compare: {exc}", file=sys.stderr)
@@ -140,6 +154,8 @@ def main() -> int:
     # names, so it is the one compared here. The others are Argo CD's to
     # reconcile once the Application exists.
     apps = [d for d in want if d.get("kind") == "Application"]
+    if len(args) == 3:
+        apps = [d for d in apps if (d.get("metadata") or {}).get("name") == args[2]]
     if len(apps) != 1:
         print(f"expected one rendered Application, got {len(apps)}", file=sys.stderr)
         return 2
