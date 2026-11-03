@@ -430,6 +430,25 @@ spec:
                           expiresAt:
                             type: string
                             format: date-time
+                    accessReview:
+                      type: object
+                      description: >
+                        The last review of who holds a role over the cluster:
+                        the members of the admin and breakGlass groups and the
+                        role holders above. Written by the director when a
+                        person who may audit the cluster records one; the
+                        commit lists what they were shown. A review is due
+                        once nextReviewAt has passed, or while there is none.
+                      properties:
+                        reviewedAt:
+                          type: string
+                          format: date-time
+                        reviewedBy:
+                          type: string
+                          maxLength: 255
+                        nextReviewAt:
+                          type: string
+                          format: date-time
                 masterPasswordSecretRef:
                   type: object
                   description: >

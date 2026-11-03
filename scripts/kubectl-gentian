@@ -56,6 +56,7 @@
 #   kubectl gentian platform-roles candidates                  who could hold one: the platform tenant's people,
 #                                                             every other tenant's administrators
 #   kubectl gentian platform-roles members                     who holds admin and breakGlass through their group
+#   kubectl gentian platform-roles review [--next <RFC 3339>]  review both lists and record it on the claim
 #
 #   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
 #   kubectl gentian credentials set <name> --field <key>=@<file> [--field <key>=-]
@@ -1643,6 +1644,7 @@ cmd_tenants_platform_access() {
 #   platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>]
 #   platform-roles holders remove <role> <tenant> <login>
 #   platform-roles members                        who holds admin and breakGlass through their group
+#   platform-roles review [--next <RFC 3339>]     show both, and record that they were reviewed
 #
 # add looks the login up in the candidates through the registrar and commits
 # the account's subject; remove takes the claim's entry by the login, or by
@@ -1654,7 +1656,8 @@ cmd_platform_roles() {
         candidates) cmd_platform_roles_candidates "$@" ;;
         holders) cmd_platform_roles_holders "$@" ;;
         members) cmd_platform_roles_members "$@" ;;
-        *) die "usage: kubectl gentian platform-roles candidates | members | holders [add|remove <role> <tenant> <login>]" ;;
+        review) cmd_platform_roles_review "$@" ;;
+        *) die "usage: kubectl gentian platform-roles candidates | members | review | holders [add|remove <role> <tenant> <login>]" ;;
     esac
 }
 
@@ -1698,6 +1701,47 @@ cmd_platform_roles_members() {
     echo "These groups are managed in Keycloak, in the kernel realm."
 }
 
+# review: the periodic review of who holds a role over the cluster. Shows the
+# group members and the holders, asks, and has the director record it: one
+# commit listing what was shown, with the next review a quarter on unless
+# --next names another date.
+cmd_platform_roles_review() {
+    local next="" usage="usage: kubectl gentian platform-roles review [--next <RFC 3339>]"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --next) [[ $# -ge 2 ]] || die "${usage}"; next="$2"; shift 2 ;;
+            *) die "${usage}" ;;
+        esac
+    done
+    need jq
+    _discover
+    local members holders answer typed
+    members="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/platform-role-members")" || exit 1
+    holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
+    jq -r '(["ROLE","GROUP","LOGIN","EMAIL"] | @tsv),
+        (.roles[] | . as $r | if .unavailable then [$r.role, $r.group, "(could not be read)", ""] | @tsv
+            elif (.members | length) == 0 then [$r.role, $r.group, "(nobody)", ""] | @tsv
+            else .members[] | [$r.role, $r.group, .username, (.email // "")] | @tsv end)' <<<"${members}" |
+        column -t -s $'\t'
+    echo
+    if [[ "$(jq '.roleHolders | length' <<<"${holders}")" == "0" ]]; then
+        echo "The claim gives nobody a cluster role by name."
+    else
+        jq -r '(["ROLE","SCOPE","TENANT","LOGIN","EXPIRES","REASON"] | @tsv),
+            (.roleHolders[] | [.role, (.scope // "cluster"), .tenant, .username, (.expiresAt // "-"), (.reason // "-")] | @tsv)' <<<"${holders}" |
+            column -t -s $'\t'
+    fi
+    echo
+    [[ "$(jq -r '.complete' <<<"${members}")" == "true" ]] || die "a group could not be read; a review of an incomplete list is not recorded"
+    echo "Take away what nobody should hold first: Keycloak for the groups, platform-roles holders remove for the claim."
+    read -r -p "Type reviewed to record that this is who should hold these roles: " typed
+    [[ "${typed}" == "reviewed" ]] || die "nothing was recorded"
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/review-access" \
+        "$(jq -n --argjson m "$(jq -c '.roles' <<<"${members}")" --arg x "${next}" \
+            '{members: $m} + (if $x != "" then {nextReviewAt: $x} else {} end)')")" || exit 1
+    echo "Reviewed: committed ($(_committed "${answer}"))."
+}
+
 cmd_platform_roles_holders() {
     local action="${1:-list}" answer
     local usage="usage: kubectl gentian platform-roles holders [list | add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>] | remove <role> <tenant> <login>]"
@@ -1708,6 +1752,9 @@ cmd_platform_roles_holders() {
             [[ $# -eq 0 ]] || die "${usage}"
             _discover
             answer="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
+            if [[ "$(jq -r '.reviewDue' <<<"${answer}")" == "true" ]]; then
+                echo "A review of who holds a role over the cluster is due$(jq -r '.accessReview.nextReviewAt // empty | " since " + .' <<<"${answer}"): kubectl gentian platform-roles review"
+            fi
             if [[ "$(jq '.roleHolders | length' <<<"${answer}")" == "0" ]]; then
                 echo "The claim gives nobody a cluster role by name. Roles: $(jq -r '.roles | join(", ")' <<<"${answer}")."
                 echo "  kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why>"

@@ -125,6 +125,8 @@ type Repository interface {
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	RoleHolders(ctx context.Context) ([]gitops.RoleHolder, error)
 	SetRoleHolder(ctx context.Context, h gitops.RoleHolder, meta gitops.Meta) (gitops.Result, error)
+	LastAccessReview(ctx context.Context) (*gitops.AccessReview, error)
+	RecordAccessReview(ctx context.Context, next time.Time, reviewed []string, meta gitops.Meta) (gitops.Result, error)
 	RemoveRoleHolder(ctx context.Context, role, tenant, subject string, meta gitops.Meta) (gitops.Result, error)
 	TenantPlatformAccess(ctx context.Context, tenant string) (bool, error)
 	SetTenantPlatformAccess(ctx context.Context, tenant string, on bool, meta gitops.Meta) (gitops.Result, error)
@@ -583,6 +585,9 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/platform-roles/holders", "can_audit", s.clusterObject, s.roleHolders)
 		s.guarded("PUT /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}", "can_configure", s.clusterObject, s.setRoleHolder)
 		s.guarded("DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}", "can_configure", s.clusterObject, s.removeRoleHolder)
+		// A review of who holds what is attested by whoever may read it: it
+		// records who looked and when, and changes nobody's access.
+		s.action("POST /v1/clusters/{c}/actions/review-access", "can_audit", s.clusterObject, s.reviewAccess)
 		// Every tenant's approved privilege exceptions in one list
 		// (privileges.go), for whoever may audit the cluster.
 		s.guarded("GET /v1/clusters/{c}/privileges", "can_audit", s.clusterObject, s.clusterPrivileges)

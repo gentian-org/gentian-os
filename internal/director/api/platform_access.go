@@ -12,8 +12,11 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -60,7 +63,109 @@ func (s *Server) roleHolders(w http.ResponseWriter, r *http.Request, _ call) {
 		}
 		out = append(out, e)
 	}
-	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": out})
+	review, err := s.cfg.Repo.LastAccessReview(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "roles": gitops.HolderRoleNames(), "roleHolders": out,
+		"accessReview": review, "reviewDue": review.Due(time.Now())})
+}
+
+// reviewedMembers are the registrar's answer for the groups behind admin
+// and breakGlass, as the reviewer was shown it.
+type reviewedMembers struct {
+	Role    string `json:"role"`
+	Group   string `json:"group"`
+	Members []struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	} `json:"members"`
+	Unavailable bool `json:"unavailable"`
+}
+
+// defaultReviewInterval is how long until the next review when the reviewer
+// names no date: a quarter.
+const defaultReviewInterval = 90 * 24 * time.Hour
+
+// reviewAccess records that the caller reviewed who holds a role over the
+// cluster: the holders the claim names, read here, and the members of the
+// role groups the caller was shown, from the registrar. One commit, whose
+// body lists both.
+func (s *Server) reviewAccess(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Members      []reviewedMembers `json:"members"`
+		NextReviewAt string            `json:"nextReviewAt"`
+	}
+	usage := `body must be {"members": [{"role", "group", "members": [{"username", "email"}]}], "nextReviewAt": "<RFC 3339, optional>"}: ` +
+		`the members as the registrar's platform-role-members answered`
+	if err := decode(r, &body); err != nil || body.Members == nil || len(body.Members) > 16 {
+		s.fail(w, r, http.StatusBadRequest, usage)
+		return
+	}
+	at := time.Now()
+	next := at.Add(defaultReviewInterval)
+	if body.NextReviewAt != "" {
+		t, err := time.Parse(time.RFC3339, body.NextReviewAt)
+		if err != nil || !t.After(at) || t.After(at.Add(366*24*time.Hour)) {
+			s.fail(w, r, http.StatusBadRequest, "nextReviewAt must be an RFC 3339 time within the coming year")
+			return
+		}
+		next = t
+	}
+	holders, err := s.cfg.Repo.RoleHolders(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	lines := []string{}
+	for _, g := range body.Members {
+		if len(g.Members) > 256 {
+			s.fail(w, r, http.StatusBadRequest, usage)
+			return
+		}
+		who := []string{}
+		for _, m := range g.Members {
+			who = append(who, reviewText(m.Username, m.Email))
+		}
+		switch {
+		case g.Unavailable:
+			who = []string{"(could not be read)"}
+		case len(who) == 0:
+			who = []string{"(nobody)"}
+		}
+		lines = append(lines, fmt.Sprintf("  - %s through %s: %s", reviewText(g.Role, ""), reviewText(g.Group, ""), strings.Join(who, ", ")))
+	}
+	for _, h := range holders {
+		until := ""
+		if h.ExpiresAt != "" {
+			until = " until " + h.ExpiresAt
+		}
+		lines = append(lines, fmt.Sprintf("  - %s over %s: %s of %s%s", h.Role, h.Scope, reviewText(h.Username, h.Email), h.Tenant, until))
+	}
+	res, err := s.cfg.Repo.RecordAccessReview(r.Context(), next, lines, c.meta)
+	s.written(w, r, res, err)
+}
+
+// reviewText is a name as one line of a commit body: control characters,
+// which could start a line of their own, are dropped, and it is cut short.
+func reviewText(name, email string) string {
+	clean := func(v string) string {
+		v = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, v)
+		if len(v) > 255 {
+			v = v[:255]
+		}
+		return v
+	}
+	if email == "" || strings.EqualFold(name, email) {
+		return clean(name)
+	}
+	return clean(name) + " <" + clean(email) + ">"
 }
 
 // setRoleHolder gives a person, by their subject in their tenant's realm, a
