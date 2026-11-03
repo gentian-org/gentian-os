@@ -2043,9 +2043,10 @@ is deleted. Shown against an API server
 
 What this does not close: provider-helm is one cluster-admin process,
 and which identity a Release gets is the ProviderConfig it names. A profile
-bundle's own Composition (`app-<profile>`, Element's and Odoo's in the
-catalog) names it itself; theirs name the kernel's, so their charts are
-installed as cluster-admin, and nothing refuses that. provider-helm reads a
+bundle's own Composition (`app-<profile>`, Element's in the catalog) names
+it for each object itself, and nothing refuses the kernel's: Element's
+installs Synapse as `tenant-apps`, and its other objects through the kernel's
+provider-kubernetes account. provider-helm reads a
 Release's values, pull secret and patches as itself, from any namespace the
 Release names.
 
