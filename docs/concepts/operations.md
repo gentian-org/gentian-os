@@ -147,9 +147,8 @@ cluster-wide gap in the billing record.
 
 ### 6.2 Usage statistics report
 
-Gentian OS is free under a usage limit that is enforced legally, not
-technically. So a cluster says, in the open, what it runs, and nothing on the
-cluster is blocked by the answer: the operator reads the HTTP status of the
+Gentian OS is free. A cluster says, in the open, what it runs, and nothing on
+the cluster is blocked by the answer: the operator reads the HTTP status of the
 reply and nothing else.
 
 **When.** A leader-elected worker in the operator sends one report a few

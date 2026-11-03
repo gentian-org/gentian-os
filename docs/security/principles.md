@@ -70,8 +70,14 @@ a role to a group — never a second decision path.
 
 ## 5. Authority is derived, never granted sideways
 
-`human ≤ tenant ≤ cluster`, each expressed through the one above
+`agent ≤ human ≤ tenant ≤ cluster`, each expressed through the one above
 (`from cluster`). Revocation is one tuple delete; the ceiling is an invariant of the model, not a setting.
+
+An agent is a component that acts for a person who is away. It speaks only
+for people who linked themselves to it with their own token, receives a token
+of that person for one app, and the person's own right to that app is asked
+on every call ([agentic-ai.md](../concepts/agentic-ai.md)). Taking the right
+away, or the person's link, ends what the agent may do.
 This is the single rule that survives heterogeneity — anything new is placed
 in the chain, not beside it.
 
