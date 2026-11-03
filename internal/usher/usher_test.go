@@ -309,3 +309,53 @@ func TestTheAppStoreTileIsForThePeopleWhoMayInstall(t *testing.T) {
 		}
 	}
 }
+
+// idStore records the request id each decision is asked under.
+type idStore struct {
+	fakeStore
+	ids []string
+}
+
+func (s *idStore) Check(ctx context.Context, id, user, relation, object string) (bool, error) {
+	s.ids = append(s.ids, id)
+	return s.fakeStore.Check(ctx, id, user, relation, object)
+}
+
+// Every decision is asked, and so logged, under the request's id: the
+// gateway's where it sent one, else one of the usher's own, answered in
+// X-Request-Id either way.
+func TestEveryDecisionCarriesTheRequestsID(t *testing.T) {
+	store := &idStore{fakeStore: fakeStore{held: map[string]bool{
+		"user:mel can_enter tenant:acme":     true,
+		"user:mel can_launch app:acme/notes": true,
+	}}}
+	s := New(Config{Authn: fakeAuthn{"mel": "mel"}, Authz: store, TilesPath: catalogueFile(t)})
+	for _, sent := range []string{"gateway-id-1234", "", "not an id!"} {
+		store.ids = nil
+		req := httptest.NewRequest(http.MethodGet, "/v1/tenants/acme/tiles", nil)
+		req.Header.Set("Authorization", "Bearer mel")
+		if sent != "" {
+			req.Header.Set("X-Request-Id", sent)
+		}
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		answered := rec.Header().Get("X-Request-Id")
+		if rec.Code != http.StatusOK || answered == "" {
+			t.Fatalf("sent %q: status %d, id %q", sent, rec.Code, answered)
+		}
+		if sent == "gateway-id-1234" && answered != sent {
+			t.Errorf("the gateway's id %q was answered as %q", sent, answered)
+		}
+		if sent == "not an id!" && answered == sent {
+			t.Errorf("an id that is not one was kept")
+		}
+		if len(store.ids) == 0 {
+			t.Fatalf("sent %q: no decision was asked", sent)
+		}
+		for _, id := range store.ids {
+			if id != answered {
+				t.Errorf("sent %q: a decision was asked under %q, the request is %q", sent, id, answered)
+			}
+		}
+	}
+}

@@ -33,6 +33,8 @@ package usher
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -105,7 +107,35 @@ func New(cfg Config) *Server {
 	return s
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// ServeHTTP implements http.Handler. Every request carries an id, answered
+// in X-Request-Id and logged with each decision taken for it.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	w.Header().Set("X-Request-Id", id)
+	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID{}, id)))
+}
+
+type ctxRequestID struct{}
+
+// inboundID is what a request id from the gateway must look like to be kept.
+// It ends up in the decision log, so it is matched, not escaped.
+var inboundID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,64}$`)
+
+// requestID keeps the gateway's id so the audit logs join on one value
+// (security principle 7), and mints one for callers that arrive without.
+func requestID(r *http.Request) string {
+	if id := r.Header.Get("X-Request-Id"); inboundID.MatchString(id) {
+		return id
+	}
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+func reqID(ctx context.Context) string {
+	id, _ := ctx.Value(ctxRequestID{}).(string)
+	return id
+}
 
 // tenantName is a DNS label, which is what a tenant's name is. Checked here
 // because the name becomes part of an object id put to the store.
@@ -180,7 +210,7 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 		holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
 		allowed := false
 		for _, relation := range relations {
-			ok, err := authz.CheckAs(ctx, s.cfg.Authz, "", user, holder, relation, target)
+			ok, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), user, holder, relation, target)
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
 				return
@@ -257,7 +287,7 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 			continue
 		}
 		for _, rel := range t.AnyOf {
-			ok, err := authz.CheckAs(ctx, s.cfg.Authz, "", c.user, c.holder, rel, t.Object)
+			ok, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), c.user, c.holder, rel, t.Object)
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
 				return
