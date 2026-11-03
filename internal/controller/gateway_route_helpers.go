@@ -26,10 +26,12 @@ const (
 	gatewayComponentKernel = "kernel-route"
 )
 
+// ingressIntent is one gateway entry of a tenant's installed app, and the
+// component whose name its host is formed from (addresses.Host).
 type ingressIntent struct {
-	appProfile string
-	profile    *gentianov1alpha1.ComponentProfile
-	ingress    *gentianov1alpha1.ExposureSpec
+	component string
+	profile   *gentianov1alpha1.ComponentProfile
+	ingress   *gentianov1alpha1.ExposureSpec
 }
 
 func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {

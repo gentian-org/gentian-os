@@ -310,7 +310,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 				"remoteRef": map[string]interface{}{"key": own, "property": p},
 			})
 		}
-		return r.ensureDatabaseSecret(ctx, comp, store, target, data)
+		return r.ensureDatabaseSecret(ctx, comp, tenant.Name, store, target, data)
 	}
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
 		// The names the kernel's chart declares, which a backup of this
@@ -338,7 +338,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			})
 		}
 	}
-	return r.ensureDatabaseSecret(ctx, comp, store, target, data)
+	return r.ensureDatabaseSecret(ctx, comp, tenant.Name, store, target, data)
 }
 
 // databaseSecretTemplate is the credential Secret every database requirement
@@ -481,7 +481,7 @@ func roleJobHash(job *batchv1.Job) string {
 
 // ensureDatabaseSecret delivers the credential into the component's
 // namespace and reports whether it has arrived.
-func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, store string, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
+func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, tenantName, store string, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
 	name := comp.Name + componentDatabaseSecretSuffix
 	spec := map[string]interface{}{
 		"refreshInterval": "1h",
@@ -500,7 +500,7 @@ func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *ge
 	desired.SetGroupVersionKind(externalSecretGVK)
 	desired.SetName(name)
 	desired.SetNamespace(comp.Namespace)
-	desired.SetLabels(componentLabels(comp))
+	desired.SetLabels(componentLabels(comp, tenantName))
 	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
 		return false, "", "", err
 	}

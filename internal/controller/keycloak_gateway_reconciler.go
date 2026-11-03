@@ -123,56 +123,66 @@ func keycloakGatewayFramePolicyApplied(ctx context.Context, c client.Client, ker
 	if err = c.Get(ctx, client.ObjectKey{Name: kernelKeycloakHTTPRouteName(), Namespace: servicesNamespace}, existing); err != nil {
 		return false
 	}
-	if len(existing.Spec.Rules) == 0 || len(existing.Spec.Rules[0].Filters) == 0 {
+	if len(existing.Spec.Rules) == 0 {
 		return false
 	}
-	modifier := existing.Spec.Rules[0].Filters[0].ResponseHeaderModifier
-	if modifier == nil {
-		return false
-	}
-	var csp string
-	for _, h := range modifier.Set {
-		if h.Name == "Content-Security-Policy" {
-			csp = h.Value
-			break
-		}
-	}
-	if csp == "" {
-		return false
-	}
-	if !strings.Contains(csp, "https://"+platformDesktopHost(kernelDomain)) {
-		return false
-	}
-	if !strings.Contains(csp, fmt.Sprintf("https://*.%s", kernelDomain)) {
-		return false
-	}
-	for _, d := range effectiveDomains {
-		if !strings.Contains(csp, fmt.Sprintf("https://*.%s", d)) {
+	// Every rule carries the policy, with exactly the sources wanted: one
+	// source more is a page the realm may be framed by that nobody allowed.
+	want, _ := frameAncestors(contentSecurityPolicy(desiredFilters))
+	for _, rule := range existing.Spec.Rules {
+		got, ok := frameAncestors(contentSecurityPolicy(rule.Filters))
+		if !ok || !sameSources(got, want) {
 			return false
 		}
 	}
-	for tenantName, subs := range oidcSubs {
-		effective := ""
-		for i, name := range tenantNames {
-			if name == tenantName && i < len(effectiveDomains) {
-				effective = effectiveDomains[i]
-				break
-			}
-		}
-		if effective == "" {
+	return true
+}
+
+// contentSecurityPolicy is the Content-Security-Policy the filters set on a
+// response, or "" where they set none.
+func contentSecurityPolicy(filters []gatewayv1.HTTPRouteFilter) string {
+	for _, f := range filters {
+		if f.ResponseHeaderModifier == nil {
 			continue
 		}
-		for _, sub := range subs {
-			var origin string
-			if sub == "@" {
-				origin = fmt.Sprintf("https://%s", effective)
-			} else {
-				origin = fmt.Sprintf("https://%s.%s", sub, effective)
-			}
-			if !strings.Contains(csp, origin) {
-				return false
+		for _, h := range f.ResponseHeaderModifier.Set {
+			if strings.EqualFold(string(h.Name), "Content-Security-Policy") {
+				return h.Value
 			}
 		}
+	}
+	return ""
+}
+
+// frameAncestors is the source list of a policy's frame-ancestors directive,
+// and whether it has one. Directives are separated by semicolons and named by
+// their first token, case-insensitively; a browser obeys the first of a name
+// and ignores the rest.
+func frameAncestors(policy string) ([]string, bool) {
+	for _, directive := range strings.Split(policy, ";") {
+		tokens := strings.Fields(directive)
+		if len(tokens) > 0 && strings.EqualFold(tokens[0], "frame-ancestors") {
+			return tokens[1:], true
+		}
+	}
+	return nil, false
+}
+
+// sameSources reports two source lists that allow the same sources, in
+// whatever order.
+func sameSources(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	count := make(map[string]int, len(a))
+	for _, s := range a {
+		count[s]++
+	}
+	for _, s := range b {
+		if count[s] == 0 {
+			return false
+		}
+		count[s]--
 	}
 	return true
 }

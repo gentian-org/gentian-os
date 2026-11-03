@@ -68,7 +68,7 @@ func TestAuthorizationKeyIsMadeOnceAndKept(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, plain).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
 
-	if err := r.ensureAuthorization(ctx, comp, authorizationProfile("ledger", ledgerModel)); err != nil {
+	if err := r.ensureAuthorization(ctx, comp, defaultTenantName(comp), authorizationProfile("ledger", ledgerModel)); err != nil {
 		t.Fatal(err)
 	}
 	first := authorizationSecret(t, c, comp)
@@ -82,14 +82,14 @@ func TestAuthorizationKeyIsMadeOnceAndKept(t *testing.T) {
 	if first.Labels[authorizationHolderLabel] != "true" || !metav1.IsControlledBy(first, comp) {
 		t.Fatalf("labels %v, owners %v", first.Labels, first.OwnerReferences)
 	}
-	if err := r.ensureAuthorization(ctx, comp, authorizationProfile("ledger", ledgerModel)); err != nil {
+	if err := r.ensureAuthorization(ctx, comp, defaultTenantName(comp), authorizationProfile("ledger", ledgerModel)); err != nil {
 		t.Fatal(err)
 	}
 	if again := string(authorizationSecret(t, c, comp).Data[authorizationKeyKey]); again != key {
 		t.Fatal("the key changed on a second reconcile")
 	}
 
-	if err := r.ensureAuthorization(ctx, plain, authorizationProfile("plain", "")); err != nil {
+	if err := r.ensureAuthorization(ctx, plain, defaultTenantName(plain), authorizationProfile("plain", "")); err != nil {
 		t.Fatal(err)
 	}
 	name := types.NamespacedName{Name: authorizationSecretName("plain"), Namespace: plain.Namespace}
@@ -105,7 +105,7 @@ func TestAuthorizationDoesNotAdoptAForeignSecret(t *testing.T) {
 	foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: authorizationSecretName("ledger"), Namespace: comp.Namespace}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, foreign).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	if err := r.ensureAuthorization(context.Background(), comp, authorizationProfile("ledger", ledgerModel)); err == nil {
+	if err := r.ensureAuthorization(context.Background(), comp, defaultTenantName(comp), authorizationProfile("ledger", ledgerModel)); err == nil {
 		t.Fatal("a foreign Secret was adopted")
 	}
 }
@@ -119,13 +119,13 @@ func TestTheArbitersTableHoldsTheKeysHashAndTheCompiledModel(t *testing.T) {
 	ledger, gone := rightsComponent("acme", "ledger"), rightsComponent("acme", "gone")
 	gone.Spec.ProfileRef.Name = "plain"
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(ledger, gone, authorizationProfile("ledger", ledgerModel), authorizationProfile("plain", "")).Build()
+		WithObjects(rightsTenant("acme"), ledger, gone, authorizationProfile("ledger", ledgerModel), authorizationProfile("plain", "")).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	if err := r.ensureAuthorization(ctx, ledger, authorizationProfile("ledger", ledgerModel)); err != nil {
+	if err := r.ensureAuthorization(ctx, ledger, defaultTenantName(ledger), authorizationProfile("ledger", ledgerModel)); err != nil {
 		t.Fatal(err)
 	}
 	// "gone" held a key when its profile declared a store, and declares none now.
-	if err := r.ensureAuthorization(ctx, gone, authorizationProfile("gone", ledgerModel)); err != nil {
+	if err := r.ensureAuthorization(ctx, gone, defaultTenantName(gone), authorizationProfile("gone", ledgerModel)); err != nil {
 		t.Fatal(err)
 	}
 	// A Secret outside a tenant's namespace carrying the label is ignored.

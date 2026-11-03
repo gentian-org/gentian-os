@@ -121,12 +121,14 @@ func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request)
 	path := BackupIdentityPath(tenant)
 	fields := map[string]string{backupIdentityField: identity}
 	meta := map[string]string{"recipient": recipient}
-	token, err := s.Bao.Token(r.Context())
-	if err != nil {
+	err = s.Bao.WithToken(r.Context(), func(token string) error {
+		return s.Bao.WriteWithMetadata(r.Context(), token, path, fields, c.name, meta)
+	})
+	if errors.Is(err, ErrVaultLogin) {
 		s.writeVaultErr(w, err)
 		return
 	}
-	if err := s.Bao.WriteWithMetadata(r.Context(), token, path, fields, c.name, meta); err != nil {
+	if err != nil {
 		log := ctrl.Log.WithName("custodian")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to escrow this backup key", "tenant", tenant)
@@ -174,12 +176,15 @@ func (s *Server) handleGetBackupIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	token, err := s.Bao.Token(r.Context())
-	if err != nil {
+	var md PathMetadata
+	err = s.Bao.WithToken(r.Context(), func(token string) (err error) {
+		md, err = s.Bao.Metadata(r.Context(), token, BackupIdentityPath(tenant))
+		return err
+	})
+	if errors.Is(err, ErrVaultLogin) {
 		s.writeVaultErr(w, err)
 		return
 	}
-	md, err := s.Bao.Metadata(r.Context(), token, BackupIdentityPath(tenant))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway,
 			errors.New("the custodian cannot reach OpenBao"))

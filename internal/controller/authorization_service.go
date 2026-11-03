@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -99,7 +98,7 @@ func authorizationModelRefusal(profile *gentianov1alpha1.ComponentProfile) strin
 // at. If it declared it once, its Secret stays until the component goes, and
 // is worth nothing meanwhile: the arbiter's table lists a key only while the
 // profile declares the requirement (authorizationStores).
-func (r *ComponentReconciler) ensureAuthorization(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
+func (r *ComponentReconciler) ensureAuthorization(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile) error {
 	if !wantsAuthorization(profile) {
 		return nil
 	}
@@ -128,7 +127,7 @@ func (r *ComponentReconciler) ensureAuthorization(ctx context.Context, comp *gen
 		}
 		secret = base64.RawURLEncoding.EncodeToString(raw)
 	}
-	labels := componentLabels(comp)
+	labels := componentLabels(comp, tenantName)
 	labels[authorizationHolderLabel] = "true"
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labels},
@@ -180,13 +179,17 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 	if err := c.List(ctx, list, client.MatchingLabels{authorizationHolderLabel: "true"}); err != nil {
 		return nil, err
 	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, tenants); err != nil {
+		return nil, err
+	}
 	var out []arbiter.Entry
 	for i := range list.Items {
 		secret := &list.Items[i]
-		tenant, ok := strings.CutPrefix(secret.Namespace, "tenant-")
+		holder := gentianov1alpha1.TenantInNamespace(tenants.Items, secret.Namespace)
 		owner := metav1.GetControllerOf(secret)
 		key := secret.Data[authorizationKeyKey]
-		if !ok || tenant == "" || secret.DeletionTimestamp != nil || len(key) == 0 ||
+		if holder == nil || secret.DeletionTimestamp != nil || len(key) == 0 ||
 			owner == nil || owner.Kind != "Component" || secret.Name != authorizationSecretName(owner.Name) {
 			continue
 		}
@@ -219,14 +222,11 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 				"component", comp.Name, "namespace", comp.Namespace, "error", err.Error())
 			continue
 		}
-		realm, err := realmOfTenantNamespace(ctx, c, secret.Namespace, tenant)
-		if err != nil {
-			return nil, err
-		}
+		// The realm is the one whose memberships reach the tenant's stores.
 		sum := sha256.Sum256(key)
 		out = append(out, arbiter.Entry{
-			Tenant: tenant, Component: comp.Name, KeyHash: hex.EncodeToString(sum[:]), Model: model,
-			Realm: realm, MirrorGroups: requirement.MirrorsGroups(), Tuples: tuples,
+			Tenant: holder.Name, Component: comp.Name, KeyHash: hex.EncodeToString(sum[:]), Model: model,
+			Realm: tenantRealmName(holder), MirrorGroups: requirement.MirrorsGroups(), Tuples: tuples,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -236,21 +236,6 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 		return out[i].Component < out[j].Component
 	})
 	return out, nil
-}
-
-// realmOfTenantNamespace is the realm of the tenant whose namespace this
-// is: the one realm whose memberships reach that tenant's stores.
-func realmOfTenantNamespace(ctx context.Context, c client.Reader, namespace, fallback string) (string, error) {
-	list := &gentianov1alpha1.TenantList{}
-	if err := c.List(ctx, list); err != nil {
-		return "", err
-	}
-	for i := range list.Items {
-		if list.Items[i].NamespaceName() == namespace {
-			return tenantRealmName(&list.Items[i]), nil
-		}
-	}
-	return fallback, nil
 }
 
 // AuthorizationTableReconciler writes the arbiter's table: which key opens

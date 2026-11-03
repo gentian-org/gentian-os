@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 )
 
 const (
@@ -241,13 +242,13 @@ func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string
 	return ip, nil
 }
 
-func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, routingMode string) error {
+func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm, routingMode string) error {
 	edgeIP, err := kernelEdgeClusterIP(ctx, c, routingMode)
 	if err != nil {
 		return err
 	}
 
-	tenantHosts, err := collectTenantAppHairpinHosts(ctx, c, kernelDomain, tenancyMode)
+	tenantHosts, err := collectTenantAppHairpinHosts(ctx, c, kernelDomain, tenancyMode, kernelRealm)
 	if err != nil {
 		return err
 	}
@@ -322,7 +323,10 @@ func resolveCoreDNSConfigMapName(ctx context.Context, c client.Client) (string, 
 	return coreDNSConfigMapName, nil
 }
 
-func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDomain, tenancyMode string) (map[string]struct{}, error) {
+// collectTenantAppHairpinHosts are the hosts of every tenant's installed
+// apps, each where its route answers (addresses.Host). An entry with no host
+// there -- an apex entry of a tenant without the bare domain -- adds none.
+func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	if kernelDomain == "" {
 		return out, nil
@@ -333,8 +337,8 @@ func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDo
 	}
 	for i := range tenants.Items {
 		tenant := &tenants.Items[i]
-		effectiveDomain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if effectiveDomain == "" {
+		zone := addresses.ZoneOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+		if zone.Domain == "" {
 			continue
 		}
 		intents, err := collectTenantIngressIntents(ctx, c, tenant)
@@ -345,7 +349,9 @@ func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDo
 			if intent.ingress == nil {
 				continue
 			}
-			out[ingressHost(intent.appProfile, intent.ingress, effectiveDomain)] = struct{}{}
+			if host := addresses.Host(zone, intent.component, intent.ingress); host != "" {
+				out[host] = struct{}{}
+			}
 		}
 	}
 	return out, nil

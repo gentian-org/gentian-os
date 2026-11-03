@@ -378,7 +378,6 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 	mux := h.routes()
 	directorOnly := []struct{ method, path string }{
 		{"GET", "/v1/tenants/demo"},
-		{"GET", "/v1/tenants/demo/apps"},
 		{"GET", "/v1/tenants/demo/backups/b1/download"},
 		{"POST", "/v1/tenants/demo/actions/backup"},
 		{"POST", "/v1/tenants/demo/actions/delete-backup"},
@@ -403,6 +402,18 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 		if got := answer(mux, c.method, c.path, ""); got != http.StatusUnauthorized {
 			t.Errorf("%s %s with no token answered %d, want 401", c.method, c.path, got)
 		}
+	}
+}
+
+// What a tenant has installed is the director's to say, from git, and how
+// each app is doing is /apps/status, from its Component. The listener serves
+// no third answer read off App claims, which an app the operator renders does
+// not have.
+func TestTheListenerServesNoListOfApps(t *testing.T) {
+	_, auth := cluster()
+	h := &HTTPServer{Auth: auth}
+	if got := answer(h.routes(), "GET", "/v1/tenants/demo/apps", "director"); got != http.StatusNotFound {
+		t.Fatalf("GET /v1/tenants/demo/apps answered %d, want 404", got)
 	}
 }
 

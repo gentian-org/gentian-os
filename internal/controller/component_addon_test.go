@@ -69,6 +69,12 @@ func calendarAddonProfile() *gentianov1alpha1.ComponentProfile {
 	return p
 }
 
+// defaultTenantName is the tenant of a component in a namespace of the name
+// a tenant that names none of its own is given.
+func defaultTenantName(comp *gentianov1alpha1.Component) string {
+	return componentTenant(nil, comp.Namespace)
+}
+
 func componentFor(name, namespace string) *gentianov1alpha1.Component {
 	return &gentianov1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{

@@ -195,17 +195,3 @@ func tenantWildcardSecretName(tenantName string) string {
 	return fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 }
 
-func additionalIngressProfile(appProfile string, index int) string {
-	return fmt.Sprintf("%s-extra%d", appProfile, index)
-}
-
-func ingressHost(appProfile string, ingress *gentianov1alpha1.ExposureSpec, effectiveDomain string) string {
-	sub := ingress.SubDomain
-	if sub == "@" {
-		return effectiveDomain
-	}
-	if sub == "" {
-		sub = appProfile
-	}
-	return fmt.Sprintf("%s.%s", sub, effectiveDomain)
-}

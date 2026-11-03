@@ -189,7 +189,7 @@ func TestTheRouteTableNamesTheSessionsCookiesOfEveryRouteWithASession(t *testing
 			Name: name, Surface: gentianov1alpha1.SurfaceGateway, AuthMode: mode, SubDomain: sub,
 			Backend: gentianov1alpha1.BackendRef{Service: "wiki", Port: 8080},
 		}
-		return buildExposureRoute(comp, "wiki-"+name, sub+".acme.k.example", acme, e,
+		return buildExposureRoute(comp, defaultTenantName(comp), "wiki-"+name, sub+".acme.k.example", acme, e,
 			routeAuthz{relation: "can_use", object: "app:acme/wiki"}, "k.example", nil)
 	}
 	web, api := expose("web", "wiki", gentianov1alpha1.AuthModeOIDC), expose("api", "wiki-api", gentianov1alpha1.AuthModeBearer)

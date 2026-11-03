@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -171,11 +172,11 @@ func (c *OpenFGA) storesNamed(ctx context.Context, name string) ([]storeRow, err
 			Stores            []storeRow `json:"stores"`
 			ContinuationToken string     `json:"continuation_token"`
 		}
-		path := "/stores?page_size=100"
+		q := url.Values{"page_size": {"100"}}
 		if token != "" {
-			path += "&continuation_token=" + token
+			q.Set("continuation_token", token)
 		}
-		if err := c.get(ctx, path, &page); err != nil {
+		if err := c.get(ctx, "/stores?"+q.Encode(), &page); err != nil {
 			return nil, fmt.Errorf("list stores: %w", err)
 		}
 		for _, s := range page.Stores {

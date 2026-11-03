@@ -493,7 +493,7 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, reason, _, err := cr.applyRendered(ctx, consumer, rendered); err != nil || reason != "ValuesPending" {
+	if _, reason, _, err := cr.applyRendered(ctx, consumer, defaultTenantName(consumer), rendered); err != nil || reason != "ValuesPending" {
 		t.Fatalf("reason %q, err %v; want the release to wait for the endpoint's Secret", reason, err)
 	}
 	es, ok := getSensitiveValues(t, c, consumer)
@@ -510,7 +510,7 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 		t.Fatalf("the consumer reads %v, not the endpoint at %s", d, path)
 	}
 	markReady(t, c, es)
-	if _, reason, _, err := cr.applyRendered(ctx, consumer, rendered); err != nil || reason == "ValuesPending" {
+	if _, reason, _, err := cr.applyRendered(ctx, consumer, defaultTenantName(consumer), rendered); err != nil || reason == "ValuesPending" {
 		t.Fatalf("reason %q, err %v; want the release written once the Secret is there", reason, err)
 	}
 	release := &unstructured.Unstructured{}
@@ -617,7 +617,7 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 		IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "mail.imap.host"},
 	}
 	in := chartRenderInput("app", profile)
-	in.Namespace = "tenant-demo"
+	in.Namespace, in.TenantName = "tenant-demo", "demo"
 	objs := renderApp(t, in)
 	data, setEntries := sensitiveOf(t, objs, "app")
 	read := map[string]string{}

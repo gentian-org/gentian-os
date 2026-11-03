@@ -126,7 +126,7 @@ func componentPods(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.C
 // (componentPods, which differs for a chart the platform places) may leave for the
 // namespaces given. Ports are the peer namespace's business; what is granted
 // is the function, as the baseline grants the edge.
-func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, pods map[string]string, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
+func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, tenantName string, pods map[string]string, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
 	egress := make([]networkingv1.NetworkPolicyEgressRule, 0, len(egressNamespaces)+len(granted))
 	for _, ns := range egressNamespaces {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
@@ -146,7 +146,7 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, pods map[stri
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      componentNetworkPolicyName(comp),
 			Namespace: comp.Namespace,
-			Labels:    componentLabels(comp),
+			Labels:    componentLabels(comp, tenantName),
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
@@ -210,7 +210,7 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 			"component", comp.Name, "error", err.Error())
 		own = nil
 	}
-	desired := buildComponentNetworkPolicy(comp, componentPods(comp, profile), r.componentEgressNamespaces(comp, profile, tenant),
+	desired := buildComponentNetworkPolicy(comp, tenant.Name, componentPods(comp, profile), r.componentEgressNamespaces(comp, profile, tenant),
 		append(rules, own...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}

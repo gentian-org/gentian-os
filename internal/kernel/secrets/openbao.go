@@ -46,6 +46,7 @@ type KVClient struct {
 	mu       sync.Mutex
 	token    string
 	tokenExp time.Time
+	static   bool // the token was set by SetStaticToken and is never dropped
 }
 
 // NewKVClient constructs a KVClient that authenticates to OpenBao via the
@@ -157,22 +158,69 @@ func (c *KVClient) SetStaticToken(tok string) {
 	defer c.mu.Unlock()
 	c.token = tok
 	c.tokenExp = time.Now().Add(24 * time.Hour)
+	c.static = true
+}
+
+// forget drops tok if it is still the cached token, so the next request logs
+// in again, and reports whether a request is worth making again. A static
+// token is kept: there is nothing to log in with in its place.
+func (c *KVClient) forget(tok string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.static {
+		return false
+	}
+	if c.token == tok {
+		c.token, c.tokenExp = "", time.Time{}
+	}
+	return true
+}
+
+// refused reports an answer that refuses the token itself. OpenBao answers
+// 403 for a token it does not know as well as for a path the policy denies,
+// so both are taken as possibly the token's.
+func refused(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
+}
+
+// send makes one request to url with the client's token. The vault refuses a
+// token it issued once it has revoked it or restarted, and a cached token
+// would go on being refused until it expired: a refused token is dropped and
+// the request made once more with a fresh login. The caller closes the
+// response's body.
+func (c *KVClient) send(ctx context.Context, method, url string, body []byte, contentType string) (*http.Response, error) {
+	for retried := false; ; retried = true {
+		tok, err := c.authToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var reader io.Reader
+		if body != nil {
+			reader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, reader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("X-Vault-Token", tok)
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if retried || !refused(resp.StatusCode) || !c.forget(tok) {
+			return resp, nil
+		}
+		_ = resp.Body.Close()
+	}
 }
 
 // Exists reports whether a secret already exists at the given KV v2 logical
 // path (without the "data/" prefix — e.g. "gentian-os/tenants/t/apps/a/oidc").
 func (c *KVClient) Exists(ctx context.Context, logicalPath string) (bool, error) {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return false, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), nil, "")
 	if err != nil {
 		return false, err
 	}
@@ -201,10 +249,6 @@ func (c *KVClient) Put(ctx context.Context, logicalPath string, data map[string]
 }
 
 func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]string, cas int, withCAS bool) error {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return err
-	}
 	body := map[string]any{"data": data}
 	if withCAS {
 		body["options"] = map[string]any{"cas": cas}
@@ -213,14 +257,7 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), bytes.NewReader(raw))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodPost, fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), raw, "application/json")
 	if err != nil {
 		return err
 	}
@@ -242,34 +279,24 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 // status and the body, for what the KV methods do not cover. A body is sent
 // as JSON, or as a JSON merge patch for PATCH.
 func (c *KVClient) Request(ctx context.Context, method, path string, body any) (int, []byte, error) {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return 0, nil, err
-	}
-	var reader io.Reader
+	var raw []byte
 	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
+		var err error
+		if raw, err = json.Marshal(body); err != nil {
 			return 0, nil, err
 		}
-		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("%s/v1/%s", c.addr, path), reader)
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	req.Header.Set("Content-Type", "application/json")
+	contentType := "application/json"
 	if method == http.MethodPatch {
-		req.Header.Set("Content-Type", "application/merge-patch+json")
+		contentType = "application/merge-patch+json"
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, method, fmt.Sprintf("%s/v1/%s", c.addr, path), raw, contentType)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
-	return resp.StatusCode, raw, err
+	answer, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, answer, err
 }
 
 // ErrNotFound is a path that holds nothing.
@@ -278,17 +305,7 @@ var ErrNotFound = errors.New("not found")
 // Get reads the secret data at logicalPath. A path that holds nothing is
 // ErrNotFound.
 func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]string, error) {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), nil, "")
 	if err != nil {
 		return nil, err
 	}

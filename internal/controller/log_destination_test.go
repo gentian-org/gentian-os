@@ -73,7 +73,7 @@ func TestTheLogDestinationIsGivenItsCertificateAndTheForwardersWayIn(t *testing.
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
 	profile := logDestinationProfile("evidence-store-ee", gentianov1alpha1.TrustTierPlatform)
 
-	if err := r.ensureLogDestination(ctx, comp, profile); err != nil {
+	if err := r.ensureLogDestination(ctx, comp, defaultTenantName(comp), profile); err != nil {
 		t.Fatal(err)
 	}
 	cert := logDestinationCert(t, c)
@@ -101,7 +101,7 @@ func TestTheLogDestinationIsGivenItsCertificateAndTheForwardersWayIn(t *testing.
 	}
 
 	issue(t, c)
-	if err := r.ensureLogDestination(ctx, comp, profile); err != nil {
+	if err := r.ensureLogDestination(ctx, comp, defaultTenantName(comp), profile); err != nil {
 		t.Fatal(err)
 	}
 	copied := &corev1.Secret{}
@@ -122,7 +122,7 @@ func TestTheLogDestinationIsGivenItsCertificateAndTheForwardersWayIn(t *testing.
 	if err := c.Update(ctx, issued); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureLogDestination(ctx, comp, profile); err != nil {
+	if err := r.ensureLogDestination(ctx, comp, defaultTenantName(comp), profile); err != nil {
 		t.Fatal(err)
 	}
 	_ = c.Get(ctx, client.ObjectKeyFromObject(copied), copied)
@@ -165,7 +165,7 @@ func TestOnlyThePlatformTenantsComponentIsALogDestination(t *testing.T) {
 		comp := rightsComponent(tc.tenant, "evidence-store-ee")
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp).Build()
 		r := &ComponentReconciler{Client: c, Scheme: scheme}
-		if err := r.ensureLogDestination(ctx, comp, logDestinationProfile("evidence-store-ee", tc.trust)); err != nil {
+		if err := r.ensureLogDestination(ctx, comp, defaultTenantName(comp), logDestinationProfile("evidence-store-ee", tc.trust)); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		cert := &unstructured.Unstructured{}
@@ -191,10 +191,10 @@ func TestASecondLogDestinationIsHeld(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second, firstProfile).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
 
-	if err := r.ensureLogDestination(ctx, first, firstProfile); err != nil {
+	if err := r.ensureLogDestination(ctx, first, defaultTenantName(first), firstProfile); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureLogDestination(ctx, second, logDestinationProfile("other-store", gentianov1alpha1.TrustTierPlatform)); err != nil {
+	if err := r.ensureLogDestination(ctx, second, defaultTenantName(second), logDestinationProfile("other-store", gentianov1alpha1.TrustTierPlatform)); err != nil {
 		t.Fatal(err)
 	}
 	cond := apimeta.FindStatusCondition(second.Status.Conditions, ConditionLogDestination)

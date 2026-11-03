@@ -66,7 +66,7 @@ func newHoldWorld(t *testing.T) *holdWorld {
 		Backend: gentianov1alpha1.BackendRef{Service: "nextcloud", Port: 8080}}
 	authz := routeAuthz{relation: "can_use", object: "app:acme/nextcloud-base-ce"}
 	for _, owner := range []*gentianov1alpha1.Component{comp, otherComp} {
-		route := buildExposureRoute(owner, owner.Name+"-web", "files."+owner.Namespace+".example", r.zoneOf(tenant), e, authz, "k.example", nil)
+		route := buildExposureRoute(owner, defaultTenantName(owner), owner.Name+"-web", "files."+owner.Namespace+".example", r.zoneOf(tenant), e, authz, "k.example", nil)
 		if err := ensureHTTPRouteResource(ctx, c, route); err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +295,7 @@ func TestARestoreWaitsForTheEdgeToHoldTheAppBack(t *testing.T) {
 	w := newRestoreWorld(t, func(r *gentianov1alpha1.TenantRestore) { r.Spec.Apps = []string{"wiki"} })
 	ctx := context.Background()
 	comp := componentFor("wiki", "tenant-demo")
-	route := buildExposureRoute(comp, "wiki-web", "wiki.demo.example", edgeZone{},
+	route := buildExposureRoute(comp, defaultTenantName(comp), "wiki-web", "wiki.demo.example", edgeZone{},
 		&gentianov1alpha1.ExposureSpec{Name: "web", AuthMode: gentianov1alpha1.AuthModeOIDC,
 			Backend: gentianov1alpha1.BackendRef{Service: "wiki", Port: 8080}},
 		routeAuthz{}, "k.example", nil)
@@ -350,7 +350,7 @@ func TestARestoreGivesUpOnAnEdgeThatDoesNotHoldTheAppBack(t *testing.T) {
 	w := newRestoreWorld(t, func(r *gentianov1alpha1.TenantRestore) { r.Spec.Apps = []string{"wiki"} })
 	ctx := context.Background()
 	comp := componentFor("wiki", "tenant-demo")
-	route := buildExposureRoute(comp, "wiki-web", "wiki.demo.example", edgeZone{},
+	route := buildExposureRoute(comp, defaultTenantName(comp), "wiki-web", "wiki.demo.example", edgeZone{},
 		&gentianov1alpha1.ExposureSpec{Name: "web", AuthMode: gentianov1alpha1.AuthModeOIDC,
 			Backend: gentianov1alpha1.BackendRef{Service: "wiki", Port: 8080}},
 		routeAuthz{}, "k.example", nil)

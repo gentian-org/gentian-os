@@ -68,9 +68,11 @@ func fixtureInput(t *testing.T, dir string) *Input {
 		return s
 	}
 	app := str("claimRef", "name")
+	// The Composition knew the tenant by its namespace alone.
 	in := &Input{
 		App:           app,
 		Namespace:     str("tenantNamespace"),
+		TenantName:    strings.TrimPrefix(str("tenantNamespace"), "tenant-"),
 		Realm:         str("realm"),
 		Domain:        str("domain"),
 		ReleaseObject: xr.GetName() + "-release",

@@ -92,7 +92,7 @@ func turnCredentials(kernelDomain, secret string) map[string][]byte {
 // It is asked only after the engine answered (systemEngineWaiting), so the
 // edge exists and its secret is in the vault.
 func (r *ComponentReconciler) ensureTURNCredentials(
-	ctx context.Context, comp *gentianov1alpha1.Component,
+	ctx context.Context, comp *gentianov1alpha1.Component, tenantName string,
 	profile *gentianov1alpha1.ComponentProfile, addons []*gentianov1alpha1.ComponentProfile,
 ) error {
 	key := types.NamespacedName{Name: turnCredentialsSecretName(comp.Name), Namespace: comp.Namespace}
@@ -115,7 +115,7 @@ func (r *ComponentReconciler) ensureTURNCredentials(
 	if err != nil {
 		return err
 	}
-	labels := componentLabels(comp)
+	labels := componentLabels(comp, tenantName)
 	labels[turnCredsLabel] = "true"
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labels},

@@ -88,6 +88,7 @@ type OpenBao struct {
 	mu       sync.Mutex
 	token    string
 	tokenExp time.Time
+	static   bool // the token was set by SetStaticToken and is never dropped
 }
 
 // ErrUpstream marks a failure to REACH OpenBao, as opposed to OpenBao
@@ -198,19 +199,63 @@ func (b *OpenBao) Token(ctx context.Context) (string, error) {
 	return b.token, nil
 }
 
-// forget drops the cached token, so the next call logs in again. Called when
-// the vault refuses a token it issued: it was revoked, or the vault restarted.
-func (b *OpenBao) forget() {
+// ErrTokenRefused is the vault refusing the token a request was made with:
+// one it revoked, or forgot in a restart -- or, as OpenBao answers both alike,
+// one whose policy does not grant the path.
+var ErrTokenRefused = errors.New("openbao refused the token")
+
+// refusal is the error for a non-2xx answer. A 401 or a 403 is also
+// ErrTokenRefused, so WithToken can tell it from every other failure, and
+// says no more than the answer did.
+func refusal(status int, format string, args ...any) error {
+	err := fmt.Errorf(format, args...)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return tokenRefused{err}
+	}
+	return err
+}
+
+type tokenRefused struct{ error }
+
+func (e tokenRefused) Unwrap() []error { return []error{e.error, ErrTokenRefused} }
+
+// WithToken calls fn with the custodian's token. A token the vault refuses
+// would go on being refused until it expired, so it is dropped and fn called
+// once more with a fresh login.
+func (b *OpenBao) WithToken(ctx context.Context, fn func(token string) error) error {
+	token, err := b.Token(ctx)
+	if err != nil {
+		return err
+	}
+	if err = fn(token); !errors.Is(err, ErrTokenRefused) || !b.forget(token) {
+		return err
+	}
+	if token, err = b.Token(ctx); err != nil {
+		return err
+	}
+	return fn(token)
+}
+
+// forget drops tok if it is still the cached token, so the next call logs in
+// again, and reports whether a call is worth making again. A static token is
+// kept: there is nothing to log in with in its place.
+func (b *OpenBao) forget(tok string) bool {
 	b.mu.Lock()
-	b.token, b.tokenExp = "", time.Time{}
-	b.mu.Unlock()
+	defer b.mu.Unlock()
+	if b.static {
+		return false
+	}
+	if b.token == tok {
+		b.token, b.tokenExp = "", time.Time{}
+	}
+	return true
 }
 
 // SetStaticToken makes Token return tok without logging in. For tests against
 // a stand-in vault.
 func (b *OpenBao) SetStaticToken(tok string) {
 	b.mu.Lock()
-	b.token, b.tokenExp = tok, time.Time{}
+	b.token, b.tokenExp, b.static = tok, time.Time{}, true
 	b.mu.Unlock()
 }
 
@@ -249,7 +294,7 @@ func (b *OpenBao) Metadata(ctx context.Context, token, path string) (PathMetadat
 		return PathMetadata{Exists: false}, nil
 	case http.StatusOK:
 	default:
-		return PathMetadata{}, fmt.Errorf("metadata read failed (HTTP %d)", resp.StatusCode)
+		return PathMetadata{}, refusal(resp.StatusCode, "metadata read failed (HTTP %d)", resp.StatusCode)
 	}
 
 	var out struct {
@@ -374,7 +419,7 @@ func (b *OpenBao) WriteWithMetadata(ctx context.Context, token, path string, fie
 		if detail == "" {
 			detail = "no detail returned"
 		}
-		return fmt.Errorf("openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
+		return refusal(resp.StatusCode, "openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
 	}
 	return b.setCustomMetadata(ctx, token, path, setBy, extra)
 }
@@ -403,7 +448,7 @@ func (b *OpenBao) createAndRecord(ctx context.Context, token, path, url string, 
 		if detail == "" {
 			detail = "no detail returned"
 		}
-		return fmt.Errorf("openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
+		return refusal(resp.StatusCode, "openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
 	}
 	return b.setCustomMetadata(ctx, token, path, setBy, extra)
 }

@@ -159,7 +159,7 @@ func TestTheHandoffWaitsForAClaimThatIsNotTheComponentsOwn(t *testing.T) {
 			claim := claimOf(comp)
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, claim).Build()
 			r := &ComponentReconciler{Client: c, Scheme: scheme}
-			waiting, err := r.handOff(ctx, getComponent(t, c, comp))
+			waiting, err := r.handOff(ctx, getComponent(t, c, comp), defaultTenantName(comp))
 			if err != nil {
 				t.Fatal(err)
 			}

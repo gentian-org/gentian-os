@@ -90,3 +90,60 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 		t.Fatalf("unexpected CSP: %q", csp)
 	}
 }
+
+// The policy counts as applied only when every rule's frame-ancestors
+// directive allows exactly the sources wanted: a header that names them all
+// and one more lets a page nobody allowed frame the realm.
+func TestTheFramePolicyIsAppliedOnlyWhenItsSourcesAreExact(t *testing.T) {
+	ctx := context.Background()
+	const kernel = "platform.example.test"
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "demo"
+	tenant.Status.Domain = "demo.platform.example.test"
+	want := contentSecurityPolicy(keycloakGatewayResponseFilters(kernel, []string{tenant.Status.Domain}, nil, []string{tenant.Name}))
+
+	withPolicy := func(policies ...string) *gatewayv1.HTTPRoute {
+		route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{
+			Name: kernelKeycloakHTTPRouteName(), Namespace: layout.Namespace(layout.Edge),
+		}}
+		for _, policy := range policies {
+			rule := kernelBackendRulePrefixNS("gentian-idp-keycloak-keycloakx-http", "", 8080, "/auth/realms/")
+			if policy != "" {
+				rule.Filters = []gatewayv1.HTTPRouteFilter{{
+					Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+					ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+						Set: []gatewayv1.HTTPHeader{{Name: "Content-Security-Policy", Value: policy}},
+					},
+				}}
+			}
+			route.Spec.Rules = append(route.Spec.Rules, rule)
+		}
+		return route
+	}
+	sources, _ := frameAncestors(want)
+	reversed := make([]string, len(sources))
+	for i, s := range sources {
+		reversed[len(sources)-1-i] = s
+	}
+	for name, tc := range map[string]struct {
+		route *gatewayv1.HTTPRoute
+		want  bool
+	}{
+		"as written":               {withPolicy(want, want), true},
+		"in another order":         {withPolicy("default-src 'self'; frame-ancestors " + strings.Join(reversed, " ")), true},
+		"one source more":          {withPolicy(want + " https://elsewhere.example"), false},
+		"one source fewer":         {withPolicy("frame-ancestors " + strings.Join(sources[1:], " ")), false},
+		"a wider wildcard":         {withPolicy(strings.Replace(want, "https://*.demo.platform.example.test", "https://*", 1)), false},
+		"one rule without it":      {withPolicy(want, ""), false},
+		"no frame-ancestors":       {withPolicy("default-src 'self' " + strings.Join(sources, " ")), false},
+		"inside another directive": {withPolicy("sandbox " + want), false},
+	} {
+		scheme := runtime.NewScheme()
+		_ = gatewayv1.Install(scheme)
+		_ = gentianov1alpha1.AddToScheme(scheme)
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), tc.route).Build()
+		if got := keycloakGatewayFramePolicyApplied(ctx, c, kernel, gentianov1alpha1.TenancyModeMulti); got != tc.want {
+			t.Errorf("%s: applied = %v, want %v", name, got, tc.want)
+		}
+	}
+}

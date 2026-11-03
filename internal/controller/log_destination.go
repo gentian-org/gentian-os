@@ -124,14 +124,14 @@ func buildLogDestinationCertificate(comp *gentianov1alpha1.Component, ld *gentia
 	return obj
 }
 
-func buildLogDestinationPolicy(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, port int32) *networkingv1.NetworkPolicy {
+func buildLogDestinationPolicy(comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, port int32) *networkingv1.NetworkPolicy {
 	tcp := corev1.ProtocolTCP
 	p := intstr.FromInt32(port)
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      logDestinationPolicyName(comp),
 			Namespace: comp.Namespace,
-			Labels:    componentLabels(comp),
+			Labels:    componentLabels(comp, tenantName),
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: componentPods(comp, profile)},
@@ -151,7 +151,7 @@ func buildLogDestinationPolicy(comp *gentianov1alpha1.Component, profile *gentia
 
 // ensureLogDestination does what the declaration asks, or takes away what an
 // earlier one was given.
-func (r *ComponentReconciler) ensureLogDestination(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
+func (r *ComponentReconciler) ensureLogDestination(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile) error {
 	ld := logDestinationOf(comp, profile)
 	if ld == nil {
 		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionLogDestination)
@@ -170,10 +170,10 @@ func (r *ComponentReconciler) ensureLogDestination(ctx context.Context, comp *ge
 	if err := r.applyLogDestinationCertificate(ctx, comp, ld); err != nil {
 		return fmt.Errorf("certificate: %w", err)
 	}
-	if err := r.applyLogDestinationPolicy(ctx, comp, profile, ld.Port); err != nil {
+	if err := r.applyLogDestinationPolicy(ctx, comp, tenantName, profile, ld.Port); err != nil {
 		return fmt.Errorf("network policy: %w", err)
 	}
-	copied, err := r.copyLogDestinationSecret(ctx, comp)
+	copied, err := r.copyLogDestinationSecret(ctx, comp, tenantName)
 	if err != nil {
 		return fmt.Errorf("certificate copy: %w", err)
 	}
@@ -255,8 +255,8 @@ func (r *ComponentReconciler) applyLogDestinationCertificate(ctx context.Context
 	return r.Update(ctx, existing)
 }
 
-func (r *ComponentReconciler) applyLogDestinationPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, port int32) error {
-	desired := buildLogDestinationPolicy(comp, profile, port)
+func (r *ComponentReconciler) applyLogDestinationPolicy(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, port int32) error {
+	desired := buildLogDestinationPolicy(comp, tenantName, profile, port)
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func (r *ComponentReconciler) applyLogDestinationPolicy(ctx context.Context, com
 
 // copyLogDestinationSecret puts the issued certificate where the component
 // mounts it, and says whether there was one to copy.
-func (r *ComponentReconciler) copyLogDestinationSecret(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+func (r *ComponentReconciler) copyLogDestinationSecret(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string) (bool, error) {
 	issued := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: logDestinationCertificate, Namespace: layout.Kernel(layout.Observability)}, issued)
 	if errors.IsNotFound(err) {
@@ -299,7 +299,7 @@ func (r *ComponentReconciler) copyLogDestinationSecret(ctx context.Context, comp
 	err = r.Get(ctx, key, existing)
 	if errors.IsNotFound(err) {
 		desired := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: componentLabels(comp)},
+			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: componentLabels(comp, tenantName)},
 			Type:       corev1.SecretTypeTLS,
 			Data:       data,
 		}

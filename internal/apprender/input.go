@@ -29,10 +29,13 @@ import (
 
 // Input is everything one render reads.
 type Input struct {
-	// App is the component's name, and Namespace the tenant's namespace it
-	// runs in. The tenant's name is the namespace's without "tenant-".
-	App       string
-	Namespace string
+	// App is the component's name, Namespace the tenant's namespace it runs
+	// in, and TenantName the tenant's name. The two are given separately: a
+	// tenant may run its workloads in a namespace of any name
+	// (spec.isolation.namespace).
+	App        string
+	Namespace  string
+	TenantName string
 	// Realm is the tenant's Keycloak realm (keycloak.RealmName); empty means
 	// the realm of the tenant's own name.
 	Realm string
@@ -124,13 +127,9 @@ type ChartPullSecret struct {
 	SecretName string
 }
 
-// Tenant is the tenant's name, read off its namespace.
+// Tenant is the tenant's name.
 func (in *Input) Tenant() string {
-	const prefix = "tenant-"
-	if len(in.Namespace) > len(prefix) && in.Namespace[:len(prefix)] == prefix {
-		return in.Namespace[len(prefix):]
-	}
-	return in.Namespace
+	return in.TenantName
 }
 
 // RealmName is the realm the app's client is registered in.
