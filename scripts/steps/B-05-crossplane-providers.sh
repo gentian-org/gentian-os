@@ -95,20 +95,6 @@ _b05_wait_activated_types() {
     return 1
 }
 
-# Providers this platform installed once and no longer does. providers.yaml is
-# applied, not synced, so a provider that left the file would stay on a cluster
-# installed before it left -- with its CRDs, and through every purge.
-_B05_RETIRED_PROVIDERS=(
-    "provider-http"
-)
-
-_b05_remove_retired_providers() {
-    local p
-    for p in "${_B05_RETIRED_PROVIDERS[@]}"; do
-        kubectl delete provider.pkg.crossplane.io "${p}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-    done
-}
-
 # The functions declared in crossplane/providers/providers.yaml, read from the
 # file so the wait cannot fall behind what is installed.
 _v5_function_names() {
@@ -247,7 +233,6 @@ apply() {
         kubectl annotate "${_B05_ACTIVATION_KIND}" "${name}" --overwrite "gentianos.io/source-sha=$(_b05_activation_sha)" >/dev/null
     done
     _v5_providers_apply providers.yaml
-    _b05_remove_retired_providers
     for p in provider-kubernetes provider-helm provider-vault; do
         info "waiting for ${p} to be Healthy"
         kubectl wait provider.pkg.crossplane.io/"${p}" --for=condition=Healthy --timeout=600s >/dev/null
@@ -375,7 +360,6 @@ destroy() {
         || warn "  Some ProviderConfigs did not delete within 2 minutes; the purge continues."
     kubectl delete -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml" --ignore-not-found --timeout=180s >/dev/null 2>&1 || true
     kubectl delete secret "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" --ignore-not-found >/dev/null 2>&1 || true
-    _b05_remove_retired_providers
     _b05_release_terminating_provider_crds
     # Last: the policy goes after the providers whose types it activated.
     kubectl delete -f "${_B05_ACTIVATION_FILE}" --ignore-not-found --timeout=60s >/dev/null 2>&1 || true

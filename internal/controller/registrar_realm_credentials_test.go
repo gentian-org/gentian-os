@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -138,35 +137,5 @@ func TestAnUnchangedPassDoesNotWrite(t *testing.T) {
 	}
 	if before.ResourceVersion != after.ResourceVersion {
 		t.Errorf("an unchanged pass wrote: %s → %s", before.ResourceVersion, after.ResourceVersion)
-	}
-}
-
-// The Secret the director mounted is removed, the registrar's is left alone,
-// and a cluster that never had the old one is not an error.
-func TestTheDirectorsFormerSecretIsRetired(t *testing.T) {
-	t.Parallel()
-	ns := controller.RegistrarRealmSecretNamespaceForTest()
-	old := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "gentian-director-realms", Namespace: ns},
-		Data:       map[string][]byte{"kernel": []byte("former")},
-	}
-	current := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: controller.RegistrarRealmSecretName, Namespace: ns},
-		Data:       map[string][]byte{"kernel": []byte("k")},
-	}
-	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(old, current).Build()
-
-	for pass := 1; pass <= 2; pass++ {
-		if err := controller.RetireDirectorRealmSecretForTest(context.Background(), c); err != nil {
-			t.Fatalf("pass %d: %v", pass, err)
-		}
-	}
-	err := c.Get(context.Background(), types.NamespacedName{Name: old.Name, Namespace: ns}, &corev1.Secret{})
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("the director's former Secret is still there: %v", err)
-	}
-	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: controller.RegistrarRealmSecretName, Namespace: ns}, &corev1.Secret{}); err != nil {
-		t.Fatalf("the registrar's Secret was removed: %v", err)
 	}
 }

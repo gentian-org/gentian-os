@@ -206,13 +206,6 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 	}
 }
 
-func TestTenantGatewayName(t *testing.T) {
-	t.Parallel()
-	if got := tenantGatewayName("demo"); got != "tenant-demo-gateway" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
 	policy := computeGatewayFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "app")

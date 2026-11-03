@@ -317,17 +317,6 @@ func (c *KeycloakAdminClient) clientSecret(ctx context.Context, token, realm, cl
 	return out.Value, nil
 }
 
-// RetiredDirectorClientID is the name this credential had while the director
-// held it. The registrar's is a new client rather than the old one renamed,
-// so that no secret the director ever mounted opens anything.
-const RetiredDirectorClientID = "gentian-director-admin"
-
-// DeleteRetiredDirectorRealmClient removes the director's former credential
-// from one realm. Absent is the ordinary answer and not an error.
-func (c *KeycloakAdminClient) DeleteRetiredDirectorRealmClient(ctx context.Context, realm string) error {
-	return c.deleteRealmClient(ctx, realm, RetiredDirectorClientID)
-}
-
 // DeleteRegistrarRealmClient removes the credential for one realm.
 //
 // The counterpart to Ensure, for a tenant that is retired while its realm

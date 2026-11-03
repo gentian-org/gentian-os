@@ -293,6 +293,8 @@ rules:
     resources:
     - backendtlspolicies
     - gatewayclasses
+    - gateways
+    - gateways/status
     verbs:
     - get
     - list
@@ -303,8 +305,6 @@ rules:
   - apiGroups:
     - gateway.networking.k8s.io
     resources:
-    - gateways
-    - gateways/status
     - httproutes
     - httproutes/status
     - referencegrants

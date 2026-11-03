@@ -1308,16 +1308,6 @@ type TenantStatus struct {
 	// +listType=set
 	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
 
-	// AddonGrantsInherited is set once the addons this tenant had before
-	// addons were granted on their own have been given their app's access:
-	// each addon whose group had nobody in it got the app's grant, the
-	// tenant's members when the app is for everyone and the app's group's
-	// members otherwise. Done once per tenant; an addon added afterwards is
-	// granted as it is installed. A migration, to be removed once every
-	// tenant carries it.
-	// +optional
-	AddonGrantsInherited bool `json:"addonGrantsInherited,omitempty"`
-
 	// AppCount is the total number of apps requested in spec.
 	// +optional
 	AppCount int `json:"appCount,omitempty"`

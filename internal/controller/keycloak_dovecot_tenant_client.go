@@ -52,15 +52,6 @@ const (
 // realm's client is tenant-default's and the kernel realm's is cluster-default's;
 // the operator waits for whichever one a tenant's mailboxes are introspected
 // against.
-//
-// kernelDovecotOIDCClientJobName outlives the Job it named, for the sweep in
-// keycloak_retired_jobs.go. That Job read the client secret from a Secret in the
-// identity namespace, and the Secret is Dovecot's, in the mail namespace: once
-// the two were different namespaces its Pod could not be created, so it never
-// finished and its TTL never ran.
-func kernelDovecotOIDCClientJobName() string {
-	return "keycloak-dovecot-oidc-kernel"
-}
 
 // keycloakClientGVK is the provider-keycloak managed resource the Compositions
 // compose for gentian-dovecot.

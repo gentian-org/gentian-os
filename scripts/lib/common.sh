@@ -512,7 +512,7 @@ CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
 #   2) the installer config file (install.env)
 #   3) the Cluster claim in the deployments repository
 #      (clusters/<cluster>/kernel/claims/cluster.yaml), for the settings of the
-#      cluster; a cluster-settings.env left by an older install still overrides
+#      cluster
 #   4) OpenBao backfill for missing values
 #   5) interactive prompts for missing required values
 #
@@ -582,28 +582,6 @@ load_env_file() {
     done
 
     info "Loaded ${label} from ${file}."
-}
-
-# Source an env file and allow its values to override any already-set variables.
-# Used for gentian-deployments cluster-settings.env (Git source of truth for
-# cluster runtime behavior).
-load_env_file_override() {
-    local file="$1"
-    local label="$2"
-
-    [[ "${file}" == "/dev/null" ]] && return 0
-    [[ -r "${file}" ]] || return 0
-
-    set -a
-    # shellcheck disable=SC1090
-    if ! source "${file}"; then
-        set +a
-        error "Failed to load ${label} from ${file}. Fix shell syntax in this file and retry."
-        return 1
-    fi
-    set +a
-
-    info "Loaded ${label} from ${file} (overrides prior values)."
 }
 
 # validate_config reports which settings and credentials this configuration
@@ -1057,22 +1035,6 @@ load_deployments_cluster_settings() {
     resolve_deployments_path
 
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
-
-    # Read when present, silent when not. Absent is the CORRECT state on a
-    # current cluster: nothing writes cluster-settings.env any more -- everything
-    # that described the cluster is a field on claims/cluster.yaml, and
-    # step 0 deliberately stops emitting it (bootstrap.sh). This
-    # branch survives only so a cluster that still has one keeps working while it
-    # migrates.
-    #
-    # Announcing its absence on every run reported the normal case as a finding,
-    # in the installer's first few lines, where an operator has the least context
-    # to judge it -- and the old comment here said installing requires the file,
-    # which stopped being true when the claim replaced it.
-    if [[ -r "${settings_file}" ]]; then
-        load_env_file_override "${settings_file}" "deployments cluster settings"
-    fi
 
     # The claim, for everything the Cluster XRD already models.
     #
@@ -1080,10 +1042,7 @@ load_deployments_cluster_settings() {
     # networkMode and nodeIp at A-05 and A-07, and the Cluster XR is not created
     # until B-08. The claim is authored before either, so one document serves
     # both readers — yq here, Crossplane later — and there is no second surface
-    # to keep in step.
-    #
-    # After the .env, so a value still in cluster-settings.env keeps working
-    # while clusters migrate; each claim_setting is a no-op when the variable is
+    # to keep in step. Each claim_setting is a no-op when the variable is
     # already set.
     local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml"
 

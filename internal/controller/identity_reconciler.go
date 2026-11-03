@@ -98,14 +98,6 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return r.requeueForPendingJob(ctx, tenant.Name, adminJobName(tenant.Name)), nil
 	}
 
-	// Two Jobs used to run here and no longer exist; what they leave behind is
-	// swept. Both had already lost the object they were named for — the browser
-	// flow and the first-broker-login flow are the Composition's — and what
-	// remained of each was a repair for a state that no longer occurs.
-	r.deleteRetiredJobs(ctx,
-		oidcBrowserFlowJobName(tenant.Name),
-		brokerFirstLoginFlowJobName(tenant.Name))
-
 	// OIDC packs require Gentian entitlement groups (provisioned above).
 	allDone := true
 	var pendingClientJobs []string
@@ -148,13 +140,6 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	}
 
 	if r.KernelRealm != "" {
-		// No broker IdP Job to wait for. Its last two writes — the mappers that
-		// carry gentian_username across the realm boundary — are tenant-default's
-		// now, so the Job is gone and what it left behind is swept.
-		// Nor the kernel realm's first-broker-login flow Job: the Job's flow
-		// nothing names any more.
-		r.deleteRetiredJobs(ctx, tenantBrokerIdPJobName(tenant.Name), kernelTenantBrokerJobName(tenant.Name))
-
 		// The portal BFF client is a Composition resource now; its readiness is
 		// reported through CrossplaneReady rather than watched here.
 

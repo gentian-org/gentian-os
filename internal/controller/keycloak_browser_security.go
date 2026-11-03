@@ -102,7 +102,5 @@ func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Cont
 	// The kernel realm above stays, and has to: no XTenant exists for it, so no
 	// Composition covers it. It is bootstrapped once at install and this is the
 	// only thing that maintains it.
-
-	r.deleteRetiredJobs(ctx, kernelBrowserSecurityJobName(), tenantBrowserSecurityJobName(tenant.Name))
 	return nil
 }

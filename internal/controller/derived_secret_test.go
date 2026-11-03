@@ -25,14 +25,12 @@ func modeOf(mode secrets.Mode) secrets.ModeFunc {
 }
 
 // A key a profile declares is a secret: on a derived cluster it follows from
-// the master password, and it is not the digest of the tenant's and the
-// app's name an earlier version delivered, which anybody who knew the two
-// could compute.
+// the master password.
 func TestADeclaredKeyIsDerivedFromTheMasterPassword(t *testing.T) {
 	w := newModelAccessWorld(t, []string{"chat"})
 	w.pass(t)
 	got := secretValue(w.secret(t, "chat"), webuiKey)
-	if len(got) != 64 || got == namesOnlyDerivedKey("demo", "chat") {
+	if len(got) != 64 {
 		t.Fatalf("%s = %q", webuiKey, got)
 	}
 
@@ -124,24 +122,14 @@ func TestWithoutTheMasterPasswordADeclaredKeyIsNotMade(t *testing.T) {
 	}
 }
 
-// The value an earlier version delivered is replaced by the first pass.
-func TestTheNamesOnlyKeyIsReplaced(t *testing.T) {
-	old := operatorModelSecret("demo", "chat", "sk-old")
-	old.Data[webuiKey] = []byte(namesOnlyDerivedKey("demo", "chat"))
-	w := newModelAccessWorld(t, []string{"chat"}, old)
-	w.pass(t)
-	if got := secretValue(w.secret(t, "chat"), webuiKey); got == namesOnlyDerivedKey("demo", "chat") || len(got) != 64 {
-		t.Errorf("%s = %q", webuiKey, got)
-	}
-
-	// Without a vault as well: random, kept in the Secret, and then stable.
-	old = operatorModelSecret("demo", "chat", "sk-old")
-	old.Data[webuiKey] = []byte(namesOnlyDerivedKey("demo", "chat"))
-	n := newModelAccessWorld(t, []string{"chat"}, old)
+// Without a vault a declared key is random, kept in the Secret, and then
+// stable.
+func TestWithoutAVaultADeclaredKeyIsRandomAndStable(t *testing.T) {
+	n := newModelAccessWorld(t, []string{"chat"})
 	n.r.Seeder = nil
 	n.pass(t)
 	first := secretValue(n.secret(t, "chat"), webuiKey)
-	if first == namesOnlyDerivedKey("demo", "chat") || len(first) != 64 {
+	if len(first) != 64 {
 		t.Fatalf("%s = %q", webuiKey, first)
 	}
 	n.pass(t)
