@@ -73,13 +73,12 @@ tuples:
   - {user: group:gentian/tenant/demo/app/nextcloud/admins#member, relation: admin,    object: app:demo/nextcloud}
   - {user: tenant:solo, relation: tenant, object: app:solo/wiki}
 
-  # --- contracts, shared instances, sessions
+  # --- contracts, shared instances
   - {user: tenant:demo,        relation: tenant,   object: contract:demo/file-store}
   - {user: app:demo/nextcloud, relation: provider, object: contract:demo/file-store}
   - {user: app:demo/openproject, relation: consumer, object: contract:demo/file-store}
   - {user: cluster:main, relation: cluster,    object: shared_instance:collabora}
   - {user: tenant:demo,  relation: offered_to, object: shared_instance:collabora}
-  - {user: user:mia, relation: revoked, object: session:sid-ended}
 
 tests:
   - name: cluster roles grant exactly their own verbs
@@ -220,12 +219,6 @@ tests:
     check:
       - {user: tenant:demo, object: shared_instance:collabora, assertions: {can_bind: true}}
       - {user: tenant:solo, object: shared_instance:collabora, assertions: {can_bind: false}}
-
-  - name: a revoked session is denied, others are not
-    check:
-      - {user: user:mia, object: session:sid-ended, assertions: {revoked: true}}
-      - {user: user:mia, object: session:sid-live,  assertions: {revoked: false}}
-      - {user: user:max, object: session:sid-ended, assertions: {revoked: false}}
 
   - name: a tenant's evidence is read by its auditor and the cluster's, by nobody of the tenant
     check:

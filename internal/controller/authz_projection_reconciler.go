@@ -48,8 +48,7 @@ import (
 //
 // What it does NOT own: membership, which arrives as signed Keycloak events
 // and is applied by the operator's membership listener
-// (membership_listener.go), and session revocation, which belongs with the
-// edge authorization service that reads it and which nothing writes yet.
+// (membership_listener.go).
 //
 // Declarative, like the functions it calls: a role whose group the claim no
 // longer names loses its tuple, so authority over a cluster is taken away by
