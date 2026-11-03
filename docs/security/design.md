@@ -6,13 +6,13 @@ type: concept
 # Gentian Cloud OS — Security Architecture
 
 Architecture reference. The normative one-page rules are [security/principles.md](principles.md); §3.0 lists the controls in place.
-Scope: identity, authorization, and isolation for a fully cloud-based, Kubernetes-native sovereign cloud OS.
+Scope: identity, authorization, and isolation for a fully cloud-based, Kubernetes-native cloud OS.
 
 ---
 
 ## 1. Purpose
 
-Gentian needs an identity and access layer that is (a) simpler and more modern than traditional directory-centric stacks, (b) fully open-source and sovereignty-friendly, (c) first-class for **two principal types** — humans and applications/workloads — and (d) designed so that a *compromised principal of any type does the least possible damage*.
+Gentian needs an identity and access layer that is (a) simpler and more modern than traditional directory-centric stacks, (b) fully open-source and self-hosted, (c) first-class for **two principal types** — humans and applications/workloads — and (d) designed so that a *compromised principal of any type does the least possible damage*.
 
 This document explains the models behind the principles, the concrete Keycloak + OpenFGA architecture, and how application permissions are modeled (profile declaration, IntegrationBinding wiring, and AppGrant ReBAC layer).
 
@@ -947,7 +947,7 @@ on every Keycloak upgrade.
 
 ### 3.2 Design rationale
 
-For a greenfield, cloud-only sovereign OS:
+For a greenfield, cloud-only OS:
 
 - **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres, and is the only place membership is changed. OpenFGA holds a projection of it, fed by Keycloak's event listener, to compute *may* — authority is separated, not copies (principle 2).
 - **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph holds people, groups, the cluster, tenants and apps (§3.0) — no role explosion.
@@ -2082,7 +2082,7 @@ pod and records which certificate it was told about; it never restarts the
 vault, which would seal it until the seal unseals it. The custodian reads the
 CA once, at start, and `B-01` restarts it when the CA has changed.
 
-## 13. Licensing & sovereignty summary
+## 13. Licensing summary
 
 - **In use, Apache 2.0:** Keycloak, OpenFGA, Kyverno, Envoy Gateway, Crossplane, Argo CD, cert-manager, External Secrets Operator.
 - **In use, MPL 2.0:** OpenBao.
