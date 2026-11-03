@@ -153,8 +153,11 @@ func runningPodIn(ctx context.Context, c client.Reader, namespace, appName, cont
 	if fallback != nil {
 		return fallback, nil
 	}
-	return nil, fmt.Errorf("no running pod for app %q", appName)
+	return nil, fmt.Errorf("%w for app %q", errNoRunningPod, appName)
 }
+
+// errNoRunningPod is runningPodIn finding no pod of the app to run in.
+var errNoRunningPod = errors.New("no running pod")
 
 func podHasContainer(pod *corev1.Pod, name string) bool {
 	for _, c := range pod.Spec.Containers {

@@ -206,13 +206,6 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 	}
 }
 
-func TestTenantGatewayName(t *testing.T) {
-	t.Parallel()
-	if got := tenantGatewayName("demo"); got != "tenant-demo-gateway" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestBuildTenantReferenceGrantObjects(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}

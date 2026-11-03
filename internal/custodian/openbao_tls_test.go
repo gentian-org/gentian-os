@@ -105,7 +105,7 @@ func TestLogin_SelfSignedWithCA_SucceedsAndIsKept(t *testing.T) {
 		t.Fatalf("logged in %d times for three requests", logins)
 	}
 	// Told its token is no good, it logs in again.
-	b.forget()
+	b.forget("s.tok")
 	if _, err := b.Token(context.Background()); err != nil || logins != 2 {
 		t.Fatalf("after forgetting: logins = %d, err = %v", logins, err)
 	}

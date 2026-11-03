@@ -29,6 +29,7 @@ func valuesTestInput(spec *gentianov1alpha1.ComponentProfileSpec) *Input {
 	return &Input{
 		App:           "demo-app",
 		Namespace:     "tenant-demo",
+		TenantName:    "demo",
 		ReleaseObject: "demo-app",
 		HelmRelease:   "demo-app",
 		KeepVolumes:   "demo-app-keep-volumes",

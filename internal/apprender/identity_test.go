@@ -24,6 +24,7 @@ func TestPackScopeMappersRenderOnceTheScopeIsObserved(t *testing.T) {
 	in := &Input{
 		App:         "demo-app",
 		Namespace:   "tenant-demo",
+		TenantName:  "demo",
 		ProfileName: "demo-app",
 		Profile: &gentianov1alpha1.ComponentProfileSpec{
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{

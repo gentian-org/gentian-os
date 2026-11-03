@@ -13,6 +13,7 @@ package secrets_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -278,9 +279,39 @@ func (d *deafStore) Get(_ context.Context, p string) (map[string]string, error) 
 	}
 	v, ok := d.data[p]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, fmt.Errorf("get %s: %w", p, secrets.ErrNotFound)
 	}
 	return v, nil
+}
+
+// A read that fails is not a path that holds nothing. Taken for one, the
+// round wrote with PutOnce, which left the stored address as it was, and
+// handed on the new one as if the vault held it.
+func TestAFailedReadIsNotAnEmptyPath(t *testing.T) {
+	ctx := context.Background()
+	for name, seed := range map[string]func(*secrets.Seeder) error{
+		"cache": func(s *secrets.Seeder) error {
+			_, err := s.SeedCache(ctx, "acme", "wiki", secrets.CacheCreds{Host: "new-cache", Port: "6380"})
+			return err
+		},
+		"oidc": func(s *secrets.Seeder) error {
+			_, err := s.SeedOIDC(ctx, "acme", "wiki", "https://new-issuer", "wiki")
+			return err
+		},
+		"model access": func(s *secrets.Seeder) error {
+			_, err := s.SeedModelAccess(ctx, "acme", "wiki", "sk-", "http://new-gateway")
+			return err
+		},
+	} {
+		store := &deafStore{data: map[string]map[string]string{}}
+		s := secrets.NewSeeder(store, secrets.NewDeriver(goldenMaster, goldenSalt)).WithMode(fixed(secrets.ModeDerived))
+		if err := seed(s); err == nil {
+			t.Errorf("%s: a round whose read failed reported success", name)
+		}
+		if len(store.data) != 0 {
+			t.Errorf("%s: a round whose read failed wrote %v", name, store.data)
+		}
+	}
 }
 
 // A random value that could not be read back is not handed on: the path may

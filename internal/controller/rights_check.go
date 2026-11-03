@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -83,7 +82,7 @@ func rightsCheckURL(bouncerService string) string {
 // at. If it declared it once, its Secret stays until the component goes, and
 // is worth nothing meanwhile: the bouncer's table lists a key only while the
 // profile declares the requirement (rightsCheckers).
-func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) error {
+func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile) error {
 	if !holdsComponentKey(profile) {
 		return nil
 	}
@@ -119,7 +118,7 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 		}
 		secret = base64.RawURLEncoding.EncodeToString(raw)
 	}
-	labels := componentLabels(comp)
+	labels := componentLabels(comp, tenantName)
 	labels[rightsCheckerLabel] = "true"
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labels},
@@ -239,13 +238,17 @@ func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1a
 	if err := c.List(ctx, list, client.MatchingLabels{rightsCheckerLabel: "true"}); err != nil {
 		return nil, err
 	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, tenants); err != nil {
+		return nil, err
+	}
 	var out []componentKey
 	for i := range list.Items {
 		secret := &list.Items[i]
-		tenant, ok := strings.CutPrefix(secret.Namespace, "tenant-")
+		holder := gentianov1alpha1.TenantInNamespace(tenants.Items, secret.Namespace)
 		owner := metav1.GetControllerOf(secret)
 		key := secret.Data[rightsCheckKeyKey]
-		if !ok || tenant == "" || secret.DeletionTimestamp != nil || len(key) == 0 ||
+		if holder == nil || secret.DeletionTimestamp != nil || len(key) == 0 ||
 			owner == nil || owner.Kind != "Component" || secret.Name != rightsCheckSecretName(owner.Name) {
 			continue
 		}
@@ -271,7 +274,7 @@ func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1a
 		}
 		sum := sha256.Sum256(key)
 		out = append(out, componentKey{
-			Tenant: tenant, Component: comp.Name, Profile: profile.Name, KeyHash: hex.EncodeToString(sum[:]),
+			Tenant: holder.Name, Component: comp.Name, Profile: profile.Name, KeyHash: hex.EncodeToString(sum[:]),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

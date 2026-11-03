@@ -249,11 +249,6 @@ type TenantReconciler struct {
 	// for an app entry declaring defaultGrant. Nil when the operator runs
 	// without its app-lifecycle service, which is what holds the means.
 	DefaultGrant AppDefaultGranter
-
-	// InheritAddonGrant gives the addons a tenant had before addons were
-	// granted on their own their app's access, once (tenant_addon_grant_inherit.go).
-	// Nil skips it.
-	InheritAddonGrant AddonGrantInheritor
 	// PlanEventStore opens a tenant's usage store for the plan event a landed
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
@@ -507,12 +502,12 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// or withdrawn has to reach the tenant's policies when it happens and
 	// not when something else next wakes the tenant. A grant carries no
 	// tenant label; it lives in the tenant's namespace.
-	mapGrantToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
-		tenantName, ok := strings.CutPrefix(obj.GetNamespace(), "tenant-")
-		if !ok || tenantName == "" {
+	mapGrantToTenant := func(ctx context.Context, obj client.Object) []reconcile.Request {
+		tenant, err := tenantInNamespace(ctx, mgr.GetClient(), obj.GetNamespace())
+		if err != nil || tenant == nil {
 			return nil
 		}
-		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenant.Name}}}
 	}
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).

@@ -185,7 +185,7 @@ func TestTheAppStoreProfileRoutesAsTheAppExpects(t *testing.T) {
 	// rule of an exposure: /oauth/callback and what is below it. The edge's
 	// own callback is under /oauth2/, which every route behind a session
 	// carries and the session filter answers itself.
-	route := buildExposureRoute(&gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "app-store", Namespace: "tenant-acme"}},
+	route := buildExposureRoute(&gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "app-store", Namespace: "tenant-acme"}}, "acme",
 		"app-store-api", "store.acme.k.example", edgeZone{}, &api, routeAuthz{relation: "can_install_app", object: "tenant:acme"}, "k.example", nil)
 	var prefixes []string
 	for _, rule := range route.Spec.Rules {
@@ -233,7 +233,7 @@ func TestTheAppStoreRoutesAskTheInstallRight(t *testing.T) {
 	var routes []client.Object
 	for i := range profile.Spec.Expose {
 		e := &profile.Spec.Expose[i]
-		routes = append(routes, buildExposureRoute(comp, comp.Name+"-"+e.Name, exposureHost(zone, comp, e), zone, e,
+		routes = append(routes, buildExposureRoute(comp, defaultTenantName(comp), comp.Name+"-"+e.Name, exposureHost(zone, comp, e), zone, e,
 			exposureAuthz(tenant, comp, profile, "c1", e.ForwardToken), r.KernelDomain, nil))
 	}
 	c := fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(routes...).Build()
@@ -920,7 +920,7 @@ func TestTheAppStoreReachesTheDesktopAPIAndNothingElseOfIt(t *testing.T) {
 	if err := c.Get(ctx, client.ObjectKeyFromObject(comp), live); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensureDesktopAccess(ctx, live, profile); err != nil {
+	if err := r.ensureDesktopAccess(ctx, live, defaultTenantName(live), profile); err != nil {
 		t.Fatal(err)
 	}
 	get := func(name string) *networkingv1.NetworkPolicy {
@@ -969,7 +969,7 @@ func TestTheAppStoreReachesTheDesktopAPIAndNothingElseOfIt(t *testing.T) {
 	// it, and the reconciler does not rely on that. What was opened is closed.
 	other := profile.DeepCopy()
 	other.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
-	if err := r.ensureDesktopAccess(ctx, live, other); err != nil {
+	if err := r.ensureDesktopAccess(ctx, live, defaultTenantName(live), other); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"desktop-api-from-app-store", "desktop-api-admits-app-store"} {

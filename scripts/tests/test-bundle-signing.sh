@@ -117,22 +117,6 @@ check "a cluster that has no key yet is given one by the kit export, and the kit
 
 echo ""
 echo "The cluster's id in its claim (step 0)"
-claim="${SANDBOX}/cluster.yaml"
-printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1-dev\nspec:\n  kernelDomain: k.example\n  platformRoles:\n    admin: g\n' > "${claim}"
-new_state
-out="$(run "ensure_claim_cluster_uid '${claim}'")"
-uid="$(grep -E '^  clusterUID: ' "${claim}" | awk '{print $2}')"
-check "a claim without an id is given one, below kernelDomain" \
-    '[[ "${uid}" =~ ^[0-9a-f]{32}$ && "$(grep -A4 "^  kernelDomain:" "${claim}" | tail -1)" == "  clusterUID: ${uid}" && "${out}" == *"was added"* ]]' "${out}"
-before="$(cat "${claim}")"
-out="$(run "ensure_claim_cluster_uid '${claim}'")"
-check "a claim with an id keeps it" '[[ "$(cat "${claim}")" == "${before}" && -z "${out}" ]]' "${out}"
-out="$(run "ensure_claim_catalogue_section '${claim}'")"
-check "the claim pass every install runs keeps it too" '[[ "$(grep -c "clusterUID:" "${claim}")" == 1 && "$(grep "^  clusterUID:" "${claim}")" == "  clusterUID: ${uid}" ]]' "${out}"
-printf 'spec:\n    kernelDomain: k.example\n' > "${SANDBOX}/odd.yaml"
-out="$(run "ensure_claim_cluster_uid '${SANDBOX}/odd.yaml'")"
-check "a claim laid out otherwise is left alone, and the line to add is named" \
-    '! grep -q clusterUID: "${SANDBOX}/odd.yaml" && [[ "${out}" == *"Add it by hand"* ]]' "${out}"
 check "a new claim is scaffolded with an id" \
     'grep -q "clusterUID: \$(gentian_new_cluster_uid)" "${REPO}/scripts/lib/bootstrap.sh"'
 

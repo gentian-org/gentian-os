@@ -59,6 +59,12 @@ func rightsComponent(tenant, name string) *gentianov1alpha1.Component {
 	return comp
 }
 
+// rightsTenant is the Tenant whose namespace rightsComponent puts a
+// component of that tenant in.
+func rightsTenant(name string) *gentianov1alpha1.Tenant {
+	return &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
 func rightsSecret(t *testing.T, c client.Client, comp *gentianov1alpha1.Component) *corev1.Secret {
 	t.Helper()
 	secret := &corev1.Secret{}
@@ -78,7 +84,7 @@ func TestRightsCheckKeyIsMadeOnceAndKept(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, plain).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
 
-	if err := r.ensureRightsCheck(ctx, comp, rightsProfile("notary", true)); err != nil {
+	if err := r.ensureRightsCheck(ctx, comp, defaultTenantName(comp), rightsProfile("notary", true)); err != nil {
 		t.Fatal(err)
 	}
 	first := rightsSecret(t, c, comp)
@@ -93,14 +99,14 @@ func TestRightsCheckKeyIsMadeOnceAndKept(t *testing.T) {
 		t.Fatalf("labels %v, owners %v", first.Labels, first.OwnerReferences)
 	}
 
-	if err := r.ensureRightsCheck(ctx, comp, rightsProfile("notary", true)); err != nil {
+	if err := r.ensureRightsCheck(ctx, comp, defaultTenantName(comp), rightsProfile("notary", true)); err != nil {
 		t.Fatal(err)
 	}
 	if again := string(rightsSecret(t, c, comp).Data[rightsCheckKeyKey]); again != key {
 		t.Fatal("the key changed on a second reconcile")
 	}
 
-	if err := r.ensureRightsCheck(ctx, plain, rightsProfile("plain", false)); err != nil {
+	if err := r.ensureRightsCheck(ctx, plain, defaultTenantName(plain), rightsProfile("plain", false)); err != nil {
 		t.Fatal(err)
 	}
 	name := types.NamespacedName{Name: rightsCheckSecretName("plain"), Namespace: plain.Namespace}
@@ -116,7 +122,7 @@ func TestRightsCheckDoesNotAdoptAForeignSecret(t *testing.T) {
 	foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: rightsCheckSecretName("notary"), Namespace: comp.Namespace}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, foreign).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	if err := r.ensureRightsCheck(context.Background(), comp, rightsProfile("notary", true)); err == nil {
+	if err := r.ensureRightsCheck(context.Background(), comp, defaultTenantName(comp), rightsProfile("notary", true)); err == nil {
 		t.Fatal("a foreign Secret was adopted")
 	}
 }
@@ -127,10 +133,10 @@ func TestBouncerTableHoldsOnlyCheckersTheOperatorMade(t *testing.T) {
 	ctx := context.Background()
 	scheme := rightsScheme(t)
 	notary, plain := rightsComponent("acme", "notary"), rightsComponent("acme", "plain")
-	objects := []client.Object{notary, plain, rightsProfile("notary", true), rightsProfile("plain", false)}
+	objects := []client.Object{rightsTenant("acme"), notary, plain, rightsProfile("notary", true), rightsProfile("plain", false)}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
-	if err := r.ensureRightsCheck(ctx, notary, rightsProfile("notary", true)); err != nil {
+	if err := r.ensureRightsCheck(ctx, notary, defaultTenantName(notary), rightsProfile("notary", true)); err != nil {
 		t.Fatal(err)
 	}
 	key := string(rightsSecret(t, c, notary).Data[rightsCheckKeyKey])
@@ -221,7 +227,7 @@ func TestOnlyThePlatformTenantsKeyAsksTheAuditQuestions(t *testing.T) {
 	}
 	evidence, elsewhere := rightsComponent("platform", "evidence"), rightsComponent("acme", "evidence")
 	notary, untrusted := rightsComponent("platform", "notary"), rightsComponent("platform", "untrusted")
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(evidence, elsewhere, notary, untrusted,
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rightsTenant("platform"), rightsTenant("acme"), evidence, elsewhere, notary, untrusted,
 		auditing("evidence", gentianov1alpha1.TrustTierPlatform), rightsProfile("notary", true),
 		auditing("untrusted", "")).Build()
 	r := &ComponentReconciler{Client: c, Scheme: scheme}
@@ -230,7 +236,7 @@ func TestOnlyThePlatformTenantsKeyAsksTheAuditQuestions(t *testing.T) {
 		if err := c.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.ensureRightsCheck(ctx, comp, profile); err != nil {
+		if err := r.ensureRightsCheck(ctx, comp, defaultTenantName(comp), profile); err != nil {
 			t.Fatal(err)
 		}
 	}

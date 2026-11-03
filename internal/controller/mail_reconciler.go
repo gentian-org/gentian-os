@@ -1124,17 +1124,6 @@ type postfixMapsBootstrap struct{ reconciler *TenantReconciler }
 // reconciler from making progress. The next tenant event retries.
 func (b postfixMapsBootstrap) Start(ctx context.Context) error {
 	logger := log.FromContext(ctx)
-	// What an earlier version wrote where nothing read it, before anything is
-	// written where it belongs: a seed is moved, not made again. Only on a
-	// cluster that runs mail -- the others have neither the objects nor the
-	// namespace to move them to.
-	if present, err := b.reconciler.mailFunctionPresent(ctx); err != nil {
-		logger.Error(err, "looking for the mail function at startup")
-	} else if present {
-		if err := b.reconciler.retireMisplacedMailObjects(ctx); err != nil {
-			logger.Error(err, "moving mail objects to the namespaces their readers are in")
-		}
-	}
 	// The kernel side first, so the maps derived below already include the kernel
 	// domain on a cluster that has no tenants.
 	if err := b.reconciler.ensureKernelMail(ctx); err != nil {
@@ -1192,8 +1181,7 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 
 	// 2. The introspection client in the kernel realm, which cluster-default
 	//    composes. Not Ready yet is not an error; the next operator start or
-	//    tenant event picks it up. The Job that used to create it is swept.
-	r.deleteRetiredJobs(ctx, kernelDovecotOIDCClientJobName())
+	//    tenant event picks it up.
 	if ready, err := r.kernelDovecotClientReady(ctx); err != nil {
 		return fmt.Errorf("check kernel Dovecot OIDC client: %w", err)
 	} else if !ready {

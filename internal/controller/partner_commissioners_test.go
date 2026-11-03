@@ -77,11 +77,11 @@ func TestDirectorListHoldsAComponentOnlyForTheTenantsThatNameIt(t *testing.T) {
 		gentianov1alpha1.TenantComponentRef{Tenant: "team", Profile: "plain"})
 	other := commissionTenant("other")
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		shop, idle, plain, profiles["shop"], profiles["idle"], profiles["plain"], customers, other,
+		rightsTenant("team"), shop, idle, plain, profiles["shop"], profiles["idle"], profiles["plain"], customers, other,
 	).Build()
 	components := &ComponentReconciler{Client: c, Scheme: scheme, DirectorURL: "http://director.test:8080"}
 	for _, comp := range []*gentianov1alpha1.Component{shop, idle, plain} {
-		if err := components.ensureRightsCheck(ctx, comp, profiles[comp.Name]); err != nil {
+		if err := components.ensureRightsCheck(ctx, comp, defaultTenantName(comp), profiles[comp.Name]); err != nil {
 			t.Fatal(err)
 		}
 	}

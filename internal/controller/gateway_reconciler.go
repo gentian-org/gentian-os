@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,9 +38,6 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	if len(intents) == 0 {
-		if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
-			return ctrl.Result{}, err
-		}
 		if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -69,14 +65,6 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 		return ctrl.Result{}, fmt.Errorf("no effective domain available for tenant %s", tenant.Name)
 	}
 
-	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-	// Tenant hostnames are served by the kernel Gateway; the tenant namespace
-	// holds no Gateway of its own.
-	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
-		return ctrl.Result{}, err
-	}
 	r.ensureTenantEdgeRoutes(ctx, tenant, effectiveDomain)
 
 	// No route is written here. An installed app is a Component, and its
@@ -112,23 +100,10 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue, "Programmed", message)
-	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.RoutingMode); err != nil {
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm, r.RoutingMode); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile CoreDNS tenant hairpin: %w", err)
 	}
 	return ctrl.Result{}, nil
-}
-
-func (r *TenantReconciler) deleteTenantGateway(ctx context.Context, nsName, tenantName string) error {
-	gw := &gatewayv1.Gateway{}
-	err := r.Get(ctx, client.ObjectKey{Name: tenantGatewayName(tenantName), Namespace: nsName}, gw)
-	if errors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	prop := metav1.DeletePropagationBackground
-	return r.Delete(ctx, gw, &client.DeleteOptions{PropagationPolicy: &prop})
 }
 
 func gatewayProgrammed(ctx context.Context, c client.Client, gw *gatewayv1.Gateway) (bool, string) {

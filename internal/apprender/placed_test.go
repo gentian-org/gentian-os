@@ -25,7 +25,7 @@ import (
 // to a schema refuses. It has no entitlement group either.
 func TestAPlacedChartKeepsItsOwnValues(t *testing.T) {
 	in := &Input{
-		App: "admin-console", Namespace: "tenant-acme", Domain: "acme.example",
+		App: "admin-console", Namespace: "tenant-acme", TenantName: "acme", Domain: "acme.example",
 		ReleaseObject: "tenant-acme-admin-console", HelmRelease: "tenant-acme-admin-console",
 		KeepVolumes: "admin-console-keep-volumes", Composite: "tenant-acme-admin-console",
 		ProfileName: "admin-console", Placed: true,
@@ -69,7 +69,7 @@ func TestAPlacedChartKeepsItsOwnValues(t *testing.T) {
 // and its alias is made, not merely observed: nobody else makes it.
 func TestAnAppNamedPastItsOverrideGetsItsAPIAlias(t *testing.T) {
 	in := &Input{
-		App: "fellwort-ee", Namespace: "tenant-acme", Domain: "acme.example",
+		App: "fellwort-ee", Namespace: "tenant-acme", TenantName: "acme", Domain: "acme.example",
 		ReleaseObject: "tenant-acme-fellwort-ee", HelmRelease: "tenant-acme-fellwort-ee",
 		KeepVolumes: "fellwort-ee-keep-volumes", Composite: "tenant-acme-fellwort-ee", ProfileName: "fellwort-ee",
 		Profile: &gentianov1alpha1.ComponentProfileSpec{

@@ -479,13 +479,16 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // the catalog and ESO's satisfaction verdict, which is the useful part. A
 // failure here must not turn a working list into an error page.
 func (s *Server) decorate(ctx context.Context, c caller, items []Status) {
-	token, err := s.Bao.Token(ctx)
-	if err != nil {
-		ctrl.Log.WithName("custodian").Error(err, "credentials are listed without who set them")
-		return
-	}
 	for i := range items {
-		md, err := s.Bao.Metadata(ctx, token, items[i].VaultPath)
+		var md PathMetadata
+		err := s.Bao.WithToken(ctx, func(token string) (err error) {
+			md, err = s.Bao.Metadata(ctx, token, items[i].VaultPath)
+			return err
+		})
+		if errors.Is(err, ErrVaultLogin) || errors.Is(err, ErrUpstream) {
+			ctrl.Log.WithName("custodian").Error(err, "credentials are listed without who set them")
+			return
+		}
 		if err != nil {
 			continue
 		}
@@ -568,12 +571,14 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	// payload, presented as a permissions problem and sent an operator to audit
 	// a policy that was already correct. The same collapse cost an afternoon
 	// one layer up, in identify.
-	token, err := s.Bao.Token(r.Context())
-	if err != nil {
+	err = s.Bao.WithToken(r.Context(), func(token string) error {
+		return s.Bao.Write(r.Context(), token, req.VaultPath, body.Fields, c.name)
+	})
+	if errors.Is(err, ErrVaultLogin) {
 		s.writeVaultErr(w, err)
 		return
 	}
-	if err := s.Bao.Write(r.Context(), token, req.VaultPath, body.Fields, c.name); err != nil {
+	if err != nil {
 		log := ctrl.Log.WithName("custodian")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to store this credential", "path", req.VaultPath)

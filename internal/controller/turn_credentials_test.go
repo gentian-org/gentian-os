@@ -39,7 +39,7 @@ func TestTURNCredentialsFollowWhatTheComponentRuns(t *testing.T) {
 	talk := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-spreed-ce"}}
 	talk.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{TURN: &gentianov1alpha1.TURNRequirement{}}}
 
-	if err := r.ensureTURNCredentials(ctx, comp, base, []*gentianov1alpha1.ComponentProfile{talk}); err != nil {
+	if err := r.ensureTURNCredentials(ctx, comp, defaultTenantName(comp), base, []*gentianov1alpha1.ComponentProfile{talk}); err != nil {
 		t.Fatal(err)
 	}
 	key := types.NamespacedName{Name: "turn-credentials-nextcloud-base-ce", Namespace: "tenant-acme"}
@@ -71,7 +71,7 @@ func TestTURNCredentialsFollowWhatTheComponentRuns(t *testing.T) {
 	// The addon's own Component deploys nothing and is given nothing.
 	talk.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{ID: "spreed", Of: "nextcloud-base-ce"}
 	addonComp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-spreed-ce", Namespace: "tenant-acme", UID: "uid-talk"}}
-	if err := r.ensureTURNCredentials(ctx, addonComp, talk, nil); err != nil {
+	if err := r.ensureTURNCredentials(ctx, addonComp, defaultTenantName(addonComp), talk, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: "turn-credentials-nextcloud-spreed-ce", Namespace: "tenant-acme"}, &corev1.Secret{}); !errors.IsNotFound(err) {
@@ -79,7 +79,7 @@ func TestTURNCredentialsFollowWhatTheComponentRuns(t *testing.T) {
 	}
 
 	// Talk switched off: nothing the component runs declares TURN.
-	if err := r.ensureTURNCredentials(ctx, comp, base, nil); err != nil {
+	if err := r.ensureTURNCredentials(ctx, comp, defaultTenantName(comp), base, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, key, &corev1.Secret{}); !errors.IsNotFound(err) {

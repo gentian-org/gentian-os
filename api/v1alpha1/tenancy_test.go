@@ -159,3 +159,26 @@ func TestTenantAdminAddressesAreDistinct(t *testing.T) {
 		t.Fatalf("two tenants share an address: both %q", x)
 	}
 }
+
+// A namespace is a tenant's by where the tenant runs its workloads, which a
+// tenant that sets spec.isolation.namespace chooses for itself.
+func TestTenantInNamespaceHonorsTheIsolationNamespace(t *testing.T) {
+	t.Parallel()
+	plain, placed := *named("acme"), *named("globex")
+	placed.Spec.Isolation = &TenantIsolation{Namespace: "globex-apps"}
+	tenants := []Tenant{plain, placed}
+	for _, tc := range []struct{ namespace, want string }{
+		{"tenant-acme", "acme"},
+		{"globex-apps", "globex"},
+		{"tenant-globex", ""},
+		{"kernel-control", ""},
+	} {
+		got := ""
+		if tn := TenantInNamespace(tenants, tc.namespace); tn != nil {
+			got = tn.Name
+		}
+		if got != tc.want {
+			t.Errorf("TenantInNamespace(%q) = %q, want %q", tc.namespace, got, tc.want)
+		}
+	}
+}

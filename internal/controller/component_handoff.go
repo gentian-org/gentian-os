@@ -54,7 +54,7 @@ var objectWrapperGVK = schema.GroupVersionKind{Group: "kubernetes.crossplane.io"
 // handOff takes a component's app over from the composite the app
 // Composition installed it as. It says what it waits for, and "" once
 // nothing of the composite is left to take over.
-func (r *ComponentReconciler) handOff(ctx context.Context, comp *gentianov1alpha1.Component) (string, error) {
+func (r *ComponentReconciler) handOff(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string) (string, error) {
 	claim := &unstructured.Unstructured{}
 	claim.SetGroupVersionKind(appClaimGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, claim)
@@ -109,7 +109,7 @@ func (r *ComponentReconciler) handOff(ctx context.Context, comp *gentianov1alpha
 			if !compositePaused(xr) {
 				return "waiting for Crossplane to pause the composite " + xrName, nil
 			}
-			if err := r.releaseComposed(ctx, comp, xr); err != nil {
+			if err := r.releaseComposed(ctx, comp, tenantName, xr); err != nil {
 				return "", err
 			}
 			if claimed && claim.GetDeletionTimestamp().IsZero() {
@@ -124,7 +124,7 @@ func (r *ComponentReconciler) handOff(ctx context.Context, comp *gentianov1alpha
 		// Taken off once more first: whatever was composed after the last
 		// pass would go with the composite.
 		if paused {
-			if err := r.releaseComposed(ctx, comp, xr); err != nil {
+			if err := r.releaseComposed(ctx, comp, tenantName, xr); err != nil {
 				return "", err
 			}
 			return "waiting for the composite " + xrName + " to go", r.setPaused(ctx, xr, false)
@@ -170,7 +170,7 @@ func (r *ComponentReconciler) dropWrappers(ctx context.Context, xrName string) e
 // component's inventory, and so removed with the component as what was
 // rendered is. A composite whose handoff had not begun goes with its claim,
 // and takes what it composed with it.
-func (r *ComponentReconciler) handOffOnDelete(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+func (r *ComponentReconciler) handOffOnDelete(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string) (bool, error) {
 	xrName := comp.Annotations[compositeAnnotation]
 	if xrName == "" {
 		return true, nil
@@ -187,7 +187,7 @@ func (r *ComponentReconciler) handOffOnDelete(ctx context.Context, comp *gentian
 	if xr.GetAnnotations()[pausedAnnotation] != "true" {
 		return true, nil
 	}
-	if err := r.releaseComposed(ctx, comp, xr); err != nil {
+	if err := r.releaseComposed(ctx, comp, tenantName, xr); err != nil {
 		return false, err
 	}
 	// The wrappers now orphan what they wrap and nothing owns them: they go
@@ -229,7 +229,7 @@ var secretV2GVK = schema.GroupVersionKind{Group: "kv.vault.upbound.io", Version:
 // composed. A wrapper and a seeder are set to orphan what they manage, and
 // what a wrapper manages is marked the component's, which is what lets the
 // next render write it.
-func (r *ComponentReconciler) releaseComposed(ctx context.Context, comp *gentianov1alpha1.Component, xr *unstructured.Unstructured) error {
+func (r *ComponentReconciler) releaseComposed(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, xr *unstructured.Unstructured) error {
 	refs, _, _ := unstructured.NestedSlice(xr.Object, "spec", "resourceRefs")
 	if len(refs) == 0 {
 		refs, _, _ = unstructured.NestedSlice(xr.Object, "spec", "crossplane", "resourceRefs")
@@ -266,7 +266,7 @@ func (r *ComponentReconciler) releaseComposed(ctx context.Context, comp *gentian
 			// It only watched what somebody else -- the chart -- manages:
 			// what it watched is not the component's to own or remove.
 		case wrapper:
-			key, err := r.markWrapped(ctx, comp, obj)
+			key, err := r.markWrapped(ctx, comp, tenantName, obj)
 			if err != nil {
 				return err
 			}
@@ -312,7 +312,7 @@ func (r *ComponentReconciler) releaseComposed(ctx context.Context, comp *gentian
 // component's labels, and, in the component's namespace, the component as
 // its owner. It answers the inventory key of one outside that namespace,
 // where no owner reference reaches.
-func (r *ComponentReconciler) markWrapped(ctx context.Context, comp *gentianov1alpha1.Component, wrapper *unstructured.Unstructured) (string, error) {
+func (r *ComponentReconciler) markWrapped(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, wrapper *unstructured.Unstructured) (string, error) {
 	manifest, found, _ := unstructured.NestedMap(wrapper.Object, "spec", "forProvider", "manifest")
 	if !found {
 		return "", nil
@@ -330,7 +330,7 @@ func (r *ComponentReconciler) markWrapped(ctx context.Context, comp *gentianov1a
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	want := componentLabels(comp)
+	want := componentLabels(comp, tenantName)
 	if live.GetNamespace() == comp.Namespace {
 		want[renderedLabel] = "true"
 	}

@@ -494,7 +494,6 @@ installer creates only the ones in use:
 - `B-05` applies `crossplane/providers/activation.yaml` — one
   `ManagedResourceActivationPolicy` listing the 25 types — before the
   providers, and waits until each of them is an established CRD.
-- `provider-http` is not installed, and is removed from a cluster that has it.
 
 provider-kubernetes and provider-helm do not declare Crossplane's safe-start
 capability; all of their (seven) types are installed whatever the list says.
@@ -534,67 +533,6 @@ reads the gentian-apps checkout beside this one too, and
 on any other tree. The plural comes from `crossplane/providers/types/`, the
 providers' own type lists at the pinned versions; after moving a provider pin
 in `providers.yaml`, run `make refresh-provider-types`.
-
-### Upgrading a cluster that copied its profiles
-
-This concerns a cluster with a `Repository` claim for the gentian-apps git
-repository (`type: git`, `role: apps`) and an ApplicationSet
-`catalogue-gentian-apps` that copies every profile of that repository into the
-cluster and follows its branch. The installer writes no such claim, and an
-`install.env` that sets `GENTIAN_APPS_REPO`, `GENTIAN_APPS_BRANCH` or
-`GENTIAN_APPS_AUTH` is read without effect.
-
-**On a fresh install nothing needs doing.** On a cluster with that claim:
-
-- The `catalogue-<name>` ApplicationSet is removed as soon as the cluster runs
-  the new Compositions, and Argo CD prunes the `catalogue-<profile>`
-  Applications it generated and **the ComponentProfiles those own**. Profiles
-  installed through the director are not affected for long: they are in
-  `clusters/<cluster>/catalogue/` and the `gentian-catalogue` Application
-  applies them again.
-- An app that was installed by name from a copied profile is left without its
-  profile. Its workloads keep running; its Component reports `ProfileMissing`
-  and nothing is rolled out for it. Install it again with its coordinate and
-  digest, which fetches the profile and pins the install:
-  `kubectl gentian apps install <app> --tenant <tenant>`. Do this before
-  purging an uninstalled app's data as well: a purge is refused without the
-  profile.
-- An add-on that was switched on by name is the same: the app it is switched
-  on in reports `AddonProfileMissing` until the add-on is given with its
-  coordinate and digest, or switched off.
-- The ApplicationSet synced a profile's whole directory, not only the profile:
-  a `composition.yaml`, an `oidc-catalog.yaml` and `customizations/` beside it
-  were applied too, and pruning removes those with the profiles. A catalog
-  serves profiles only. An app whose profile names a Composition of its own
-  (`spec.package.composition`) or relies on an OIDC pack shipped beside it
-  needs those objects applied separately before it is installed again.
-- Step 0 removes `claims/gentian-apps-repository.yaml` from the deployments
-  checkout. Claims are synced without pruning, so the `Repository` object stays
-  on the cluster until it is deleted there
-  (`kubectl delete repository gentian-apps -n kernel-provisioning`); it composes
-  nothing but an Argo CD repository entry in the meantime.
-- A tenant's own `Repository` of `type: git` and `role: apps` copies nothing,
-  and the director refuses to declare a new one. Publish those
-  profiles as a catalog instead and add it for the tenant.
-
-### Upgrading a cluster whose roles were held by groups
-
-The Cluster claim's `spec.platformRoles` names a group for `admin` and
-`breakGlass` only; every other cluster role, and a tenant's perimeter
-approver, is a role holder (`spec.platformAccess.roleHolders`,
-[iam.md §1.1c](../concepts/iam.md)). A claim that still names a group for
-`securityOfficer`, `auditor`, `serviceAdmin` or `sharedAppsAdmin`, or a
-tenant manifest with `spec.perimeter.adminsApprove`, is rewritten once at
-step 0 (`scripts/lib/carry-over-role-holders.py`), in the commit step 0
-makes: the members of those kernel-realm groups become holders of their role,
-and a tenant's administrators who were in its perimeter group, or all of them
-where the switch was on, its perimeter approvers -- each with the reason
-"carried over at upgrade". Whoever cannot be carried over (a perimeter group
-member who is no administrator of the tenant, a member of the platform
-tenant's perimeter group) is named in a warning; name them again with
-`kubectl gentian platform-roles holders add` if they should hold a role.
-Step 0 reads Keycloak for this and nothing else; when it cannot be reached
-the claim keeps its old fields until a run where it can.
 
 ### Tenancy modes, addresses, and who is in charge
 

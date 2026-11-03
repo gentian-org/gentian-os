@@ -310,7 +310,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 				"remoteRef": map[string]interface{}{"key": own, "property": p},
 			})
 		}
-		return r.ensureDatabaseSecret(ctx, comp, store, target, data)
+		return r.ensureDatabaseSecret(ctx, comp, tenant.Name, store, target, data)
 	}
 	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
 		// The names the kernel's chart declares, which a backup of this
@@ -338,7 +338,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			})
 		}
 	}
-	return r.ensureDatabaseSecret(ctx, comp, store, target, data)
+	return r.ensureDatabaseSecret(ctx, comp, tenant.Name, store, target, data)
 }
 
 // databaseSecretTemplate is the credential Secret every database requirement
@@ -481,7 +481,7 @@ func roleJobHash(job *batchv1.Job) string {
 
 // ensureDatabaseSecret delivers the credential into the component's
 // namespace and reports whether it has arrived.
-func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, store string, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
+func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, tenantName, store string, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
 	name := comp.Name + componentDatabaseSecretSuffix
 	spec := map[string]interface{}{
 		"refreshInterval": "1h",
@@ -500,7 +500,7 @@ func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *ge
 	desired.SetGroupVersionKind(externalSecretGVK)
 	desired.SetName(name)
 	desired.SetNamespace(comp.Namespace)
-	desired.SetLabels(componentLabels(comp))
+	desired.SetLabels(componentLabels(comp, tenantName))
 	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
 		return false, "", "", err
 	}
@@ -607,16 +607,8 @@ func componentsOfZoneSecret(c client.Client) handler.EventHandler {
 // componentOriginLabel marks a Component made from an entry of the tenant's
 // spec.apps ("install"): the ones ensureAppComponents removes again when
 // their entry goes.
-//
-// "default" is what an earlier release labeled the components it placed
-// itself, with no line in git. Such a Component is left exactly as it is
-// until the director's placement worker writes its entry; ensureComponent
-// then relabels it, and from then on it is an install like any other. It
-// is never removed for lacking an entry: removing one purged its data.
-// The value is read for one release.
 const (
 	componentOriginLabel   = "gentianos.io/component-origin"
-	componentOriginDefault = "default"
 	componentOriginInstall = "install"
 )
 
@@ -849,17 +841,6 @@ func (r *TenantReconciler) ensureComponent(
 	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
-	// A Component written before spec.tenancy became spec.class has neither:
-	// the API server returns the stored object untouched, and the rename left
-	// the field this reconciler reads empty. It is REPAIRED, not replaced.
-	// Deleting it deadlocked the cluster once: the object has a finalizer,
-	// removing a finalizer is an update of the whole object, and the whole
-	// object is invalid while class is empty. Setting the field is one small
-	// write and the immutability rule admits it from empty for exactly this.
-	if existing.Spec.Class == "" {
-		existing.Spec.Class = gentianov1alpha1.ComponentClassApp
-		changed = true
-	}
 	// What the Tenant says about this install reaches the Component here, and
 	// that is the whole of how a commit takes effect: the director commits to
 	// the Tenant, Argo applies it, and the Component is reconciled again with

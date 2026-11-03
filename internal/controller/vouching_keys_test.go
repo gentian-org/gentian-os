@@ -67,11 +67,11 @@ func TestRegistrarListHoldsOnlyComponentsThatVouch(t *testing.T) {
 		"notary": vouchingProfile("notary"), "checker": rightsProfile("checker", true), "plain": rightsProfile("plain", false),
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		notary, checker, plain, elsewhere, profiles["notary"], profiles["checker"], profiles["plain"],
+		rightsTenant("acme"), rightsTenant("globex"), notary, checker, plain, elsewhere, profiles["notary"], profiles["checker"], profiles["plain"],
 	).Build()
 	components := &ComponentReconciler{Client: c, Scheme: scheme}
 	for _, comp := range []*gentianov1alpha1.Component{notary, checker, plain, elsewhere} {
-		if err := components.ensureRightsCheck(ctx, comp, profiles[comp.Name]); err != nil {
+		if err := components.ensureRightsCheck(ctx, comp, defaultTenantName(comp), profiles[comp.Name]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -146,8 +146,8 @@ func TestRegistrarListNamesTheProfile(t *testing.T) {
 	comp := rightsComponent("acme", "front-desk")
 	comp.Spec.ProfileRef.Name = "notary"
 	profile := vouchingProfile("notary")
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(comp, profile).Build()
-	if err := (&ComponentReconciler{Client: c, Scheme: scheme}).ensureRightsCheck(ctx, comp, profile); err != nil {
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rightsTenant("acme"), comp, profile).Build()
+	if err := (&ComponentReconciler{Client: c, Scheme: scheme}).ensureRightsCheck(ctx, comp, defaultTenantName(comp), profile); err != nil {
 		t.Fatal(err)
 	}
 	keys, err := vouchingKeys(ctx, c)

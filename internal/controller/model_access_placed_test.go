@@ -37,13 +37,13 @@ func shippedDesktopProfile(t *testing.T) *gentianov1alpha1.ComponentProfile {
 		"desktop.enabled=true", "desktop.chart.version=0.1.0-develop.0000000")
 }
 
-// placedComponent is the Component an earlier release made for a profile
-// the platform places, labeled origin default, with no entry in spec.apps.
+// placedComponent is the Component made from the entry the placement worker
+// writes for a profile the platform places.
 func placedComponent(tenant, name string) *gentianov1alpha1.Component {
 	return &gentianov1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: "tenant-" + tenant,
-			Labels: map[string]string{tenantLabel: tenant, managedByLabel: managedByValue, componentOriginLabel: componentOriginDefault},
+			Labels: map[string]string{tenantLabel: tenant, managedByLabel: managedByValue, componentOriginLabel: componentOriginInstall},
 		},
 		Spec: gentianov1alpha1.ComponentSpec{
 			ProfileRef: gentianov1alpha1.ProfileRef{Name: name},
@@ -56,6 +56,7 @@ func placedComponent(tenant, name string) *gentianov1alpha1.Component {
 func newPlacedWorld(t *testing.T, objs ...client.Object) *modelAccessWorld {
 	t.Helper()
 	w := newModelAccessWorld(t, nil, append(objs, placedComponent("demo", "desktop"))...)
+	w.tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
 	w.profiles["desktop"] = shippedDesktopProfile(t)
 	return w
 }
@@ -114,7 +115,7 @@ func TestAPlacedComponentThatDeclaresTheModelGatewayIsServed(t *testing.T) {
 		t.Fatal("no Secret llm-credentials-desktop")
 	}
 	key := secretValue(secret, modelCredentialsAPIKey)
-	if !strings.HasPrefix(key, modelgateway.KeyPrefix) || key == modelgateway.LegacyKey("demo", "desktop") {
+	if !strings.HasPrefix(key, modelgateway.KeyPrefix) {
 		t.Fatalf("key = %q", key)
 	}
 	if w.gateway.keys["demo-desktop"] != modelgateway.HashKey(key) || len(w.gateway.keys) != 1 {
@@ -144,7 +145,7 @@ func TestAPlacedComponentThatDeclaresTheModelGatewayIsServed(t *testing.T) {
 		t.Error("the key is among the release values")
 	}
 
-	np := buildComponentNetworkPolicy(comp, releasePods(releaseName(comp)), nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
+	np := buildComponentNetworkPolicy(comp, defaultTenantName(comp), releasePods(releaseName(comp)), nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
 	if len(np.Spec.Egress) != 1 {
 		t.Fatalf("egress = %+v", np.Spec.Egress)
 	}
@@ -261,31 +262,26 @@ func TestAPlacedComponentIsServedOnlyAtPlatformTrustAndNeverByValue(t *testing.T
 	}
 }
 
-// A component the tenant has by another way -- neither an entry of
-// spec.apps nor the label an earlier release placed it with -- is not served
-// by the placed route, whatever its profile declares.
+// A component the tenant has by another way -- not an entry of spec.apps --
+// is not served by the placed route, whatever its profile declares.
 func TestOnlyAComponentThePlatformPlacedIsServedAsOne(t *testing.T) {
 	w := newPlacedWorld(t)
+	w.tenant.Spec.Apps = nil
 	comp := placedComponent("demo", "desktop")
-	delete(comp.Labels, componentOriginLabel)
 	v, err := modelAccessFor(context.Background(), w.r.Client, comp, w.profiles["desktop"], w.tenant)
 	if err != nil || v.reason != "ModelAccessUnsupported" || v.placed {
 		t.Fatalf("verdict = %+v %v", v, err)
 	}
 }
 
-// The desktop as the placement worker writes it now: an entry of spec.apps
+// The desktop as the placement worker writes it: an entry of spec.apps
 // marked placed, and a Component made from it labeled install. It is served
-// exactly as the Component an earlier release placed: by the Component
-// reconciler, at platform trust, with a key of its own. When the worker
-// takes the entry out, the platform took the component away, and its key
-// goes rather than being kept as an uninstalled app's.
+// by the Component reconciler, at platform trust, with a key of its own.
+// When the worker takes the entry out, the platform took the component away,
+// and its key goes rather than being kept as an uninstalled app's.
 func TestAPlacedEntryIsServedAsAPlacedComponent(t *testing.T) {
 	comp := placedComponent("demo", "desktop")
-	comp.Labels[componentOriginLabel] = componentOriginInstall
-	w := newModelAccessWorld(t, nil, comp)
-	w.profiles["desktop"] = shippedDesktopProfile(t)
-	w.tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
+	w := newPlacedWorld(t)
 
 	state := w.pass(t)
 	if len(state.served) != 1 || state.served[0] != "desktop" || len(state.waiting) != 0 {
@@ -327,6 +323,7 @@ func TestAnotherTenantsDesktopHasADifferentKey(t *testing.T) {
 
 	demo := w.tenant
 	w.tenant = planTenant("other")
+	w.tenant.Spec.Apps = []gentianov1alpha1.TenantApp{placedEntry("desktop")}
 	w.pass(t)
 	theirs := &corev1.Secret{}
 	if err := w.r.Get(context.Background(), types.NamespacedName{Name: "llm-credentials-desktop", Namespace: "tenant-other"}, theirs); err != nil {
@@ -388,6 +385,7 @@ func TestWhatRemovesAPlacedComponentsKey(t *testing.T) {
 	t.Run("the platform takes the component away", func(t *testing.T) {
 		w := newPlacedWorld(t)
 		w.pass(t)
+		w.tenant.Spec.Apps = nil
 		if err := w.r.Delete(ctx, placedComponent("demo", "desktop")); err != nil {
 			t.Fatal(err)
 		}
@@ -406,6 +404,7 @@ func TestWhatRemovesAPlacedComponentsKey(t *testing.T) {
 // uninstalled app's generated key is still kept.
 func TestAPlacedComponentDoesNotChangeWhatAppsAreGiven(t *testing.T) {
 	w := newModelAccessWorld(t, []string{"chat", "wiki"}, placedComponent("demo", "desktop"))
+	w.tenant.Spec.Apps = append(w.tenant.Spec.Apps, placedEntry("desktop"))
 	w.profiles["desktop"] = shippedDesktopProfile(t)
 	state := w.pass(t)
 	if len(state.served) != 2 || len(w.gateway.keys) != 2 || w.secret(t, "wiki") != nil {

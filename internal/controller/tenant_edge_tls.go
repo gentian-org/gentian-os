@@ -28,10 +28,6 @@ import (
 const (
 	defaultDNS01ClusterIssuer = "letsencrypt-dns01-cloudflare"
 	defaultServicePort        = int32(80)
-
-	// kernelWildcardTenantSecret was replicated from the kernel wildcard into
-	// tenant namespaces by older operator versions.
-	kernelWildcardTenantSecret = "kernel-wildcard-tls"
 )
 
 var certManagerCertGVK = schema.GroupVersionKind{
@@ -92,19 +88,6 @@ func buildTenantWildcardCertificate(
 	return obj
 }
 
-func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context, nsName string) error {
-	legacy := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kernelWildcardTenantSecret,
-			Namespace: nsName,
-		},
-	}
-	if err := r.Delete(ctx, legacy); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete legacy kernel wildcard TLS secret: %w", err)
-	}
-	return nil
-}
-
 // ensureTenantEdgeRoutes programs how a tenant's hostnames are reached.
 //
 // No DNS here, and none needed: the tenant's HTTPRoutes attach to the kernel
@@ -154,9 +137,6 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 	nsName := tenantNamespaceName(tenant)
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
 
-	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
-		return err
-	}
 	if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 		return err
 	}
@@ -195,10 +175,6 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		}
 	}
 
-	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
-		return err
-	}
-
 	tenantWildcardTLS := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantWildcardSecretName(tenant.Name),
@@ -219,17 +195,3 @@ func tenantWildcardSecretName(tenantName string) string {
 	return fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 }
 
-func additionalIngressProfile(appProfile string, index int) string {
-	return fmt.Sprintf("%s-extra%d", appProfile, index)
-}
-
-func ingressHost(appProfile string, ingress *gentianov1alpha1.ExposureSpec, effectiveDomain string) string {
-	sub := ingress.SubDomain
-	if sub == "@" {
-		return effectiveDomain
-	}
-	if sub == "" {
-		sub = appProfile
-	}
-	return fmt.Sprintf("%s.%s", sub, effectiveDomain)
-}

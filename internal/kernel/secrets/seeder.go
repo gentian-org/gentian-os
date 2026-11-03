@@ -153,6 +153,18 @@ func randomHex(n int) string {
 // not read back may not be the stored one — PutOnce leaves an existing path
 // alone — and handing it on would set a database role or a bucket user to a
 // password nothing holds.
+// stored is the record at path, or nil where the path holds nothing. A read
+// that fails is an error and not "nothing": taken for nothing, the round would
+// write with PutOnce, which leaves the stored record as it is, and the values
+// it refreshes -- an address, a port -- would not reach the vault.
+func (s *Seeder) stored(ctx context.Context, path string) (map[string]string, error) {
+	got, err := s.w.Get(ctx, path)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	return got, err
+}
+
 func (s *Seeder) seedAndRead(ctx context.Context, path string, data map[string]string, reproducible bool) (map[string]string, error) {
 	if err := s.w.PutOnce(ctx, path, data); err != nil {
 		return nil, err
@@ -181,7 +193,10 @@ type OIDCCreds struct {
 // client-id are refreshed on reconcile; client-secret is write-once.
 func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID string) (OIDCCreds, error) {
 	salt := CategoryPath(tenant, app, "oidc")
-	existing, _ := s.w.Get(ctx, salt)
+	existing, err := s.stored(ctx, salt)
+	if err != nil {
+		return OIDCCreds{}, fmt.Errorf("seed oidc(%s/%s): read: %w", tenant, app, err)
+	}
 	// The stored secret stands; one is made only where none is stored.
 	secret, certain := "", true
 	if existing != nil {
@@ -199,7 +214,6 @@ func (s *Seeder) SeedOIDC(ctx context.Context, tenant, app, issuer, clientID str
 		"client-id":     clientID,
 		"client-secret": secret,
 	}
-	var err error
 	if existing == nil {
 		err = s.w.PutOnce(ctx, salt, want)
 	} else {
@@ -384,7 +398,10 @@ type CacheCreds struct {
 // rule in every profile. Engines without per-app users (memcached) leave it empty.
 func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCreds) (CacheCreds, error) {
 	salt := CategoryPath(tenant, app, "cache")
-	existing, _ := s.w.Get(ctx, salt)
+	existing, err := s.stored(ctx, salt)
+	if err != nil {
+		return CacheCreds{}, fmt.Errorf("seed cache(%s/%s): read: %w", tenant, app, err)
+	}
 	password, certain := base.Password, true
 	if password == "" {
 		if existing != nil && existing["password"] != "" {
@@ -409,7 +426,6 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 	} else if existing != nil && existing["user"] != "" {
 		want["user"] = existing["user"]
 	}
-	var err error
 	if existing == nil {
 		err = s.w.PutOnce(ctx, salt, want)
 	} else {
@@ -461,7 +477,10 @@ type ModelAccessCreds struct {
 // pass, so a gateway that moves is followed.
 func (s *Seeder) SeedModelAccess(ctx context.Context, tenant, app, prefix, baseURL string) (ModelAccessCreds, error) {
 	salt := CategoryPath(tenant, app, ModelAccessCategory)
-	existing, _ := s.w.Get(ctx, salt)
+	existing, err := s.stored(ctx, salt)
+	if err != nil {
+		return ModelAccessCreds{}, fmt.Errorf("seed model access(%s/%s): read: %w", tenant, app, err)
+	}
 	key := ""
 	if existing != nil {
 		key = existing["api-key"]
@@ -474,7 +493,6 @@ func (s *Seeder) SeedModelAccess(ctx context.Context, tenant, app, prefix, baseU
 		key = prefix + g.value
 	}
 	want := map[string]string{"base-url": baseURL, "api-key": key}
-	var err error
 	if existing == nil {
 		err = s.w.PutOnce(ctx, salt, want)
 	} else if existing["base-url"] != baseURL || existing["api-key"] != key {

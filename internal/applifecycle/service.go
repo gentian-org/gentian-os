@@ -18,9 +18,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -30,17 +27,10 @@ import (
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
-	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
 const platformAppAnnotation = "gentianos.io/platform-app"
-
-var appClaimGVK = schema.GroupVersionKind{
-	Group:   "gentianos.io",
-	Version: "v1alpha1",
-	Kind:    "App",
-}
 
 // Service answers what the cluster holds of a tenant's apps, resources and
 // backups, and carries out the commands of the operator's listener. It writes
@@ -164,76 +154,6 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		svc.actualSource = src
 	}
 	return svc, nil
-}
-
-func (s *Service) appReadyState(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (bool, string, error) {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(appClaimGVK)
-	if err := s.client.Get(ctx, client.ObjectKey{Name: profile, Namespace: tenantNamespace(tenant)}, obj); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, "Install requested — waiting for the app claim to be created", nil
-		}
-		return false, "", err
-	}
-	ready, msg := claimReady(obj)
-	return ready, msg, nil
-}
-
-func claimReady(obj *unstructured.Unstructured) (bool, string) {
-	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
-	if err != nil || !found {
-		return false, "Provisioning in progress"
-	}
-	for _, raw := range conditions {
-		cond, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if cond["type"] == "Ready" && cond["status"] == "True" {
-			return true, "Installed and ready"
-		}
-		if cond["type"] == "Ready" && cond["message"] != nil {
-			return false, fmt.Sprint(cond["message"])
-		}
-	}
-	return false, "Provisioning in progress"
-}
-
-// ListInstalled returns non-platform apps from tenant.spec.apps with claim status.
-func (s *Service) ListInstalled(ctx context.Context, tenant string) ([]Result, error) {
-	t := &gentianov1alpha1.Tenant{}
-	if err := s.client.Get(ctx, client.ObjectKey{Name: tenant}, t); err != nil {
-		return nil, err
-	}
-	// What the tenant installed: a component the platform places is not
-	// listed, as a platform app is not.
-	installed, err := placement.Installed(ctx, s.client, t.Spec.Apps)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Result, 0, len(installed))
-	for _, app := range installed {
-		if app.Profile == "" {
-			continue
-		}
-		ap := &gentianov1alpha1.ComponentProfile{}
-		if err := s.client.Get(ctx, client.ObjectKey{Name: app.Profile}, ap); err == nil {
-			if ap.Annotations != nil && ap.Annotations[platformAppAnnotation] == "true" {
-				continue
-			}
-		}
-		ready, msg, err := s.appReadyState(ctx, t, app.Profile)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, Result{
-			Tenant:  tenant,
-			Profile: app.Profile,
-			Ready:   ready,
-			Message: msg,
-		})
-	}
-	return out, nil
 }
 
 func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string, error) {

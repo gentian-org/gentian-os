@@ -86,17 +86,7 @@ func (c *KVClient) ListChildren(ctx context.Context, logicalPath string) ([]stri
 }
 
 func (c *KVClient) listChildren(ctx context.Context, path string) ([]string, error) {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	url := fmt.Sprintf("%s/v1/%s/metadata/%s?list=true", c.addr, c.mount, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/metadata/%s?list=true", c.addr, c.mount, path), nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("openbao unreachable: %w", err)
 	}
@@ -120,17 +110,7 @@ func (c *KVClient) listChildren(ctx context.Context, path string) ([]string, err
 }
 
 func (c *KVClient) deleteMetadata(ctx context.Context, path string) error {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return err
-	}
-	url := fmt.Sprintf("%s/v1/%s/metadata/%s", c.addr, c.mount, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodDelete, fmt.Sprintf("%s/v1/%s/metadata/%s", c.addr, c.mount, path), nil, "")
 	if err != nil {
 		return fmt.Errorf("openbao unreachable: %w", err)
 	}

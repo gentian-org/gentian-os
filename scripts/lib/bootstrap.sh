@@ -647,19 +647,6 @@ apply_cluster_xr() {
         exit 1
     }
 
-    # A claim left over from the layout this installer no longer builds is
-    # refused before anything is applied. spec.layout is gone from the schema,
-    # so a claim still carrying it is a claim nobody has looked at since the
-    # kernel moved -- and applying it would place the kernel by a composition
-    # that has one answer now, in namespaces the rest of the claim does not
-    # describe.
-    local claim_layout
-    claim_layout="$(_gentian_yq '.spec.layout' "${claims_dir}/cluster.yaml" 2>/dev/null || echo "")"
-    if [[ -n "${claim_layout}" && "${claim_layout}" != "v5" && "${claim_layout}" != "null" ]]; then
-        error "The Cluster claim says layout '${claim_layout}'. This installer builds one layout and it is not that one."
-        error "  Remove spec.layout from ${claims_dir}/cluster.yaml, or scaffold a new claim."
-        return 1
-    fi
     info "Applying Cluster claim from ${claims_dir}/cluster.yaml..."
     kubectl apply -f "${claims_dir}/cluster.yaml"
 
@@ -738,12 +725,6 @@ _seed_once() {
 # cert-manager's default; cert-manager renews them at two thirds of that, so
 # a sealed vault leaves about 30 days before the first one expires.
 #
-# A self-signed cluster that predates this had its CA made by cert-manager,
-# and clients may have been told to trust it. That CA is imported instead of
-# generating one, from the Secret cert-manager wrote -- recognized by the
-# Certificate that wrote it, so a Secret somebody supplied for private-ca is
-# never read -- and the Secret is then written again without its key.
-#
 # The CA's certificate is written to gentian-root-ca-tls in cert-manager's
 # namespace, ca.crt and tls.crt and no key: the anchor a self-signed cluster
 # hands to its clients (certificates.trustAnchorSecret).
@@ -779,38 +760,18 @@ _internal_ca_role() {
         no_store=true require_cn=false >/dev/null
 }
 
-# _internal_ca_legacy <dir> — the CA cert-manager made on this cluster, as
-# <dir>/ca.crt and <dir>/ca.key, when there is one.
-_internal_ca_legacy() {
-    local dir="$1" ns="$2"
-    kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null |
-        jq -e 'select(.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca")
-               | select(.data["tls.key"] != null)' > "${dir}/secret.json" 2>/dev/null || return 1
-    (umask 077
-     jq -r '.data["tls.crt"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.crt"
-     jq -r '.data["tls.key"]' "${dir}/secret.json" | base64 -d > "${dir}/ca.key")
-    rm -f "${dir}/secret.json"
-    openssl x509 -noout -in "${dir}/ca.crt" >/dev/null 2>&1 && [[ -s "${dir}/ca.key" ]]
-}
-
 # _internal_ca_publish <ns> — the CA's certificate, without a key, as
-# gentian-root-ca-tls. Only over a Secret that is this one's, or the one
-# cert-manager's CA wrote; a Secret of that name somebody else made is left.
+# gentian-root-ca-tls. Only over a Secret that is this one's; a Secret of that
+# name somebody else made is left.
 _internal_ca_publish() {
     local ns="$1" cur crt
     crt="$(bao read -field=certificate "${INTERNAL_CA_MOUNT}/cert/ca" 2>/dev/null)" || return 1
     [[ -n "${crt}" ]] || return 1
     cur="$(kubectl get secret gentian-root-ca-tls -n "${ns}" -o json 2>/dev/null || true)"
-    if [[ -n "${cur}" ]]; then
-        if jq -e '.metadata.annotations["cert-manager.io/certificate-name"] == "gentian-root-ca"' \
-            <<< "${cur}" >/dev/null 2>&1; then
-            # Its type says it holds a key, and a type cannot be changed.
-            kubectl delete secret gentian-root-ca-tls -n "${ns}" >/dev/null || return 1
-        elif ! jq -e '.metadata.labels["gentianos.io/issuer-role"] == "internal-ca"' \
-            <<< "${cur}" >/dev/null 2>&1; then
-            warn "${ns}/gentian-root-ca-tls is not the internal CA's; left as it is."
-            return 0
-        fi
+    if [[ -n "${cur}" ]] && ! jq -e '.metadata.labels["gentianos.io/issuer-role"] == "internal-ca"' \
+        <<< "${cur}" >/dev/null 2>&1; then
+        warn "${ns}/gentian-root-ca-tls is not the internal CA's; left as it is."
+        return 0
     fi
     jq -n --arg c "${crt}" --arg ns "${ns}" '{
         apiVersion: "v1", kind: "Secret", type: "Opaque",
@@ -823,7 +784,7 @@ _internal_ca_publish() {
 }
 
 seed_internal_ca() {
-    local mount="${INTERNAL_CA_MOUNT}" default dir ns made
+    local mount="${INTERNAL_CA_MOUNT}" default ns
     if [[ "$(gentian_issuer_mode)" == "private-ca" ]]; then
         info "issuerMode is private-ca: gentian-ca is your own CA, and the vault holds none."
         return 0
@@ -847,33 +808,14 @@ seed_internal_ca() {
     if [[ -n "${default}" ]]; then
         info "Internal CA already in the vault; left as it is."
     else
-        dir="$(mktemp -d)" || return 1
-        chmod 700 "${dir}"
-        if _internal_ca_legacy "${dir}" "${ns}"; then
-            # Certificate and key on stdin, never in an argument.
-            local imported
-            imported="$(cat "${dir}/ca.crt" "${dir}/ca.key" |
-                bao write -format=json "${mount}/issuers/import/bundle" pem_bundle=- 2>/dev/null |
-                jq -r '.data.imported_issuers[0] // empty')"
-            rm -rf "${dir}"
-            if [[ -z "${imported}" ]] ||
-                ! bao write "${mount}/config/issuers" default="${imported}" >/dev/null; then
-                error "The CA cert-manager made on this cluster could not be imported into ${mount}/."
-                return 1
-            fi
-            made="imported the CA cert-manager made on this cluster before"
-        else
-            rm -rf "${dir}"
-            if ! bao write "${mount}/root/generate/internal" \
-                common_name=gentian-root-ca organization=gentian-os \
-                key_type=ec key_bits=256 ttl=87600h max_path_length=0 \
-                issuer_name=gentian-root-ca key_name=gentian-root-ca >/dev/null; then
-                error "The vault could not generate the internal CA at ${mount}/."
-                return 1
-            fi
-            made="generated in the vault"
+        if ! bao write "${mount}/root/generate/internal" \
+            common_name=gentian-root-ca organization=gentian-os \
+            key_type=ec key_bits=256 ttl=87600h max_path_length=0 \
+            issuer_name=gentian-root-ca key_name=gentian-root-ca >/dev/null; then
+            error "The vault could not generate the internal CA at ${mount}/."
+            return 1
         fi
-        success "Internal CA ${made}, at ${mount}/."
+        success "Internal CA generated in the vault, at ${mount}/."
     fi
     if ! _internal_ca_role; then
         error "The internal CA's role ${mount}/roles/gentian-ca could not be written."
@@ -1689,8 +1631,7 @@ _claim_cluster_fields() {
         # and writes every record of this zone, in both network modes. With a
         # fixed address the records point at the Gateway's address; behind a
         # tunnel the operator writes DNSEndpoints that point every hostname
-        # at the tunnel's name. The claim once carried a field for it,
-        # certificates.externalDns, which nothing read.
+        # at the tunnel's name.
         printf '    # external-dns is installed with this provider and writes every record\n'
         if [[ "${nm}" == "static-ip" ]]; then
             printf '    # of the zone, pointing at the address of the Gateway. dnsProvider:\n'
@@ -1927,18 +1868,7 @@ ensure_platform_concierge_exposure() {
     local file="${dir}/exposures.yaml" manifest="${dir}/tenant.yaml" kustomization="${dir}/kustomization.yaml"
     [[ -f "${manifest}" ]] || return 1
 
-    # An earlier installer appended the entry to the tenant's manifest itself.
-    # The block is this function's own, from its comment to the end of the
-    # file, and is taken out so the surface is declared once.
     local wrote=1
-    if grep -q '^  # What this tenant publishes with no session in front of it' "${manifest}"; then
-        local kept
-        kept="$(sed '/^  # What this tenant publishes with no session in front of it/,$d' "${manifest}")"
-        printf '%s\n' "${kept}" > "${manifest}"
-        info "tenants/platform/tenant.yaml: the concierge's publication moves to exposures.yaml."
-        wrote=0
-    fi
-
     if [[ ! -f "${file}" ]]; then
         local now review
         now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1984,178 +1914,6 @@ EXPOSURES
         wrote=0
     fi
     return "${wrote}"
-}
-
-# _remove_retired_apps_repository_claim <kernel dir>
-#
-# Removes the Repository claim earlier installers scaffolded for the app
-# catalog's git repository, and answers 0 when it removed one.
-#
-# Only the file this installer wrote, recognized by what it declared: the
-# claim named gentian-apps, a git repository with role apps. A file of that
-# name saying anything else is somebody's own and is left alone.
-_remove_retired_apps_repository_claim() {
-    local file="$1/claims/gentian-apps-repository.yaml"
-    [[ -f "${file}" ]] || return 1
-    grep -q '^  name: gentian-apps$' "${file}" || return 1
-    grep -q '^  type: git$' "${file}" || return 1
-    grep -q '^  role: apps$' "${file}" || return 1
-    rm -f "${file}"
-    info "Removed ${file}: profiles are no longer copied from the gentian-apps git repository;"
-    info "  they arrive one at a time from the catalog source on the Cluster claim."
-    return 0
-}
-
-# _remove_retired_suze_claim <kernel dir>
-#
-# Removes the Suze claim earlier installers scaffolded for Keycloak and
-# OpenFGA, and answers 0 when it removed one. Only a file declaring that
-# kind: a claims/suze.yaml saying anything else is somebody's own and is
-# left alone.
-_remove_retired_suze_claim() {
-    local file="$1/claims/suze.yaml"
-    [[ -f "${file}" ]] || return 1
-    grep -q '^kind: Suze$' "${file}" || return 1
-    rm -f "${file}"
-    info "Removed ${file}: Keycloak and OpenFGA are installed by the identity ApplicationSet"
-    info "  (kernel/appsets/raw/09-identity.yaml); no claim composes them any more."
-    return 0
-}
-
-# _claim_security_officers_to_role_holders <kernel_dir>
-#
-# A Cluster claim names who holds a cluster role in
-# spec.platformAccess.roleHolders, each entry with its role. A claim written
-# before then names its security officers in securityOfficers, entries
-# without a role, beside brokeredSecondFactor; the schema has neither, and
-# the API server would drop them in silence. Rewritten here, in place and
-# committed with the rest: the list under its new key, each entry given
-# role securityOfficer, and the switch removed. Returns 1 when there was
-# nothing to rewrite.
-_claim_security_officers_to_role_holders() {
-    local file="$1/claims/cluster.yaml"
-    [[ -f "${file}" ]] || return 1
-    grep -Eq '^[[:space:]#]*(securityOfficers|brokeredSecondFactor):' "${file}" || return 1
-    local tmp
-    tmp="$(mktemp)"
-    awk '
-        /^[[:space:]#]*brokeredSecondFactor:/ { next }
-        match($0, /^[[:space:]#]*securityOfficers:/) {
-            sub(/securityOfficers:/, "roleHolders:")
-            inside = ($0 !~ /^[[:space:]]*#/)
-            match($0, /^ */); keyIndent = RLENGTH
-            print; next
-        }
-        inside {
-            match($0, /^ */)
-            if ($0 !~ /^[[:space:]]*$/ && RLENGTH <= keyIndent) { inside = 0 }
-            else if (match($0, /^ *- tenant:/)) {
-                pad = substr($0, 1, index($0, "-") - 1)
-                print pad "- role: securityOfficer"
-                sub(/- tenant:/, "  tenant:")
-            }
-        }
-        { print }
-    ' "${file}" > "${tmp}" && mv "${tmp}" "${file}"
-    info "Rewrote ${file}: security officers are role holders (spec.platformAccess.roleHolders, role securityOfficer)."
-    return 0
-}
-
-# _claim_drop_empty_mappings <claim file>
-#
-# A key of the claim's spec with nothing under it is null, and the schema
-# wants an object there: Argo's diff of the whole claim fails and nothing of
-# it reaches the cluster. A rewrite that removes a key's last child leaves
-# just that (platformAccess, once its brokeredSecondFactor was retired), so
-# step 0 runs this after every rewrite: each key below spec with neither a
-# value nor a child goes, and with it a parent it empties in turn. Returns 1
-# when there was none.
-_claim_drop_empty_mappings() {
-    local file="$1" tmp
-    [[ -f "${file}" ]] || return 1
-    tmp="$(mktemp)"
-    awk '
-        function indent(s) { match(s, /^ */); return RLENGTH }
-        { line[NR] = $0; keep[NR] = 1 }
-        END {
-            n = NR; dropped = 0
-            do {
-                changed = 0
-                for (i = 1; i <= n; i++) {
-                    if (!keep[i] || line[i] !~ /^  +[A-Za-z_][A-Za-z0-9_-]*:[ \t]*(#.*)?$/) continue
-                    k = indent(line[i]); empty = 1
-                    for (j = i + 1; j <= n; j++) {
-                        if (!keep[j] || line[j] ~ /^[ \t]*(#.*)?$/) continue
-                        d = indent(line[j])
-                        empty = !(d > k || (d == k && substr(line[j], d + 1, 2) == "- "))
-                        break
-                    }
-                    if (empty) { keep[i] = 0; changed = 1; dropped++ }
-                }
-            } while (changed)
-            last = n
-            if (dropped) while (last > 0 && (!keep[last] || line[last] ~ /^[ \t]*$/)) last--
-            for (i = 1; i <= last; i++) if (keep[i]) print line[i]
-            exit (dropped ? 0 : 1)
-        }
-    ' "${file}" > "${tmp}" || { rm -f "${tmp}"; return 1; }
-    mv "${tmp}" "${file}"
-    info "Rewrote ${file}: removed keys left with nothing under them (a null where the schema wants an object)."
-    return 0
-}
-
-# _claim_carry_over_role_holders <kernel_dir> <cluster>
-#
-# securityOfficer, auditor, serviceAdmin and sharedAppsAdmin are held by name
-# on the Cluster claim (spec.platformAccess.roleHolders), and so is a tenant's
-# perimeter approver; the claim's spec.platformRoles names a group for admin
-# and breakGlass only, and a tenant's manifest has no spec.perimeter. A
-# cluster set up before then is carried over here, once, in the commit step 0
-# makes anyway: the members of the retired kernel-realm groups, of each
-# tenant's perimeter group who administer it, and every administrator of a
-# tenant that had adminsApprove, become role holders with reason "carried
-# over at upgrade" (scripts/lib/carry-over-role-holders.py). Whoever cannot be
-# carried over is named in a warning. The one read of the cluster step 0
-# makes, and read only: a cluster with no Keycloak yet has nobody in those
-# groups, and one whose Keycloak does not answer keeps the old fields until a
-# run where it does. Returns 1 when there was nothing to carry over.
-_GENTIAN_CARRIED_PATHS=()
-_claim_carry_over_role_holders() {
-    local kernel_dir="$1" cluster="$2"
-    local claim="${kernel_dir}/claims/cluster.yaml" tenants="${GENTIAN_DEPLOYMENTS_PATH}/clusters/$2/tenants"
-    local script="${SCRIPT_DIR}/scripts/lib/carry-over-role-holders.py"
-    [[ -f "${claim}" ]] || return 1
-    python3 "${script}" check "${claim}" "${tenants}" || return 1
-    if gentian_read_only; then
-        gentian_would "carry the cluster's group-held roles and perimeter approvers over to role holders on claims/cluster.yaml"
-        return 1
-    fi
-    local ns user="" pass="" base="" line rc=0 out
-    ns="${IDENTITY_NAMESPACE:-$(ns_kernel authentication)}"
-    if command -v kubectl >/dev/null 2>&1; then
-        user="admin"
-        pass="$(kubectl get secret keycloak-idp-credentials -n "${ns}" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
-    fi
-    if [[ -n "${user}" && -n "${pass}" ]]; then
-        if ! base="$(gentian_service_addr "${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http" "${ns}" 8080 http)"; then
-            warn "Keycloak cannot be reached from here, so the cluster's role holders were not carried over yet;"
-            warn "  claims/cluster.yaml keeps its old platformRoles until a run where it can be."
-            return 1
-        fi
-        base="${base}/auth"
-    fi
-    out="$(KC_BASE="${base}" KC_USER="${user}" KC_PASS="${pass}" KERNEL_REALM="${KERNEL_REALM:-kernel}" \
-        python3 "${script}" apply "${claim}" "${tenants}")" || rc=$?
-    while IFS= read -r line; do
-        case "${line}" in
-            info:*) info "Role holders: ${line#info: }" ;;
-            warn:*) warn "Role holders: ${line#warn: }" ;;
-            edited:*) _GENTIAN_CARRIED_PATHS+=("${line#edited: "${GENTIAN_DEPLOYMENTS_PATH}"/}") ;;
-        esac
-    done <<< "${out}"
-    (( rc == 0 )) || return 1
-    info "Rewrote ${claim}: cluster roles and perimeter approvers are role holders (spec.platformAccess.roleHolders)."
-    return 0
 }
 
 # gentian_catalogue_url
@@ -2367,21 +2125,11 @@ _claim_record_partners() {
 # So a claim with no spec.catalogue is given the default one. A claim that
 # says anything at all there is left alone, and that is how a cluster goes
 # without a store: `catalogue: {}` is a decision somebody wrote down, where an
-# absent key is only a key nobody wrote. The one edit made to an existing
-# section is removing the fields the schema no longer has
-# (_claim_drop_catalogue_access, _claim_drop_catalogue_tenants). The same
-# pass removes the one field the schema lost outside this section
-# (_claim_drop_external_dns), whatever the claim says of the catalog, and
-# gives a claim that has no cluster id one (ensure_claim_cluster_uid).
+# absent key is only a key nobody wrote.
 ensure_claim_catalogue_section() {
     local claim="$1"
     [[ -f "${claim}" ]] || return 0
-    _claim_drop_external_dns "${claim}"
-    ensure_claim_cluster_uid "${claim}"
     if yq_get '.spec.catalogue' "${claim}" >/dev/null 2>&1; then
-        _claim_drop_catalogue_access "${claim}"
-        _claim_drop_catalogue_tenants "${claim}"
-        _claim_warn_retired_catalogue_addresses "${claim}"
         _claim_record_extra_services "${claim}"
         _claim_record_partners "${claim}"
         # A store somebody named stays named: the claim is theirs. The desktop
@@ -2420,38 +2168,6 @@ gentian_new_cluster_uid() {
     openssl rand -hex 16
 }
 
-# ensure_claim_cluster_uid <claim file>
-#
-# A claim written before clusters had an id is given one, once: right below
-# spec.kernelDomain, where a new claim has it. A claim that has one keeps it
-# whatever it is -- it is what every bundle the cluster signed records, and a
-# reinstall from the same deployments repository finds it there. A claim
-# whose kernelDomain line is not where a scaffolded one has it is left alone
-# and the line to add is named.
-ensure_claim_cluster_uid() {
-    local claim="$1" uid
-    [[ -f "${claim}" ]] || return 0
-    yq_get '.spec.clusterUID' "${claim}" >/dev/null 2>&1 && return 0
-    if ! grep -qE '^  kernelDomain:' "${claim}"; then
-        warn "claims/cluster.yaml has no spec.clusterUID, and no kernelDomain line at spec's indent"
-        warn "  to put one below. Add it by hand, under spec:"
-        warn "    clusterUID: $(gentian_new_cluster_uid)"
-        return 0
-    fi
-    uid="$(gentian_new_cluster_uid)"
-    awk -v uid="${uid}" '
-        { print }
-        !done && /^  kernelDomain:/ {
-            print "  # This cluster'"'"'s random id, made once and never changed. A restore brings"
-            print "  # back the rights granted in a tenant only from a bundle this cluster"
-            print "  # signed and took; changing it makes every earlier bundle another cluster'"'"'s."
-            print "  clusterUID: " uid
-            done = 1
-        }' "${claim}" > "${claim}.uid" && cat "${claim}.uid" > "${claim}"
-    rm -f "${claim}.uid"
-    info "claims/cluster.yaml had no cluster id: spec.clusterUID ${uid} was added."
-}
-
 # preview_claim_catalogue_section <claim file> — what
 # ensure_claim_catalogue_section would do to the claim, without doing it.
 #
@@ -2475,165 +2191,6 @@ preview_claim_catalogue_section() {
         printf '%s\n' "${said}"
     fi
     rm -f "${copy}"
-}
-
-# _claim_warn_retired_catalogue_addresses <claim file>
-#
-# Two addresses an earlier installer wrote into every new claim never served
-# anything: the store at gentian.org/apps and the catalog at
-# store.gentian.org/catalogue. A claim still naming them gives its tenants an
-# App Store that cannot reach a store and a catalog that lists nothing, and
-# nothing on the cluster says why. The claim is not rewritten -- it is
-# somebody's -- so the installer says which line it is and what a new claim
-# would say there.
-_claim_warn_retired_catalogue_addresses() {
-    local claim="$1" store urls
-    store="$(yq_get '.spec.catalogue.storeUrl' "${claim}" 2>/dev/null || true)"
-    if [[ "${store%/}" == "https://gentian.org/apps" ]]; then
-        warn "claims/cluster.yaml names the App Store ${store} (spec.catalogue.storeUrl),"
-        warn "  an address earlier installs wrote that never served a store: the App Store"
-        warn "  app would list nothing. A new claim names ${GENTIAN_STORE_URL:-https://store-service.aluvian.io}."
-        warn "  Edit the line in ${claim} and run ./install.sh again."
-    fi
-    urls="$(yq_get '.spec.catalogue.sources[].url' "${claim}" 2>/dev/null || true)"
-    if grep -qE '^https://store\.gentian\.org/catalogue/?$' <<< "${urls}"; then
-        warn "claims/cluster.yaml names the catalog https://store.gentian.org/catalogue"
-        warn "  (spec.catalogue.sources), an address earlier installs wrote that never served"
-        warn "  one: no app could be listed or installed from it. A new claim names"
-        warn "  $(gentian_catalogue_url)."
-        warn "  Edit the line in ${claim} and run ./install.sh again."
-    fi
-    return 0
-}
-
-# _claim_drop_catalogue_access <claim file>
-#
-# A catalog source used to say `access: entitled` or `access: open`. The
-# schema no longer has the field, and a claim still carrying it is refused
-# when it is applied, because an unknown field is an error rather than something ignored.
-# So the lines are removed from a claim written before, and only there: under
-# spec.catalogue, at a source's own indent.
-_claim_drop_catalogue_access() {
-    local claim="$1" tmp
-    grep -qE '^      +access: *(entitled|open) *$' "${claim}" || return 0
-    tmp="$(mktemp)"
-    awk '
-        /^  catalogue:/              { inside = 1; print; next }
-        inside && /^  [A-Za-z]/      { inside = 0 }
-        inside && /^      +access: *(entitled|open) *$/ { next }
-        { print }
-    ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
-    rm -f "${tmp}"
-    info "claims/cluster.yaml: removed 'access' from its catalog sources; the schema no longer has the field."
-}
-
-# _claim_drop_external_dns <claim file>
-#
-# certificates.externalDns was a field of the claim that nothing read:
-# external-dns is installed with the DNS provider and writes the records
-# whatever the field said. The schema no longer has it, and a claim that
-# still carries it is refused when it is applied, like the two fields above;
-# step 0 wrote it into every static-ip claim, so it is removed from a claim
-# written before. Removing it changes nothing on the cluster.
-_claim_drop_external_dns() {
-    local claim="$1" tmp
-    grep -qE '^    externalDns: *(true|false) *(#.*)?$' "${claim}" || return 0
-    tmp="$(mktemp)"
-    awk '
-        /^  certificates:/       { inside = 1; print; next }
-        inside && /^  [A-Za-z]/  { inside = 0 }
-        inside && /^    externalDns: *(true|false) *(#.*)?$/ { next }
-        { print }
-    ' "${claim}" > "${tmp}"
-    if ! cmp -s "${tmp}" "${claim}"; then
-        cat "${tmp}" > "${claim}"
-        info "claims/cluster.yaml: removed certificates.externalDns; nothing read it, and the schema no longer has the field. external-dns writes the records as before."
-    fi
-    rm -f "${tmp}"
-}
-
-# drop_branding_removed_fields <branding file>
-#
-# The cluster's Branding, claims/branding.yaml, is the director's file: it
-# writes the whole of it whenever the brand is set. spec.hideVendorPromotions
-# was a field of it that the schema no longer has, and a Branding that still
-# carries it is refused when it is applied, like the fields of the claim
-# above. The director leaves the key out the next time it writes the file;
-# until somebody sets the brand again, the file written before still has it,
-# so it is removed here. A spec that held nothing else is left as `spec: {}`.
-#
-# preview_branding_removed_fields says the same of it, for a run that changes
-# nothing.
-drop_branding_removed_fields() {
-    local file="$1" tmp
-    [[ -f "${file}" ]] || return 0
-    grep -qE '^  hideVendorPromotions: *(true|false) *$' "${file}" || return 0
-    tmp="$(mktemp)"
-    awk '
-        function flush() { if (pending) { print "spec: {}"; pending = 0 } }
-        /^spec: *$/ { pending = 1; next }
-        /^  hideVendorPromotions: *(true|false) *$/ { next }
-        pending && /^  / { print "spec:"; pending = 0 }
-        { flush(); print }
-        END { flush() }
-    ' "${file}" > "${tmp}"
-    if ! cmp -s "${tmp}" "${file}"; then
-        cat "${tmp}" > "${file}"
-        info "claims/branding.yaml: removed spec.hideVendorPromotions; the schema no longer has the field. The rest of the brand is as it was."
-    fi
-    rm -f "${tmp}"
-}
-
-preview_branding_removed_fields() {
-    local file="$1"
-    [[ -f "${file}" ]] || return 0
-    grep -qE '^  hideVendorPromotions: *(true|false) *$' "${file}" || return 0
-    gentian_would "remove spec.hideVendorPromotions, which the schema no longer has, from claims/branding.yaml, then commit and push the edit signed"
-}
-
-# _claim_drop_catalogue_tenants <claim file>
-#
-# A catalog source used to list the tenants it was open to. The list gated
-# nothing -- an install asks whether the person may install apps in the
-# tenant, and never asked about the source -- so the schema no longer has it:
-# a source the claim names is offered to every tenant. A claim still carrying
-# `tenants:` under a source is refused when it is applied, for the same reason
-# as `access` above, so it is removed from a claim written before.
-#
-# The value may be written on the key's line (`tenants: [demo]`), or as a
-# list below it, and the key may be the first of its source (`- tenants:`).
-# In that last case the dash moves to the source's next key, which would
-# otherwise belong to the source before it.
-_claim_drop_catalogue_tenants() {
-    local claim="$1" tmp
-    grep -qE '^    +(- +)?tenants:' "${claim}" || return 0
-    tmp="$(mktemp)"
-    awk '
-        function indent(line) { match(line, /^ */); return RLENGTH }
-        /^  catalogue:/         { inside = 1; skipping = 0; dash = ""; print; next }
-        inside && /^  [A-Za-z]/ { inside = 0; skipping = 0; dash = "" }
-        inside && skipping {
-            # The value of the key being dropped: anything indented deeper
-            # than the key, and list items written at the key own indent.
-            if ($0 !~ /^ *$/ && (indent($0) > key || (indent($0) == key && $0 ~ /^ *- /))) next
-            skipping = 0
-        }
-        inside && /^      +tenants:/ { key = indent($0); skipping = 1; next }
-        inside && /^    +- +tenants:/ {
-            match($0, /^ *- +/); key = RLENGTH; dash = substr($0, 1, RLENGTH)
-            skipping = 1; next
-        }
-        inside && dash != "" {
-            if ($0 !~ /^ *$/ && indent($0) == key) $0 = dash substr($0, key + 1)
-            dash = ""
-        }
-        { print }
-    ' "${claim}" > "${tmp}"
-    if ! cmp -s "${tmp}" "${claim}"; then
-        cat "${tmp}" > "${claim}"
-        info "claims/cluster.yaml: removed 'tenants' from its catalog sources; a source is offered to every tenant."
-    fi
-    rm -f "${tmp}"
 }
 
 # _claim_default_line <field> <value> <default> <explanation>
@@ -2837,16 +2394,6 @@ EOF
         generated=1
     fi
 
-    # Keycloak and OpenFGA are Argo CD Applications of the identity
-    # ApplicationSet now, and the Suze kind that composed them is gone. A
-    # checkout scaffolded before then still holds that claim, and the claims
-    # Application would fail on a kind the cluster does not serve -- so it is
-    # removed here, and the removal is committed with the rest.
-    _remove_retired_suze_claim "${kernel_dir}" && generated=1
-    _claim_security_officers_to_role_holders "${kernel_dir}" && generated=1
-    _claim_carry_over_role_holders "${kernel_dir}" "${cluster}" && generated=1
-    _claim_drop_empty_mappings "${kernel_dir}/claims/cluster.yaml" && generated=1
-
     # The deployments repository's own credential.
     #
     # Without this claim nothing composes the Secret the operator and the
@@ -2903,18 +2450,7 @@ EOF
     # not have to name a vault path for a secret that does not exist, which
     # would then sit in the custodian as a requirement nobody can
     # satisfy. A mirror sets the matching AUTH and gets the credential block.
-    #
-    # The app catalog is not one of them. Its git repository was claimed
-    # here so that an ApplicationSet could copy every profile in it into the
-    # cluster; a profile now arrives one at a time through the director, from
-    # the catalog source the Cluster claim names (_claim_catalogue_section),
-    # and nothing on the cluster reads that git repository. A deployments
-    # checkout scaffolded before then still holds the claim file, and it is
-    # removed here so that a fresh install from it declares no such claim.
-    # Claims are synced without pruning, so on a cluster that already applied
-    # it the Repository stays until it is deleted there; it composes no
-    # ApplicationSet any more either way (docs/reference/install.md).
-    _remove_retired_apps_repository_claim "${kernel_dir}" && generated=1
+
     local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_auth_var
     for _repo_role in gentian-os gentian-ui; do
         _repo_file="${kernel_dir}/claims/${_repo_role}-repository.yaml"
@@ -3050,8 +2586,7 @@ EOF
         info "Scaffolded clusters/${cluster}/tenants/platform"
         generated=1
     fi
-    # The concierge's publication, for the tenant just written and for one
-    # written before the concierge was a published component alike.
+    # The concierge's publication, for the tenant just written.
     if ensure_platform_concierge_exposure "${platform_dir}"; then
         generated=1
     fi
@@ -3195,11 +2730,6 @@ _claims_this_checkout_cannot_apply() {
 # never arrive.
 _cluster_scaffold_paths() {
     printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
-    # And a tenant's manifest the role holders' carry-over rewrote.
-    local _c
-    for _c in ${_GENTIAN_CARRIED_PATHS[@]+"${_GENTIAN_CARRIED_PATHS[@]}"}; do
-        [[ "${_c}" == clusters/$1/tenants/*/tenant.yaml ]] && printf '%s\n' "${_c}"
-    done
     # And the user tenant of a single-tenancy cluster, when its manifest is
     # there. Only then: a path that does not exist fails `git add` for all of
     # them.
@@ -3518,7 +3048,6 @@ _scaffold_default_profiles() {
     if [[ "$(gentian_extra_services_enabled "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml")" != "true" ]]; then
         _default_extra_services_remove "${dir}"
     fi
-    _retired_extra_services_remove "${cluster}" "${dir}"
     list="$(_default_profiles_configured "${cluster}")"
     [[ -n "${list}" ]] || return 0
     IFS=',' read -r -a entries <<< "${list}"
@@ -3779,12 +3308,10 @@ require_cluster_deployment() {
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
         preview_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
-        preview_branding_removed_fields "${kernel_dir}/claims/branding.yaml"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
         ensure_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
-        drop_branding_removed_fields "${kernel_dir}/claims/branding.yaml"
     fi
     if [[ -f "${claim}" ]]; then
         local net

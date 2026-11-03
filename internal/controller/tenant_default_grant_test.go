@@ -13,7 +13,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -237,47 +236,5 @@ func TestAnAddonForEveryoneIsGrantedFromItsOwnGroup(t *testing.T) {
 	r.applyDefaultGrants(context.Background(), tenant)
 	if got := strings.Join(tenant.Status.DefaultGrantedApps, ","); got != "cloud" {
 		t.Fatalf("noted %q after the addon was switched off", got)
-	}
-}
-
-// The addons a tenant had before addons were granted on their own get their
-// app's access once: each call names the app and whether it is for everyone,
-// an addon declared for everyone is left to the default grant, and the note
-// is set only once nothing failed.
-func TestAddonsInstalledBeforeGetTheirAppsAccessOnce(t *testing.T) {
-	type call struct {
-		app, addon string
-		everyone   bool
-	}
-	var calls []call
-	fail := errors.New("keycloak is away")
-	var err error
-	r := &TenantReconciler{InheritAddonGrant: func(_ context.Context, _, app, addon string, everyone bool) (bool, error) {
-		calls = append(calls, call{app, addon, everyone})
-		return err == nil, err
-	}}
-	tenant := grantTenant(
-		gentianov1alpha1.TenantApp{Profile: "cloud", DefaultGrant: true, Addons: []string{"cloud-calendar", "cloud-deck"},
-			AddonGrants: []gentianov1alpha1.AddonGrant{{Name: "cloud-deck", DefaultGrant: true}}},
-		gentianov1alpha1.TenantApp{Profile: "erp", Addons: []string{"erp-crm"}},
-	)
-
-	err = fail
-	if retry := r.inheritAddonGrants(context.Background(), tenant); !retry || tenant.Status.AddonGrantsInherited {
-		t.Fatalf("a failed migration: retry=%v noted=%v", retry, tenant.Status.AddonGrantsInherited)
-	}
-	err = nil
-	calls = nil
-	if retry := r.inheritAddonGrants(context.Background(), tenant); retry || !tenant.Status.AddonGrantsInherited {
-		t.Fatalf("a migration that went through: retry=%v noted=%v", retry, tenant.Status.AddonGrantsInherited)
-	}
-	want := []call{{"cloud", "cloud-calendar", true}, {"erp", "erp-crm", false}}
-	if fmt.Sprint(calls) != fmt.Sprint(want) {
-		t.Fatalf("calls = %v, want %v", calls, want)
-	}
-	calls = nil
-	r.inheritAddonGrants(context.Background(), tenant)
-	if len(calls) != 0 {
-		t.Fatalf("the migration ran again: %v", calls)
 	}
 }

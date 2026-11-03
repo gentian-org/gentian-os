@@ -260,7 +260,7 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 	// point at that answer and send nowhere.
 	create("the restore hold's answer", httpRouteFilterGVK, restoreHoldFilterSpec())
 	held := buildExposureRoute(
-		&gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "files", Namespace: servicesNamespace}},
+		&gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "files", Namespace: servicesNamespace}}, "acme",
 		"files-web", "files.acme.example", zone,
 		&gentianov1alpha1.ExposureSpec{Name: "web", AuthMode: gentianov1alpha1.AuthModeOIDC, Paths: []string{"/apps", "/remote.php"},
 			Backend: gentianov1alpha1.BackendRef{Service: "files", Port: 8080}},

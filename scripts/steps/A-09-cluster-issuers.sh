@@ -55,32 +55,8 @@ _v5_internal_ca_present() {
         kubectl get rolebinding gentian-ca-issuer-token -n "${ns}" >/dev/null 2>&1
 }
 
-# What held the internal CA's key in a Kubernetes object before the vault
-# signed for it, retired so that no key is left there:
-#   - on a self-signed cluster, the CA cert-manager made: a selfSigned issuer
-#     signing a CA Certificate into gentian-root-ca-tls. The Certificate and
-#     the issuer go here; the Secret stays until B-08 has imported its CA
-#     into the vault, so the anchor clients were told to trust is kept, and
-#     B-08 then rewrites it without the key.
-#   - an ExternalSecret gentian-root-ca-tls that copied the CA's key out of
-#     the vault's KV store. It owns its Secret, which goes with it.
-_v5_retire_cert_manager_ca() {
-    local ns; ns="$(_v5_cert_manager_namespace)"
-    if kubectl get certificate gentian-root-ca -n "${ns}" >/dev/null 2>&1; then
-        info "Retiring the CA cert-manager made; the internal CA is the vault's from now on."
-        gentian_run kubectl delete certificate gentian-root-ca -n "${ns}" --ignore-not-found=true >/dev/null
-    fi
-    if kubectl get clusterissuer gentian-selfsigned-bootstrap >/dev/null 2>&1; then
-        gentian_run kubectl delete clusterissuer gentian-selfsigned-bootstrap --ignore-not-found=true >/dev/null
-    fi
-    if kubectl get externalsecret gentian-root-ca-tls -n "${ns}" >/dev/null 2>&1; then
-        gentian_run kubectl delete externalsecret gentian-root-ca-tls -n "${ns}" --ignore-not-found=true >/dev/null
-    fi
-}
-
 _v5_apply_internal_ca() {
     local ns; ns="$(_v5_cert_manager_namespace)"
-    _v5_retire_cert_manager_ca
     _v5_internal_ca_rendered | gentian_run kubectl apply -n "${ns}" -f -
     info "Internal CA gentian-ca applied; it issues once the vault has the CA (B-08) and"
     info "  cert-manager's role at the vault exists (C-01). It serves in-cluster TLS."
@@ -106,11 +82,8 @@ check() {
     local mode; mode="$(_v5_issuer_mode)"
     case "${mode}" in
         self-signed)
-            # What apply() creates. A CA Certificate left from before the
-            # vault signed is a CA beside it, and apply() retires it.
+            # What apply() creates.
             _v5_internal_ca_present || return "${CHECK_MISSING}"
-            kubectl get certificate gentian-root-ca -n "$(_v5_cert_manager_namespace)" >/dev/null 2>&1 &&
-                return "${CHECK_MISSING}"
             ;;
         acme-dns01|acme-http01)
             _v5_internal_ca_present || return "${CHECK_MISSING}"
@@ -212,9 +185,8 @@ EOF
 }
 
 destroy() {
-    # Only the issuers this installer labeled, the internal CA's
-    # ServiceAccount and token Role, and a root CA Certificate left from
-    # before the vault signed. A ClusterIssuer somebody else put on this
+    # Only the issuers this installer labeled, and the internal CA's
+    # ServiceAccount and token Role. A ClusterIssuer somebody else put on this
     # cluster is not ours to remove -- v4's step ended with a `delete
     # clusterissuer --all`, which on a shared cluster takes out everyone
     # else's anchors too. The CA itself stays in the vault: a reinstall gets
@@ -223,9 +195,5 @@ destroy() {
     kubectl delete clusterissuer -l app.kubernetes.io/managed-by=gentian-install \
         --ignore-not-found=true >/dev/null 2>&1 || true
     kubectl delete rolebinding,role,serviceaccount -n "${ns}" -l gentianos.io/issuer-role=internal-ca \
-        --ignore-not-found=true >/dev/null 2>&1 || true
-    kubectl delete externalsecret gentian-root-ca-tls -n "${ns}" \
-        --ignore-not-found=true >/dev/null 2>&1 || true
-    kubectl delete certificate gentian-root-ca -n "${ns}" \
         --ignore-not-found=true >/dev/null 2>&1 || true
 }

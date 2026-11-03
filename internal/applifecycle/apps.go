@@ -203,30 +203,19 @@ var waitingReasons = map[string]bool{
 	"ValuesPending":     true,
 }
 
-// componentOriginLabel is the operator's label of a component an earlier
-// release placed itself with no entry of spec.apps (internal/controller,
-// componentOriginLabel). Read for one release; a placed component is
-// otherwise known by its profile (ComponentProfile spec.placement).
+// The origin a state reports: "default" for a component the platform places
+// (ComponentProfile spec.placement) or one that comes with the cluster,
+// "install" otherwise.
 const (
-	componentOriginLabel   = "gentianos.io/component-origin"
 	componentOriginDefault = "default"
 	componentOriginInstall = "install"
 )
 
-// componentOrigin is the origin a state reports from the component alone:
-// "default" for one an earlier release placed, "install" otherwise.
-func componentOrigin(comp *gentianov1alpha1.Component) string {
-	if comp.Labels[componentOriginLabel] == componentOriginDefault {
-		return componentOriginDefault
-	}
-	return componentOriginInstall
-}
-
 // AppStates reports every app of a tenant as the cluster has it.
 //
 // The components the platform places itself -- the desktop, the consoles,
-// the App Store app -- are listed with origin "default", by the operator's
-// label on the component: a screen shows that they run and offers nothing to
+// the App Store app -- are listed with origin "default", by the placement
+// their profile declares: a screen shows that they run and offers nothing to
 // do about them. So is one whose profile has the platform-app annotation,
 // such as Open WebUI, which comes with the cluster's models.
 // Add-ons are left out as apps: an add-on is switched on inside its base, and
@@ -261,7 +250,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			return nil, fmt.Errorf("get componentprofile %q: %w", profile, err)
 		}
 		state := componentState(comp)
-		state.Origin = componentOrigin(comp)
+		state.Origin = componentOriginInstall
 		if found && (placement.ByOperator(cp) || cp.Annotations[platformAppAnnotation] == "true") {
 			state.Origin = componentOriginDefault
 		}

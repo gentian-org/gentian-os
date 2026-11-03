@@ -63,9 +63,11 @@ func apprenderFixtureInput(t *testing.T, fixture string) *apprender.Input {
 		return s
 	}
 	app := str("claimRef", "name")
+	// The Composition knew the tenant by its namespace alone.
 	in := &apprender.Input{
 		App:           app,
 		Namespace:     str("tenantNamespace"),
+		TenantName:    strings.TrimPrefix(str("tenantNamespace"), "tenant-"),
 		Realm:         str("realm"),
 		Domain:        str("domain"),
 		ReleaseObject: xr.GetName() + composedReleaseSuffix,
@@ -174,7 +176,7 @@ func renderedNamed(objs []*unstructured.Unstructured, kind, name string) *unstru
 func chartRenderInput(app string, profile *gentianov1alpha1.ComponentProfile) *apprender.Input {
 	release := "tenant-acme-" + app
 	return &apprender.Input{
-		App: app, Namespace: "tenant-acme", Domain: "acme.k.example",
+		App: app, Namespace: "tenant-acme", TenantName: "acme", Domain: "acme.k.example",
 		ReleaseObject: release, HelmRelease: release, KeepVolumes: app + "-keep-volumes", Composite: release,
 		ProfileName: profile.Name, Profile: &profile.Spec, ProfileAnnotations: profile.Annotations,
 		Placed:   operatorPlaced(profile),

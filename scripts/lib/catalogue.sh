@@ -356,14 +356,6 @@ _address_origin_name() {
 # tenant while the cluster offers a store, tenants made later included.
 _EXTRA_SERVICE_PROFILES="operations-console-ee app-store-pe aluvian-center-pe"
 
-# Names the extra services were placed under before the catalog renamed
-# them. A profile an earlier run placed under one of them from the store's
-# catalog leaves the cluster's catalog on the next run, as the extra
-# services do with --no-extra-services: the catalog no longer lists it, so
-# it would otherwise stay at its last build for good, and the Components the
-# operator placed of it with it. One placed from anywhere else stays.
-_RETIRED_EXTRA_SERVICE_PROFILES="operations-console app-store subscription-center"
-
 # _default_profiles_configured [cluster] -- the list, as GENTIAN_DEFAULT_PROFILES
 # gives it or, unset, the extra services at the store's catalog. Without the
 # extra services (gentian_extra_services_enabled) none of the three is in it,
@@ -421,31 +413,14 @@ _is_store_catalogue_origin() {
     [[ "$2" == "$(_default_profile_origin "${base}" "$1")" || "$2" == "cluster/$(_address_origin_name "${base}")" ]]
 }
 
-# _retired_extra_services_remove <cluster> <catalogue dir> -- the profiles
-# placed under a name the extra services no longer have
-# (_RETIRED_EXTRA_SERVICE_PROFILES) leave the cluster's catalog, when their
-# recorded origin is the store's catalog.
-_retired_extra_services_remove() {
-    local cluster="$1" dir="$2" name recorded names=""
-    for name in ${_RETIRED_EXTRA_SERVICE_PROFILES}; do
-        [[ -f "${dir}/${name}.yaml" ]] || continue
-        recorded="$(_profile_bundle_recorded "${dir}" "${name}")"
-        _is_store_catalogue_origin "${cluster}" "${recorded#* }" || continue
-        names="${names:+${names} }${name}"
-    done
-    [[ -n "${names}" ]] || return 0
-    _default_extra_services_remove "${dir}" "${names}" quiet
-    info "Removed ${names} from the cluster's catalogue: the store's catalogue no longer has the extra service under that name."
-}
-
-# _default_extra_services_remove <catalogue dir> [names] [quiet] -- without the
+# _default_extra_services_remove <catalogue dir> -- without the
 # extra services, the profiles an earlier run placed for them leave the
 # cluster's catalogue: the profile, its bundle patch and their lines in the
 # kustomization. The ProfileBuilds stay: a tenant that runs a build keeps it.
 # The Components the operator placed of them go once the profiles do
 # (ensureDefaultComponents).
 _default_extra_services_remove() {
-    local dir="$1" names="${2:-${_EXTRA_SERVICE_PROFILES} ${_RETIRED_EXTRA_SERVICE_PROFILES}}" quiet="${3:-}" name kust tmp removed=""
+    local dir="$1" names="${_EXTRA_SERVICE_PROFILES}" name kust tmp removed=""
     kust="${dir}/kustomization.yaml"
     for name in ${names}; do
         [[ -f "${dir}/${name}.yaml" ]] || continue
@@ -477,7 +452,7 @@ _default_extra_services_remove() {
         ' "${kust}" > "${tmp}" && cat "${tmp}" > "${kust}"
         rm -f "${tmp}"
     fi
-    [[ -n "${quiet}" ]] || info "Extra services off (--no-extra-services): removed ${removed} from the cluster's catalogue."
+    info "Extra services off (--no-extra-services): removed ${removed} from the cluster's catalogue."
 }
 
 # _default_profile_parse <entry> -- reads one entry of the list into
