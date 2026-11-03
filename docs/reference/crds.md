@@ -407,7 +407,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.defaultForTenants` | boolean |  | `DefaultForTenants` is placement {tenants: every}. |
 | `spec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `spec.expose` | []object |  | `Expose` declares entry points. |
-| `spec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host, by the same keys AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and… |
+| `spec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
 | `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
 | `spec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `spec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
@@ -1029,7 +1029,6 @@ OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. Shipp
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec` | object |  | OIDCPackCatalogSpec holds mapper templates and per-clientId pack definitions. |
-| `spec.extraManagedByAttributeGroups` | []string |  | `ExtraManagedByAttributeGroups` lists additional cn=managed-by-attribute-* groups provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g. |
 | `spec.mapperTemplates` | map[string]object |  | `MapperTemplates` are reusable Keycloak protocol mapper definitions. |
 | `spec.mapperTemplates{}.config` | map[string]string |  | `Config` holds Keycloak mapper configuration key/value pairs. |
 | `spec.mapperTemplates{}.keycloakName` | string |  | `KeycloakName` overrides the mapper name in Keycloak when it differs from the catalog template key. |
@@ -1201,7 +1200,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.defaultForTenants` | boolean |  | `DefaultForTenants` is placement {tenants: every}. |
 | `status.profileSpec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `status.profileSpec.expose` | []object |  | `Expose` declares entry points. |
-| `status.profileSpec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host, by the same keys AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and… |
+| `status.profileSpec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
 | `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
 | `status.profileSpec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `status.profileSpec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |

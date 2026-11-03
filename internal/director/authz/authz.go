@@ -91,20 +91,11 @@ func GroupFromPath(path string) (string, error) {
 	return Group(strings.TrimPrefix(path, "/"))
 }
 
-// Tenant, Cluster and Session name the objects the director
+// Tenant and Cluster name the objects the director
 // checks against. Tenant and cluster names are DNS labels and need no
 // encoding; they are validated where they enter.
 func Tenant(name string) string  { return "tenant:" + name }
 func Cluster(name string) string { return "cluster:" + name }
-
-// Session returns the object a revocation is recorded against.
-func Session(sid string) (string, error) {
-	id, err := encode(sid)
-	if err != nil {
-		return "", err
-	}
-	return "session:" + id, nil
-}
 
 // OpenFGA is a Checker backed by an OpenFGA server.
 type OpenFGA struct {

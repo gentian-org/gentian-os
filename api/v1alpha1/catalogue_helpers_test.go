@@ -26,24 +26,6 @@ import (
 	"github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func TestProfileGatewayAnnotations(t *testing.T) {
-	p := &v1alpha1.ComponentProfile{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				v1alpha1.AnnotationProfileGatewayRootRedirect: "/app/",
-				v1alpha1.AnnotationProfileGatewayAPIBackends:  `[{"pathPrefix":"/app/api","serviceName":"demo-api"}]`,
-			},
-		},
-	}
-	if v1alpha1.ProfileGatewayRootRedirect(p) != "/app/" {
-		t.Fatalf("root redirect: %q", v1alpha1.ProfileGatewayRootRedirect(p))
-	}
-	backends, err := v1alpha1.ProfileGatewayAPIBackends(p)
-	if err != nil || len(backends) != 1 || backends[0].ServiceName != "demo-api" {
-		t.Fatalf("api backends: %v, %v", backends, err)
-	}
-}
-
 func TestProfileOIDCDefaultRedirectURIs(t *testing.T) {
 	p := &v1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{

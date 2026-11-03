@@ -28,35 +28,6 @@ func testGentianCatalogClient(t *testing.T) client.Client {
 	return NewTestClientWithCatalogFile(t, "testdata/minimal-oidc-catalog.yaml")
 }
 
-func TestManagedByAttributeGroupNames_FromCatalog(t *testing.T) {
-	c := testGentianCatalogClient(t)
-	groups, err := ManagedByAttributeGroupNames(context.Background(), c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"TestApp",
-		"TestAppAdmin",
-	}
-	if len(groups) != len(want) {
-		t.Fatalf("groups: %v want %v", groups, want)
-	}
-	for i, name := range want {
-		if groups[i] != name {
-			t.Fatalf("groups[%d]=%q want %q (full: %v)", i, groups[i], name, groups)
-		}
-	}
-}
-
-func TestNormalizeMBAGroupName(t *testing.T) {
-	if got := NormalizeMBAGroupName("managed-by-attribute-Fileshare"); got != "Fileshare" {
-		t.Fatalf("got %q", got)
-	}
-	if got := NormalizeMBAGroupName("FileshareAdmin"); got != "FileshareAdmin" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestResolvePackClusterCatalog(t *testing.T) {
 	c := testGentianCatalogClient(t)
 	pack, templates, ok, err := ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")

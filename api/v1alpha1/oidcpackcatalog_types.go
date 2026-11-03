@@ -45,12 +45,6 @@ type OIDCPackCatalogSpec struct {
 	// Packs maps OIDC clientId to pack configuration.
 	// +optional
 	Packs map[string]OIDCPackSpec `json:"packs,omitempty"`
-
-	// ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
-	// provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
-	// portal admin groups).
-	// +optional
-	ExtraManagedByAttributeGroups []string `json:"extraManagedByAttributeGroups,omitempty"`
 }
 
 // OIDCMapperTemplate describes one Keycloak protocol mapper on a client scope.

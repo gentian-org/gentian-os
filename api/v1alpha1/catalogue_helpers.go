@@ -23,37 +23,6 @@ import (
 	"strings"
 )
 
-// GatewayAPIBackend is one extra HTTPRoute rule: path prefix → Kubernetes Service.
-type GatewayAPIBackend struct {
-	PathPrefix  string `json:"pathPrefix"`
-	ServiceName string `json:"serviceName"`
-	Port        int32  `json:"port,omitempty"`
-}
-
-// ProfileGatewayRootRedirect returns gentianos.io/gateway-root-redirect when set.
-func ProfileGatewayRootRedirect(p *ComponentProfile) string {
-	if p == nil {
-		return ""
-	}
-	return strings.TrimSpace(p.Annotations[AnnotationProfileGatewayRootRedirect])
-}
-
-// ProfileGatewayAPIBackends parses gentianos.io/gateway-api-backends JSON.
-func ProfileGatewayAPIBackends(p *ComponentProfile) ([]GatewayAPIBackend, error) {
-	if p == nil {
-		return nil, nil
-	}
-	raw := strings.TrimSpace(p.Annotations[AnnotationProfileGatewayAPIBackends])
-	if raw == "" {
-		return nil, nil
-	}
-	var backends []GatewayAPIBackend
-	if err := json.Unmarshal([]byte(raw), &backends); err != nil {
-		return nil, err
-	}
-	return backends, nil
-}
-
 // ProfileOIDCDefaultRedirectURIs parses gentianos.io/oidc-default-redirect-uris JSON.
 func ProfileOIDCDefaultRedirectURIs(p *ComponentProfile) ([]string, error) {
 	if p == nil {
@@ -68,29 +37,6 @@ func ProfileOIDCDefaultRedirectURIs(p *ComponentProfile) ([]string, error) {
 		return nil, err
 	}
 	return uris, nil
-}
-
-// GatewayFrameAncestorsSpec is the JSON shape for gentianos.io/gateway-frame-ancestors.
-type GatewayFrameAncestorsSpec struct {
-	Mode    string   `json:"mode"`
-	Origins []string `json:"origins"`
-}
-
-// GatewayFrameAncestors parses gentianos.io/gateway-frame-ancestors on one
-// exposure's annotations.
-func GatewayFrameAncestors(annotations map[string]string) (*GatewayFrameAncestorsSpec, error) {
-	if len(annotations) == 0 {
-		return nil, nil
-	}
-	raw := strings.TrimSpace(annotations[AnnotationIngressGatewayFrameAncestors])
-	if raw == "" {
-		return nil, nil
-	}
-	var spec GatewayFrameAncestorsSpec
-	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
-		return nil, err
-	}
-	return &spec, nil
 }
 
 // GatewayEscapedSlashesAction returns gentianos.io/gateway-escaped-slashes-action

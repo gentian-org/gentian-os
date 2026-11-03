@@ -224,9 +224,9 @@ func TestACompanionThatIsNotWhatTheBundleSaysHoldsTheRollout(t *testing.T) {
 		{"a pack made a public client", KindOIDCPacks, func(u *unstructured.Unstructured) {
 			set(t, u, true, "spec", "packs", "gentian-shop", "publicClient")
 		}, "spec.packs"},
-		{"a group added", KindOIDCPacks, func(u *unstructured.Unstructured) {
-			set(t, u, []any{"Admins"}, "spec", "extraManagedByAttributeGroups")
-		}, "spec.extraManagedByAttributeGroups"},
+		{"a mapper's claim renamed", KindOIDCPacks, func(u *unstructured.Unstructured) {
+			set(t, u, "mail", "spec", "mapperTemplates", "email", "config", "claim.name")
+		}, "spec.mapperTemplates"},
 		{"a record's review moved", KindCustomization, func(u *unstructured.Unstructured) {
 			set(t, u, "2031-01-01", "spec", "reviewBy")
 		}, "spec.reviewBy"},

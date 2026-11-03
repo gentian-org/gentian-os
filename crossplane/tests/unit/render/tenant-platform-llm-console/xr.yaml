@@ -38,7 +38,6 @@ spec:
       realm: acme
     - tenant: Not_A_Label
       realm: x
-  apps: []
   quotas:
     requestsCpu: "4"
     requestsMemory: 16Gi

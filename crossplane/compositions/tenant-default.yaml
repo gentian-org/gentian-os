@@ -599,9 +599,9 @@ spec:
             {{- $exchangeSecret   := printf "edge-%s-exchange" $zone }}
             {{- /* The profiles whose components ask for an exchanged token
                  (exposure exchangeToken), read from the operator's projection
-                 like the hosts above and for the same reason. Not spec.apps:
-                 the components every tenant is given are not on it, and one
-                 of those may ask as well as an installed app may. */}}
+                 like the hosts above and for the same reason: it covers the
+                 components every tenant is given as well as installed apps,
+                 and either may ask. */}}
             {{- $exchangeProfiles := list }}
             {{- range $p := (splitList "\n" (dig "exchangeProfiles" "" $zhData)) }}
             {{- $p = trim $p }}
@@ -2046,10 +2046,9 @@ spec:
                  refuses a second top-level group of the same name, so the failure
                  mode if it does not resolve is a conflict rather than a duplicate.
 
-                 The gentian-groups Job still makes these. It also covers profiles
-                 that are not on spec.apps, which this cannot see — CollectTenantGroupNames
-                 takes an additionalProfiles argument for exactly that — so the Job
-                 goes only once that gap is closed.
+                 The gentian-groups Job still makes these. It also covers the
+                 tenant's apps, which this Composition cannot see —
+                 CollectTenantGroupNames reads them from the Tenant.
               */}}
             {{- /* Only the four that belong to the tenant itself. The per-app
                  group is app-default's, because its name follows the resolved
@@ -4087,21 +4086,12 @@ spec:
             {{- end }}{{- /* enter */}}
             {{- end }}{{- /* $adoptsKernelRealm */}}
 
-            {{- /* No App claims. An installed app is a Component, and its
-                 Component writes the claim the app Composition answers
-                 (internal/controller/component_composition.go). This
-                 Composition used to emit one per entry of spec.apps, which
-                 made an installed app a list entry and a claim and never a
-                 thing of its own: no status, no tile, and a route with
-                 nothing asked at it. */}}
-
-            {{- /* No implicit apps. open-webui used to be injected here whenever the
-                 cluster served LLM — but an app the composition invents is an app
-                 the tenant operator cannot see: it seeds OIDC credentials (and
-                 builds identity Jobs and groups) from tenant.spec.apps alone, so
-                 the injected app's ExternalSecrets waited forever on an OpenBao
-                 path nothing would ever write. Tenant scaffolding lists open-webui
-                 in spec.apps when the claim serves LLM; one list, every reader. */}}
+            {{- /* No App claims, and no apps. An installed app is a Component,
+                 and its Component writes the claim the app Composition answers
+                 (internal/controller/component_composition.go). The tenant's
+                 apps are the Tenant's spec.apps, which this Composition does
+                 not receive: an app it invented would be one the operator
+                 seeds no credentials for. */}}
 
     - step: automatically-detect-ready-composed-resources
       functionRef:

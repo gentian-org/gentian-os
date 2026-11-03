@@ -12,73 +12,12 @@ package controller
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/placement"
 )
-
-const (
-	gatewayFrameAncestorsOriginPortal  = "portal"
-	gatewayFrameAncestorsOriginMainApp = "mainApp"
-)
-
-func ingressFrameAncestorsPolicy(
-	kernelDomain, effectiveDomain, mainIngressSubDomain string,
-	exposure *gentianov1alpha1.ExposureSpec,
-) (gatewayFrameAncestorsPolicy, bool, error) {
-	spec, err := gentianov1alpha1.GatewayFrameAncestors(exposure.Annotations)
-	if err != nil {
-		return gatewayFrameAncestorsPolicy{}, false, fmt.Errorf("parse %s: %w", gentianov1alpha1.AnnotationIngressGatewayFrameAncestors, err)
-	}
-	if spec == nil || len(spec.Origins) == 0 {
-		return gatewayFrameAncestorsPolicy{}, false, nil
-	}
-	mode := strings.TrimSpace(spec.Mode)
-	if mode == "" {
-		mode = gatewayFrameAncestorsReplace
-	}
-	seen := make(map[string]struct{})
-	var origins []string
-	add := func(origin string) {
-		if origin == "" {
-			return
-		}
-		if _, dup := seen[origin]; dup {
-			return
-		}
-		seen[origin] = struct{}{}
-		origins = append(origins, origin)
-	}
-	for _, token := range spec.Origins {
-		switch strings.TrimSpace(token) {
-		case gatewayFrameAncestorsOriginPortal:
-			for _, origin := range desktopOrigins(effectiveDomain) {
-				add(origin)
-			}
-		case gatewayFrameAncestorsOriginMainApp:
-			if effectiveDomain != "" && mainIngressSubDomain != "" {
-				if mainIngressSubDomain == "@" {
-					add(fmt.Sprintf("https://%s", effectiveDomain))
-				} else {
-					add(fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
-				}
-			}
-		default:
-			add(strings.ReplaceAll(token, "${TENANT_DOMAIN}", effectiveDomain))
-		}
-	}
-	if len(origins) == 0 {
-		return gatewayFrameAncestorsPolicy{}, false, nil
-	}
-	return gatewayFrameAncestorsPolicy{
-		Mode:    mode,
-		Origins: strings.Join(origins, " "),
-	}, true, nil
-}
 
 func ingressNeedsEscapedSlashesKeepUnchanged(exposure *gentianov1alpha1.ExposureSpec) bool {
 	return gentianov1alpha1.GatewayEscapedSlashesAction(exposure.Annotations) == "KeepUnchanged"

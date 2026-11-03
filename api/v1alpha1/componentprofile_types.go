@@ -786,19 +786,17 @@ type ExposureSpec struct {
 	// +optional
 	ClientAuthorization ClientAuthorization `json:"clientAuthorization,omitempty"`
 
-	// Annotations are gateway policy for this host, by the same keys
-	// AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and
-	// gentianos.io/gateway-escaped-slashes-action.
+	// Annotations are gateway policy for this host. The one key read is
+	// gentianos.io/gateway-escaped-slashes-action: KeepUnchanged passes
+	// percent-encoded slashes in a path through to the backend unaltered.
 	//
 	// Here rather than on the object, because they are per HOST and a profile
-	// may publish several. frame-ancestors decides which pages may embed this
-	// one in a frame, which is what lets the desktop open an app in a window
-	// instead of a browser tab — so it is not decoration, and a profile that
-	// lost it would open in a tab with no error to say why.
+	// may publish several. Who may embed this host in a frame is not set
+	// here: the operator gives every exposure the same frame policy, its
+	// tenant's desktop and the component's own other hosts.
 	//
-	// Not a free-form passthrough: the nginx ingress annotations that used to
-	// sit beside these — body size, read and send timeouts — are the gateway's
-	// own policy now and are not read from here.
+	// Not a free-form passthrough: body size, read and send timeouts are the
+	// gateway's own policy and are not read from here.
 	// +optional
 	// +kubebuilder:validation:MaxProperties=16
 	Annotations map[string]string `json:"annotations,omitempty"`

@@ -33,11 +33,6 @@ const (
 const (
 	AnnotationProfileDeploymentRole = "gentianos.io/deployment-role"
 
-	// GatewayRootRedirect is an HTTPRoute redirect target for GET / on the app host.
-	AnnotationProfileGatewayRootRedirect = "gentianos.io/gateway-root-redirect"
-	// GatewayAPIBackends is a JSON array of extra path→Service routes on the app host.
-	// Shape: [{"pathPrefix":"/api","serviceName":"my-api","port":8080}]
-	AnnotationProfileGatewayAPIBackends = "gentianos.io/gateway-api-backends"
 	// OIDCDefaultRedirectURIs is a JSON array used when spec.requires.services.identity.oidc.redirectUris is empty.
 	// Supports ${TENANT_DOMAIN} substitution.
 	AnnotationProfileOIDCDefaultRedirectURIs = "gentianos.io/oidc-default-redirect-uris"
@@ -46,10 +41,8 @@ const (
 	AnnotationProfileKernelEgressNamespaces = "gentianos.io/kernel-egress-namespaces"
 )
 
-// Per-host gateway policy annotations on IngressSpec.annotations (primary or additionalIngresses).
+// Per-host gateway policy annotations on spec.expose[].annotations.
 const (
-	// GatewayFrameAncestors is JSON: {"mode":"replace|append","origins":["portal","mainApp",...]}.
-	AnnotationIngressGatewayFrameAncestors = "gentianos.io/gateway-frame-ancestors"
 	// GatewayEscapedSlashesAction sets Envoy ClientTrafficPolicy path.escapedSlashesAction.
 	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
 )

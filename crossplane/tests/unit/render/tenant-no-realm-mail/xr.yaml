@@ -18,7 +18,6 @@ spec:
     databasePrefix: user_
     s3Prefix: user-
   deletionPolicy: Retain
-  apps: []
   quotas:
     requestsCpu: "4"
     requestsMemory: 16Gi

@@ -19,7 +19,6 @@ spec:
     databasePrefix: user_
     s3Prefix: user-
   deletionPolicy: Retain
-  apps: []
   realmMail:
     host: mail.platform.example.test
     port: "587"
