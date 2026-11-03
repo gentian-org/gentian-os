@@ -11,8 +11,16 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func TestPatchHairpinCorefile_UpdatesKernelHostsPreservesMail(t *testing.T) {
@@ -244,5 +252,47 @@ func TestPatchHairpinCorefile_RetiresTenantHostsWithTheTenant(t *testing.T) {
 	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
 	if !changed || strings.Contains(patched, "chat.demo.platform.example.test") {
 		t.Fatalf("the deleted tenant's host survived:\n%s", patched)
+	}
+}
+
+// The hairpin lists a tenant's app hosts where their routes answer, by the
+// one rule the routes are built from (addresses.Host): the platform's
+// desktop on its zone's own domain, an apex entry on the bare domain for the
+// platform tenant and nowhere for anybody else.
+func TestTheHairpinListsAppHostsWhereTheirRoutesAnswer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	gateway := func(name, sub string, apex bool) gentianov1alpha1.ExposureSpec {
+		return gentianov1alpha1.ExposureSpec{
+			Name: name, Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
+			SubDomain: sub, Apex: apex, Backend: gentianov1alpha1.BackendRef{Service: name, Port: 8080},
+		}
+	}
+	profile := func(name string, expose ...gentianov1alpha1.ExposureSpec) *gentianov1alpha1.ComponentProfile {
+		return &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: gentianov1alpha1.ComponentProfileSpec{Expose: expose}}
+	}
+	platform, acme := platformTenantFixture(), acmeTenantFixture()
+	platform.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "desktop"}, {Profile: "concierge"}}
+	acme.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "wiki"}, {Profile: "site"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(platform, acme,
+		profile("desktop", gateway("web", "desktop", false)),
+		profile("concierge", gateway("web", "", true)),
+		profile("wiki", gateway("web", "", false), gateway("api", "wiki-api", false)),
+		profile("site", gateway("web", "", true)),
+	).Build()
+
+	got, err := collectTenantAppHairpinHosts(context.Background(), c, "k.example", gentianov1alpha1.TenancyModeMulti, "kernel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct{}{
+		"platform.k.example": {}, "k.example": {},
+		"wiki.acme.k.example": {}, "wiki-api.acme.k.example": {},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("hairpin hosts = %v, want %v", got, want)
 	}
 }

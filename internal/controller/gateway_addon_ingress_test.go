@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 )
 
 // An Odoo-shaped tenant: a base that owns the ERP host, and an addon that wants
@@ -82,18 +83,19 @@ func TestCollectTenantIngressIntentsIncludesAddonHosts(t *testing.T) {
 	}
 
 	got := make(map[string]string, len(intents))
+	zone := addresses.Zone{Domain: "demo.desk.gentian.org"}
 	for _, in := range intents {
-		got[in.appProfile] = ingressHost(in.appProfile, in.ingress, "demo.desk.gentian.org")
+		got[in.component+"/"+in.ingress.Name] = addresses.Host(zone, in.component, in.ingress)
 	}
 
 	// The base still owns its own host.
-	if host := got["odoo-base-ce"]; host != "erp.demo.desk.gentian.org" {
+	if host := got["odoo-base-ce/web"]; host != "erp.demo.desk.gentian.org" {
 		t.Errorf("base host = %q, want erp.demo.desk.gentian.org", host)
 	}
 
 	// The addon's host is present, and named for the addon rather than the base
 	// so its route, certificate and DNS record go away with the addon.
-	host, ok := got["odoo-website-ce-extra0"]
+	host, ok := got["odoo-website-ce/site"]
 	if !ok {
 		t.Fatalf("addon ingress produced no intent; got %v", got)
 	}
@@ -129,7 +131,7 @@ func TestCollectTenantIngressIntentsIgnoresAddonPrimaryIngress(t *testing.T) {
 	}
 	for _, in := range intents {
 		if in.ingress.SubDomain == "hijack" {
-			t.Fatalf("addon Spec.Ingress was honored as %q; addons get no primary host", in.appProfile)
+			t.Fatalf("addon Spec.Ingress was honored as %q; addons get no primary host", in.component)
 		}
 	}
 }

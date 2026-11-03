@@ -114,7 +114,7 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 		// host. Any further gateway entry is what additionalIngresses were.
 		gateways := profile.GatewayExposures()
 		if len(gateways) > 0 {
-			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: gateways[0]})
+			intents = append(intents, ingressIntent{component: servingComponent(app.Profile, gateways[0]), profile: profile, ingress: gateways[0]})
 		}
 		intents = append(intents, additionalIngressIntents(app.Profile, profile)...)
 
@@ -139,9 +139,9 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 	return intents, nil
 }
 
-// additionalIngressIntents turns a profile's AdditionalIngresses into intents.
-// The name carries the profile the ingress was declared on, so an addon's host
-// is named for the addon rather than for the base it is activated inside.
+// additionalIngressIntents turns a profile's AdditionalIngresses into intents,
+// each for the component that serves it: the one the entry routes into, or
+// the profile's own -- an addon's, not the base it is activated inside.
 func additionalIngressIntents(
 	profileName string, profile *gentianov1alpha1.ComponentProfile,
 ) []ingressIntent {
@@ -152,12 +152,22 @@ func additionalIngressIntents(
 	intents := make([]ingressIntent, 0, len(gateways))
 	for i := range gateways {
 		intents = append(intents, ingressIntent{
-			appProfile: additionalIngressProfile(profileName, i),
-			profile:    profile,
-			ingress:    gateways[i],
+			component: servingComponent(profileName, gateways[i]),
+			profile:   profile,
+			ingress:   gateways[i],
 		})
 	}
 	return intents
+}
+
+// servingComponent is the component whose routes serve an entry of the
+// profile an install is named after: the component the entry routes into,
+// where it names one.
+func servingComponent(profileName string, e *gentianov1alpha1.ExposureSpec) string {
+	if e.Backend.Component != "" {
+		return e.Backend.Component
+	}
+	return profileName
 }
 
 func clusterNeedsEscapedSlashesKeepUnchanged(ctx context.Context, c client.Client) (bool, error) {
