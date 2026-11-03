@@ -471,3 +471,46 @@ func TestBootstrapAdoptsTheNamedStoreOnlyWhenNothingIsRecorded(t *testing.T) {
 		t.Fatalf("store=%q err=%v, want by-name", store, err)
 	}
 }
+
+// pagedStores lists one store per page, under a continuation token of the
+// kind OpenFGA hands out: base64, with characters a query string gives
+// another meaning to.
+type pagedStores struct{ asked []string }
+
+func (p *pagedStores) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const second = "ey+Jw/YWdl==&page_size=1"
+	token := r.URL.Query().Get("continuation_token")
+	p.asked = append(p.asked, token)
+	switch token {
+	case "":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"stores":             []map[string]any{{"id": "first", "name": "other"}},
+			"continuation_token": second,
+		})
+	case second:
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"stores": []map[string]any{{"id": "wanted", "name": StoreName, "created_at": "2025-01-01T00:00:00Z"}},
+		})
+	default:
+		http.Error(w, "unknown continuation token", http.StatusBadRequest)
+	}
+}
+
+// A continuation token goes back to OpenFGA as it came, whatever characters
+// it holds.
+func TestTheStoresAreListedPageByPageWithTheTokenAsGiven(t *testing.T) {
+	p := &pagedStores{}
+	srv := httptest.NewServer(p)
+	t.Cleanup(srv.Close)
+	c, err := newClient(Options{BaseURL: srv.URL, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := c.storesNamed(context.Background(), StoreName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].ID != "wanted" {
+		t.Fatalf("found %+v after asking with tokens %q", found, p.asked)
+	}
+}
