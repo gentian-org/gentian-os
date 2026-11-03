@@ -1029,7 +1029,6 @@ OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. Shipp
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec` | object |  | OIDCPackCatalogSpec holds mapper templates and per-clientId pack definitions. |
-| `spec.extraManagedByAttributeGroups` | []string |  | `ExtraManagedByAttributeGroups` lists additional cn=managed-by-attribute-* groups provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g. |
 | `spec.mapperTemplates` | map[string]object |  | `MapperTemplates` are reusable Keycloak protocol mapper definitions. |
 | `spec.mapperTemplates{}.config` | map[string]string |  | `Config` holds Keycloak mapper configuration key/value pairs. |
 | `spec.mapperTemplates{}.keycloakName` | string |  | `KeycloakName` overrides the mapper name in Keycloak when it differs from the catalog template key. |
