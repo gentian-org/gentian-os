@@ -322,6 +322,21 @@ _keycloak_internal_service_url() {
     return 1
 }
 
+# The image the realm Jobs below run: storage-tools, which carries curl and
+# jq, at the reference the running operator gives its own identity Jobs.
+# Without an operator to ask, the tag this run renders for it.
+_keycloak_job_image() {
+    local image
+    image=$(kubectl get deploy gentian-os -n "$(ns_kernel control)" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env[?(@.name=="STORAGE_TOOLS_IMAGE")].value}' 2>/dev/null || true)
+    if [[ -n "${image}" ]]; then
+        echo "${image}"
+        return 0
+    fi
+    resolve_gentian_os_image_tag
+    echo "ghcr.io/gentian-org/storage-tools:${GENTIAN_OS_IMAGE_TAG}"
+}
+
 wait_for_keycloak_http_service() {
     local ns
     ns="${1:-$(_pl_identity_ns)}"
@@ -672,7 +687,8 @@ configure_keycloak_realm_smtp() {
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
-    local smtp_shell
+    local smtp_shell job_image
+    job_image=$(_keycloak_job_image)
     smtp_shell=$(_keycloak_smtp_configure_shell)
 
     kubectl apply -f - <<EOF
@@ -689,14 +705,23 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: configure
-          image: alpine:3.20
+          image: ${job_image}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - /bin/sh
             - -ec
             - |
-              apk add --no-cache --quiet curl jq >/dev/null
               set -eu
               resolve_keycloak_base() {
                 local base code
@@ -995,7 +1020,8 @@ run_keycloak_portal_bootstrap_job() {
         "${bootstrap_secret_args[@]}" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    local smtp_shell refresh_shell
+    local smtp_shell refresh_shell job_image
+    job_image=$(_keycloak_job_image)
     smtp_shell=$(_keycloak_smtp_configure_shell)
     refresh_shell=$(_keycloak_refresh_token_shell)
 
@@ -1015,14 +1041,23 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: bootstrap
-          image: alpine:3.20
+          image: ${job_image}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - /bin/sh
             - -ec
             - |
-              apk add --no-cache --quiet curl jq >/dev/null
               set -eu
               resolve_keycloak_base() {
                 local base code
