@@ -271,17 +271,11 @@ echo "restored %[4]s; the dump's schema ${src} is its schema %[4]s"`, shellSingl
 // does not destroy what its bundle does not cover -- and is named in the
 // Job's output.
 func PostgresOwnedRestoreJob(p JobParams, d Decryption, artefact, source, database string) *batchv1.Job {
-	unpack := corev1.Container{
-		Name:    "unpack-owned",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	unpack := toolsContainer("unpack-owned", fmt.Sprintf(`set -eu
 mkdir -p %[1]s/owned
 tar xzf %[1]s/owned.tar.gz -C %[1]s/owned
 [ -f %[1]s/owned/INDEX ] || { echo "ERROR: the archive has no INDEX" >&2; exit 1; }
-echo "unpacked the archive of owned databases"`, workDir)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "unpacked the archive of owned databases"`, workDir))
 	restore := corev1.Container{
 		Name:    "pg-restore-owned",
 		Image:   kernel.PostgresProvisionerImage(),
@@ -445,17 +439,11 @@ echo "restored ${DB}"`, shellSingleQuote(database), workDir)},
 // The names are the app's own choice: each is handed to the server as hex
 // and quoted by it, and reaches the client only as an argument.
 func MariaDBOwnedRestoreJob(p JobParams, d Decryption, artefact, source, database, user string) *batchv1.Job {
-	unpack := corev1.Container{
-		Name:    "unpack-owned",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	unpack := toolsContainer("unpack-owned", fmt.Sprintf(`set -eu
 mkdir -p %[1]s/owned
 tar xzf %[1]s/owned.tar.gz -C %[1]s/owned
 [ -f %[1]s/owned/INDEX ] || { echo "ERROR: the archive has no INDEX" >&2; exit 1; }
-echo "unpacked the archive of owned databases"`, workDir)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "unpacked the archive of owned databases"`, workDir))
 	script := mariadbRefusal(database, user)
 	if script == "" {
 		script = fmt.Sprintf(`set -euo pipefail
@@ -545,16 +533,10 @@ func (p JobParams) restoreRole() string {
 // objects are written, so a restore that cannot provision does not replace
 // the bucket's contents either.
 func S3RestoreJob(p JobParams, d Decryption, artefact, bucket string, provision corev1.Container) *batchv1.Job {
-	unpack := corev1.Container{
-		Name:    "unpack-bucket",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	unpack := toolsContainer("unpack-bucket", fmt.Sprintf(`set -eu
 mkdir -p %[1]s/restore
 tar xzf %[1]s/bucket.tar.gz -C %[1]s/restore
-echo "unpacked bucket archive"`, workDir)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "unpacked bucket archive"`, workDir))
 	// Platform storage, not the bundle's location. The init container above
 	// fetched the archive from wherever the bundle lives; this one puts the
 	// app's objects back into the cluster's own object store, which is a different
@@ -592,21 +574,14 @@ echo "restored bucket %[2]s"`, workDir, bucket, platformRemote), PlatformStorage
 // creates it with the app already paused: unpacking over a running app's volume
 // would race its own writes.
 func VolumeRestoreJob(p JobParams, d Decryption, artefact, claim string) *batchv1.Job {
-	restore := corev1.Container{
-		Name:    "volume-restore",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	// Root, as only root puts each file back under the owner it had.
+	restore := volumeToolsContainer("volume-restore", fmt.Sprintf(`set -eu
 # Deliberately not deleting the target first: excludePaths mean the archive is
 # not always a complete picture of the volume, and wiping data the profile chose
 # not to capture would turn a documented omission into data loss.
 tar xzf %s/volume.tar.gz -C /target
-echo "restored volume %s"`, workDir, claim)},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "target", MountPath: "/target"},
-			{Name: "work", MountPath: workDir},
-		},
-	}
+echo "restored volume %s"`, workDir, claim))
+	restore.VolumeMounts = append(restore.VolumeMounts, corev1.VolumeMount{Name: "target", MountPath: "/target"})
 	target := corev1.Volume{
 		Name: "target",
 		VolumeSource: corev1.VolumeSource{
@@ -750,11 +725,7 @@ func mustJSON(v any) string {
 // fails. It used to pass over each and report the count of what worked.
 func RealmImportJob(p JobParams, d Decryption, artefact, realm string, source RealmSource) *batchv1.Job {
 	mailFrom, mailTo := source.mailMove()
-	restore := corev1.Container{
-		Name:    "realm-import",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{realmScriptPrelude + fmt.Sprintf(`REALM=%[1]s
+	restore := toolsContainer("realm-import", realmScriptPrelude+fmt.Sprintf(`REALM=%[1]s
 MAIL_FROM=%[3]s
 MAIL_TO=%[4]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
@@ -1131,13 +1102,11 @@ if [ "${failed}" -ne 0 ]; then
   exit 1
 fi
 echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a password reset"`,
-			quotedRealm(realm), workDir, shellSingleQuote(mailFrom), shellSingleQuote(mailTo),
-			shellSingleQuote(source.platformClients()), shellSingleQuote(mustJSON(keycloak.PlatformClientPatterns)),
-			shellSingleQuote(keycloak.PlatformGroupPattern), shellSingleQuote(source.hostMoves()),
-			shellSingleQuote(keycloak.PlatformMarkerAttribute), shellSingleQuote(keycloak.PlatformMarkerValue))},
-		Env:          keycloakAdminEnv(),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+		quotedRealm(realm), workDir, shellSingleQuote(mailFrom), shellSingleQuote(mailTo),
+		shellSingleQuote(source.platformClients()), shellSingleQuote(mustJSON(keycloak.PlatformClientPatterns)),
+		shellSingleQuote(keycloak.PlatformGroupPattern), shellSingleQuote(source.hostMoves()),
+		shellSingleQuote(keycloak.PlatformMarkerAttribute), shellSingleQuote(keycloak.PlatformMarkerValue)))
+	restore.Env = keycloakAdminEnv()
 	return restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "realm.tar.gz"),
 	}, restore, nil)

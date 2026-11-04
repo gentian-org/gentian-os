@@ -18,7 +18,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -133,13 +132,7 @@ rm -f '%s'
 [ -s '%s' ] || { echo "ERROR: encryption produced no output" >&2; exit 1; }
 echo "encrypted %s"`, encryptBootstrap(e), encrypt, plain, cipher, localFile)
 
-	container := corev1.Container{
-		Name:         "encrypt",
-		Image:        kernel.StorageToolsImage(),
-		Command:      []string{"/bin/sh", "-c"},
-		Args:         []string{script},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+	container := toolsContainer("encrypt", script)
 	if e.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		container.Env = []corev1.EnvVar{
 			meta.SecretEnv(PassphraseEnvVar, e.PassphraseSecret, e.PassphraseKey),

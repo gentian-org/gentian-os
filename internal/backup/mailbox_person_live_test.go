@@ -41,12 +41,12 @@ func (m *liveMail) person(job *batchv1.Job, env ...string) (string, MailboxOutco
 	// Later values win: a test overrides a name the Job would not be built
 	// with.
 	all = append(all, env...)
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", "rm -f "+workDir+"/result")
+	m.mustRun(kernel.StorageToolsImage(), "0:0", "sh", "rm -f "+workDir+"/result")
 	out, err := m.run(DovecotImage, "1000:1000", c.Command[0], c.Args[0], all...)
 	if err != nil {
 		return out, MailboxOutcome{}, err
 	}
-	report := m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", "cat "+workDir+"/result")
+	report := m.mustRun(kernel.StorageToolsImage(), "0:0", "sh", "cat "+workDir+"/result")
 	outcome, err := ParseMailboxOutcome(report)
 	return out, outcome, err
 }
@@ -188,11 +188,11 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 	if !strings.Contains(out, "copied 2 mailbox(es) of demo.example") || !strings.Contains(out, "copied 1 archived mailbox(es) of demo.example") {
 		t.Fatalf("the backup:\n%s", out)
 	}
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", containerByName(backupJob, "pack-mailboxes").Args[0])
-	if index := m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", "tar xzOf "+workDir+"/mailboxes.tar.gz ./INDEX"); index != "alice\nbob\n" {
+	m.mustRun(kernel.StorageToolsImage(), userOf(containerByName(backupJob, "pack-mailboxes")), "sh", containerByName(backupJob, "pack-mailboxes").Args[0])
+	if index := m.mustRun(kernel.StorageToolsImage(), "0:0", "sh", "tar xzOf "+workDir+"/mailboxes.tar.gz ./INDEX"); index != "alice\nbob\n" {
 		t.Errorf("the bundle lists the live mailboxes %q", index)
 	}
-	if index := m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", "tar xzOf "+workDir+"/mailboxes.tar.gz ./archived/INDEX"); index != name+"\n" {
+	if index := m.mustRun(kernel.StorageToolsImage(), "0:0", "sh", "tar xzOf "+workDir+"/mailboxes.tar.gz ./archived/INDEX"); index != name+"\n" {
 		t.Errorf("the bundle lists the archived mailboxes %q", index)
 	}
 
@@ -284,7 +284,7 @@ dv "${box}" flags add '\Answered $Later' mailbox Archive all`)
 		t.Fatalf("after the tenant's deletion the volume holds:\n%s", got)
 	}
 	restore := MailboxRestoreJob(p, d, MailboxesArtefact, "claim", "renamed.example")
-	m.mustRun(kernel.DefaultKeycloakProvisionerImage, "0:0", "sh", containerByName(restore, "unpack-mailboxes").Args[0])
+	m.mustRun(kernel.StorageToolsImage(), userOf(containerByName(restore, "unpack-mailboxes")), "sh", containerByName(restore, "unpack-mailboxes").Args[0])
 	out = m.mustRun(DovecotImage, "1000:1000", "/bin/bash", containerByName(restore, "mailbox-restore").Args[0], "DOMAIN=renamed.example")
 	if !strings.Contains(out, "restored 2 mailbox(es) into renamed.example") || !strings.Contains(out, "restored 1 archived mailbox(es) of renamed.example") {
 		t.Fatalf("the restore:\n%s", out)

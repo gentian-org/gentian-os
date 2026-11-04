@@ -80,12 +80,61 @@ func storageEnv(secret string) []corev1.EnvVar {
 // storageTools is a container of the platform's storage tools running
 // script with env.
 func storageTools(name, script string, env []corev1.EnvVar) corev1.Container {
+	c := toolsContainer(name, script)
+	c.Env = env
+	return c
+}
+
+// toolsContainer is a container of the platform's storage tools running
+// script in the scratch directory, as the image's own unprivileged user
+// (toolsSecurityContext). The image carries every tool the scripts call;
+// nothing is installed when one runs.
+func toolsContainer(name, script string) corev1.Container {
 	return corev1.Container{
-		Name:         name,
-		Image:        kernel.StorageToolsImage(),
-		Command:      []string{"/bin/sh", "-c"},
-		Args:         []string{script},
-		Env:          env,
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+		Name:            name,
+		Image:           kernel.StorageToolsImage(),
+		Command:         []string{"/bin/sh", "-c"},
+		Args:            []string{script},
+		VolumeMounts:    []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+		SecurityContext: toolsSecurityContext(),
 	}
+}
+
+// toolsSecurityContext is the restricted context a storage tools container
+// runs under: the image's user and group, no privilege escalation, no
+// capabilities, the runtime's seccomp profile. What it writes goes to the
+// scratch directory (an emptyDir, writable by anyone) and /tmp (the image's,
+// writable by anyone); it reads what an earlier step of the same pod wrote
+// there.
+func toolsSecurityContext() *corev1.SecurityContext {
+	no, yes := false, true
+	user := kernel.StorageToolsUser
+	return &corev1.SecurityContext{
+		RunAsUser:                &user,
+		RunAsGroup:               &user,
+		RunAsNonRoot:             &yes,
+		AllowPrivilegeEscalation: &no,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+// volumeToolsContainer is a storage tools container that reads or writes an
+// app's volume, which only root can do: the files are whichever uid the app
+// writes as, some readable by that uid alone, and a restore puts each back
+// under the owner it had. It runs as root without privilege escalation, and
+// keeps the runtime's default capabilities, which are what lets root read and
+// chown files it does not own. The volume Jobs run in tenant namespaces,
+// whose policies require neither non-root nor dropped capabilities.
+func volumeToolsContainer(name, script string) corev1.Container {
+	c := toolsContainer(name, script)
+	no := false
+	root := int64(0)
+	c.SecurityContext = &corev1.SecurityContext{
+		RunAsUser:                &root,
+		RunAsGroup:               &root,
+		AllowPrivilegeEscalation: &no,
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	return c
 }

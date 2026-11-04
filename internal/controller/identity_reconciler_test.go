@@ -12,6 +12,7 @@ package controller_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -265,8 +266,20 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 		t.Fatal("expected at least one container in realm Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != kernel.DefaultKeycloakProvisionerImage {
-		t.Errorf("unexpected container image %q, want %s", container.Image, kernel.DefaultKeycloakProvisionerImage)
+	// The storage tools carry curl and jq; nothing is installed when the Job
+	// runs, and it runs as the image's unprivileged user.
+	if container.Image != kernel.StorageToolsImage() {
+		t.Errorf("unexpected container image %q, want %s", container.Image, kernel.StorageToolsImage())
+	}
+	if strings.Contains(strings.Join(container.Command, " "), "apk ") {
+		t.Errorf("the realm Job installs a package when it runs: %v", container.Command)
+	}
+	sc := container.SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser != kernel.StorageToolsUser ||
+		sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot ||
+		sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation ||
+		sc.Capabilities == nil || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("the realm Job does not run as %d under the restricted context: %+v", kernel.StorageToolsUser, sc)
 	}
 	if len(container.Env) < 2 {
 		t.Errorf("expected at least 2 env vars (KEYCLOAK_URL, KEYCLOAK_ADMIN_PASSWORD), got %d", len(container.Env))

@@ -16,8 +16,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-
-	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 // A tenant's mailboxes.
@@ -214,16 +212,14 @@ echo "copied ${copied} archived mailbox(es) of ${DOMAIN}"`, MailRoot, workDir, M
 	copyBoxes := mailContainer("mailbox-backup", script, corev1.EnvVar{Name: "DOMAIN", Value: domain})
 	copyBoxes.VolumeMounts = append(copyBoxes.VolumeMounts, corev1.VolumeMount{Name: "work", MountPath: workDir})
 	// A separate container, as for every archive: one image packs them all.
-	pack := corev1.Container{
-		Name:    "pack-mailboxes",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	// As the mail server's user, who made the copies: they are that user's
+	// alone to read and remove.
+	pack := toolsContainer("pack-mailboxes", fmt.Sprintf(`set -eu
 tar czf %[1]s/mailboxes.tar.gz -C %[1]s/mail .
 rm -rf %[1]s/mail
-echo "archived the mailboxes"`, workDir)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "archived the mailboxes"`, workDir))
+	mailUser := MailUser
+	pack.SecurityContext.RunAsUser, pack.SecurityContext.RunAsGroup = &mailUser, &mailUser
 	return uploadJob(p, "mailboxes.tar.gz", MailboxesArtefact, []corev1.Container{copyBoxes, pack}, []corev1.Volume{mailVolume(claim)})
 }
 
@@ -242,11 +238,7 @@ echo "archived the mailboxes"`, workDir)},
 // one; a link in the archive is refused, because the synchronization would
 // follow it, and what it reads it writes into the tenant's mailbox.
 func MailboxRestoreJob(p JobParams, d Decryption, artefact, claim, domain string) *batchv1.Job {
-	unpack := corev1.Container{
-		Name:    "unpack-mailboxes",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	unpack := toolsContainer("unpack-mailboxes", fmt.Sprintf(`set -eu
 mkdir -p %[1]s/mail
 tar xzf %[1]s/mailboxes.tar.gz -C %[1]s/mail
 rm -f %[1]s/mailboxes.tar.gz
@@ -257,9 +249,7 @@ if [ -s /tmp/odd ]; then
 fi
 # The mail server's user reads and indexes them.
 chmod -R a+rwX %[1]s/mail
-echo "unpacked the archive of mailboxes"`, workDir)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "unpacked the archive of mailboxes"`, workDir))
 	script := doveadmPrelude + fmt.Sprintf(`# put_back FROM INTO WHAT: every mailbox FROM/INDEX names, synchronised into
 # the directory of its name below INTO. restored is how many.
 put_back() {

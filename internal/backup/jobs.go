@@ -22,7 +22,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -223,7 +222,8 @@ func PostgresOwnedDumpJob(p JobParams, role, database string) *batchv1.Job {
 		Args: []string{fmt.Sprintf(`set -eu
 ROLE=%[1]s
 DB=%[2]s
-mkdir -p %[3]s/owned
+# Anyone's: the pack step runs as another user and removes what is in it.
+mkdir -p -m 0777 %[3]s/owned
 psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > %[3]s/owned/INDEX <<'PSQL'
 %[4]s
 PSQL
@@ -242,16 +242,10 @@ echo "dumped ${n} database(s) ${ROLE} owns besides ${DB}"`,
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	// A separate container because the dump image is not relied on for tar.
-	pack := corev1.Container{
-		Name:    "pack-owned",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	pack := toolsContainer("pack-owned", fmt.Sprintf(`set -eu
 tar czf %[1]s/owned.tar.gz -C %[1]s/owned .
 rm -rf %[1]s/owned
-echo "archived the databases owned besides %[2]s"`, workDir, database)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "archived the databases owned besides %[2]s"`, workDir, database))
 	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
 }
 
@@ -305,7 +299,8 @@ func MariaDBOwnedDumpJob(p JobParams, user, database string) *batchv1.Job {
 	if script == "" {
 		script = fmt.Sprintf(`set -euo pipefail
 MARIADB=(%[4]s)
-mkdir -p %[2]s/owned
+# Anyone's: the pack step runs as another user and removes what is in it.
+mkdir -p -m 0777 %[2]s/owned
 unlistable="$("${MARIADB[@]}" -N -s <<'SQL'
 SELECT COUNT(*) FROM (%[3]s) o WHERE o.schema_name REGEXP '[[:cntrl:]]';
 SQL
@@ -337,16 +332,10 @@ echo "dumped ${n} database(s) that are %[1]s's besides itself"`,
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	// A separate container, as for PostgreSQL: one image packs every archive.
-	pack := corev1.Container{
-		Name:    "pack-owned",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	pack := toolsContainer("pack-owned", fmt.Sprintf(`set -eu
 tar czf %[1]s/owned.tar.gz -C %[1]s/owned .
 rm -rf %[1]s/owned
-echo "archived the databases that are %[2]s's besides itself"`, workDir, database)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "archived the databases that are %[2]s's besides itself"`, workDir, database))
 	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
 }
 
@@ -357,7 +346,8 @@ echo "archived the databases that are %[2]s's besides itself"`, workDir, databas
 // which bytes are derived; they are applied as tar patterns, so a pattern that
 // matched a config directory would silently drop the key an app's data is
 // encrypted with — which is why the catalog rejects such patterns rather
-// than trusting this layer to notice.
+// than trusting this layer to notice. A pattern is a glob: its * does not
+// match a /, and it matches at the start of any of a path's components.
 func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1.Job {
 	artefact := VolumeArtefact(claim)
 	var excludes strings.Builder
@@ -366,19 +356,11 @@ func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1
 	}
 	// Every container that runs tar must use an image that has it; the first
 	// live volume capture ran a client image without one and exited 127 on
-	// its first command.
-	archive := corev1.Container{
-		Name:    "archive",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-tar czf %s/volume.tar.gz -C /source%s .
-echo "archived %s"`, workDir, excludes.String(), claim)},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "source", MountPath: "/source", ReadOnly: true},
-			{Name: "work", MountPath: workDir},
-		},
-	}
+	// its first command. Root, as only root reads every file of the volume.
+	archive := volumeToolsContainer("archive", fmt.Sprintf(`set -eu
+tar czf %s/volume.tar.gz -C /source --no-wildcards-match-slash%s .
+echo "archived %s"`, workDir, excludes.String(), claim))
+	archive.VolumeMounts = append(archive.VolumeMounts, corev1.VolumeMount{Name: "source", MountPath: "/source", ReadOnly: true})
 	source := corev1.Volume{
 		Name: "source",
 		VolumeSource: corev1.VolumeSource{
@@ -421,16 +403,10 @@ mkdir -p %[1]s/bucket
 # Each object's modification time comes with it, as a file's.
 rclone copy "%[3]s:%[2]s" %[1]s/bucket
 echo "fetched bucket %[2]s"`, workDir, sourceBucket, platformRemote), PlatformStorageEnv())
-	pack := corev1.Container{
-		Name:    "pack-bucket",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+	pack := toolsContainer("pack-bucket", fmt.Sprintf(`set -eu
 tar czf %[1]s/bucket.tar.gz -C %[1]s/bucket .
 rm -rf %[1]s/bucket
-echo "archived bucket %[2]s"`, workDir, sourceBucket)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "archived bucket %[2]s"`, workDir, sourceBucket))
 	return uploadJob(p, "bucket.tar.gz", artefact, []corev1.Container{fetch, pack}, nil)
 }
 
@@ -449,11 +425,7 @@ echo "archived bucket %[2]s"`, workDir, sourceBucket)},
 // decision hiding in an API limitation, not an oversight.
 func RealmExportJob(p JobParams, realm string) *batchv1.Job {
 	quoted := shellSingleQuote(realm)
-	export := corev1.Container{
-		Name:    "realm-export",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{realmScriptPrelude + fmt.Sprintf(`REALM=%[1]s
+	export := toolsContainer("realm-export", realmScriptPrelude+fmt.Sprintf(`REALM=%[1]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
 new_token
 
@@ -496,16 +468,14 @@ rm -f %[2]s/groups.json
   || { echo "ERROR: the memberships of some people were not recorded" >&2; exit 1; }
 
 tar czf %[2]s/realm.tar.gz -C %[2]s realm.json users.ndjson memberships.ndjson
-echo "exported realm ${REALM} (${n} users)"`, quoted, workDir)},
-		Env:          keycloakAdminEnv(),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "exported realm ${REALM} (${n} users)"`, quoted, workDir))
+	export.Env = keycloakAdminEnv()
 	return uploadJob(p, "realm.tar.gz", IdentityArtefact, []corev1.Container{export}, nil)
 }
 
 // realmScriptPrelude is what the realm export and the realm import begin
-// with: the tools, the administrator's token, and the one way either talks
-// to the identity provider.
+// with: the administrator's token, and the one way either talks to the
+// identity provider. curl and jq are the storage tools image's.
 //
 // kc answers with the body on success and fails, saying what was refused and
 // how, on anything else -- these scripts used curl -sf, which says nothing,
@@ -514,7 +484,7 @@ echo "exported realm ${REALM} (${n} users)"`, quoted, workDir)},
 // answers 401, and the loops ask for one as they go.
 //
 // Not passed through fmt: it holds curl's own %{http_code}.
-const realmScriptPrelude = keycloak.ProvisionerBootstrap + `set -eu
+const realmScriptPrelude = `set -eu
 new_token() {
   TOKEN=$(curl -sS --max-time 30 -X POST \
     "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \

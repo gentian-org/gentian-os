@@ -499,14 +499,22 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm 
 	}
 }
 
-// keycloakContainer returns a Container spec that runs a shell script via the
-// Alpine-based Keycloak provisioner image (wget + jq). Credentials are injected
-// from the well-known keycloak-admin Secret in the kernel namespace.
+// keycloakContainer returns a Container spec that runs a shell script in the
+// platform's storage tools image, which carries curl and jq, as that image's
+// unprivileged user under the restricted security context. Credentials are
+// injected from the well-known keycloak-admin Secret in the kernel namespace.
+// A script writes only below /tmp (mktemp), which the image keeps writable by
+// anyone.
 func keycloakContainer(name, script string) corev1.Container {
+	user := kernel.StorageToolsUser
+	yes := true
+	sc := provisioningSecurityContext()
+	sc.RunAsUser, sc.RunAsGroup, sc.RunAsNonRoot = &user, &user, &yes
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c", keycloak.ProvisionerBootstrap + script},
+		Name:            name,
+		Image:           kernel.StorageToolsImage(),
+		Command:         []string{"/bin/sh", "-c", script},
+		SecurityContext: sc,
 		Env: []corev1.EnvVar{
 			{
 				Name: "KEYCLOAK_URL",

@@ -27,10 +27,9 @@ const (
 	// client, whose mariadb-dump opens every dump with a statement the 11.1
 	// server refuses (SET ... NOTE_VERBOSITY): each dump was taken and none
 	// could be loaded again. Bump the two together; a test holds them equal.
-	DefaultMariaDBProvisionerImage  = "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
-	DefaultRedisProvisionerImage    = "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
-	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
-	DefaultKeycloakProvisionerImage = "alpine:3.20"
+	DefaultMariaDBProvisionerImage = "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
+	DefaultRedisProvisionerImage   = "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
+	DefaultMemcachedImage          = "memcached:1.6.38-alpine"
 
 	// The publishing proxy that stands in a tenant's DMZ (AD-6). nginx
 	// because what it does is the one thing nginx is unambiguous about:
@@ -57,7 +56,8 @@ const (
 	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-13056ec@sha256:fdaf2e3941ae77b2095e00dc2e149f14e027c76b5e8b144047f06f605e4662cf"
 
 	// DefaultStorageToolsImage is what every Job that moves a tenant's
-	// objects runs: rclone, age, tar and coreutils
+	// objects, packs an archive or talks to the identity provider's
+	// administration runs: rclone, age, tar, coreutils, curl and jq
 	// (kernel/images/storage-tools). CI builds it beside the operator and
 	// tags it as the operator is tagged; the operator's chart names the
 	// build of its own tag (charts/gentian-os/templates/deployment.yaml),
@@ -73,6 +73,10 @@ const (
 	DefaultSeaweedFSImage = "docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
 	// StorageToolsRepository is where CI publishes that image.
 	StorageToolsRepository = "ghcr.io/gentian-org/storage-tools"
+	// StorageToolsUser is the user the storage tools image runs as (its
+	// Dockerfile's USER). The Jobs name it in their security context, so a
+	// pod runs as it whichever image an override names.
+	StorageToolsUser int64 = 65532
 	// DefaultTURNEdgeImage is the TURN edge's server: STUNner's daemon,
 	// run standalone from a configuration the operator writes
 	// (internal/controller/turn_edge.go). Named by tag and by the digest of
@@ -114,7 +118,8 @@ func SignInSidecarImage() string {
 }
 
 // StorageToolsImage is the image of the Jobs that capture, upload, fetch,
-// restore and delete a tenant's objects.
+// restore and delete a tenant's objects, pack and unpack its archives, and
+// provision, export and import its identity realm.
 func StorageToolsImage() string {
 	return envOrDefault("STORAGE_TOOLS_IMAGE", DefaultStorageToolsImage)
 }
@@ -122,10 +127,6 @@ func StorageToolsImage() string {
 // SeaweedFSImage is the image of the Jobs that administer the object store.
 func SeaweedFSImage() string {
 	return envOrDefault("SEAWEEDFS_IMAGE", DefaultSeaweedFSImage)
-}
-
-func KeycloakProvisionerImage() string {
-	return envOrDefault("KEYCLOAK_PROVISIONER_IMAGE", DefaultKeycloakProvisionerImage)
 }
 
 func envOrDefault(key, fallback string) string {

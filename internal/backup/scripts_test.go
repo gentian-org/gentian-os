@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // unitJobs is every Job an export and a restore run, by its constructor, for
@@ -89,9 +88,7 @@ func containerScript(c corev1.Container) (shell, script string) {
 // text, each with why. Nothing here discards a failure: every one of them is
 // followed by a branch that fails the script with its own message.
 var allowedQuiet = []string{
-	// Installing a tool: the package manager's chatter is hidden, and a
-	// failure ends in "could not install" or "<tool> unavailable".
-	"apk add --no-cache --quiet",
+	// Checking a tool is there: a missing one ends in "<tool> unavailable".
 	`command -v "${tool}" >/dev/null 2>&1 ||`,
 }
 
@@ -125,8 +122,7 @@ func TestNoUnitScriptDiscardsAFailure(t *testing.T) {
 				t.Errorf("%s: runs no script this test can read", where)
 				continue
 			}
-			body := strings.TrimPrefix(script, keycloak.ProvisionerBootstrap)
-			if !strings.HasPrefix(body, "set -eu") {
+			if !strings.HasPrefix(script, "set -eu") {
 				t.Errorf("%s: the script does not stop at the first failing command", where)
 			}
 			for _, line := range strings.Split(script, "\n") {
