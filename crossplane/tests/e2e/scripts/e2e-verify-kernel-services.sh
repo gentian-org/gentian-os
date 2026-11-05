@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E smoke — Keycloak + Dovecot installation health (live cluster required).
 #
-# Usage:  make e2e-p5-keycloak-dovecot   (or make verify-kernel-services)
+# Usage:  make verify-kernel-services
 #         VERIFY_KERNEL_SERVICES=1 crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
 #
 # Prerequisites:

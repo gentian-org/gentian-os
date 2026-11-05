@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 ## Gentian deployment
 
 Kernel installs this chart via Crossplane `Release`. Packaged charts are published
-to `charts/infra/packages/`; run `./scripts/publish-infra-charts.sh` after editing
+to `charts/infra/packages/`; run `./scripts/tools/publish-infra-charts.sh` after editing
 the chart source under `charts/infra/mariadb/`.
 
 ## Standalone install
