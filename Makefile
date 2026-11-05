@@ -6,6 +6,7 @@ SHELL := /bin/bash
 
 CONTROLLER_GEN ?= controller-gen
 KUBECONFORM ?= kubeconform
+KUBECONFORM_VERSION ?= v0.6.7
 
 CRD_OPTIONS ?= crd
 BOILERPLATE := api/hack/boilerplate.go.txt
@@ -22,7 +23,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: verify all build generate manifests gen-platform-version gen-docs test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-platform-role-groups test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-internal-ca test-bundle-signing test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation lint-composed-provider-fields test-provider-activation refresh-provider-types test-default-profile-digest test-store-catalogues lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-secrets-at-rest test-log-forwarding test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-object-storage-lab test-build-pin test-bootstrap-app-drift test-one-cluster test-namespace-teardown test-operator-objects test-claims-kinds
+.PHONY: verify lint-chart-schemas install-kubeconform install-tools all build generate manifests gen-platform-version gen-docs test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-platform-role-groups test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies gen-kernel-network-policies test-wildcard-cache test-internal-ca test-bundle-signing test-dns-credential-single-writer lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout lint-retired-namespaces verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-provider-activation lint-composed-provider-fields test-provider-activation refresh-provider-types test-default-profile-digest test-store-catalogues lint-credential-validators lint-credential-catalogue test-openbao-cli-download verify-openbao-cli-release lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-install-settings test-mail-egress test-secrets-at-rest test-log-forwarding test-activation-token test-realm-smtp-settings test-realm-smtp-lab test-object-storage-lab test-build-pin test-bootstrap-app-drift test-one-cluster test-namespace-teardown test-operator-objects test-claims-kinds
 
 all: generate build test
 
@@ -155,7 +156,7 @@ tidy:
 	go mod tidy
 
 ## Run every linter the CI Lint job runs (Go, YAML, shell)
-lint: lint-go lint-yaml lint-shell lint-docs lint-spelling
+lint: lint-go lint-yaml lint-shell lint-docs lint-spelling lint-chart-schemas
 
 ## Everything CI runs, in one target. A local gate set that is a subset of
 ## CI's reports green on work CI will reject.
@@ -469,6 +470,12 @@ check-credentials:
 ## the offline lint set.
 lint-image-digests:
 	@bash scripts/lint/lint-image-digests.sh
+
+## Render every chart in the repository and validate the objects with
+## kubeconform -strict against the oldest Kubernetes the installer accepts.
+## Needs helm, kubeconform (make install-kubeconform) and the network.
+lint-chart-schemas:
+	@KUBECONFORM="$(KUBECONFORM)" bash scripts/lint/lint-chart-schemas.sh
 
 ## Assert no image under kernel/, charts/ or crossplane/ is tagged latest, and
 ## that the images which must be exact (the model gateway) are named by tag
@@ -873,7 +880,7 @@ verify-image-updates:
 	@bash scripts/tools/verify-image-updates.sh
 
 ## Install crossplane CLI (if not present) and kubeconform (if not present)
-install-tools:
+install-tools: install-kubeconform
 	@which crossplane >/dev/null 2>&1 || { \
 		echo "Installing crossplane CLI..."; \
 		tmpdir=$$(mktemp -d); \
@@ -881,16 +888,19 @@ install-tools:
 		  && sudo mv crossplane /usr/local/bin/crossplane ); \
 		rmdir "$$tmpdir"; \
 	}
-	@which kubeconform >/dev/null 2>&1 || { \
-		echo "Installing kubeconform..."; \
-		KUBECONFORM_VERSION=v0.6.7; \
+	@echo "crossplane: $$(crossplane version 2>&1 | head -1)"
+
+## Install kubeconform $(KUBECONFORM_VERSION) into /usr/local/bin (if not present).
+## CI installs it with this target too.
+install-kubeconform:
+	@which $(KUBECONFORM) >/dev/null 2>&1 || { \
+		echo "Installing kubeconform $(KUBECONFORM_VERSION)..."; \
 		OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
 		ARCH=$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
-		curl -sL "https://github.com/yannh/kubeconform/releases/download/$${KUBECONFORM_VERSION}/kubeconform-$${OS}-$${ARCH}.tar.gz" \
+		curl -fsSL "https://github.com/yannh/kubeconform/releases/download/$(KUBECONFORM_VERSION)/kubeconform-$${OS}-$${ARCH}.tar.gz" \
 			| sudo tar -xz -C /usr/local/bin kubeconform; \
 	}
-	@echo "crossplane: $$(crossplane version 2>&1 | head -1)"
-	@echo "kubeconform: $$(kubeconform -v)"
+	@echo "kubeconform: $$($(KUBECONFORM) -v)"
 
 # ---------------------------------------------------------------------------
 # E2E tests (live dev cluster required)
