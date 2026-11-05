@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerate charts/infra/packages/ (classic Helm repo) from vendored source charts.
-# Crossplane provider-helm Release CRs and Argo CD ApplicationSets pull charts from this index.
+# The Cluster composition's provider-helm Releases pull their charts from this index.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -10,7 +10,7 @@ REPO_URL="${CHART_PACKAGES_REPO_URL:-https://raw.githubusercontent.com/gentian-o
 
 mkdir -p "${PACKAGES}"
 
-for chart in postgresql mariadb redis seaweedfs; do
+for chart in mariadb redis seaweedfs; do
   helm package "${ROOT}/charts/infra/${chart}" -d "${PACKAGES}"
 done
 
