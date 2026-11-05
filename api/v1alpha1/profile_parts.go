@@ -884,6 +884,13 @@ type BackchannelLogoutSpec struct {
 	Path string `json:"path"`
 }
 
+// DefaultDatabaseConnectionLimit is the most connections an app's account
+// holds on a shared database server when its profile names no
+// connectionLimit. A tenant app's pools rarely need more: a request worker
+// holds one or two, and the shared servers take 400 (PostgreSQL) and 151
+// (MariaDB) in all.
+const DefaultDatabaseConnectionLimit int32 = 25
+
 // DatabaseRequirement specifies a relational database need.
 type DatabaseRequirement struct {
 	// Engine selects the database engine. Defaults to postgresql.
@@ -896,6 +903,15 @@ type DatabaseRequirement struct {
 	// +optional
 	// +kubebuilder:default=true
 	DatabasePerTenant bool `json:"databasePerTenant"`
+
+	// ConnectionLimit is the most connections the app's account may hold at
+	// once on the shared server, which every tenant's apps use. Unset is
+	// DefaultDatabaseConnectionLimit; a profile raises it for an app whose
+	// pools need more, within the maximum.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	ConnectionLimit *int32 `json:"connectionLimit,omitempty"`
 
 	// AllowDynamicDatabaseCreation lets the app create databases of its own at
 	// runtime. Ask for it only when creating databases is what the app is for

@@ -237,7 +237,7 @@ func (r *TenantRestoreReconciler) ensureRetainedStores(
 			return false, "", fmt.Errorf("the app has no ComponentProfile on this cluster, so nothing says how its database is to be made")
 		}
 		ok, reason, message, err := ensurePostgresStore(ctx, r.Client, r.Tenant.Seeder, tenant, appName,
-			schemaPreferenceFor(profile), allowsDynamicDatabaseCreation(profile))
+			schemaPreferenceFor(profile), allowsDynamicDatabaseCreation(profile), connectionLimitFor(profile))
 		if err != nil {
 			return false, "", err
 		}
@@ -253,7 +253,7 @@ func (r *TenantRestoreReconciler) ensureRetainedStores(
 		if needDatabase && profile == nil {
 			return false, "", fmt.Errorf("the app has no ComponentProfile on this cluster, so nothing says how its database is to be made")
 		}
-		ok, err := r.ensureRetainedMariaDB(ctx, tenant, appName, needDatabase, allowsDynamicDatabaseCreation(profile))
+		ok, err := r.ensureRetainedMariaDB(ctx, tenant, appName, needDatabase, allowsDynamicDatabaseCreation(profile), connectionLimitFor(profile))
 		if err != nil || !ok {
 			return false, "its MariaDB database", err
 		}
@@ -274,7 +274,7 @@ func (r *TenantRestoreReconciler) ensureRetainedStores(
 // waited for either way, which is how a later pass finds the one an earlier
 // pass started. The password reaches the Job in a Secret the Job owns,
 // handed over once the Job is there.
-func (r *TenantRestoreReconciler) ensureRetainedMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, start, allowDynamic bool) (bool, error) {
+func (r *TenantRestoreReconciler) ensureRetainedMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, start, allowDynamic bool, connLimit int32) (bool, error) {
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: mariadbSetupJobName(tenant.Name, appName), Namespace: mariadbNamespace}, job)
 	switch {
@@ -285,7 +285,7 @@ func (r *TenantRestoreReconciler) ensureRetainedMariaDB(ctx context.Context, ten
 		if err != nil {
 			return false, err
 		}
-		desired := makeMariaDBSetupJob(tenant, appName, password != "", allowDynamic)
+		desired := makeMariaDBSetupJob(tenant, appName, password != "", allowDynamic, connLimit)
 		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
 			return false, err
 		}

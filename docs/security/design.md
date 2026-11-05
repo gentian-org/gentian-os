@@ -71,7 +71,7 @@ One MariaDB server (`system-mariadb`) holds the databases of every tenant's Mari
 What it does not cover:
 
 - **No transport encryption is required** of an app's connection (no `REQUIRE SSL`, and the server does not set `require_secure_transport`); the account's host is `%`.
-- **No resource limits** are set on the account (`MAX_USER_CONNECTIONS` and the like): one app can exhaust the server's connections.
+- **Connections are the only resource limit.** The account holds at most `requires.services.database.connectionLimit` connections at once (`MAX_USER_CONNECTIONS`; 25 when the profile names none, at most 100), so one app cannot take every connection of the shared server. An app's PostgreSQL role is held to the same number (`CONNECTION LIMIT`). Its queries are not limited: one app's load still slows the others.
 - **The network keeps an app to the server it declared, and no further.** A tenant's namespace denies egress by default. An app's `kernel-access` policy opens the server of the engine its profile declares, on that engine's port: `system-mariadb` on 3306 for a MariaDB app, `system-postgresql` on 5432 for a PostgreSQL one, and nothing of the other. So an app in a tenant's namespace that declared no MariaDB database cannot reach the MariaDB server at all. The server's side keeps out the rest: its own policy admits tenant namespaces and the platform's named clients, and no other pod of the cluster (§2.7). Among the apps that do reach the server, the account's rights above are the only boundary between tenants.
 - **The admin credential** (`mariadb-admin`, root) is held by the operator's Jobs in `system-mariadb` and is not an app's.
 

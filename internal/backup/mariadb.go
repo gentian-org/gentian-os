@@ -185,7 +185,10 @@ func mariadbRefusal(database, user string) string {
 //
 // Either fails the Job with the reason, and the app is not provisioned
 // until the overlap is gone.
-func MariaDBSetupScript(database, user string, dynamic bool) string {
+//
+// connLimit caps the connections the user may hold (MAX_USER_CONNECTIONS); 0
+// is none.
+func MariaDBSetupScript(database, user string, dynamic bool, connLimit int32) string {
 	if refusal := mariadbRefusal(database, user); refusal != "" {
 		return refusal
 	}
@@ -221,7 +224,7 @@ BEGIN NOT ATOMIC
   END IF;%[3]s
   CREATE DATABASE IF NOT EXISTS `+"`%[1]s`"+`;
   EXECUTE IMMEDIATE CONCAT('CREATE USER IF NOT EXISTS ''%[2]s''@''%%'' IDENTIFIED BY ', QUOTE(@pass));
-  EXECUTE IMMEDIATE CONCAT('ALTER USER ''%[2]s''@''%%'' IDENTIFIED BY ', QUOTE(@pass));
+  EXECUTE IMMEDIATE CONCAT('ALTER USER ''%[2]s''@''%%'' IDENTIFIED BY ', QUOTE(@pass), ' WITH MAX_USER_CONNECTIONS %[10]d');
   IF %[4]s THEN
     %[5]s;
   END IF;
@@ -233,7 +236,7 @@ SQL
 echo "database %[1]s and user %[2]s ensured; the user holds: %[8]s"
 `, database, user, overlap, mariadbStraySQL(database, user, dynamic), MariaDBRevokeAll(user),
 		strings.Join(MariaDBGrants(database, user, dynamic), ";\n  "), mariadbClient,
-		mariadbHoldsText(database, dynamic), mariadbProvisioningLock)
+		mariadbHoldsText(database, dynamic), mariadbProvisioningLock, max(connLimit, 0))
 }
 
 func mariadbHoldsText(database string, dynamic bool) string {
