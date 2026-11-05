@@ -314,7 +314,7 @@ _helm_retry() {
     local err_file
     err_file="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'" RETURN
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
 
     while (( n <= attempts )); do
         if helm "$@" 2>"${err_file}"; then
@@ -350,7 +350,7 @@ _kubectl_retry() {
     local err_file
     err_file="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'" RETURN
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
 
     while (( n <= attempts )); do
         if kubectl "$@" 2>"${err_file}"; then
@@ -396,7 +396,7 @@ _bao_retry() {
     local err_file
     err_file="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'" RETURN
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
 
     while (( n <= attempts )); do
         # Not `if bao ...; then return 0; fi`: when neither branch of an

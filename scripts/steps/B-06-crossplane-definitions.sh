@@ -41,7 +41,7 @@ _v5_apply_composition() {
     local file="$1" annotated
     annotated="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${annotated}'" RETURN
+    trap "rm -f '${annotated}'; trap - RETURN" RETURN
     kubectl annotate --local -f "${file}" --overwrite "gentianos.io/source-sha=$(_v5_sha "${file}")" -o yaml > "${annotated}" || return 1
     _kubectl_retry apply -f "${annotated}"
 }
