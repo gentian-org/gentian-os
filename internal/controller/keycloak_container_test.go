@@ -25,7 +25,7 @@ import (
 // can move, as root, and fetched curl and jq from the network first.
 func TestTheIdentityJobsRunTheToolsImageAsItsUser(t *testing.T) {
 	scripts := map[string]string{
-		"realm":          buildRealmScript("demo", "Demo"),
+		"realm":          buildRealmScript(),
 		"realm delete":   buildRealmDeleteScript("demo", "kernel"),
 		"realm disable":  buildRealmDisableScript("demo"),
 		"tenant admin":   buildAdminScript("demo"),

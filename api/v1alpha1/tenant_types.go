@@ -675,8 +675,11 @@ type TenantIsolation struct {
 	Namespace string `json:"namespace,omitempty"`
 
 	// KeycloakRealm is the Keycloak realm name for this tenant.
-	// Defaults to the tenant name.
+	// Defaults to the tenant name. A DNS label: the identity Jobs pass it to
+	// shell scripts and Keycloak URLs.
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$`
 	KeycloakRealm string `json:"keycloakRealm,omitempty"`
 
 	// DatabasePrefix is the prefix for all database names belonging to this tenant.

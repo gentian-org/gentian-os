@@ -309,8 +309,10 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
-	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
+	c := keycloakContainer("provision-realm", buildRealmScript())
+	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
+		corev1.EnvVar{Name: "BROWSER_SECURITY_HEADERS", Value: authz.BrowserSecurityHeadersJSON()})
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmJobName(tenant.Name),
@@ -554,20 +556,26 @@ func keycloakContainer(name, script string) corev1.Container {
 // else about the realm is the Composition's: the realm's own fields, and the
 // bridges to the kernel realm in either direction (hub_projection.go), which
 // this script once wrote as the client broker-<realm> in the kernel realm.
-func buildRealmScript(realmName, displayName string) string {
-	script := fmt.Sprintf(`set -eu
+//
+// Nothing is written into the script's text: the realm name arrives as
+// REALM_NAME and the headers as BROWSER_SECURITY_HEADERS, and the display
+// name, which the tenant's administrators set, is the Composition's to write.
+// Interpolated, a quote in the name ran commands in a Job holding the
+// Keycloak admin client.
+func buildRealmScript() string {
+	script := `set -eu
 
-`+keycloak.ShellAdminToken()+`
-HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
+` + keycloak.ShellAdminToken() + `
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/%s")
+  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}")
 if [ "${HTTP}" = "404" ]; then
   curl -sf \
     -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
-  echo "realm %s created"
+    -d '{"realm":"'"${REALM_NAME}"'","enabled":true,"registrationAllowed":false,"browserSecurityHeaders":'"${BROWSER_SECURITY_HEADERS}"'}'
+  echo "realm ${REALM_NAME} created"
 else
   # The realm is NOT restated here. tenant-default composes a Realm that
   # declares enabled, displayName, registrationAllowed and the browser security
@@ -578,9 +586,9 @@ else
   # The create above stays, as a bootstrap: the Composition needs the realm to
   # exist before it can adopt it, and everything else in the realm needs the
   # realm.
-  echo "realm %s already exists (HTTP ${HTTP}); its settings are the Composition's"
+  echo "realm ${REALM_NAME} already exists (HTTP ${HTTP}); its settings are the Composition's"
 fi
-`, realmName, realmName, displayName, realmName, realmName)
+`
 	// No user-profile writes. tenant-default composes a UserProfile that declares
 	// all six attributes whole, where this appended one patch to add uid and
 	// gentian.inviteEmail and a second to strip `required` off the name fields.

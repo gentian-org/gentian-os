@@ -773,7 +773,10 @@ spec:
                   keycloakRealm:
                     description: |-
                       KeycloakRealm is the Keycloak realm name for this tenant.
-                      Defaults to the tenant name.
+                      Defaults to the tenant name. A DNS label: the identity Jobs pass it to
+                      shell scripts and Keycloak URLs.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$
                     type: string
                   mode:
                     default: namespace

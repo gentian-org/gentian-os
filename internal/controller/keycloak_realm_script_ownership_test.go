@@ -28,7 +28,7 @@ import (
 // Composition and the script disagree about a field, which is the case that took
 // three sessions to find the last time.
 func TestRealmScriptLeavesTheBrokerMappersToTheComposition(t *testing.T) {
-	script := buildRealmScript("corp", "Corp")
+	script := buildRealmScript()
 
 	for _, gone := range []string{
 		`oidc-user-attribute-idp-mapper`,
@@ -51,7 +51,7 @@ func TestRealmScriptLeavesTheBrokerMappersToTheComposition(t *testing.T) {
 // both re-read and rewrote the same six-attribute document to change one field.
 // tenant-default declares it whole.
 func TestRealmScriptLeavesTheUserProfileToTheComposition(t *testing.T) {
-	script := buildRealmScript("corp", "Corp")
+	script := buildRealmScript()
 
 	for _, gone := range []string{
 		`/users/profile`,
