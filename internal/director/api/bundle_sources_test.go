@@ -296,6 +296,24 @@ func TestATenantsAdministratorDeclaresTheTenantsOwnStores(t *testing.T) {
 	if code, _ := h.do(t, "DELETE", "/v1/clusters/"+dt.Cluster+"/bundle-sources/demo.offsite", alice, ""); code != http.StatusBadRequest {
 		t.Errorf("the cluster's removal of a tenant's store = %d", code)
 	}
+	// Keys the store's bundles are read by: the tenant's to declare, only on
+	// its own store, and only age public keys.
+	key := "age1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jn54khce"
+	keyed := `{"endpoint":"https://sos.example","bucket":"demo-offsite","recipients":["` + key + `"]}`
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/bundle-sources/offsite", tom, keyed); code != http.StatusAccepted {
+		t.Fatalf("tom's keys = %d %v", code, body)
+	}
+	if file := h.remoteFile(t, "demo", "bundle-source-offsite.yaml"); !strings.Contains(file, "recipients:\n    - \""+key+"\"") {
+		t.Errorf("the keys are not declared:\n%s", file)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/bundle-sources/offsite", tom,
+		`{"endpoint":"https://sos.example","bucket":"demo-offsite","recipients":["ssh-ed25519 AAAA"]}`); code != http.StatusBadRequest {
+		t.Errorf("a key that is not age's = %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/bundle-sources/old", alice,
+		`{"endpoint":"https://s3.example","bucket":"old","recipients":["`+key+`"]}`); code != http.StatusBadRequest {
+		t.Errorf("keys on the cluster's source = %d", code)
+	}
 	if code, body := h.do(t, "DELETE", "/v1/tenants/demo/bundle-sources/offsite", tom, ""); code != http.StatusAccepted {
 		t.Errorf("tom's removal = %d %v", code, body)
 	}

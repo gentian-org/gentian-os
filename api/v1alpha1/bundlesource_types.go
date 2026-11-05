@@ -32,6 +32,7 @@ import (
 // They are a CredentialRequirement the operator derives from this object and
 // the custodian fills, at a vault path derived from the name -- exactly as a
 // backup destination's are, and with no field that could name another.
+// +kubebuilder:validation:XValidation:rule="!has(self.recipients) || size(self.recipients) == 0 || (has(self.tenant) && size(self.tenant) > 0)",message="recipients belong to a tenant's own store"
 type BundleSourceSpec struct {
 	// Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io. A scheme
 	// is required, as for a destination.
@@ -76,6 +77,18 @@ type BundleSourceSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	Description string `json:"description,omitempty"`
+
+	// Recipients are age public keys (age1…) a tenant's store holds its
+	// bundles readable by. An export to the store that names no recipients
+	// of its own is encrypted to these in place of the cluster's, which is
+	// how a backup nobody starts by hand -- an add-on's -- is readable by
+	// the tenant's own key: the key is the tenant's declaration, never the
+	// starter's. A tenant's own store only.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=128
+	// +kubebuilder:validation:items:Pattern=`^age1[02-9ac-hj-np-z]{58}$`
+	Recipients []string `json:"recipients,omitempty"`
 }
 
 // BundleSourceStatus reports whether the source can be read.

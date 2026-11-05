@@ -68,6 +68,37 @@ func TestABundleSourcesNameSaysWhoseItIs(t *testing.T) {
 	}
 }
 
+// Keys are a tenant's store's; the cluster's sources are read from, never
+// written to, and carry none.
+func TestOnlyATenantsStoreHoldsKeys(t *testing.T) {
+	ctx := context.Background()
+	key := "age1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jn54khce"
+	keyed := func(name, tenant string) *gentianov1alpha1.BundleSource {
+		return &gentianov1alpha1.BundleSource{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: gentianov1alpha1.BundleSourceSpec{
+				Tenant: tenant, Endpoint: "https://s3.example", Bucket: "bundles", Recipients: []string{key},
+			},
+		}
+	}
+	own := keyed("keyed.offsite", "keyed")
+	if err := testClient.Create(ctx, own); err != nil {
+		t.Fatalf("a tenant's store with its keys was refused: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, own) })
+	cluster := keyed("keyed-cluster", "")
+	if err := testClient.Create(ctx, cluster); err == nil {
+		_ = testClient.Delete(ctx, cluster)
+		t.Fatal("the cluster's source was given keys")
+	}
+	bad := keyed("keyed.bad", "keyed")
+	bad.Spec.Recipients = []string{"ssh-ed25519 AAAA"}
+	if err := testClient.Create(ctx, bad); err == nil {
+		_ = testClient.Delete(ctx, bad)
+		t.Fatal("a key that is not age's was admitted")
+	}
+}
+
 // mode: source names a store and nothing else of a destination; a store
 // named under any other mode is refused rather than ignored.
 func TestAnExportToAStoreNamesTheStoreAlone(t *testing.T) {

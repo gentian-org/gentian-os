@@ -1187,9 +1187,9 @@ The Component's `ClusterRolesBound` condition names each request and what became
 
 | Role | Allows | Approved by |
 |---|---|---|
-| `tenant-exports` | start, read and remove `TenantExport`s in every tenant's namespace | break-glass |
+| `tenant-exports` | start, read and remove `TenantExport`s in every tenant's namespace; read which tenants there are | break-glass |
 
-An export a component starts is held by admission (`charts/gentian-os/templates/tenant-export-guard.yaml`) to what the tenant and the cluster declared: it goes to the cluster's storage, the tenant's backup policy or a store the tenant declared, never to an endpoint the export names, and it is encrypted to the cluster's recovery keys, with no recipients of its own and no passphrase. The operator's own exports, for the Admin Console's export and the platform's schedules, and a person's are not held by it.
+An export a component starts is held by admission (`charts/gentian-os/templates/tenant-export-guard.yaml`) to what the tenant and the cluster declared: it goes to the cluster's storage, the tenant's backup policy or a store the tenant declared, never to an endpoint the export names, and it names no recipients of its own and no passphrase: it is encrypted to the cluster's recovery keys, or to the keys the tenant's store declares when it goes to one. The operator's own exports, for the Admin Console's export and the platform's schedules, and a person's are not held by it.
 
 A role is added in this repository, never by a catalog or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
 

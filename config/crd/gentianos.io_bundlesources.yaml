@@ -108,6 +108,20 @@ spec:
                 maxLength: 512
                 pattern: ^$|^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*/?$
                 type: string
+              recipients:
+                description: |-
+                  Recipients are age public keys (age1…) a tenant's store holds its
+                  bundles readable by. An export to the store that names no recipients
+                  of its own is encrypted to these in place of the cluster's, which is
+                  how a backup nobody starts by hand -- an add-on's -- is readable by
+                  the tenant's own key: the key is the tenant's declaration, never the
+                  starter's. A tenant's own store only.
+                items:
+                  maxLength: 128
+                  pattern: ^age1[02-9ac-hj-np-z]{58}$
+                  type: string
+                maxItems: 8
+                type: array
               region:
                 description: Region, for a provider that requires one.
                 maxLength: 64
@@ -125,6 +139,10 @@ spec:
             - bucket
             - endpoint
             type: object
+            x-kubernetes-validations:
+            - message: recipients belong to a tenant's own store
+              rule: '!has(self.recipients) || size(self.recipients) == 0 || (has(self.tenant)
+                && size(self.tenant) > 0)'
           status:
             description: BundleSourceStatus reports whether the source can be read.
             properties:

@@ -213,6 +213,7 @@ BundleSource is a place outside the cluster that holds bundles: the cluster's, d
 | `spec.description` | string |  | `Description` says what the storage is, for whoever picks a bundle from it. |
 | `spec.endpoint` | string | yes | `Endpoint` is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io. |
 | `spec.prefix` | string |  | `Prefix` is where in the bucket the bundles are, each one a prefix of its own directly below it. |
+| `spec.recipients` | []string |  | `Recipients` are age public keys (age1…) a tenant's store holds its bundles readable by. |
 | `spec.region` | string |  | `Region`, for a provider that requires one. |
 | `spec.tenant` | string |  | `Tenant` makes this a tenant's own store, declared by its administrator, its keys in the tenant's part of the vault. |
 | `status` | object |  | BundleSourceStatus reports whether the source can be read. |
