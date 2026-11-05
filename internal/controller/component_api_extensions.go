@@ -101,13 +101,13 @@ func (r *ComponentReconciler) ensureAPIExtensions(ctx context.Context, comp *gen
 		// the API server is not asked.
 		return "", nil
 	}
-	granted := security.GrantedSet(comp.Spec.Privileges, time.Now())
+	granted := security.LiveGrants(profile, comp.Spec.Privileges, time.Now())
 	verdicts := make([]apiExtensionVerdict, 0, len(requests))
 	for i := range requests {
 		req := &requests[i]
 		v := apiExtensionVerdict{name: req.Name, serviceAccount: req.ServiceAccount}
 		if _, ok := granted[security.PrivilegeRef(security.PrivilegeAPIExtensions, req.Name)]; !ok {
-			v.reason, v.message = reasonAPIExtensionNotGranted, req.Name+": not granted on this install, or the grant has expired"
+			v.reason, v.message = reasonAPIExtensionNotGranted, req.Name+": not granted on this install, the grant has expired, or the definitions changed since they were approved"
 			verdicts = append(verdicts, v)
 			continue
 		}

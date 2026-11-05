@@ -155,11 +155,11 @@ if [[ "${out}" == *"Default profile operations-console-ee: ${DIGEST}, listed by 
 else
     bad "what goes into the commit says the digest, that the index stated it, the address and the origin" "${out}"
 fi
-if fetched "${BASE}/index.yaml" && fetched "${URL}" && [[ "$(wc -l < "${CURL_LOG}" | tr -d ' ')" == "5" ]] \
+if fetched "${BASE}/index.yaml" && fetched "${URL}" && [[ "$(wc -l < "${CURL_LOG}" | tr -d ' ')" == "6" ]] \
     && [[ "$(grep -c '/profiles/' "${CURL_LOG}")" == "1" ]]; then
-    ok "the index, then the profile; for the three extra services the index does not list, the index alone"
+    ok "the index, then the profile; for the four extra services the index does not list, the index alone"
 else
-    bad "the index, then the profile; for the three extra services the index does not list, the index alone" "$(cat "${CURL_LOG}")"
+    bad "the index, then the profile; for the four extra services the index does not list, the index alone" "$(cat "${CURL_LOG}")"
 fi
 
 # A second run.

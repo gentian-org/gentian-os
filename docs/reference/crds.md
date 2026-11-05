@@ -214,6 +214,7 @@ BundleSource is a place outside the cluster that holds bundles: the cluster's, d
 | `spec.description` | string |  | `Description` says what the storage is, for whoever picks a bundle from it. |
 | `spec.endpoint` | string | yes | `Endpoint` is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io. |
 | `spec.prefix` | string |  | `Prefix` is where in the bucket the bundles are, each one a prefix of its own directly below it. |
+| `spec.recipients` | []string |  | `Recipients` are age public keys (age1…) a tenant's store holds its bundles readable by. |
 | `spec.region` | string |  | `Region`, for a provider that requires one. |
 | `spec.tenant` | string |  | `Tenant` makes this a tenant's own store, declared by its administrator, its keys in the tenant's part of the vault. |
 | `status` | object |  | BundleSourceStatus reports whether the source can be read. |
@@ -269,6 +270,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges` | []object |  | `Privileges` are the profile's privilege requests that a person granted. |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
+| `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
 | `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
@@ -1746,6 +1748,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.privileges` | []object |  | `Privileges` are the privilege requests a person granted for this tenant's components (AD-5). |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
+| `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
 | `spec.privileges[].install` | string | yes | `Install` names the Component this grant is for, which is the component's object name in the tenant's namespace. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>. |

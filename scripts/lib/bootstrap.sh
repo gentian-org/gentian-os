@@ -1902,6 +1902,103 @@ EXPOSURES
     return "${wrote}"
 }
 
+# The profiles whose privileges the initial install approves, and the
+# cluster roles it permits them: the store's add-ons that only break-glass
+# approves after it.
+_INITIAL_INSTALL_APPROVED_PROFILES="backup-scheduler-ee"
+_INITIAL_INSTALL_PERMITTED_ROLES="backup-scheduler-ee:tenant-exports"
+
+# _initial_install_approves -- whether this initial install places them:
+# with API extensions and the store's extra services.
+_initial_install_approves() {
+    [[ "${GENTIAN_DISABLE_API_EXTENSIONS:-0}" != "1" ]] || return 1
+    [[ "$(gentian_extra_services_enabled "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml")" == "true" ]]
+}
+
+# _initial_install_allowlist -- the cluster's values block that permits the
+# add-ons' cluster roles. The director starts the cluster's allowlist from
+# the values once; after that the allowlist is the claims' file, changed by
+# break-glass.
+_initial_install_allowlist() {
+    local entry
+    printf '\n# The cluster roles the initial install permitted, for the add-ons it\n'
+    printf '# approved. After the install the allowlist is the claims'"'"'\n'
+    printf '# platform-security-policy.yaml, changed by break-glass.\n'
+    printf 'platformSecurityPolicy:\n  allowedClusterRoles:\n'
+    for entry in ${_INITIAL_INSTALL_PERMITTED_ROLES}; do
+        printf '    - profile: %s\n      role: %s\n' "${entry%%:*}" "${entry#*:}"
+    done
+}
+
+# _initial_install_approvals <cluster> <platform tenant directory>
+#
+# At a cluster's initial install, the approvals of the add-ons it placed: every
+# apiExtensions and clusterRoles request of each profile in
+# _INITIAL_INSTALL_APPROVED_PROFILES that step 0 put in the catalog, written
+# where the director writes an approval (the platform tenant's
+# privileges.yaml), with the installer as approver. An API extension's
+# approval is pinned to the definitions approved by the digest the operator
+# computes (security.APIExtensionDigest): the request as JSON with sorted
+# keys, which is what `jq -cjS` writes. A later version of the profile that
+# changes them waits for break-glass.
+#
+# Called only from the run that wrote the Cluster claim. A profile that was
+# not placed then -- the catalog did not list it yet -- is approved by nobody
+# but break-glass when a later run places it.
+_initial_install_approvals() {
+    local cluster="$1" dir="$2" profile placed json request digest name now file kustomization line install privilege
+    local -a lines=()
+    _initial_install_approves || return 0
+    file="${dir}/privileges.yaml"
+    kustomization="${dir}/kustomization.yaml"
+    [[ ! -f "${file}" ]] || return 0
+    for profile in ${_INITIAL_INSTALL_APPROVED_PROFILES}; do
+        placed="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/catalogue/${profile}.yaml"
+        [[ -f "${placed}" ]] || continue
+        json="$(_yaml_docs_json "${placed}" | jq -c 'select(.kind == "ComponentProfile")' | head -1)"
+        if [[ -z "${json}" ]]; then
+            error "${placed} holds no ComponentProfile to approve."
+            return 1
+        fi
+        while IFS= read -r request; do
+            [[ -n "${request}" ]] || continue
+            digest="sha256:$(jq -cjS '{group, serviceAccount, definitions}' <<< "${request}" | sha256sum | cut -d' ' -f1)"
+            lines+=("${profile}|apiExtensions/$(jq -r .name <<< "${request}")|${digest}")
+        done < <(jq -c '.spec.requires.privileges.apiExtensions[]?' <<< "${json}")
+        while IFS= read -r name; do
+            [[ -n "${name}" ]] && lines+=("${profile}|clusterRoles/${name}|")
+        done < <(jq -r '.spec.requires.privileges.clusterRoles[]?.name' <<< "${json}")
+    done
+    (( ${#lines[@]} )) || return 0
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    {
+        printf '# Managed by the director: the privilege requests somebody approved for\n'
+        printf '# this tenant. The entries below were approved by the initial install of\n'
+        printf '# this cluster, which is break-glass authority; every later approval is\n'
+        printf '# break-glass'"'"'s, through the director.\n'
+        printf '#\n'
+        printf '# Removing an entry withdraws the privilege. The component then holds\n'
+        printf '# again, which is where it was before the approval.\n'
+        printf 'apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata:\n  name: platform\nspec:\n  privileges:\n'
+        while IFS='|' read -r install privilege digest; do
+            printf '    - install: %s\n      privilege: %s\n      approver: installer\n      approvedAt: %s\n' "${install}" "${privilege}" "${now}"
+            printf '      reason: "Approved by the initial install of this cluster, as one of its default add-ons."\n'
+            [[ -z "${digest}" ]] || printf '      digest: %s\n' "${digest}"
+        done < <(printf '%s\n' "${lines[@]}" | sort)
+    } > "${file}"
+    if ! grep -qx -- '- path: privileges.yaml' "${kustomization}"; then
+        if grep -qx 'patches:' "${kustomization}"; then
+            line="$(awk '{ print } $0 == "patches:" { print "- path: privileges.yaml" }' "${kustomization}")"
+            printf '%s\n' "${line}" > "${kustomization}"
+        else
+            [[ -z "$(tail -c 1 "${kustomization}")" ]] || printf '\n' >> "${kustomization}"
+            printf 'patches:\n- path: privileges.yaml\n' >> "${kustomization}"
+        fi
+    fi
+    info "tenants/platform/privileges.yaml: the initial install approved ${#lines[@]} privilege(s) of its default add-ons."
+    return 0
+}
+
 # gentian_catalogue_url
 #
 # The address a new Cluster claim names for the default catalog, `gentian`.
@@ -2322,6 +2419,11 @@ scaffold_cluster_deployment() {
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
     local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
     local generated=0
+    # The initial install: the run that writes the Cluster claim. Running it
+    # is break-glass authority, so its defaults may approve what only
+    # break-glass approves later (_initial_install_approvals). Every later
+    # run is an update, and approves nothing.
+    local initial_install=0
 
     # Before anything is written: the gentian-os Repository claim names the
     # ref this cluster follows, and a detached checkout with no
@@ -2375,6 +2477,7 @@ spec:
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
+        initial_install=1
         info "  Catalogue: $(gentian_catalogue_url)"
         info "  $(gentian_catalogue_reason)"
         generated=1
@@ -2509,6 +2612,12 @@ appLifecycle:
     # and pushes with.
     gitCredentialsSecret: deployments-git-credentials
 EOF
+        if (( initial_install )) && _initial_install_approves; then
+            # Permitted at the initial install, which approves the add-ons'
+            # requests (_initial_install_approvals); the director starts the
+            # cluster's allowlist from it once.
+            _initial_install_allowlist >> "${kernel_dir}/values.yaml"
+        fi
         info "Scaffolded ${kernel_dir}/values.yaml"
         generated=1
     fi
@@ -2615,6 +2724,9 @@ EOF
     # build its digest names -- is a reason to stop before anything of this
     # run is committed.
     _scaffold_default_profiles "${cluster}" || return 1
+    if (( initial_install )); then
+        _initial_install_approvals "${cluster}" "${platform_dir}" || return 1
+    fi
 
     # The cluster's resource plans: the directory the director writes them
     # into, which the gentian-resource-plans Application syncs.

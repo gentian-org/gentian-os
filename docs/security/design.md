@@ -1187,9 +1187,9 @@ The Component's `ClusterRolesBound` condition names each request and what became
 
 | Role | Allows | Approved by |
 |---|---|---|
-| `tenant-exports` | start, read and remove `TenantExport`s in every tenant's namespace | break-glass |
+| `tenant-exports` | start, read and remove `TenantExport`s in every tenant's namespace; read which tenants there are | break-glass |
 
-An export a component starts is held by admission (`charts/gentian-os/templates/tenant-export-guard.yaml`) to what the tenant and the cluster declared: it goes to the cluster's storage, the tenant's backup policy or a store the tenant declared, never to an endpoint the export names, and it is encrypted to the cluster's recovery keys, with no recipients of its own and no passphrase. The operator's own exports, for the Admin Console's export and the platform's schedules, and a person's are not held by it.
+An export a component starts is held by admission (`charts/gentian-os/templates/tenant-export-guard.yaml`) to what the tenant and the cluster declared: it goes to the cluster's storage, the tenant's backup policy or a store the tenant declared, never to an endpoint the export names, and it names no recipients of its own and no passphrase: it is encrypted to the cluster's recovery keys, or to the keys the tenant's store declares when it goes to one. The operator's own exports, for the Admin Console's export and the platform's schedules, and a person's are not held by it.
 
 A role is added in this repository, never by a catalog or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
 
@@ -1226,7 +1226,11 @@ The `APIExtensionsInstalled` condition names each request and what became of it;
 
 The component's ServiceAccount reads its types, and writes their status, through one ClusterRole, `gentian-api-extensions`, whose rules the operator keeps to the installed types and which it binds to the account while the grant lives. The operator may change that role and no other (`escalate` and `bind` held to its name). Every component bound to it reads every add-on's types; none writes an object of them. The objects are declared by people, through the director, as files of a tenant's directory (`PUT /v1/tenants/{t}/extensions/{group}/{resource}/{name}`, `can_set_policy`), or of the platform tenant's for what is the cluster's (`PUT /v1/clusters/{c}/extensions/…`, `can_configure`), each checked against its type's schema before it is committed, and only of a type installed and granted now.
 
-A grant that is withdrawn or has expired unbinds the role at the next reconcile, and the install waits again. The types stay: removing a definition deletes every object of it, which is a person's decision.
+**An approval names what it approved.** A grant of `apiExtensions/<name>` carries the digest of the request as the approver read it (`digest`, sha256 of its group, ServiceAccount and definitions as JSON with sorted keys, `security.APIExtensionDigest`); the pending request reports the digest an approval must name, and `kubectl gentian apps approve` sends it. A later version of the profile that changes the definitions is not answered by the grant, and the install waits for a new one.
+
+A grant that is withdrawn, has expired or names other definitions unbinds the role at the next reconcile, and the install waits again. The types stay: removing a definition deletes every object of it, which is a person's decision.
+
+**The initial install approves the add-ons it places.** Running the installer for a cluster's first time is break-glass authority, so the run that writes the Cluster claim approves every `apiExtensions` and `clusterRoles` request of the default add-ons it placed (the backup scheduler, `backup-scheduler-ee`): the platform tenant's `privileges.yaml`, with the installer as approver and the digest it computed from the profile, and the role permitted in the cluster's values, which the director starts the allowlist from (`scripts/lib/bootstrap.sh`, `_initial_install_approvals`). No later run approves anything: an add-on placed by an update, a changed request and a withdrawn approval are break-glass's. `--disable-api-extensions` and `--no-extra-services` place no add-on and approve nothing.
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 

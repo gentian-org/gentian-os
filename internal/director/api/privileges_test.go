@@ -249,13 +249,17 @@ func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
 			{"break-glass", "gentian", "bea", security.PrivilegeApproverBreakGlass},
 		} {
 			token := h.token(t, who.realm, who.user)
-			code, body := h.do(t, "PUT", path, token, reason("reviewed and agreed for this install"))
+			body := reason("reviewed and agreed for this install")
+			if strings.HasPrefix(ref, security.PrivilegeAPIExtensions+"/") {
+				body = `{"reason":"reviewed and agreed for this install","digest":"sha256:` + strings.Repeat("a", 64) + `"}`
+			}
+			code, answer := h.do(t, "PUT", path, token, body)
 			want := http.StatusForbidden
 			if security.PrivilegeApprover(ref) == who.approver {
 				want = http.StatusAccepted
 			}
 			if code != want {
-				t.Errorf("%s approving %s = %d %v, want %d", who.name, ref, code, body, want)
+				t.Errorf("%s approving %s = %d %v, want %d", who.name, ref, code, answer, want)
 			}
 		}
 	}
@@ -284,5 +288,32 @@ func TestTheClustersGrantedPrivilegesAreListedAcrossTenants(t *testing.T) {
 	}
 	if code, _ := h.do(t, "GET", path, tom, ""); code != http.StatusForbidden {
 		t.Fatalf("a tenant administrator listing the cluster's grants: %d, want 403", code)
+	}
+}
+
+// An approval of an API extension names the definitions it approved, and
+// carries them into git; another kind names none.
+func TestAnAPIExtensionsApprovalNamesWhatItApproved(t *testing.T) {
+	h := start(t)
+	bea := h.token(t, "gentian", "bea")
+	sam := h.token(t, "gentian", "sam")
+	path := "/v1/tenants/demo/privileges/nextcloud/apiExtensions/schedules"
+	digest := "sha256:" + strings.Repeat("b", 64)
+
+	if code, _ := h.do(t, "PUT", path, bea, reason("reviewed and agreed for this install")); code != http.StatusBadRequest {
+		t.Errorf("an approval naming no digest = %d", code)
+	}
+	if code, _ := h.do(t, "PUT", path, bea, `{"reason":"reviewed and agreed for this install","digest":"md5:abc"}`); code != http.StatusBadRequest {
+		t.Errorf("a digest that is not one = %d", code)
+	}
+	if code, body := h.do(t, "PUT", path, bea, `{"reason":"reviewed and agreed for this install","digest":"`+digest+`"}`); code != http.StatusAccepted {
+		t.Fatalf("bea's approval = %d %v", code, body)
+	}
+	if !strings.Contains(h.remoteFile(t, "demo", "privileges.yaml"), "digest: "+digest) {
+		t.Error("the approval does not record what it approved")
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/podSecurity/x", sam,
+		`{"reason":"reviewed and agreed for this install","digest":"`+digest+`"}`); code != http.StatusBadRequest {
+		t.Errorf("a digest on another kind = %d", code)
 	}
 }

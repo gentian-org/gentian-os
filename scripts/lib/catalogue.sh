@@ -351,15 +351,15 @@ _address_origin_name() {
 
 # The store's extra services: the profiles an installation places from the
 # store's catalog unless --no-extra-services says otherwise. Where each runs
-# is the profile's own to say (its placement): the Operations Console and the
-# operations sync in the platform tenant, the App Store app and the Aluvian
-# Center in every other tenant while the cluster offers a store, tenants made
-# later included.
-_EXTRA_SERVICE_PROFILES="operations-console-ee operations-sync-ee app-store-pe aluvian-center-pe"
+# is the profile's own to say (its placement): the Operations Console, its
+# backup scheduler and the operations sync in the platform tenant, the App
+# Store app and the Aluvian Center in every other tenant while the cluster
+# offers a store, tenants made later included.
+_EXTRA_SERVICE_PROFILES="operations-console-ee backup-scheduler-ee operations-sync-ee app-store-pe aluvian-center-pe"
 
 # _default_profiles_configured [cluster] -- the list, as GENTIAN_DEFAULT_PROFILES
 # gives it or, unset, the extra services at the store's catalog. Without the
-# extra services (gentian_extra_services_enabled) none of the three is in it,
+# extra services (gentian_extra_services_enabled) none of them is in it,
 # whichever way the list was given.
 _default_profiles_configured() {
     local cluster="${1:-}" base list name entry out="" claim=""

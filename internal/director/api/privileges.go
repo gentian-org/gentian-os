@@ -12,6 +12,7 @@ package api
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 // are writes in this API's sense: a commit to the deployments repository, with
 // the approver taken from the token and never from the body.
 
+var grantDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
 // grantPrivilegeRequest is what an approver states. Not who they are, and not
 // when: an approval that could name its own approver would record nothing, so
 // both come from the call.
@@ -39,6 +42,11 @@ type grantPrivilegeRequest struct {
 	// waiver it is close to obligatory in practice -- a waiver with no expiry
 	// is a waiver nobody reviews.
 	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Digest is what the approver read of an API extension: the request's
+	// digest as the pending request reports it (approvedBy, digest). Required
+	// for apiExtensions, and the approval answers that request and no later
+	// version of it.
+	Digest string `json:"digest,omitempty"`
 }
 
 // tenantPrivileges answers what has been granted for this tenant, from git.
@@ -213,6 +221,15 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 			return
 		}
 	}
+	kind, _ := security.SplitPrivilegeRef(ref)
+	switch {
+	case kind == security.PrivilegeAPIExtensions && !grantDigest.MatchString(body.Digest):
+		s.fail(w, r, http.StatusBadRequest, "approving an API extension names the definitions approved: digest, sha256:<hex>, as the pending request reports it")
+		return
+	case kind != security.PrivilegeAPIExtensions && body.Digest != "":
+		s.fail(w, r, http.StatusBadRequest, "digest belongs to an apiExtensions approval")
+		return
+	}
 	res, err := s.cfg.Repo.GrantPrivilege(r.Context(), r.PathValue("t"), gitops.PrivilegeGrant{
 		Install:    install,
 		Privilege:  ref,
@@ -220,6 +237,7 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 		ApprovedAt: time.Now().UTC().Format(time.RFC3339),
 		Reason:     strings.TrimSpace(body.Reason),
 		ExpiresAt:  body.ExpiresAt,
+		Digest:     body.Digest,
 	}, c.meta)
 	s.written(w, r, res, err)
 }

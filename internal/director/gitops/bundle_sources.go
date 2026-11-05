@@ -57,6 +57,9 @@ type BundleSourceDeclaration struct {
 	Region          string `json:"region,omitempty"`
 	AddressingStyle string `json:"addressingStyle,omitempty"`
 	Description     string `json:"description,omitempty"`
+	// Recipients are the age keys a tenant's store holds its bundles
+	// readable by; a tenant's own store only.
+	Recipients []string `json:"recipients,omitempty"`
 }
 
 // DeclaredBundleSource is one source as git declares it.
@@ -75,6 +78,7 @@ var ErrBundleSourceNotFound = errors.New("no such bundle source")
 var (
 	bundleSourceName   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$`)
 	bundleSourceBucket = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+	ageRecipient       = regexp.MustCompile(`^age1[02-9ac-hj-np-z]{58}$`)
 	bundleSourcePrefix = regexp.MustCompile(`^$|^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*/?$`)
 )
 
@@ -105,6 +109,14 @@ func CheckBundleSource(name string, d *BundleSourceDeclaration) error {
 	if len(d.Description) > 256 || strings.ContainsAny(d.Description, "\r\n") {
 		return fmt.Errorf("%w: description is one line, 256 characters at most", ErrInvalidBundleSource)
 	}
+	if len(d.Recipients) > 8 {
+		return fmt.Errorf("%w: a store holds at most eight keys", ErrInvalidBundleSource)
+	}
+	for _, key := range d.Recipients {
+		if !ageRecipient.MatchString(key) {
+			return fmt.Errorf("%w: %q is not an age public key (age1…)", ErrInvalidBundleSource, key)
+		}
+	}
 	return nil
 }
 
@@ -116,6 +128,9 @@ func (g *GitOps) DeclareBundleSource(ctx context.Context, name string, d BundleS
 	d.Description = strings.TrimSpace(d.Description)
 	if err := CheckBundleSource(name, &d); err != nil {
 		return Result{}, err
+	}
+	if len(d.Recipients) > 0 {
+		return Result{}, fmt.Errorf("%w: keys belong to a tenant's own store, which bundles are written to", ErrInvalidBundleSource)
 	}
 	return g.writeClaimsFile(ctx, bundleSourceFile(name), renderBundleSource(name, "", d),
 		fmt.Sprintf("Declare bundle source %s: %s, bucket %s", name, d.Endpoint, d.Bucket), meta)
@@ -252,6 +267,12 @@ func renderBundleSource(name, tenant string, d BundleSourceDeclaration) string {
 	} {
 		if f.value != "" {
 			b.WriteString("  " + f.key + ": " + strconv.Quote(f.value) + "\n")
+		}
+	}
+	if len(d.Recipients) > 0 {
+		b.WriteString("  recipients:\n")
+		for _, key := range d.Recipients {
+			b.WriteString("    - " + strconv.Quote(key) + "\n")
 		}
 	}
 	return b.String()

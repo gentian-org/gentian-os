@@ -53,3 +53,7 @@ rules:
   - apiGroups: ["gentianos.io"]
     resources: ["tenantexports"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # Which tenants there are, for a schedule of the cluster's.
+  - apiGroups: ["gentianos.io"]
+    resources: ["tenants"]
+    verbs: ["get", "list", "watch"]

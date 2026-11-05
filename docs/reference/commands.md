@@ -624,6 +624,10 @@ kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
   --reason "reads the website's and the store's order requests over https"
 ```
 
+An `apiExtensions` approval names the definitions it approves: the command
+sends the digest the cluster reports for the pending request, and a later
+change to them waits for a new approval.
+
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 
@@ -1302,6 +1306,10 @@ spec:
     source: demo.offsite   # <tenant>.<name>; another tenant's or the cluster's is refused
 ```
 
+A store may declare the age keys its bundles are read by (`recipients` on
+the store); an export to it that names none of its own is encrypted to them
+in place of the cluster's.
+
 ### Watching one
 
 ```bash
@@ -1655,7 +1663,7 @@ GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's
 GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
 GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
 GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
-PUT    /v1/tenants/{t}/bundle-sources/{name}                    a store of the tenant's own, as <t>.<name>; the cluster's body
+PUT    /v1/tenants/{t}/bundle-sources/{name}                    a store of the tenant's own, as <t>.<name>; the cluster's body, and recipients?
 DELETE /v1/tenants/{t}/bundle-sources/{name}                    removed from git, and so from the cluster
 POST   /v1/tenants/{t}/bundle-sources/{name}/actions/fetch      {prefix}: the tenant's administrator's fetch
 GET    /v1/tenants/{t}/bundle-fetches/{f}                       a fetch made on the tenant's route
