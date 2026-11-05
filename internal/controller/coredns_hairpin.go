@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
@@ -242,6 +243,13 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 	if err != nil {
 		return err
 	}
+	routeHosts, err := collectEdgeRouteHairpinHosts(ctx, c)
+	if err != nil {
+		return err
+	}
+	for host := range routeHosts {
+		tenantHosts[host] = struct{}{}
+	}
 
 	cmName, err := resolveCoreDNSConfigMapName(ctx, c)
 	if err != nil {
@@ -345,6 +353,53 @@ func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDo
 		}
 	}
 	return out, nil
+}
+
+// collectEdgeRouteHairpinHosts returns every hostname a route on the edge
+// Gateways serves. The hosts the operator derives itself cover the kernel and
+// the catalog's apps, but not the consoles a tenant's install routes: their
+// names left the cluster for the public address, and a server-side fetch to
+// one -- the desktop asking whether the Admin Console may be framed -- timed
+// out there. What the edge serves is the list.
+func collectEdgeRouteHairpinHosts(ctx context.Context, c client.Client) (map[string]struct{}, error) {
+	routes := &gatewayv1.HTTPRouteList{}
+	if err := c.List(ctx, routes); err != nil {
+		return nil, fmt.Errorf("list HTTPRoutes for CoreDNS hairpin: %w", err)
+	}
+	out := map[string]struct{}{}
+	for i := range routes.Items {
+		route := &routes.Items[i]
+		if !routeOnEdge(route) {
+			continue
+		}
+		for _, h := range route.Spec.Hostnames {
+			// A hosts entry names one host; a wildcard is not one.
+			if host := string(h); host != "" && !strings.HasPrefix(host, "*") {
+				out[host] = struct{}{}
+			}
+		}
+	}
+	return out, nil
+}
+
+// routeOnEdge reports whether route attaches to one of the edge Gateways.
+func routeOnEdge(route *gatewayv1.HTTPRoute) bool {
+	for _, ref := range route.Spec.ParentRefs {
+		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayv1.GroupName {
+			continue
+		}
+		if ref.Kind != nil && *ref.Kind != "Gateway" {
+			continue
+		}
+		ns := route.Namespace
+		if ref.Namespace != nil {
+			ns = string(*ref.Namespace)
+		}
+		if ns == servicesNamespace && (ref.Name == AuthenticatedGatewayName || ref.Name == PerimeterGatewayName) {
+			return true
+		}
+	}
+	return false
 }
 
 func restartCoreDNSDeployment(ctx context.Context, c client.Client) error {

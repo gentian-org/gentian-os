@@ -212,6 +212,19 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return obj.GetLabels()[bouncerRouteLabel] == "true"
 			})),
 		).
+		// A route on the edge appearing, going or changing its hostnames:
+		// the CoreDNS hairpin names every host the edge serves.
+		Watches(
+			&gatewayv1.HTTPRoute{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(
+				predicate.GenerationChangedPredicate{},
+				predicate.NewPredicateFuncs(func(obj client.Object) bool {
+					route, ok := obj.(*gatewayv1.HTTPRoute)
+					return ok && routeOnEdge(route)
+				}),
+			),
+		).
 		// A publishing proxy coming up or going away: the front page of the
 		// main address follows the website's (mainAddressWebsiteServing).
 		Watches(
