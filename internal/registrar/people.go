@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
@@ -73,7 +74,7 @@ func (s *Server) tenantError(w http.ResponseWriter, r *http.Request, err error) 
 		// The request was fine and the caller is allowed; the cluster did
 		// not answer. 503, and the detail goes to the log only.
 		s.cfg.Log.ErrorContext(r.Context(), "the cluster's tenants could not be read",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable, "the cluster's tenants could not be read")
 	}
 }
@@ -94,7 +95,7 @@ func (s *Server) realmFor(w http.ResponseWriter, r *http.Request) (identity.Real
 	token, err := s.cfg.Identity.Realm(tenant.Realm)
 	if err != nil {
 		s.cfg.Log.WarnContext(r.Context(), "no Keycloak credential for realm",
-			"request_id", reqID(r.Context()), "tenant", tenant.Name, "realm", tenant.Realm)
+			"request_id", guard.ID(r.Context()), "tenant", tenant.Name, "realm", tenant.Realm)
 		s.fail(w, r, http.StatusServiceUnavailable,
 			"this registrar holds no credential for the realm "+tenant.Realm+
 				": the operator writes one per realm, and this one has not arrived yet")
@@ -118,7 +119,7 @@ func (s *Server) realmFor(w http.ResponseWriter, r *http.Request) (identity.Real
 // joins Keycloak's record of the change to the registrar's record of the
 // authority.
 func identityContext(r *http.Request) context.Context {
-	return identity.WithRequestID(r.Context(), reqID(r.Context()))
+	return identity.WithRequestID(r.Context(), guard.ID(r.Context()))
 }
 
 // identityError maps what the realm said onto what the caller should hear.
@@ -140,21 +141,21 @@ func (s *Server) identityError(w http.ResponseWriter, r *http.Request, err error
 		// this is refused all the same: who holds a platform role is not
 		// changed through the registrar (identity/guard.go).
 		s.cfg.Log.WarnContext(r.Context(), "refused: the holders of the platform's roles are not managed here",
-			"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
+			"request_id", guard.ID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
 		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
 			". Who holds a platform role is not changed through the registrar.")
 	case errors.Is(err, identity.ErrGuardUnavailable):
 		s.cfg.Log.ErrorContext(r.Context(), "the platform role groups could not be read; nothing was written",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable,
 			"the platform role groups could not be read from the Cluster claim, so nothing was changed")
 	case errors.Is(err, identity.ErrUnguarded):
 		s.cfg.Log.ErrorContext(r.Context(), "a write the registrar has no rule for was refused",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusInternalServerError, "this registrar does not make that change")
 	default:
 		s.cfg.Log.ErrorContext(r.Context(), "keycloak call failed",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the realm could not be reached")
 	}
 }
@@ -226,7 +227,7 @@ func (s *Server) clusterUserCount(w http.ResponseWriter, r *http.Request, _ call
 		}
 		complete = false
 		s.cfg.Log.WarnContext(r.Context(), "realm not counted",
-			"request_id", reqID(r.Context()), "realm", entry.Realm, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "realm", entry.Realm, "error", err.Error())
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"cluster": s.cfg.Cluster, "users": total, "complete": complete, "realms": realms,
@@ -487,11 +488,11 @@ func (s *Server) removePerson(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		id, err := s.cfg.Mailboxes.Decide(r.Context(), MailboxDecision{
 			Tenant: tenant.Name, Address: mailbox, Choice: body.Mailbox,
-			Subject: c.subject, Name: c.name, RequestID: reqID(r.Context()),
+			Subject: c.subject, Name: c.name, RequestID: guard.ID(r.Context()),
 		})
 		if err != nil {
 			s.cfg.Log.ErrorContext(r.Context(), "the decision about a mailbox could not be written down; nobody was removed",
-				"request_id", reqID(r.Context()), "tenant", tenant.Name, "error", err.Error())
+				"request_id", guard.ID(r.Context()), "tenant", tenant.Name, "error", err.Error())
 			s.fail(w, r, http.StatusServiceUnavailable,
 				"what is to become of the mailbox could not be written down, so the person was not removed. Nothing was changed.")
 			return
@@ -508,7 +509,7 @@ func (s *Server) removePerson(w http.ResponseWriter, r *http.Request, c call) {
 				// Left behind, it is acted on by nobody while the person
 				// exists, and refused by the operator after that.
 				s.cfg.Log.ErrorContext(r.Context(), "a decision about a mailbox could not be taken back after the removal failed",
-					"request_id", reqID(r.Context()), "tenant", tenant.Name, "record", decision, "error", werr.Error())
+					"request_id", guard.ID(r.Context()), "tenant", tenant.Name, "record", decision, "error", werr.Error())
 			}
 			cancel()
 		}
@@ -1005,7 +1006,7 @@ func (s *Server) recordIdentityAction(r *http.Request, c call, action string, re
 		principal = c.component
 	}
 	s.cfg.Log.InfoContext(ctx, "identity action",
-		"request_id", reqID(ctx),
+		"request_id", guard.ID(ctx),
 		"action", action,
 		"realm", realm.Name(),
 		"tenant", r.PathValue("t"),
@@ -1021,7 +1022,7 @@ func (s *Server) recordIdentityAction(r *http.Request, c call, action string, re
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	err := s.cfg.Record.Write(writeCtx, record.Action{
-		RequestID: reqID(ctx),
+		RequestID: guard.ID(ctx),
 		Action:    action,
 		Realm:     realm.Name(),
 		Tenant:    r.PathValue("t"),
@@ -1031,7 +1032,7 @@ func (s *Server) recordIdentityAction(r *http.Request, c call, action string, re
 	})
 	if err != nil {
 		s.cfg.Log.ErrorContext(ctx, "the authority for an identity action was not recorded",
-			"request_id", reqID(ctx), "action", action, "error", err.Error())
+			"request_id", guard.ID(ctx), "action", action, "error", err.Error())
 	}
 }
 

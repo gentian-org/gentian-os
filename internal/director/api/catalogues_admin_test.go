@@ -11,11 +11,11 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
-	"regexp"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"

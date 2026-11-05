@@ -227,7 +227,7 @@ func (s *Server) clusterResourceReport(w http.ResponseWriter, r *http.Request, _
 
 func (s *Server) unreachable(w http.ResponseWriter, r *http.Request, err error) {
 	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "error", err.Error())
-	fail(w, http.StatusBadGateway, "the operator's API did not answer")
+	fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
 
 // resourcePlans answers the catalog as it applies to this tenant: the
@@ -239,7 +239,7 @@ func (s *Server) resourcePlans(w http.ResponseWriter, r *http.Request, c call) {
 	if err != nil {
 		var upstream *lifecycle.UpstreamError
 		if errors.As(err, &upstream) {
-			fail(w, upstream.Status, upstream.Message)
+			fail(w, r, upstream.Status, upstream.Message)
 			return
 		}
 		s.unreachable(w, r, err)
@@ -266,7 +266,7 @@ func (s *Server) clusterResources(w http.ResponseWriter, r *http.Request, _ call
 		if status == http.StatusOK {
 			status = http.StatusBadGateway
 		}
-		fail(w, status, lifecycle.ErrorMessage(body))
+		fail(w, r, status, lifecycle.ErrorMessage(body))
 		return
 	}
 	if answer.Tenants == nil {
