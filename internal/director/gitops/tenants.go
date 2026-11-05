@@ -42,6 +42,28 @@ import (
 // ErrTenantExists is a create against a name the cluster already has.
 var ErrTenantExists = errors.New("tenant already exists")
 
+// ErrNameUsedBefore is a tenant asked for under the name of one this cluster
+// had and retired. Rights, memberships and cache keys address a tenant by its
+// name and outlive it, so a new tenant of the name starts with what the old
+// one left. Refused unless the cluster administrator approves the reuse
+// (reuseName), which is what recovering that tenant needs.
+var ErrNameUsedBefore = errors.New("a tenant of this name existed before")
+
+// NameUsedBeforeError says which name and when its tenant was retired.
+type NameUsedBeforeError struct {
+	Name    string
+	Retired time.Time
+}
+
+func (e *NameUsedBeforeError) Error() string {
+	return fmt.Sprintf("a tenant named %s existed on this cluster until %s. Its rights, memberships and cache keys "+
+		"are still addressed by that name, so a new tenant of the name starts with the old one's people and rights. "+
+		"Choose another name; to recover that tenant, ask again with the name's reuse approved",
+		e.Name, e.Retired.UTC().Format("2006-01-02 15:04 UTC"))
+}
+
+func (e *NameUsedBeforeError) Unwrap() error { return ErrNameUsedBefore }
+
 // ErrSingleTenancy is a tenant a single-tenancy cluster may not carry: the
 // operator's own refusal (internal/tenancy), so the director, the webhook
 // and the reconciler say the same sentence about the same rule.
@@ -383,6 +405,9 @@ type NewTenant struct {
 	// written into it in the commit that creates it. The director's to
 	// say, from the operator's placement; never read from a request.
 	Placed []string `json:"-"`
+	// ReuseName is the cluster administrator's approval to create a tenant
+	// under the name of a retired one (ErrNameUsedBefore).
+	ReuseName bool `json:"reuseName,omitempty"`
 }
 
 // NewTenantCatalogue is the switch in spec.catalogue of a tenant being
@@ -431,7 +456,7 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 			}
 		}
 		return []byte(text), nil
-	}, nil, fmt.Sprintf("Add tenant %s", req.Name), "created", meta)
+	}, nil, req.ReuseName, fmt.Sprintf("Add tenant %s", req.Name), "created", meta)
 }
 
 // createTenant is how a tenant comes into being in git, for every way there
@@ -441,8 +466,9 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 // What is checked here is checked for both, before anything is written: the
 // name, the cluster's tenancy mode, that no tenant of the name exists, that
 // none of the names the new tenant would use -- its realm, its database
-// prefix, its bucket prefix -- is another tenant's (backup.NamesTaken), and
-// that the name is not the alias of a published surface (ErrNameIsAlias).
+// prefix, its bucket prefix -- is another tenant's (backup.NamesTaken), that
+// the name is not the alias of a published surface (ErrNameIsAlias), and that
+// no retired tenant had it, unless reuseName approves that (ErrNameUsedBefore).
 //
 // manifest is called once those hold, and its answer is committed with the
 // kustomization and with beside, further files of the tenant's directory.
@@ -451,6 +477,7 @@ func (g *GitOps) createTenant(
 	name string,
 	manifest func() ([]byte, error),
 	beside map[string][]byte,
+	reuseName bool,
 	message, status string,
 	meta Meta,
 ) (Result, error) {
@@ -474,6 +501,19 @@ func (g *GitOps) createTenant(
 	file := filepath.Join(dir, "tenant.yaml")
 	if _, err := os.Stat(file); err == nil {
 		return Result{}, fmt.Errorf("%w: %q", ErrTenantExists, name)
+	}
+	retired, usedBefore, err := g.retiredAt(ctx, dir)
+	if err != nil {
+		return Result{}, err
+	}
+	warning := ""
+	if usedBefore {
+		if !reuseName {
+			return Result{}, &NameUsedBeforeError{Name: name, Retired: retired}
+		}
+		warning = fmt.Sprintf("tenant %s reuses the name of the tenant retired on %s: the rights, memberships and cache keys "+
+			"that tenant left pass to this one", name, retired.UTC().Format("2006-01-02 15:04 UTC"))
+		message += "\n\nApproved reuse of a retired tenant's name: " + warning + "."
 	}
 	body, err := manifest()
 	if err != nil {
@@ -529,7 +569,33 @@ func (g *GitOps) createTenant(
 	if err := g.commitPaths(ctx, rels, message, meta); err != nil {
 		return Result{}, err
 	}
-	return g.landed(ctx, status)
+	res, err := g.landed(ctx, status)
+	res.Warning = warning
+	return res, err
+}
+
+// retiredAt is when git last changed a tenant directory that is gone, and
+// whether there ever was one. A directory git never held has no history.
+func (g *GitOps) retiredAt(ctx context.Context, dir string) (time.Time, bool, error) {
+	rel, err := filepath.Rel(g.path, dir)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	cmd, cancel := g.gitCmd(ctx, "-C", g.path, "log", "-1", "--format=%cI", "--", rel)
+	defer cancel()
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("git log %s: %w", rel, err)
+	}
+	stamp := strings.TrimSpace(string(out))
+	if stamp == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("git log %s: %w", rel, err)
+	}
+	return at, true, nil
 }
 
 // declaredTenants reads every tenant git declares, as far as its names go.

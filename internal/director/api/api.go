@@ -1957,7 +1957,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 	var body gitops.NewTenant
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}, optionally with `+
-			`"requireMFA": false, "catalogue": {"delegated": true}, "signUp": true, "country": "CH"`)
+			`"requireMFA": false, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", "reuseName": true`)
 		return
 	}
 	if !gitops.ValidName(body.Name) {
@@ -1979,6 +1979,10 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
 		return
 	}
+	if errors.Is(err, gitops.ErrNameUsedBefore) {
+		s.fail(w, r, http.StatusConflict, err.Error()+` ("reuseName": true; kubectl gentian: --reuse-name)`)
+		return
+	}
 	if errors.Is(err, gitops.ErrSingleTenancy) || errors.Is(err, gitops.ErrNameIsAlias) {
 		s.fail(w, r, http.StatusConflict, err.Error())
 		return
@@ -1988,6 +1992,9 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	answer := map[string]any{"status": res.Status, "signUp": body.SignUp, "country": body.Country}
+	if res.Warning != "" {
+		answer["warning"] = res.Warning
+	}
 	if !res.Changed {
 		s.json(w, http.StatusOK, answer)
 		return
