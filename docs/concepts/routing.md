@@ -260,7 +260,6 @@ platform's included:
 | Label | What answers there |
 | --- | --- |
 | `argocd` | the GitOps console |
-| `corp` | a name the tunnel ingress publishes for the cluster |
 | `headlamp` | the cluster console |
 | `id` | the identity provider |
 | `imap` | the cluster's mail host for reading mail |

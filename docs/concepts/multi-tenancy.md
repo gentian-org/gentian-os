@@ -130,7 +130,7 @@ Its domain is the cluster's, so it has no listener, certificate, DNS wildcard
 or apex route of its own: the cluster's certificate (`<KERNEL_DOMAIN>` and
 `*.<KERNEL_DOMAIN>`) and catch-all listener serve it. The names the kernel
 answers on at that level -- `id`, `platform`, `www`, `argocd`, `headlamp`,
-`llm`, `mail`, `imap`, `mail-egress`, `corp` -- are refused to its components
+`llm`, `mail`, `imap`, `mail-egress` -- are refused to its components
 and apps (`HostReserved`). The names the platform keeps in every tenant are
 refused to apps there as everywhere.
 

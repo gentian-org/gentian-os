@@ -51,8 +51,7 @@ func ensureKernelGatewayTunnelIngress(
 	}
 
 	hosts := map[string]struct{}{
-		kernelDomain:           {},
-		"corp." + kernelDomain: {},
+		kernelDomain: {},
 	}
 	// The hostnames are the routes': a kernel UI is published only once it
 	// is routed, which is only once the kernel zone exists. The cluster id

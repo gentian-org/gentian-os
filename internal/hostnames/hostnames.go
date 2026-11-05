@@ -97,12 +97,11 @@ var platformLabels = []Reserved{
 // The list is what writes a host under the cluster's domain:
 // kernel_gateway_routes.go (id, www, argocd, headlamp, monitoring, llm),
 // mail_dnsendpoint.go and the mail egress record (mail, imap, mail-egress),
-// gateway_tunnel_ingress.go (corp), and the platform tenant's zone
+// and the platform tenant's zone
 // (platform, and admin.platform below it). The object store, the secret
 // store and the registry publish no host.
 var kernelLabels = []Reserved{
 	{Label: "argocd", Why: "the GitOps console"},
-	{Label: "corp", Why: "a name the tunnel ingress publishes for the cluster"},
 	{Label: "headlamp", Why: "the cluster console"},
 	{Label: "id", Why: "the identity provider"},
 	{Label: "imap", Why: "the cluster's mail host for reading mail"},

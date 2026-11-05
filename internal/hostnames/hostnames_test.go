@@ -51,7 +51,7 @@ func TestTheReservedNamesAreTheseAndNoOthers(t *testing.T) {
 	if got, want := Names(PlatformLabels()), "desktop, admin, store, console, platform, id, auth, login, signin, sign-in, sso, account, accounts"; got != want {
 		t.Errorf("platform labels = %s\nwant            %s", got, want)
 	}
-	if got, want := Names(KernelLabels()), "argocd, corp, headlamp, id, imap, llm, mail, mail-egress, monitoring, platform, www"; got != want {
+	if got, want := Names(KernelLabels()), "argocd, headlamp, id, imap, llm, mail, mail-egress, monitoring, platform, www"; got != want {
 		t.Errorf("kernel labels = %s\nwant          %s", got, want)
 	}
 	owners := map[string]string{}
@@ -180,7 +180,7 @@ func TestTheKernelsNamesAreRefusedOnTheClustersDomainOnly(t *testing.T) {
 					t.Errorf("%s by %s on the cluster's domain: %+v", label, p.Name, refusal)
 					continue
 				}
-				for _, want := range []string{label + ".k.example", "tenancy mode is single", "argocd, corp, headlamp"} {
+				for _, want := range []string{label + ".k.example", "tenancy mode is single", "argocd, headlamp"} {
 					if !strings.Contains(refusal.Message(), want) {
 						t.Errorf("the refusal of %s does not say %q: %s", label, want, refusal.Message())
 					}
