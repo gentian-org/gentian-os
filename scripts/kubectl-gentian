@@ -282,7 +282,7 @@ cmd_login() {
         sleep "${interval}"
         answer="$(curl -sS --max-time 20 -d client_id=gentian-cli \
             -d grant_type=urn:ietf:params:oauth:grant-type:device_code \
-            --data-urlencode "device_code=${device}" \
+            --data-urlencode device_code@<(printf '%s' "${device}") \
             "${_ISSUER}/protocol/openid-connect/token")"
         err="$(printf '%s' "${answer}" | jq -r '.error // empty')"
         case "${err}" in
@@ -314,7 +314,7 @@ cmd_logout() {
         refresh="$(jq -r '.refresh_token // empty' "${_TOKEN_FILE}")"
         if [[ -n "${refresh}" ]]; then
             curl -sS --max-time 10 -o /dev/null -d client_id=gentian-cli \
-                --data-urlencode "refresh_token=${refresh}" "${_ISSUER}/protocol/openid-connect/logout" || true
+                --data-urlencode refresh_token@<(printf '%s' "${refresh}") "${_ISSUER}/protocol/openid-connect/logout" || true
         fi
         rm -f "${_TOKEN_FILE}"
     fi
@@ -336,7 +336,7 @@ _access_token() {
     refresh="$(jq -r '.refresh_token // empty' "${_TOKEN_FILE}")"
     [[ -n "${refresh}" ]] || die "the session has ended: kubectl gentian login"
     answer="$(curl -sS --max-time 20 -d client_id=gentian-cli -d grant_type=refresh_token \
-        --data-urlencode "refresh_token=${refresh}" "${_ISSUER}/protocol/openid-connect/token")"
+        --data-urlencode refresh_token@<(printf '%s' "${refresh}") "${_ISSUER}/protocol/openid-connect/token")"
     [[ -n "$(printf '%s' "${answer}" | jq -r '.access_token // empty')" ]] ||
         die "the session has ended: kubectl gentian login"
     _store_token "${answer}"
@@ -519,11 +519,11 @@ _ask() {
     out="$(mktemp)"
     if [[ -n "${body}" ]]; then
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${base}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
+            --data-binary @<(printf '%s' "${body}") "${base}${path}")"
     else
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" "${base}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${base}${path}")"
     fi
     if [[ "${status}" -ge 300 ]]; then
         local msg
@@ -550,11 +550,11 @@ _try() {
     out="$(mktemp)"
     if [[ -n "${body}" ]]; then
         _TRY_STATUS="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${_DIR_BASE}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
+            --data-binary @<(printf '%s' "${body}") "${_DIR_BASE}${path}")"
     else
         _TRY_STATUS="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" "${_DIR_BASE}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${_DIR_BASE}${path}")"
     fi
     if [[ "${_TRY_STATUS}" -ge 300 ]]; then
         _TRY_ANSWER="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
@@ -811,11 +811,11 @@ cmd_tenants_import() {
     [[ -z "${bucket}" || -n "${prefix}" ]] || die "--bucket needs --prefix"
     if [[ -n "${idfile}" ]]; then
         identity="$(grep -v '^#' "${idfile}")"
-        dec="$(jq -n --arg i "${identity}" '{identity:$i}')"
+        dec="$(jq -n --rawfile i <(printf '%s' "${identity}") '{identity:$i}')"
     elif [[ -n "${ask_pw}" ]]; then
         [[ -t 0 ]] || die "--passphrase needs a terminal"
         read -r -s -p "Passphrase: " passphrase; echo
-        dec="$(jq -n --arg p "${passphrase}" '{passphrase:$p}')"
+        dec="$(jq -n --rawfile p <(printf '%s' "${passphrase}") '{passphrase:$p}')"
     else
         die "say how to open the bundle: --identity-file <f> or --passphrase"
     fi
@@ -831,7 +831,7 @@ cmd_tenants_import() {
         bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
     # The tenant's name is the bundle's: an import does not rename.
-    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --argjson k "${keep}" --argjson r "${reuse}" '{bundle:$b, decryption:$d, keepCustomDomain:$k} + (if $r then {reuseName:true} else {} end)')"
+    body="$(jq -n --argjson b "${bundle}" --rawfile d <(printf '%s' "${dec}") --argjson k "${keep}" --argjson r "${reuse}" '{bundle:$b, decryption:($d | fromjson), keepCustomDomain:$k} + (if $r then {reuseName:true} else {} end)')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     printf '%s' "${answer}" | jq -r '.warning // empty | "WARNING: \(.)"' >&2
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
@@ -871,7 +871,7 @@ _upload() {
     _connect
     out="$(mktemp)"
     status="$(curl -sS -o "${out}" -w '%{http_code}' -X POST \
-        -H "Authorization: Bearer ${token}" -H "Content-Type: application/x-tar" \
+        -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/x-tar" \
         --data-binary "@${file}" "${_DIR_BASE}${path}")"
     if [[ "${status}" -ge 300 ]]; then
         echo "error: $(jq -r '.error // .detail // .' "${out}" 2>/dev/null || cat "${out}")"
@@ -1063,8 +1063,8 @@ _purge_app_when_gone() {
     while :; do
         token="$(_access_token)"
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${_DIR_BASE}/v1/tenants/${t}/actions/purge-app")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
+            --data-binary @<(printf '%s' "${body}") "${_DIR_BASE}/v1/tenants/${t}/actions/purge-app")"
         [[ "${status}" -lt 300 ]] && break
         msg="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
         if [[ "${status}" != "409" ]]; then
@@ -2887,7 +2887,7 @@ cmd_credentials() {
                         # A file ends in a newline more often than not, and the
                         # custodian refuses a value that does: the last one goes.
                         value="${value%$'\n'}"
-                        fields="$(jq -c --arg k "${key}" --arg v "${value}" '. + {($k): $v}' <<<"${fields}")"
+                        fields="$(jq -c --arg k "${key}" --rawfile v <(printf '%s' "${value}") '. + {($k): $v}' <<<"${fields}")"
                         ;;
                     *) die "unexpected argument $1" ;;
                 esac
