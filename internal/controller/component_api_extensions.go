@@ -57,9 +57,12 @@ import (
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;create;update
 //
 // The one role is created empty and then given its rules, which escalate,
-// held to its name, permits; its binding is held to it with bind.
+// held to its name, permits; its binding is held to it with bind. The
+// operator's own read of the types (gentian-api-extensions-reader) is kept
+// the same way, and bound by the chart.
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=update;escalate;bind,resourceNames=gentian-api-extensions
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=update;escalate,resourceNames=gentian-api-extensions-reader
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;delete
 
 const (
@@ -290,7 +293,8 @@ func (r *ComponentReconciler) bindAPIExtensions(ctx context.Context, comp *genti
 }
 
 // ensureAPIExtensionsRole keeps gentian-api-extensions to exactly the
-// installed types: each read, and its status written. Which types are
+// installed types, each read and its status written, and
+// gentian-api-extensions-reader to their reads alone. Which types are
 // installed is read from the profiles that ask for them, each confirmed on
 // the cluster by name, since the operator lists no definitions.
 func (r *ComponentReconciler) ensureAPIExtensionsRole(ctx context.Context) error {
@@ -329,7 +333,7 @@ func (r *ComponentReconciler) ensureAPIExtensionsRole(ctx context.Context) error
 		groups = append(groups, g)
 	}
 	sort.Strings(groups)
-	var rules []rbacv1.PolicyRule
+	var rules, reads []rbacv1.PolicyRule
 	for _, g := range groups {
 		plurals := byGroup[g]
 		sort.Strings(plurals)
@@ -337,37 +341,46 @@ func (r *ComponentReconciler) ensureAPIExtensionsRole(ctx context.Context) error
 		for _, p := range plurals {
 			status = append(status, p+"/status")
 		}
-		rules = append(rules,
-			rbacv1.PolicyRule{APIGroups: []string{g}, Resources: plurals, Verbs: []string{"get", "list", "watch"}},
+		read := rbacv1.PolicyRule{APIGroups: []string{g}, Resources: plurals, Verbs: []string{"get", "list", "watch"}}
+		rules = append(rules, read,
 			rbacv1.PolicyRule{APIGroups: []string{g}, Resources: status, Verbs: []string{"get", "update", "patch"}},
 		)
+		reads = append(reads, read)
 	}
+	if err := r.keepClusterRole(ctx, security.APIExtensionsClusterRole, rules); err != nil {
+		return err
+	}
+	return r.keepClusterRole(ctx, security.APIExtensionsReaderClusterRole, reads)
+}
 
+// keepClusterRole keeps one of the operator's two roles of the installed
+// types to exactly rules.
+func (r *ComponentReconciler) keepClusterRole(ctx context.Context, name string, rules []rbacv1.PolicyRule) error {
 	role := &rbacv1.ClusterRole{}
-	err := r.Get(ctx, client.ObjectKey{Name: security.APIExtensionsClusterRole}, role)
+	err := r.Get(ctx, client.ObjectKey{Name: name}, role)
 	if errors.IsNotFound(err) {
 		// Created without rules, which needs no permission the operator
 		// lacks; the rules follow as an update, which escalate permits for
 		// this one name.
 		role = &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{
-			Name:   security.APIExtensionsClusterRole,
+			Name:   name,
 			Labels: map[string]string{managedByLabel: managedByValue},
 		}}
 		if err := r.Create(ctx, role); err != nil && !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("create ClusterRole %s: %w", security.APIExtensionsClusterRole, err)
+			return fmt.Errorf("create ClusterRole %s: %w", name, err)
 		}
-		if err := r.Get(ctx, client.ObjectKey{Name: security.APIExtensionsClusterRole}, role); err != nil {
-			return fmt.Errorf("get ClusterRole %s: %w", security.APIExtensionsClusterRole, err)
+		if err := r.Get(ctx, client.ObjectKey{Name: name}, role); err != nil {
+			return fmt.Errorf("get ClusterRole %s: %w", name, err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("get ClusterRole %s: %w", security.APIExtensionsClusterRole, err)
+		return fmt.Errorf("get ClusterRole %s: %w", name, err)
 	}
 	if equality.Semantic.DeepEqual(role.Rules, rules) && role.AggregationRule == nil {
 		return nil
 	}
 	role.Rules, role.AggregationRule = rules, nil
 	if err := r.Update(ctx, role); err != nil {
-		return fmt.Errorf("update ClusterRole %s: %w", security.APIExtensionsClusterRole, err)
+		return fmt.Errorf("update ClusterRole %s: %w", name, err)
 	}
 	return nil
 }
