@@ -1151,7 +1151,6 @@ becomes a relation.
 | Director | a tenant | `can_view` | reading what git declares for the tenant; downloading a backup |
 | Director | a tenant | `can_install_app` | install, uninstall, add-ons, the tenant's own catalogs, purging an app, removing what a newer build of an app left behind (only on a cluster with one user tenant) |
 | Director | a tenant | `can_grant` | what an app may consume; giving an app to every member |
-| Director | a tenant | `can_set_plan` | the resource plan |
 | Director | a tenant | `can_set_policy` | backup policy, sign-in security policy, languages |
 | Director | a tenant | `can_expose` | publishing to the internet |
 | Director | a tenant or the cluster | `can_approve_privilege`, `can_approve` | granting a privilege an app asked for; which of the two depends on the kind of privilege |

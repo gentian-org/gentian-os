@@ -122,8 +122,9 @@ type PendingPrivilege struct {
 	Privilege string `json:"privilege"`
 	// ApprovedBy is who answers it: "perimeter-approver" for the tenant's
 	// perimeter approver (tenant#can_approve_privilege), "security-officer" for the cluster's
-	// security officer (cluster#can_approve). security.PrivilegeApprover
-	// decides it from the kind, as the director does on the approval.
+	// security officer (cluster#can_approve), "break-glass" for
+	// cluster#can_set_admission. security.PrivilegeApprover decides it from
+	// the request, as the director does on the approval.
 	ApprovedBy string `json:"approvedBy"`
 	// Reason is what the profile said it needs the privilege for, which is
 	// what an approver reads before deciding. Empty when the profile gave
@@ -159,15 +160,14 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 	requests := requestsOf(comp)
 	out := make([]PendingPrivilege, 0, len(pending))
 	for _, ref := range pending {
-		kind, _ := security.SplitPrivilegeRef(ref)
 		p := PendingPrivilege{
 			Privilege:  ref,
-			ApprovedBy: security.PrivilegeApprover(kind),
+			ApprovedBy: security.PrivilegeApprover(ref),
 			Reason:     security.PrivilegeReason(profile, ref),
 			ExpiredAt:  expiredGrantAt(comp, ref, now),
 		}
 		if req, ok := requests[ref]; ok {
-			if p.ApprovedBy == security.PrivilegeApproverSecurityOfficer {
+			if p.ApprovedBy != security.PrivilegeApproverPerimeter {
 				p.RequestedBy, p.RequestedAt, p.Note = req.RequestedBy, req.RequestedAt, req.Note
 			}
 			p.DeclinedBy, p.DeclinedAt, p.DeclineReason = declineOf(comp, req, ref)

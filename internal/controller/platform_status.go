@@ -106,16 +106,39 @@ func (w *PlatformStatusWriter) Start(ctx context.Context) error {
 // whose composite does not exist yet is skipped and written on the next
 // pass.
 func (w *PlatformStatusWriter) WriteOnce(ctx context.Context) error {
+	now := time.Now
+	if w.Now != nil {
+		now = w.Now
+	}
+	return forEachClusterComposite(ctx, w.Reader, func(xr *unstructured.Unstructured) error {
+		platform := map[string]any{
+			"version":     platformversion.ChartVersion,
+			"versionLine": platformversion.Line,
+			"build":       w.Build,
+			"reportedAt":  now().UTC().Format(time.RFC3339),
+		}
+		if latest := w.latest(ctx); latest.Version != "" {
+			platform["latestRelease"] = latest.Version
+			platform["latestReleaseNotes"] = latest.NotesURL
+		}
+		patch, _ := json.Marshal(map[string]any{"status": map[string]any{"platform": platform}})
+		if err := w.Writer.Status().Patch(ctx, xr, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			return fmt.Errorf("write the platform's version on %s: %w", xr.GetName(), err)
+		}
+		return nil
+	})
+}
+
+// forEachClusterComposite calls fn with the composite of every Cluster
+// claim: what the operator writes the cluster's status on. A claim whose
+// composite does not exist yet is skipped and written on the next pass.
+func forEachClusterComposite(ctx context.Context, reader client.Reader, fn func(xr *unstructured.Unstructured) error) error {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
 	})
-	if err := w.Reader.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
+	if err := reader.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
 		return fmt.Errorf("list Cluster claims: %w", err)
-	}
-	now := time.Now
-	if w.Now != nil {
-		now = w.Now
 	}
 	for i := range list.Items {
 		claim := &list.Items[i]
@@ -129,22 +152,11 @@ func (w *PlatformStatusWriter) WriteOnce(ctx context.Context) error {
 		}
 		xr := &unstructured.Unstructured{}
 		xr.SetGroupVersionKind(gv.WithKind(ref["kind"]))
-		if err := w.Reader.Get(ctx, types.NamespacedName{Name: ref["name"]}, xr); err != nil {
+		if err := reader.Get(ctx, types.NamespacedName{Name: ref["name"]}, xr); err != nil {
 			return fmt.Errorf("read the composite %s of Cluster claim %s: %w", ref["name"], claim.GetName(), err)
 		}
-		platform := map[string]any{
-			"version":     platformversion.ChartVersion,
-			"versionLine": platformversion.Line,
-			"build":       w.Build,
-			"reportedAt":  now().UTC().Format(time.RFC3339),
-		}
-		if latest := w.latest(ctx); latest.Version != "" {
-			platform["latestRelease"] = latest.Version
-			platform["latestReleaseNotes"] = latest.NotesURL
-		}
-		patch, _ := json.Marshal(map[string]any{"status": map[string]any{"platform": platform}})
-		if err := w.Writer.Status().Patch(ctx, xr, client.RawPatch(types.MergePatchType, patch)); err != nil {
-			return fmt.Errorf("write the platform's version on %s: %w", ref["name"], err)
+		if err := fn(xr); err != nil {
+			return err
 		}
 	}
 	return nil

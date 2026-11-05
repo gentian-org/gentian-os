@@ -98,6 +98,9 @@ type Repository interface {
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	PlanDefinitions(ctx context.Context) ([]gitops.PlanDefinition, error)
 	WritePlans(ctx context.Context, message string, meta gitops.Meta, writes ...gitops.PlanWrite) (gitops.Result, error)
+	PlanOrdering(ctx context.Context) (*gentianov1alpha1.PlanOrderingSpec, bool, error)
+	SetPlanOrdering(ctx context.Context, spec gentianov1alpha1.PlanOrderingSpec, meta gitops.Meta) (gitops.Result, error)
+	ClearPlanOrdering(ctx context.Context, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
@@ -161,6 +164,9 @@ type Repository interface {
 	RemoveBundleSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	DeclareTenantBundleSource(ctx context.Context, tenant, label string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantBundleSource(ctx context.Context, tenant, label string, meta gitops.Meta) (gitops.Result, error)
+	DeclareExtensionObject(ctx context.Context, tenant string, o gitops.ExtensionObject, meta gitops.Meta) (gitops.Result, error)
+	RemoveExtensionObject(ctx context.Context, tenant, group, resource, name string, meta gitops.Meta) (gitops.Result, error)
+	PlatformTenant(ctx context.Context) (string, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -175,7 +181,7 @@ type Lifecycle interface {
 	Stream(ctx context.Context, path string) (*http.Response, error)
 	// Upload is Do for a body streamed through unread: a bundle upload.
 	Upload(ctx context.Context, path, contentType string, body io.Reader) (int, []byte, error)
-	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
+	Plans(ctx context.Context, tenant string) ([]lifecycle.Plan, error)
 	// Do asks the cluster to do something once, as the person named. Only
 	// the action routes call it.
 	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
@@ -412,6 +418,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
 		return call{}, false
 	}
+	// A token a component obtained for the person reaches only the routes
+	// its scopes name (authn/delegated.go), before the graph is asked.
+	if !ident.MayCall(pattern) {
+		s.cfg.Log.WarnContext(ctx, "delegated token refused outside its scopes", "request_id", reqID(ctx),
+			"client", ident.Client, "route", pattern)
+		s.fail(w, r, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
+		return call{}, false
+	}
 	target, err := obj(r)
 	if err != nil {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
@@ -431,17 +445,19 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusForbidden, "forbidden")
 		return call{}, false
 	}
-	return call{
-		id:     ident,
-		user:   user,
-		holder: holder,
-		meta: gitops.Meta{
-			Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
-			Subject:   user[len("user:"):],
-			RequestID: reqID(ctx),
-			Decision:  relation + " " + target,
-		},
-	}, true
+	meta := gitops.Meta{
+		Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
+		Subject:   user[len("user:"):],
+		RequestID: reqID(ctx),
+		Decision:  relation + " " + target,
+	}
+	if ident.Delegated() {
+		// Who asked on the person's behalf, and why, in the commit beside
+		// the person and the decision.
+		meta.Via = ident.Client
+		meta.Reason = r.Header.Get("X-Gentian-Reason")
+	}
+	return call{id: ident, user: user, holder: holder, meta: meta}, true
 }
 
 // guarded registers a route with the relation it requires. Together with
@@ -561,6 +577,11 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/resource-plans", "can_audit", s.clusterObject, s.clusterResourcePlans)
 		s.guarded("PUT /v1/clusters/{c}/resource-plans/{name}", "can_configure", s.clusterObject, s.setClusterResourcePlan)
 		s.guarded("DELETE /v1/clusters/{c}/resource-plans/{name}", "can_configure", s.clusterObject, s.removeClusterResourcePlan)
+		// Where a tenant orders another plan: the notice its own screen
+		// shows in place of a choice, read with the tenant's resources.
+		s.guarded("GET /v1/clusters/{c}/plan-ordering", "can_audit", s.clusterObject, s.clusterPlanOrdering)
+		s.guarded("PUT /v1/clusters/{c}/plan-ordering", "can_configure", s.clusterObject, s.setClusterPlanOrdering)
+		s.guarded("DELETE /v1/clusters/{c}/plan-ordering", "can_configure", s.clusterObject, s.clearClusterPlanOrdering)
 		// The models the gateway offers, which are the claim's and nobody
 		// else's: read like a setting, written like one, and under
 		// /v1/clusters only, so that no relation on a tenant reaches them --
@@ -663,6 +684,10 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/bundle-sources", "can_configure", s.clusterObject, s.listClusterSources)
 			s.guarded("PUT /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.declareClusterSource)
 			s.guarded("DELETE /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.removeClusterSource)
+			// An add-on's objects of the cluster (extensions.go), declared
+			// in the platform tenant's directory.
+			s.guarded("PUT /v1/clusters/{c}/extensions/{group}/{resource}/{name}", "can_configure", s.clusterObject, s.declareClusterExtensionObject)
+			s.guarded("DELETE /v1/clusters/{c}/extensions/{group}/{resource}/{name}", "can_configure", s.clusterObject, s.removeClusterExtensionObject)
 			s.guarded("GET /v1/clusters/{c}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.clusterSourceBundles)
 			s.action("POST /v1/clusters/{c}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromClusterSource)
 			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources", "can_configure", s.clusterObject, s.tenantSources)
@@ -795,10 +820,14 @@ func (s *Server) routes() {
 		// officer holds can_view on every tenant without administering one.
 		s.action("POST /v1/tenants/{t}/apps/{p}/actions/decline-privilege", "can_view", tenantObject, s.declinePrivilege)
 
-		// Choosing a plan is can_set_plan, model v1's own verb for it, and it
-		// is a commit: the operator learns the plan from git like everything
-		// else.
-		s.guarded("PUT /v1/tenants/{t}/resources", "can_set_plan", tenantObject, s.setResourcePlan)
+		// Moving a tenant to another plan is the cluster's administrator's,
+		// under /v1/clusters so that no relation on a tenant reaches it: a
+		// tenant orders another plan where the cluster's notice says, and the
+		// cluster's administrator, or what they linked for it, moves it. A
+		// commit, like everything else the operator learns from git.
+		if s.cfg.Cluster != "" {
+			s.guarded("PUT /v1/clusters/{c}/tenants/{t}/resources", "can_configure", s.clusterObject, s.setResourcePlan)
+		}
 
 		// The bundle as one file, through the director and never a signed
 		// URL: a link that works without a session is a session nobody can
@@ -930,6 +959,11 @@ func (s *Server) routes() {
 		// custodian in the tenant's part of the vault.
 		s.guarded("PUT /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.declareTenantStore)
 		s.guarded("DELETE /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.removeTenantStore)
+		// An add-on's objects of the tenant (extensions.go): a backup
+		// schedule, say, of a type break-glass let the add-on bring.
+		// Declared under the relation the tenant's backup policy is.
+		s.guarded("PUT /v1/tenants/{t}/extensions/{group}/{resource}/{name}", "can_set_policy", tenantObject, s.declareTenantExtensionObject)
+		s.guarded("DELETE /v1/tenants/{t}/extensions/{group}/{resource}/{name}", "can_set_policy", tenantObject, s.removeTenantExtensionObject)
 		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
 		// Fetching one of them into the cluster's import storage, to rewrite
 		// it before it is restored: only a bundle whose header names the
@@ -980,7 +1014,7 @@ func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
 // tenantRelations are the tenant verbs the desktop asks about the caller.
 var tenantRelations = []string{
 	"can_enter", "can_view", "can_administer", "can_install_app", "can_manage_users",
-	"can_set_plan", "can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
+	"can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
 }
 
 func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
@@ -2290,7 +2324,7 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 	case errors.Is(err, gitops.ErrInvalidBackupPolicy):
 		s.fail(w, r, http.StatusBadRequest, err.Error())
-	case errors.Is(err, gitops.ErrInvalidPlan):
+	case errors.Is(err, gitops.ErrInvalidPlan), errors.Is(err, gitops.ErrInvalidPlanOrdering):
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, gitops.ErrPlanNotFound):
 		s.fail(w, r, http.StatusNotFound, err.Error())

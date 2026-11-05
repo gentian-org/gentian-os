@@ -303,6 +303,7 @@ namespaces:
                 evidence: [kernel/manifests/cert-manager/internal-ca.yaml:87]
             also:
               - External Secrets, in this namespace (crossplane/compositions/cluster-default.yaml:33)
+              - the vault's daily snapshot job, in this namespace (charts/gentian-os/templates/openbao-snapshots.yaml)
               - the installer, from the install host; by port-forward where the host does not reach the pod (scripts/lib/portforward.sh:107)
           - port: 8201
             what: cluster traffic between vault replicas
@@ -355,9 +356,15 @@ namespaces:
 
   - name: kernel-seal
     sameNamespace: true
-    sameNamespaceWhy: one workload; a pod of this namespace can mount the seal's own Secrets anyway.
+    sameNamespaceWhy: >-
+      The seal and its daily snapshot job, which reads the seal's API
+      (charts/gentian-os/templates/openbao-snapshots.yaml); a pod of this
+      namespace can mount the seal's own Secrets anyway.
     egress: open
-    egressWhy: not restricted in this pass; the seal calls nothing but DNS.
+    egressWhy: >-
+      Not restricted in this pass. The seal calls the API server (token review,
+      for its snapshot job's login); the snapshot job writes to the object
+      store's S3 port, which admits it by its label.
     workloads:
       - name: openbao-transit
         installedBy: bootstrap-application:openbao-transit
@@ -372,6 +379,7 @@ namespaces:
                 evidence: [kernel/bootstrap/chart/templates/openbao.yaml:43]
             also:
               - the installer, from the install host; by port-forward where the host does not reach the pod (scripts/steps/B-02-seal-init.sh:20)
+              - the seal's daily snapshot job, in this namespace (charts/gentian-os/templates/openbao-snapshots.yaml)
           - port: 8201
             what: cluster traffic between replicas
             closed: one replica, no peer

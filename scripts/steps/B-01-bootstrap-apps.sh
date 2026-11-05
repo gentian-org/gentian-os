@@ -133,6 +133,13 @@ _v5_render() {
     local acme_staging=false
     [[ "${ACME_ENV:-production}" == "staging" ]] && acme_staging=true
 
+    # Each instance's backend, read before anything is rendered: a failure to
+    # read what the vault's volume holds stops the render, where a command
+    # substitution among helm's arguments would pass an empty value on.
+    local vault_storage transit_storage
+    vault_storage="$(openbao_storage_for_render openbao)" || return 1
+    transit_storage="$(openbao_storage_for_render openbao-transit)" || return 1
+
     local tmp
     tmp="$(mktemp -d)"
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
@@ -192,6 +199,8 @@ _v5_render() {
         --set-string "gentianOsBranch=$(gentian_os_ref)" \
         --set-string "gentianOsRevision=$(gentian_os_revision)" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
+        --set-string "openbao.storage=${vault_storage}" \
+        --set-string "openbao.transitStorage=${transit_storage}" \
         --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
         --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
         --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \

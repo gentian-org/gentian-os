@@ -91,6 +91,10 @@ server:
       bao status 2>/dev/null | grep -q 'Initialized.*true' || exit 0
       bao operator unseal "$TRANSIT_UNSEAL_KEY" || true
 
+  # For a render of this file alone. What a cluster runs is the config
+  # kernel/bootstrap/chart/templates/openbao-transit.yaml merges over it: the
+  # same listener, and the storage backend the Cluster claim states (raft, or
+  # file for a seal not yet moved).
   standalone:
     config: |
       ui = false

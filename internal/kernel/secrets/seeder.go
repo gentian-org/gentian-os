@@ -345,25 +345,29 @@ type S3Creds struct {
 	SecretKey string
 }
 
-// SeedS3 derives the access/secret key pair from the master.
-func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (S3Creds, error) {
-	salt := CategoryPath(tenant, app, "s3")
+// SeedS3 writes the S3 record at path -- an app's
+// (CategoryPath(tenant, app, "s3")) or one of the kernel's own
+// (KernelPath(category, name)), with the same fields, so one ExternalSecret
+// shape reads either -- and returns the stored one. The key pair is derived
+// from the master where the cluster derives, with the path as the salt, and
+// made once: the stored pair is returned ever after.
+func (s *Seeder) SeedS3(ctx context.Context, path string, base S3Creds) (S3Creds, error) {
 	reproducible := true
 	if base.AccessKey == "" {
-		g, err := s.gen(ctx, salt, "access-key", 20)
+		g, err := s.gen(ctx, path, "access-key", 20)
 		if err != nil {
-			return S3Creds{}, fmt.Errorf("seed s3(%s/%s): %w", tenant, app, err)
+			return S3Creds{}, fmt.Errorf("seed s3(%s): %w", path, err)
 		}
 		base.AccessKey, reproducible = g.value, g.reproducible
 	}
 	if base.SecretKey == "" {
-		g, err := s.gen(ctx, salt, "secret-key", 40)
+		g, err := s.gen(ctx, path, "secret-key", 40)
 		if err != nil {
-			return S3Creds{}, fmt.Errorf("seed s3(%s/%s): %w", tenant, app, err)
+			return S3Creds{}, fmt.Errorf("seed s3(%s): %w", path, err)
 		}
 		base.SecretKey, reproducible = g.value, reproducible && g.reproducible
 	}
-	got, err := s.seedAndRead(ctx, salt, map[string]string{
+	got, err := s.seedAndRead(ctx, path, map[string]string{
 		"endpoint":   base.Endpoint,
 		"bucket":     base.Bucket,
 		"region":     base.Region,
@@ -371,7 +375,7 @@ func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (
 		"secret-key": base.SecretKey,
 	}, reproducible)
 	if err != nil {
-		return S3Creds{}, fmt.Errorf("seed s3(%s/%s): %w", tenant, app, err)
+		return S3Creds{}, fmt.Errorf("seed s3(%s): %w", path, err)
 	}
 	return S3Creds{
 		Endpoint: got["endpoint"], Bucket: got["bucket"], Region: got["region"],
@@ -823,4 +827,20 @@ func (s *Seeder) Read(ctx context.Context, logicalPath string) (map[string]strin
 
 func (s *Seeder) Write(ctx context.Context, logicalPath string, data map[string]string) error {
 	return s.w.Put(ctx, logicalPath, data)
+}
+
+// MetadataReader is a Writer that can also say when a record was made and
+// which version it is at; *KVClient is one.
+type MetadataReader interface {
+	Metadata(ctx context.Context, logicalPath string) (RecordMetadata, error)
+}
+
+// Metadata reads the record's KV v2 metadata, never its values. An error
+// where the Seeder's Writer cannot say.
+func (s *Seeder) Metadata(ctx context.Context, logicalPath string) (RecordMetadata, error) {
+	m, ok := s.w.(MetadataReader)
+	if !ok {
+		return RecordMetadata{}, fmt.Errorf("metadata of %s: the vault client cannot read record metadata", logicalPath)
+	}
+	return m.Metadata(ctx, logicalPath)
 }

@@ -62,6 +62,7 @@ def bootstrap(*extra):
         layout.write_text("namespaces:\n" + "".join("  " + line for line in body.splitlines(True)))
         return helm("boot", "kernel/bootstrap/chart", "-f", str(layout), "-f", "kernel/platforms.yaml",
                     "--set-string", "appsets.enabled=true", "--set-string", "operator.enabled=true",
+                    "--set-string", "operator.tag=develop-abc1234",
                     "--set-string", "headlamp.oidc.enabled=true", "--set-string", "kernelDomain=k.example",
                     "--set-string", "cluster=c", "--set-string", "dnsProvider=cloudflare",
                     "--set-string", "versions.headlamp.chart=0.0.0",

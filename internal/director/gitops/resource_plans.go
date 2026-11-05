@@ -47,16 +47,15 @@ var ErrInvalidPlan = errors.New("invalid resource plan")
 
 // PlanDefinition is one plan as the API reads and writes it.
 type PlanDefinition struct {
-	Name                string            `json:"name"`
-	DisplayName         string            `json:"displayName"`
-	Description         string            `json:"description,omitempty"`
-	Tier                int32             `json:"tier"`
-	Units               int32             `json:"units,omitempty"`
-	ProductSku          string            `json:"productSku,omitempty"`
-	Default             bool              `json:"default,omitempty"`
-	SelfServiceDisabled bool              `json:"selfServiceDisabled,omitempty"`
-	Retired             bool              `json:"retired,omitempty"`
-	Quotas              map[string]string `json:"quotas"`
+	Name        string            `json:"name"`
+	DisplayName string            `json:"displayName"`
+	Description string            `json:"description,omitempty"`
+	Tier        int32             `json:"tier"`
+	Units       int32             `json:"units,omitempty"`
+	ProductSku  string            `json:"productSku,omitempty"`
+	Default     bool              `json:"default,omitempty"`
+	Retired     bool              `json:"retired,omitempty"`
+	Quotas      map[string]string `json:"quotas"`
 }
 
 // CheckPlanDefinition refuses a plan the CRD would refuse, or the operator
@@ -177,16 +176,15 @@ func (g *GitOps) planDefinitionsLocked() ([]PlanDefinition, error) {
 			continue
 		}
 		out = append(out, PlanDefinition{
-			Name:                doc.Name,
-			DisplayName:         doc.Spec.DisplayName,
-			Description:         doc.Spec.Description,
-			Tier:                doc.Spec.Tier,
-			Units:               doc.Spec.Units,
-			ProductSku:          doc.Spec.ProductSku,
-			Default:             doc.Spec.Default,
-			SelfServiceDisabled: doc.Spec.SelfServiceDisabled,
-			Retired:             doc.Spec.Retired,
-			Quotas:              quotasOf(&doc.Spec.Quotas),
+			Name:        doc.Name,
+			DisplayName: doc.Spec.DisplayName,
+			Description: doc.Spec.Description,
+			Tier:        doc.Spec.Tier,
+			Units:       doc.Spec.Units,
+			ProductSku:  doc.Spec.ProductSku,
+			Default:     doc.Spec.Default,
+			Retired:     doc.Spec.Retired,
+			Quotas:      quotasOf(&doc.Spec.Quotas),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -392,9 +390,6 @@ func renderPlan(p PlanDefinition) string {
 	}
 	if p.Default {
 		b.WriteString("  default: true\n")
-	}
-	if p.SelfServiceDisabled {
-		b.WriteString("  selfServiceDisabled: true\n")
 	}
 	if p.Retired {
 		b.WriteString("  retired: true\n")

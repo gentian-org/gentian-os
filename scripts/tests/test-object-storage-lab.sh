@@ -8,8 +8,9 @@
 # Builds the storage tools image (kernel/images/storage-tools) as CI does,
 # starts the S3 server at the image the platform pins, and runs the Jobs the
 # operator builds -- the bucket Job, a capture of a bucket and of a volume,
-# the upload, the manifest, a restore of each, the deletion of a bundle and
-# the purge of an app's bucket -- each container with the image, script,
+# the upload, the manifest, a restore of each, the deletion of a bundle, the
+# purge of an app's bucket, and two identities scoped to prefixes of one
+# bucket -- each container with the image, script,
 # environment and volumes its Job gives it
 # (internal/backup/objectstore_live_test.go). What counts is what the store
 # holds afterwards, read back with rclone.
@@ -32,4 +33,4 @@ echo "object storage: the Jobs against the server the platform deploys"
 echo ""
 docker build -q -t "${image}" kernel/images/storage-tools >/dev/null
 GENTIAN_LIVE_S3=1 STORAGE_TOOLS_IMAGE="${image}" \
-    go test ./internal/backup -run 'TestObjectStorageJobsAgainstAServer$|TestALockedBucketAgainstAServer$' -count=1 -v
+    go test ./internal/backup -run 'TestObjectStorageJobsAgainstAServer$|TestALockedBucketAgainstAServer$|TestPrefixScopedIdentitiesAgainstAServer$' -count=1 -v

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 )
@@ -84,7 +85,7 @@ func Pinned(ctx context.Context, o Options) (storeID, modelID string, err error)
 
 func (c *OpenFGA) pinnedOnce(ctx context.Context, o Options, want map[string]any) (string, error) {
 	var recorded map[string]any
-	if err := c.get(ctx, "/stores/"+o.StoreID+"/authorization-models/"+url.PathEscape(o.ModelID), &recorded); err == nil {
+	if err := c.fga.Do(ctx, http.MethodGet, "/stores/"+o.StoreID+"/authorization-models/"+url.PathEscape(o.ModelID), nil, &recorded); err == nil {
 		if m, ok := recorded["authorization_model"].(map[string]any); ok && sameModel(m, want) {
 			return o.ModelID, nil
 		}
@@ -94,24 +95,17 @@ func (c *OpenFGA) pinnedOnce(ctx context.Context, o Options, want map[string]any
 	// OpenFGA lists a store's models newest first.
 	token := ""
 	for range pinPages {
-		var page struct {
-			Models            []map[string]any `json:"authorization_models"`
-			ContinuationToken string           `json:"continuation_token"`
-		}
-		path := "/stores/" + o.StoreID + "/authorization-models?page_size=50"
-		if token != "" {
-			path += "&continuation_token=" + url.QueryEscape(token)
-		}
-		if err := c.get(ctx, path, &page); err != nil {
+		models, next, err := c.fga.ReadModels(ctx, o.StoreID, 50, token)
+		if err != nil {
 			return "", fmt.Errorf("read models: %w", err)
 		}
-		for _, m := range page.Models {
+		for _, m := range models {
 			if sameModel(m, want) {
 				id, _ := m["id"].(string)
 				return id, nil
 			}
 		}
-		if token = page.ContinuationToken; token == "" {
+		if token = next; token == "" {
 			break
 		}
 	}

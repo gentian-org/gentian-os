@@ -140,17 +140,17 @@ func TestWhatTheProjectionWritesIsNotStoreOnly(t *testing.T) {
 // it stands; nothing else, the tenant least of all.
 func TestRebase(t *testing.T) {
 	cases := []struct{ in, want Tuple }{
-		{Tuple{"cluster:c1", "operated_by", "tenant:demo"}, Tuple{"cluster:c2", "operated_by", "tenant:demo"}},
-		{Tuple{"cluster:c1#operator", "admin", "app:demo/wiki"}, Tuple{"cluster:c2#operator", "admin", "app:demo/wiki"}},
-		{Tuple{"group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki"}, Tuple{"group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki"}},
-		{Tuple{"cluster:c10", "operated_by", "tenant:demo"}, Tuple{"cluster:c10", "operated_by", "tenant:demo"}},
+		{Tuple{User: "cluster:c1", Relation: "operated_by", Object: "tenant:demo"}, Tuple{User: "cluster:c2", Relation: "operated_by", Object: "tenant:demo"}},
+		{Tuple{User: "cluster:c1#operator", Relation: "admin", Object: "app:demo/wiki"}, Tuple{User: "cluster:c2#operator", Relation: "admin", Object: "app:demo/wiki"}},
+		{Tuple{User: "group:gentian/tenant/demo/leads#member", Relation: "admin", Object: "app:demo/wiki"}, Tuple{User: "group:gentian/tenant/demo/leads#member", Relation: "admin", Object: "app:demo/wiki"}},
+		{Tuple{User: "cluster:c10", Relation: "operated_by", Object: "tenant:demo"}, Tuple{User: "cluster:c10", Relation: "operated_by", Object: "tenant:demo"}},
 	}
 	for _, c := range cases {
 		if got := Rebase(c.in, "c1", "c2"); got != c.want {
 			t.Errorf("Rebase(%v) = %v, want %v", c.in, got, c.want)
 		}
 	}
-	same := Tuple{"cluster:c1", "operated_by", "tenant:demo"}
+	same := Tuple{User: "cluster:c1", Relation: "operated_by", Object: "tenant:demo"}
 	if got := Rebase(same, "c1", "c1"); got != same {
 		t.Errorf("on the same cluster: %v", got)
 	}
@@ -165,9 +165,9 @@ func TestRebase(t *testing.T) {
 // entry of the store's is told from one that is.
 func TestWellFormed(t *testing.T) {
 	good := []Tuple{
-		{"group:gentian/tenant/demo/admins#member", "admin", "tenant:demo"},
-		{"cluster:c1", "operated_by", "tenant:demo"},
-		{"tenant:demo", "tenant", "app:demo/wiki"},
+		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "tenant:demo"},
+		{User: "cluster:c1", Relation: "operated_by", Object: "tenant:demo"},
+		{User: "tenant:demo", Relation: "tenant", Object: "app:demo/wiki"},
 	}
 	for _, tuple := range good {
 		if err := WellFormed(tuple); err != nil {
@@ -175,10 +175,10 @@ func TestWellFormed(t *testing.T) {
 		}
 	}
 	bad := []Tuple{
-		{"", "admin", "tenant:demo"}, {"user:*", "admin", "tenant:demo"}, {"group:x#", "admin", "tenant:demo"},
-		{"group:x#member", "", "tenant:demo"}, {"group:x#member", "admin", "tenant:demo#member"},
-		{"group:x#member", "admin", "tenant"}, {"group:x#member", "ad min", "tenant:demo"},
-		{"group:x #member", "admin", "tenant:demo"}, {"group:x#member", "admin", "tenant:de:mo"},
+		{User: "", Relation: "admin", Object: "tenant:demo"}, {User: "user:*", Relation: "admin", Object: "tenant:demo"}, {User: "group:x#", Relation: "admin", Object: "tenant:demo"},
+		{User: "group:x#member", Relation: "", Object: "tenant:demo"}, {User: "group:x#member", Relation: "admin", Object: "tenant:demo#member"},
+		{User: "group:x#member", Relation: "admin", Object: "tenant"}, {User: "group:x#member", Relation: "ad min", Object: "tenant:demo"},
+		{User: "group:x #member", Relation: "admin", Object: "tenant:demo"}, {User: "group:x#member", Relation: "admin", Object: "tenant:de:mo"},
 	}
 	for _, tuple := range bad {
 		if WellFormed(tuple) == nil {

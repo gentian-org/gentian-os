@@ -911,7 +911,7 @@ the code does.
 | The rights check for a component (`requires.services.rights`) | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](../concepts/mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
 | A tenant's backup and deletion | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artifacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](../concepts/data-lifecycle.md)) |
-| Approval path for profile-declared egress | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster. The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
+| Approval path for profile-declared egress | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). Resource types of a component's own are installed only once break-glass granted them (§3.4b). The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Kernel and system namespaces only (§12.4) |
 | The internal CA's key | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
@@ -1010,7 +1010,7 @@ Field reference and deployment flow: [app-catalog.md](../concepts/app-catalog.md
 | Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol?, endpoint? }` |
 | Contracts the app **may consume** from other apps | `spec.integrations[]` | `{ contract, provider?, capabilities? }` |
 | Platform services (identity, database, object storage, cache, mail, model gateway, …) | `spec.requires.services` | Separate from contracts |
-| What goes beyond the default posture (pod-security waiver, egress, cluster roles) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
+| What goes beyond the default posture (pod-security waiver, egress, cluster roles, API extensions) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
 | Where the chart takes what was provided | `spec.package.valueMapping` | Chart value keys per service |
 
 A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one. A provider may say where it answers one (`endpoint`: a Service of its own, the port its pods listen on, a path); the binding carries that, the consumer is told the address and a grant opens that port only. What is asked there is the two apps' business.
@@ -1159,7 +1159,7 @@ Revoking a grant removes the network path and both key Secrets in one reconcile.
 
 #### 3a. Cluster roles — named by the platform, never written by a profile
 
-Referred to as §3.4a. An app that needs to read something of the cluster through the Kubernetes API asks for a cluster role **by name**:
+Referred to as §3.4a. An app that needs to read something of the cluster through the Kubernetes API, or to write one of the platform's kinds, asks for a cluster role **by name**:
 
 ```yaml
 spec:
@@ -1177,17 +1177,56 @@ The operator binds the role to that ServiceAccount, in the component's own names
 |---|---|---|
 | The name is in the platform's set | The platform, in this repository | `UnknownRole` |
 | The cluster permits it for this profile: `PlatformSecurityPolicy.spec.allowedClusterRoles[]`, `{profile, role}` | Whoever holds `can_set_admission` on the cluster (`PUT /v1/clusters/{c}/platform-security`, `{"allowedClusterRoles": […]}`) | `NotAllowed` |
-| A live grant `clusterRoles/<name>` is on the install | The security officer (`cluster#can_approve`), as for a pod-security waiver | `NotGranted` |
+| A live grant `clusterRoles/<name>` is on the install | The security officer (`cluster#can_approve`), as for a pod-security waiver; break-glass (`cluster#can_set_admission`) for a role that writes | `NotGranted` |
 
 The Component's `ClusterRolesBound` condition names each request and what became of it. Two more reasons bind nothing: `NoServiceAccount` (the entry names none, or names `default`, which every pod without an account of its own runs under) and `RoleNotInstalled` (the platform's `ClusterRole` object is not on the cluster, or does not carry the platform's label). A binding goes at the component's next reconcile when the grant is withdrawn or has expired, when the cluster stops permitting it (a change of the policy wakes the component), when the profile stops asking, and with the component. Nothing reconciles at the moment a grant expires.
 
 **A profile's own rules are never made into a role.** `rules` is accepted on an entry; such an entry binds nothing and the condition says `FreeFormRules`. The install waits for the grant of every privilege the profile asks for, this kind included.
 
-**The set is the platform's and is empty.** No profile of the catalog asks for a cluster role. With an empty set the operator has no permission on RBAC objects and asks the API server for none. A role is added in this repository, never by a catalog or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
+**The set is the platform's.** It holds one role:
 
-1. The `ClusterRole` in `charts/gentian-os/templates/profile-cluster-roles.yaml`, named `gentian-profile-role-<name>` and labeled `gentianos.io/profile-cluster-role: <name>`. Read verbs only, named resources, no Secrets, no wildcard, nothing of RBAC or admission, no `nodes/proxy`, no impersonation; the test refuses anything else.
-2. The name, with what it allows in an approver's words, in `PlatformClusterRoles`.
+| Role | Allows | Approved by |
+|---|---|---|
+| `tenant-exports` | start, read and remove `TenantExport`s in every tenant's namespace | break-glass |
+
+An export a component starts is held by admission (`charts/gentian-os/templates/tenant-export-guard.yaml`) to what the tenant and the cluster declared: it goes to the cluster's storage, the tenant's backup policy or a store the tenant declared, never to an endpoint the export names, and it is encrypted to the cluster's recovery keys, with no recipients of its own and no passphrase. The operator's own exports, for the Admin Console's export and the platform's schedules, and a person's are not held by it.
+
+A role is added in this repository, never by a catalog or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
+
+1. The `ClusterRole` in `charts/gentian-os/templates/profile-cluster-roles.yaml`, named `gentian-profile-role-<name>` and labeled `gentianos.io/profile-cluster-role: <name>`. Read verbs only, named resources, no Secrets, no wildcard, nothing of RBAC or admission, no `nodes/proxy`, no impersonation; the test refuses anything else. A role marked as one that writes may also create, update, patch and delete, kinds of `gentianos.io` only.
+2. The name, with what it allows in an approver's words and whether it writes, in `PlatformClusterRoles`. A role that writes is break-glass's to approve (`security.PrivilegeApprover`).
 3. The operator's own permissions, as markers beside the reconciler: read on `clusterroles`, read, create and delete on `clusterrolebindings`, and `bind` on `clusterroles` held to the names of the set.
+
+#### 3b. API extensions — a component's own types, approved by break-glass
+
+Referred to as §3.4b. A component that needs resource types of its own writes them out in its profile, so that what is approved is what is installed:
+
+```yaml
+spec:
+  requires:
+    privileges:
+      apiExtensions:
+        - name: schedules
+          group: backup.example.org      # the component's own group
+          serviceAccount: backup         # reads the types, writes their status
+          definitions:                   # CustomResourceDefinitions, apiextensions.k8s.io/v1
+            - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, ...}
+          reason: "The add-on's schedules."
+```
+
+A chart's own definitions are never installed: app charts render with `skipCRDs`, and a tenant's chart may not write a definition. The operator installs the profile's (`internal/controller/component_api_extensions.go`) once a live grant `apiExtensions/<name>` is on the install, which only break-glass gives (`cluster#can_set_admission`), and only when every definition:
+
+| Holds | Reason on the Component when it does not |
+|---|---|
+| is a `CustomResourceDefinition` of the request's group, named `<plural>.<group>`, namespaced, without a conversion webhook (the API server would call the component on every read) | `InvalidDefinition` |
+| is in a group that is neither Kubernetes' (`*.k8s.io`, `*.kubernetes.io`) nor the platform's (`*.gentianos.io`), and serves no type of anybody else | `InvalidDefinition`, `GroupTaken` |
+| is a new type, or one the operator installed for the same profile | `TypeTaken` |
+
+The `APIExtensionsInstalled` condition names each request and what became of it; a granted request that could not be installed holds the install. The admission guard `charts/gentian-os/templates/api-extensions-guard.yaml` holds the operator's own writes of definitions to the same rules, so a fault in the operator cannot change a type it did not install. The operator lists no definitions; it reads them by name and learns a group's other types from discovery.
+
+The component's ServiceAccount reads its types, and writes their status, through one ClusterRole, `gentian-api-extensions`, whose rules the operator keeps to the installed types and which it binds to the account while the grant lives. The operator may change that role and no other (`escalate` and `bind` held to its name). Every component bound to it reads every add-on's types; none writes an object of them. The objects are declared by people, through the director, as files of a tenant's directory (`PUT /v1/tenants/{t}/extensions/{group}/{resource}/{name}`, `can_set_policy`), or of the platform tenant's for what is the cluster's (`PUT /v1/clusters/{c}/extensions/…`, `can_configure`), each checked against its type's schema before it is committed, and only of a type installed and granted now.
+
+A grant that is withdrawn or has expired unbinds the role at the next reconcile, and the install waits again. The types stay: removing a definition deletes every object of it, which is a person's decision.
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
@@ -1412,11 +1451,21 @@ rewrites `gentian-os/kernel/llm` on every run, and under `derived` it writes
 the derived keys over whatever was there, while the model gateway's database
 still has the old password.
 
-**Under `random`, OpenBao holds the only copy of all but an app's own
-secrets, and nothing backs OpenBao up.** Of the stored credentials a
+**Under `random`, OpenBao holds the only live copy of all but an app's own
+secrets, and its snapshot is the only other.** Of the stored credentials a
 tenant's bundle holds the apps' own secrets and no other, in both modes
-(§6.4), the recovery kit holds the master password and not what was drawn at
-random, and the platform takes no snapshot of OpenBao. What follows:
+(§6.4), and the recovery kit holds the master password and not what was drawn
+at random. A vault on Raft storage is snapshotted every day by the CronJob
+`openbao-snapshot` in the vault's namespace, with a token whose policy reads
+`sys/storage/raft/snapshot` and nothing else, and the snapshot is encrypted
+to the backup recipient inside the pod before it is written to the platform's
+object store ([recovery.md §4](../guides/recovery.md)). The transit seal
+that unseals the vault is snapshotted the same way, by
+`openbao-transit-snapshot` in the seal's namespace with a role of the seal's
+own, because the key that unseals the vault exists nowhere else: it is not
+exportable, and is not made so. A restored seal opens with the recovery
+kit's `TRANSIT_UNSEAL_KEY`. An instance on file storage is not snapshotted;
+the operator says so on the `Cluster` claim's status. What follows:
 
 - *A tenant's backup, restore and import work as under `derived`.* The one
   kind of credential an app's restored data depends on, the app's own
@@ -1434,8 +1483,13 @@ random, and the platform takes no snapshot of OpenBao. What follows:
   recovery kit holds. Under `random` they write new ones, which the
   running databases, buckets and sign-in clients were not created with, and
   every service and app is locked out of its own store until each credential
-  is set by hand. A cluster that runs `random` has to snapshot OpenBao itself
-  and keep the unseal material from the recovery kit with the snapshot.
+  is set by hand, unless the vault is restored from its snapshot
+  ([recovery.md §4](../guides/recovery.md)): a cluster that runs `random`
+  needs its vault and its seal on Raft, and the recovery kit, whose backup
+  identity opens the snapshots and whose `TRANSIT_UNSEAL_KEY` opens the seal
+  restored from its own, which then unseals the vault.
+  The snapshots sit on the cluster's own object store; a copy off the
+  cluster is the operator's to make.
 
 No person's password is derived or generated. The platform administrator and
 each tenant's administrator set their own through a single-use activation link
