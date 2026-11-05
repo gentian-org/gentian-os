@@ -60,6 +60,26 @@ func TestInstallCommitSaysWhoWasAllowedWhat(t *testing.T) {
 	}
 }
 
+// A component holding a commission key is named as the author, has no
+// address or subject of its own, and writes under the director's address.
+func TestAnAuthorWithoutAddressOrSubjectWritesUnderTheDirectorsAddress(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	m := gitops.Meta{
+		Author:    gitops.Person{Name: "commerce (tenant demo)"},
+		Principal: "component:demo/commerce",
+		RequestID: "req-12345678",
+		Decision:  "commissions_partners tenant:demo",
+	}
+	if _, err := g.Install(context.Background(), "demo", "element", "", m); err != nil {
+		t.Fatal(err)
+	}
+	got := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%an <%ae>", "main")
+	if want := "commerce (tenant demo) <director@cluster.example>"; strings.TrimSpace(got) != want {
+		t.Fatalf("author = %q, want %q", got, want)
+	}
+}
+
 func TestAnUnchangedStateIsNotACommit(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
