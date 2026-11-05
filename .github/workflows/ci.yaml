@@ -505,8 +505,13 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
           images: ghcr.io/gentian-org/keycloak-event-listener
+          # The identity appset names this image by the ref the cluster
+          # follows (gentian.os.revision.placeholder): a branch, or a release
+          # tag as git spells it, v0.5.0. type=ref,event=tag publishes that
+          # spelling beside the semver one.
           tags: |
             type=semver,pattern={{version}}
+            type=ref,event=tag
             type=ref,event=branch
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
