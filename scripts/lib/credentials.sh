@@ -904,11 +904,9 @@ _settle_derivation_salt() {
             warn "  previous run may have printed — was never valid here."
             if [[ "${_GENTIAN_SALT_FROM_CACHE}" == "1" ]]; then _GENTIAN_CACHE_SALT_WRONG=1; fi
         fi
-        DERIVATION_SALT="${cluster_salt}"
     fi
-    if [[ -z "${DERIVATION_SALT:-}" ]]; then
-        DERIVATION_SALT="$(openssl rand -hex 16)"
+    if [[ -z "${cluster_salt}" && -z "${DERIVATION_SALT:-}" ]]; then
         info "Generated a new derivation salt."
     fi
-    export DERIVATION_SALT
+    gentian_settle_derivation "" "${cluster_salt}"
 }

@@ -667,10 +667,10 @@ seed_secrets() {
     EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}" \
     EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}" \
     EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}" \
-    bash "${SCRIPT_DIR}/scripts/bootstrap/seed-openbao.sh" \
-        "$MASTER_PASSWORD" \
-        "${SMTP_RELAY_USERNAME:-}" \
-        "${SMTP_RELAY_PASSWORD:-}"
+    MASTER_PASSWORD="${MASTER_PASSWORD}" \
+    SMTP_RELAY_USERNAME="${SMTP_RELAY_USERNAME:-}" \
+    SMTP_RELAY_PASSWORD="${SMTP_RELAY_PASSWORD:-}" \
+    bash "${SCRIPT_DIR}/scripts/bootstrap/seed-openbao.sh"
     success "All kernel secrets seeded."
 }
 

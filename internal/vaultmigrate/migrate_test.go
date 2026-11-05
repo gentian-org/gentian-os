@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -152,5 +153,36 @@ func TestCrossplaneMayNotChangeItsOwnRights(t *testing.T) {
 	}
 	if strings.Contains(text, "__KV_MOUNT__") {
 		t.Error("the mount was not filled in")
+	}
+}
+
+// TestDeriveMatchesTheSharedVectors holds derive to the values the installer's
+// _derived (scripts/lib/derive.sh) is held to as well, by
+// scripts/tests/test-secret-mode.sh.
+func TestDeriveMatchesTheSharedVectors(t *testing.T) {
+	raw, err := os.ReadFile("../../scripts/tests/derivation-vectors.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, "|")
+		if len(f) != 5 {
+			t.Fatalf("malformed vector: %q", line)
+		}
+		n++
+		got, err := derive(f[0], f[1], Seed{Context: f[2], Purpose: f[3]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != f[4] {
+			t.Errorf("%s:%s derived %s, want %s", f[2], f[3], got, f[4])
+		}
+	}
+	if n == 0 {
+		t.Fatal("no vectors")
 	}
 }

@@ -151,14 +151,13 @@ bootstrap_openbao_for_crossplane() {
 # =============================================================================
 # _derive <context> <purpose> — the derived-credential function, at file scope.
 #
-# Same derivation as scripts/bootstrap/seed-openbao.sh. There was a third
-# implementation, crossplane/functions/derive-secrets/derive.py, deleted as dead
-# code in 3920c1ba — derivation happens in shell only.
+# The derivation itself is _derived (scripts/lib/derive.sh), the one the
+# portal login bootstrap and scripts/bootstrap/seed-openbao.sh use as well.
 #
 # File scope because it has callers outside the step that first needed it.
 # Nested inside create_crossplane_secrets it existed only while B-06 ran, and
 # `declare -F _derive` — which _keycloak_smtp_settings tested before deriving the
-# Postfix password, as it now tests _derived below — was therefore false
+# Postfix password, as it now tests _derived — was therefore false
 # everywhere else. On every
 # MAIL_SERVICE_MODE=system cluster that test failed, so Keycloak realm SMTP was
 # skipped with "SMTP credentials incomplete" and the realm could not send an
@@ -172,19 +171,14 @@ _derive() {
     fi
 }
 
-# _derived <context> <purpose> — the derivation itself, whatever the mode.
-#
 # _derive answers a different value on every call under secretMode random, so
 # it only suits a caller that offers the value to a path created once and
 # keeps what the path already held. A caller that hands the value straight to
 # its users, and is called more than once, needs the same answer each time:
 # the kernel realm's own mail login is asked for twice in one run, and under
 # random the realm was configured with one password while the Secret the mail
-# server learns it from held another. That one is derived in both modes.
-_derived() {
-    echo -n "${1}:${2}" | openssl dgst -sha256 \
-        -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
-}
+# server learns it from held another. That one is derived in both modes, by
+# calling _derived directly.
 
 create_crossplane_secrets() {
     banner "Create derived-credential Secrets for Cluster XR"
@@ -195,26 +189,14 @@ create_crossplane_secrets() {
         exit 1
     fi
 
-    # Try to read existing master-password and salt from OpenBao
-    local existing_secret
+    # What OpenBao already holds wins over this shell's.
+    local existing_secret m_val="" s_val=""
     existing_secret=$(bao kv get -mount=secret -format=json gentian-os/kernel/internal/master-password 2>/dev/null || true)
     if [[ -n "${existing_secret}" ]]; then
-        local m_val s_val
         m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
         s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
-        if [[ -n "${m_val}" ]]; then
-            MASTER_PASSWORD="${m_val}"
-        fi
-        if [[ -n "${s_val}" ]]; then
-            DERIVATION_SALT="${s_val}"
-        elif [[ -n "${m_val}" ]]; then
-            DERIVATION_SALT=""
-        fi
     fi
-    if [[ -z "${DERIVATION_SALT:-}" && -z "${existing_secret}" ]]; then
-        DERIVATION_SALT=$(openssl rand -hex 16)
-    fi
-    export DERIVATION_SALT
+    gentian_settle_derivation "${m_val}" "${s_val}"
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key.
     #
