@@ -204,16 +204,6 @@ Other options:
                         Console's service and the API-extension grant it needs
                         -- out of the scaffold. Everything of Gentian OS stays:
                         export, import, purge and the bundle need no extension
-  --no-usage-statistics   turn the usage statistics report off. By default the cluster
-                        tells the report address once a day what it runs:
-                        tenants, counts of accounts, and the apps installed
-                        through the App Store. No personal data. Off, nothing
-                        is sent and there are no extra services (as with
-                        --no-extra-services): no App Store, Operations Console,
-                        operations sync or Aluvian Center. For people who
-                        manage their own cluster at their own risk. The same as
-                        GENTIAN_NO_USAGE_STATISTICS=1 in install.env, which is
-                        where to put it so a later run does not turn it back on
   --no-extra-services   leave out the store's extra services, which a cluster
                         otherwise gets from the store's catalog: the
                         Operations Console and the operations sync (platform
@@ -304,6 +294,7 @@ parse_driver_args() {
                 GENTIAN_RECOVER_FROM="$1" ;;
             --rotate-break-glass-key) GENTIAN_ROTATE_BREAK_GLASS="rotate" ;;
             --disable-api-extensions) export GENTIAN_DISABLE_API_EXTENSIONS="1" ;;
+            # Unlisted: accepted, and kept out of the help and the reference.
             --no-usage-statistics) export GENTIAN_NO_USAGE_STATISTICS="1" ;;
             --no-extra-services) export GENTIAN_NO_EXTRA_SERVICES="1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
