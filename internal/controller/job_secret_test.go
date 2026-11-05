@@ -218,8 +218,8 @@ func TestTheStoreJobsReadTheAppsPasswordFromASecretTheyOwn(t *testing.T) {
 func TestTheStoreJobsReadNoPasswordWithoutAVault(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	for env, job := range map[string]*batchv1.Job{
-		"ROLE_PW":             makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", false, "", false),
-		"DB_PASS":             makeMariaDBSetupJob(tenant, "shop", false, false),
+		"ROLE_PW":             makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", false, "", false, 25),
+		"DB_PASS":             makeMariaDBSetupJob(tenant, "shop", false, false, 25),
 		"REDIS_USER_PASSWORD": makeRedisACLJob(tenant, "chat", false),
 	} {
 		for _, e := range job.Spec.Template.Spec.Containers[0].Env {
@@ -249,7 +249,7 @@ func TestTheDesktopsRoleJobReadsItsPasswordFromASecretItOwns(t *testing.T) {
 	}
 	step := func() {
 		t.Helper()
-		if _, _, _, err := ensurePostgresStore(ctx, c, seeder, tenant, portalShellAppName, gentianov1alpha1.SchemaPreferenceAppSchema, false); err != nil {
+		if _, _, _, err := ensurePostgresStore(ctx, c, seeder, tenant, portalShellAppName, gentianov1alpha1.SchemaPreferenceAppSchema, false, 25); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -295,7 +295,7 @@ func TestARetainedMariaDBSetupReadsItsPasswordFromASecretItOwns(t *testing.T) {
 		Tenant: &TenantReconciler{Client: c, Scheme: s, Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master"))}}
 	name := types.NamespacedName{Name: mariadbSetupJobName("demo", "shop"), Namespace: mariadbNamespace}
 
-	if _, err := r.ensureRetainedMariaDB(ctx, tenant, "shop", true, false); err != nil {
+	if _, err := r.ensureRetainedMariaDB(ctx, tenant, "shop", true, false, 25); err != nil {
 		t.Fatal(err)
 	}
 	password := vault[secrets.CategoryPath("demo", "shop", "database")]["password"]
@@ -310,7 +310,7 @@ func TestARetainedMariaDBSetupReadsItsPasswordFromASecretItOwns(t *testing.T) {
 	if err := c.Update(ctx, job); err != nil {
 		t.Fatal(err)
 	}
-	if done, err := r.ensureRetainedMariaDB(ctx, tenant, "shop", false, false); err != nil || done {
+	if done, err := r.ensureRetainedMariaDB(ctx, tenant, "shop", false, false, 25); err != nil || done {
 		t.Fatalf("done=%v err=%v while the Job runs", done, err)
 	}
 	sec := &corev1.Secret{}
