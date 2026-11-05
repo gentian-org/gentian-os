@@ -311,27 +311,14 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
-| `spec.adapter` | object |  | `Adapter` is what an adapter adapts and the reviewed list of its tools. |
+| `spec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `spec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
-| `spec.adapter.speaksAs` | string | yes | `SpeaksAs` is how a call reaches the app as the person on whose behalf it is made, in the order of preference the platform has: a short token for this app from… |
-| `spec.adapter.tools` | []object | yes | `Tools` are the operations this adapter offers, each at a version. |
-| `spec.adapter.tools[].class` | string |  | `Class` is whether the tool reads, changes, or changes irreversibly. |
-| `spec.adapter.tools[].description` | map[string]string | yes | `Description` is the tool in plain words, by language (en, de, ...). |
-| `spec.adapter.tools[].identifiers` | []string |  | `Identifiers` are the fields of the answer that the app made up, such as the number of a new task, by their JSON pointer into the answer. |
-| `spec.adapter.tools[].input` | object (free-form) |  | `Input` is the JSON Schema of the tool's arguments. |
-| `spec.adapter.tools[].name` | string | yes | `Name` of the tool, for example create-task. |
-| `spec.adapter.tools[].output` | object (free-form) |  | `Output` is the JSON Schema of the tool's answer. |
-| `spec.adapter.tools[].reverse` | object |  | `Reverse` is the tool of this adapter that undoes this one. |
-| `spec.adapter.tools[].reverse.name` | string | yes |  |
-| `spec.adapter.tools[].reverse.version` | string | yes |  |
-| `spec.adapter.tools[].version` | string | yes | `Version` of the tool, for example v1. |
 | `spec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
 | `spec.backup.boundSecrets[].openBaoPath` | string | yes | `OpenBaoPath` is relative to this tenant's own prefix (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets belonging to the tenant being… |
-| `spec.backup.consistency` | string |  | `Consistency` selects whether all of this app's stores must be captured inside one quiesce window. |
 | `spec.backup.minRestoreVersion` | string |  | `MinRestoreVersion` refuses to restore a bundle into an app older than this version, expressed as the app version the profile's chart deploys. |
 | `spec.backup.quiesce` | object |  | `Quiesce` controls how writes are paused while the app is captured. |
 | `spec.backup.quiesce.container` | string |  | `Container` names the container to run Pre and Post in. |
@@ -418,10 +405,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
 | `spec.expose[].name` | string | yes |  |
 | `spec.expose[].paths` | []string |  | `Paths` this entry serves. |
-| `spec.expose[].source` | object |  | `Source` restricts who may call this entry, before authMode is considered. |
-| `spec.expose[].source.cidrs` | []string |  | `CIDRs` admitted, after the real client IP is resolved at the edge. |
-| `spec.expose[].source.component` | string |  | `Component` names another installed component whose pods may call this entry. |
-| `spec.expose[].stripPrefix` | boolean |  | `StripPrefix` removes the matched path prefix before the request reaches the backend. |
 | `spec.expose[].subDomain` | string |  | `SubDomain` is the host label of this entry in the tenant's zone. |
 | `spec.expose[].surface` | string | yes | `Surface` selects where this entry is published. |
 | `spec.expose[].tile` | object |  | `Tile` is how this entry appears on the portal, for an entry a person is meant to open. |
@@ -454,7 +437,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `spec.extensions[].kernelRequirements.database` | object |  | `Database` specifies a relational database requirement. |
 | `spec.extensions[].kernelRequirements.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
-| `spec.extensions[].kernelRequirements.database.databasePerTenant` | boolean |  | `DatabasePerTenant` creates a separate database for each tenant (default true). |
 | `spec.extensions[].kernelRequirements.database.engine` | string |  | `Engine` selects the database engine. |
 | `spec.extensions[].kernelRequirements.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `spec.extensions[].kernelRequirements.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -510,7 +492,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
 | `spec.extensions[].kernelRequirements.storage.files.protocol` | string |  | `Protocol` is the access protocol. |
 | `spec.extensions[].kernelRequirements.storage.s3` | object |  | `S3` requests a per-tenant S3 bucket from the platform's object store. |
-| `spec.extensions[].kernelRequirements.storage.s3.bucketPerTenant` | boolean |  | `BucketPerTenant` creates a dedicated bucket for each tenant. |
 | `spec.extensions[].kernelRequirements.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `spec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
@@ -556,7 +537,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
 | `spec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
 | `spec.launch` | string | yes | `Launch` is how a person reaches this component. |
-| `spec.launchFrom` | string |  | `LaunchFrom` names the contract whose provider opens this component. |
 | `spec.package` | object | yes | `Package` is how the component is deployed. |
 | `spec.package.addon` | object |  | `Addon` describes a component the platform does not deploy at all: it flips a switch inside another component's own addon system. |
 | `spec.package.addon.id` | string | yes | `ID` is what the hosting component's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
@@ -715,7 +695,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `spec.requires.services.database` | object |  | `Database` specifies a relational database requirement. |
 | `spec.requires.services.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
-| `spec.requires.services.database.databasePerTenant` | boolean |  | `DatabasePerTenant` creates a separate database for each tenant (default true). |
 | `spec.requires.services.database.engine` | string |  | `Engine` selects the database engine. |
 | `spec.requires.services.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `spec.requires.services.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -771,7 +750,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
 | `spec.requires.services.storage.files.protocol` | string |  | `Protocol` is the access protocol. |
 | `spec.requires.services.storage.s3` | object |  | `S3` requests a per-tenant S3 bucket from the platform's object store. |
-| `spec.requires.services.storage.s3.bucketPerTenant` | boolean |  | `BucketPerTenant` creates a dedicated bucket for each tenant. |
 | `spec.requires.services.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `spec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
@@ -1097,27 +1075,14 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
-| `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts and the reviewed list of its tools. |
+| `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `status.profileSpec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
-| `status.profileSpec.adapter.speaksAs` | string | yes | `SpeaksAs` is how a call reaches the app as the person on whose behalf it is made, in the order of preference the platform has: a short token for this app from… |
-| `status.profileSpec.adapter.tools` | []object | yes | `Tools` are the operations this adapter offers, each at a version. |
-| `status.profileSpec.adapter.tools[].class` | string |  | `Class` is whether the tool reads, changes, or changes irreversibly. |
-| `status.profileSpec.adapter.tools[].description` | map[string]string | yes | `Description` is the tool in plain words, by language (en, de, ...). |
-| `status.profileSpec.adapter.tools[].identifiers` | []string |  | `Identifiers` are the fields of the answer that the app made up, such as the number of a new task, by their JSON pointer into the answer. |
-| `status.profileSpec.adapter.tools[].input` | object (free-form) |  | `Input` is the JSON Schema of the tool's arguments. |
-| `status.profileSpec.adapter.tools[].name` | string | yes | `Name` of the tool, for example create-task. |
-| `status.profileSpec.adapter.tools[].output` | object (free-form) |  | `Output` is the JSON Schema of the tool's answer. |
-| `status.profileSpec.adapter.tools[].reverse` | object |  | `Reverse` is the tool of this adapter that undoes this one. |
-| `status.profileSpec.adapter.tools[].reverse.name` | string | yes |  |
-| `status.profileSpec.adapter.tools[].reverse.version` | string | yes |  |
-| `status.profileSpec.adapter.tools[].version` | string | yes | `Version` of the tool, for example v1. |
 | `status.profileSpec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
 | `status.profileSpec.backup.boundSecrets[].openBaoPath` | string | yes | `OpenBaoPath` is relative to this tenant's own prefix (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets belonging to the tenant being… |
-| `status.profileSpec.backup.consistency` | string |  | `Consistency` selects whether all of this app's stores must be captured inside one quiesce window. |
 | `status.profileSpec.backup.minRestoreVersion` | string |  | `MinRestoreVersion` refuses to restore a bundle into an app older than this version, expressed as the app version the profile's chart deploys. |
 | `status.profileSpec.backup.quiesce` | object |  | `Quiesce` controls how writes are paused while the app is captured. |
 | `status.profileSpec.backup.quiesce.container` | string |  | `Container` names the container to run Pre and Post in. |
@@ -1204,10 +1169,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
 | `status.profileSpec.expose[].name` | string | yes |  |
 | `status.profileSpec.expose[].paths` | []string |  | `Paths` this entry serves. |
-| `status.profileSpec.expose[].source` | object |  | `Source` restricts who may call this entry, before authMode is considered. |
-| `status.profileSpec.expose[].source.cidrs` | []string |  | `CIDRs` admitted, after the real client IP is resolved at the edge. |
-| `status.profileSpec.expose[].source.component` | string |  | `Component` names another installed component whose pods may call this entry. |
-| `status.profileSpec.expose[].stripPrefix` | boolean |  | `StripPrefix` removes the matched path prefix before the request reaches the backend. |
 | `status.profileSpec.expose[].subDomain` | string |  | `SubDomain` is the host label of this entry in the tenant's zone. |
 | `status.profileSpec.expose[].surface` | string | yes | `Surface` selects where this entry is published. |
 | `status.profileSpec.expose[].tile` | object |  | `Tile` is how this entry appears on the portal, for an entry a person is meant to open. |
@@ -1240,7 +1201,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `status.profileSpec.extensions[].kernelRequirements.database` | object |  | `Database` specifies a relational database requirement. |
 | `status.profileSpec.extensions[].kernelRequirements.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
-| `status.profileSpec.extensions[].kernelRequirements.database.databasePerTenant` | boolean |  | `DatabasePerTenant` creates a separate database for each tenant (default true). |
 | `status.profileSpec.extensions[].kernelRequirements.database.engine` | string |  | `Engine` selects the database engine. |
 | `status.profileSpec.extensions[].kernelRequirements.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `status.profileSpec.extensions[].kernelRequirements.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -1296,7 +1256,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.files.protocol` | string |  | `Protocol` is the access protocol. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.s3` | object |  | `S3` requests a per-tenant S3 bucket from the platform's object store. |
-| `status.profileSpec.extensions[].kernelRequirements.storage.s3.bucketPerTenant` | boolean |  | `BucketPerTenant` creates a dedicated bucket for each tenant. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `status.profileSpec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
@@ -1342,7 +1301,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
 | `status.profileSpec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
 | `status.profileSpec.launch` | string | yes | `Launch` is how a person reaches this component. |
-| `status.profileSpec.launchFrom` | string |  | `LaunchFrom` names the contract whose provider opens this component. |
 | `status.profileSpec.package` | object | yes | `Package` is how the component is deployed. |
 | `status.profileSpec.package.addon` | object |  | `Addon` describes a component the platform does not deploy at all: it flips a switch inside another component's own addon system. |
 | `status.profileSpec.package.addon.id` | string | yes | `ID` is what the hosting component's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
@@ -1501,7 +1459,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `status.profileSpec.requires.services.database` | object |  | `Database` specifies a relational database requirement. |
 | `status.profileSpec.requires.services.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
-| `status.profileSpec.requires.services.database.databasePerTenant` | boolean |  | `DatabasePerTenant` creates a separate database for each tenant (default true). |
 | `status.profileSpec.requires.services.database.engine` | string |  | `Engine` selects the database engine. |
 | `status.profileSpec.requires.services.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `status.profileSpec.requires.services.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -1557,7 +1514,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
 | `status.profileSpec.requires.services.storage.files.protocol` | string |  | `Protocol` is the access protocol. |
 | `status.profileSpec.requires.services.storage.s3` | object |  | `S3` requests a per-tenant S3 bucket from the platform's object store. |
-| `status.profileSpec.requires.services.storage.s3.bucketPerTenant` | boolean |  | `BucketPerTenant` creates a dedicated bucket for each tenant. |
 | `status.profileSpec.requires.services.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `status.profileSpec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |

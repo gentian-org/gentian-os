@@ -23,8 +23,7 @@ import (
 )
 
 // wiki is a bundle as a catalog source publishes one. It leaves out what
-// the schema defaults -- the database's engine and databasePerTenant, the
-// tile's object -- which is what a published profile does.
+// the schema defaults -- the database's engine, the tile's object -- which is what a published profile does.
 const wiki = `# A comment, which is part of what was hashed and of nothing else.
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
@@ -76,7 +75,6 @@ func held(t *testing.T, bundle string) *gentianov1alpha1.ComponentProfile {
 	}
 	if p.Spec.Requires != nil && p.Spec.Requires.Services != nil && p.Spec.Requires.Services.Database != nil {
 		p.Spec.Requires.Services.Database.Engine = "postgresql"
-		p.Spec.Requires.Services.Database.DatabasePerTenant = true
 	}
 	for i := range p.Spec.Expose {
 		if p.Spec.Expose[i].Tile != nil {
@@ -145,8 +143,8 @@ func TestAProfileThatIsNotWhatItsBundleSaysIsRefused(t *testing.T) {
 			p.Spec.Expose = append(p.Spec.Expose, p.Spec.Expose[0])
 		}, "spec.expose"},
 		"a field the bundle does not state": {func(p *gentianov1alpha1.ComponentProfile) { p.Spec.DefaultForTenants = true }, "spec.defaultForTenants"},
-		"a default switched off": {func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Requires.Services.Database.DatabasePerTenant = false
+		"a default changed": {func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Requires.Services.Database.Engine = gentianov1alpha1.DatabaseEngineMariaDB
 		}, "spec.requires"},
 		"a requirement removed": {func(p *gentianov1alpha1.ComponentProfile) { p.Spec.Requires = nil }, "spec.requires"},
 		"an annotation the platform reads, changed": {func(p *gentianov1alpha1.ComponentProfile) {
@@ -255,7 +253,7 @@ func TestDefaultsAreAppliedOnlyInsideWhatExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := said.Spec.Requires.Services.Database
-	if db.Engine != "postgresql" || !db.DatabasePerTenant {
+	if db.Engine != "postgresql" {
 		t.Fatalf("database = %+v", db)
 	}
 	if said.Spec.Expose[0].Tile.Object != "app" {
@@ -265,12 +263,12 @@ func TestDefaultsAreAppliedOnlyInsideWhatExists(t *testing.T) {
 		t.Fatalf("a default made an object that was not there: %+v", said.Spec)
 	}
 	// What the bundle states is kept, default or not.
-	stated, err := decodeText(strings.Replace(wiki, "database: {}", "database: {engine: mariadb, databasePerTenant: false}", 1))
+	stated, err := decodeText(strings.Replace(wiki, "database: {}", "database: {engine: mariadb}", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
 	db = stated.Spec.Requires.Services.Database
-	if db.Engine != "mariadb" || db.DatabasePerTenant {
+	if db.Engine != "mariadb" {
 		t.Fatalf("database = %+v", db)
 	}
 }

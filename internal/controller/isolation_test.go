@@ -486,13 +486,12 @@ func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string
 func newFullComponentProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
 	kr := &gentianov1alpha1.ServiceRequirements{
 		Database: &gentianov1alpha1.DatabaseRequirement{
-			Engine:            dbEngine,
-			DatabasePerTenant: true,
+			Engine: dbEngine,
 		},
 	}
 	if needsS3 {
 		kr.Storage = &gentianov1alpha1.StorageRequirement{
-			S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
+			S3: &gentianov1alpha1.S3Requirement{},
 		}
 	}
 	if needsRedis {

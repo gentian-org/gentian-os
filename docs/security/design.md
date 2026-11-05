@@ -1062,7 +1062,6 @@ spec:
           accessType: CONFIDENTIAL
       database:
         engine: postgresql
-        databasePerTenant: true
 
   provides:                          # contracts this app serves to other apps
     - name: project-management

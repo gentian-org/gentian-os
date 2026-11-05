@@ -123,21 +123,6 @@ const (
 	BackupQuiesceCommand BackupQuiesceMode = "command"
 )
 
-// BackupConsistency selects the window an app's stores must be captured within.
-// +kubebuilder:validation:Enum=app;perStore
-type BackupConsistency string
-
-const (
-	// BackupConsistencyApp captures every store of the app inside a single
-	// quiesce window, because its database, buckets and volumes reference each
-	// other. This is the boundary that matters; two different apps share no
-	// transactional state, so skew between them is harmless.
-	BackupConsistencyApp BackupConsistency = "app"
-	// BackupConsistencyPerStore lets each store be captured independently, for
-	// an app whose stores hold no references to each other.
-	BackupConsistencyPerStore BackupConsistency = "perStore"
-)
-
 // TenantPhase represents the overall lifecycle phase of a Tenant.
 // +kubebuilder:validation:Enum=Provisioning;Ready;Degraded;Deleting
 type TenantPhase string

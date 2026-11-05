@@ -65,7 +65,7 @@ const (
 	// ComponentLaunchTile means at least one exposure carries a tile.
 	ComponentLaunchTile ComponentLaunch = "tile"
 	// ComponentLaunchFrom means another component opens it: Collabora from
-	// Nextcloud, a viewer from a file manager. LaunchFrom names the contract.
+	// Nextcloud, a viewer from a file manager.
 	ComponentLaunchFrom ComponentLaunch = "from"
 	// ComponentLaunchNone means nothing opens it: either it is the launcher
 	// itself, which is the desktop, or it has no human surface at all.
@@ -198,8 +198,6 @@ type ComponentPlacement struct {
 // delivery of its own: a component the Composition creates entirely.
 // +kubebuilder:validation:XValidation:rule="[has(self.__package__.chart) || (has(self.__package__.composition) && self.__package__.composition.size() > 0), has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is a chart, a composition, the two together, an api, or an addon -- and nothing else beside them"
 // +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
-// +kubebuilder:validation:XValidation:rule="self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size() > 0)",message="launch from needs launchFrom: which contract's provider opens this"
-// +kubebuilder:validation:XValidation:rule="self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size() == 0",message="launchFrom is meaningless unless launch is from"
 // A tile is on an exposure, or on package.api for a component that is only a
 // link to a service hosted elsewhere -- it has no exposure to carry one, and
 // counting exposures alone refused every such profile. `package` is a CEL
@@ -211,7 +209,7 @@ type ComponentPlacement struct {
 // handed a contract to call it, and it holds no credential of an app of its
 // own -- vouching would be one for every app, a contract key one for its app.
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('adapter' in self.classes) || self.classes.size() == 1",message="adapter is exclusive: an adapter is a component of its own, never also the app it adapts"
-// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'adapter' in self.classes) == has(self.adapter)",message="spec.adapter is for class adapter, and class adapter needs it: the reviewed list of its tools"
+// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'adapter' in self.classes) == has(self.adapter)",message="spec.adapter is for class adapter, and class adapter needs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || self.launch == 'none'",message="an adapter has launch none: nobody opens it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.expose) || self.expose.size() == 0",message="an adapter exposes nothing: only the component that speaks as a person reaches it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.provides) || self.provides.size() == 0",message="an adapter provides no contract: another app reaching it through one would call a tool past the component that checks every call"
@@ -240,14 +238,6 @@ type ComponentProfileSpec struct {
 	// nobody can open should be refused at admission, and "nobody opens this"
 	// has to be a word somebody wrote rather than a field they omitted.
 	Launch ComponentLaunch `json:"launch"`
-
-	// LaunchFrom names the contract whose provider opens this component.
-	// Required when Launch is "from", meaningless otherwise. It records what
-	// the model could not say before: which component opens this one.
-	// +optional
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	LaunchFrom string `json:"launchFrom,omitempty"`
 
 	// TrustTier is the review level of this entry. "platform" is required
 	// before "shared-app" may appear in Classes. Required, with no default:
@@ -278,8 +268,8 @@ type ComponentProfileSpec struct {
 	// +optional
 	Provides []ContractRef `json:"provides,omitempty"`
 
-	// Adapter is what an adapter adapts and the reviewed list of its tools.
-	// Present exactly when the class is adapter.
+	// Adapter is what an adapter adapts. Present exactly when the class is
+	// adapter.
 	// +optional
 	Adapter *AdapterSpec `json:"adapter,omitempty"`
 
@@ -694,7 +684,7 @@ func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
 // +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || (self.surface == 'gateway' && self.authMode == 'oidc')",message="clientAuthorization is for a gateway entry behind the session (authMode oidc): it says whose the Authorization header is once a person has signed in"
 // +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))",message="clientAuthorization excludes forwardToken and exchangeToken: the Authorization header toward the app is either the app's own or a token the platform puts there"
 // +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || self.authMode == 'none'",message="an apex entry is a website for anyone (authMode none): the cluster's main address passes no credential to an app"
-// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc' || has(self.source)",message="a gateway entry is behind the zone's session (authMode oidc) or pins its caller (source). What needs neither is a perimeter surface"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc'",message="a gateway entry is behind the zone's session (authMode oidc). What needs no session is a perimeter surface"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
@@ -739,15 +729,6 @@ type ExposureSpec struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	DenyPaths []string `json:"denyPaths,omitempty"`
-
-	// StripPrefix removes the matched path prefix before the request reaches
-	// the backend.
-	// +optional
-	StripPrefix bool `json:"stripPrefix,omitempty"`
-
-	// Source restricts who may call this entry, before authMode is considered.
-	// +optional
-	Source *SourceRestriction `json:"source,omitempty"`
 
 	// ForwardToken asks the gateway to pass the edge access token to this
 	// backend. A backend otherwise gets identity headers, not a bearer that is
@@ -945,25 +926,6 @@ const (
 	// where a service's console is governed from.
 	TileObjectCluster TileObject = "cluster"
 )
-
-// SourceRestriction pins the caller. Exactly one form; both are evaluated at
-// the proxy, not the app.
-//
-// +kubebuilder:validation:XValidation:rule="(has(self.cidrs) && self.cidrs.size() > 0) != (has(self.component) && self.component.size() > 0)",message="exactly one of cidrs or component"
-type SourceRestriction struct {
-	// CIDRs admitted, after the real client IP is resolved at the edge.
-	// +optional
-	// +listType=set
-	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:items:MaxLength=43
-	CIDRs []string `json:"cidrs,omitempty"`
-
-	// Component names another installed component whose pods may call this
-	// entry. Preferred over CIDRs, which age badly.
-	// +optional
-	// +kubebuilder:validation:MaxLength=63
-	Component string `json:"component,omitempty"`
-}
 
 // BackendRef is the Service an exposure routes to. It defaults to this
 // component's own namespace, and may name another component's instead.

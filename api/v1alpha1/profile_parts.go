@@ -891,12 +891,6 @@ type DatabaseRequirement struct {
 	// +kubebuilder:default=postgresql
 	Engine DatabaseEngine `json:"engine,omitempty"`
 
-	// DatabasePerTenant creates a separate database for each tenant (default true).
-	// Set to false only for shared-schema apps.
-	// +optional
-	// +kubebuilder:default=true
-	DatabasePerTenant bool `json:"databasePerTenant"`
-
 	// AllowDynamicDatabaseCreation lets the app create databases of its own at
 	// runtime. Ask for it only when creating databases is what the app is for
 	// (a data explorer, say); an app that merely stores its own state must not.
@@ -970,11 +964,6 @@ type StorageRequirement struct {
 
 // S3Requirement describes S3 storage needs.
 type S3Requirement struct {
-	// BucketPerTenant creates a dedicated bucket for each tenant. Defaults to true.
-	// +optional
-	// +kubebuilder:default=true
-	BucketPerTenant bool `json:"bucketPerTenant"`
-
 	// ObjectLock makes the bucket with S3 Object Lock, which cannot be
 	// switched off again, and lets the app read and set the bucket's default
 	// retention (GetBucketObjectLockConfiguration,
@@ -1645,12 +1634,6 @@ type BackupSpec struct {
 	// +optional
 	Restore *BackupRestore `json:"restore,omitempty"`
 
-	// Consistency selects whether all of this app's stores must be captured
-	// inside one quiesce window. Defaults to app.
-	// +optional
-	// +kubebuilder:default=app
-	Consistency BackupConsistency `json:"consistency,omitempty"`
-
 	// MinRestoreVersion refuses to restore a bundle into an app older than this
 	// version, expressed as the app version the profile's chart deploys.
 	// Restoring older data into a newer app is allowed — that just runs the
@@ -1774,15 +1757,6 @@ func (b *BackupSpec) QuiesceMode() BackupQuiesceMode {
 		return BackupQuiesceScaleDown
 	}
 	return b.Quiesce.Mode
-}
-
-// ConsistencyMode returns the window this app's stores must be captured within,
-// resolving the default.
-func (b *BackupSpec) ConsistencyMode() BackupConsistency {
-	if b == nil || b.Consistency == "" {
-		return BackupConsistencyApp
-	}
-	return b.Consistency
 }
 
 // QuiesceCommands returns the commands that pause and resume writes. Both are

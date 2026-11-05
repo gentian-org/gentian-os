@@ -38,8 +38,7 @@ func newMariaDBProfile(name string) *gentianov1alpha1.ComponentProfile {
 
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{
-					Engine:            gentianov1alpha1.DatabaseEngineMariaDB,
-					DatabasePerTenant: true,
+					Engine: gentianov1alpha1.DatabaseEngineMariaDB,
 				},
 			}},
 		},

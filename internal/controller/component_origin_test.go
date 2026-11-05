@@ -171,9 +171,6 @@ spec:
       version: "1.0.0"
   adapter:
     adapts: {profile: wiki}
-    speaksAs: token
-    tools:
-    - {name: search, version: v1, description: {en: Search the wiki}, class: read}
 `
 
 // An adapter is rolled out like an app, from a release of its own in its

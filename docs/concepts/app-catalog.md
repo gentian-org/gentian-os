@@ -133,8 +133,8 @@ spec:
     services:
       identity:                   # exactly one of oidc | saml | sidecar (iam.md §1.11)
         sidecar: { entryPaths: ["/login"] }
-      database: { engine: postgresql, databasePerTenant: true }
-      storage:  { s3: { bucketPerTenant: true } }
+      database: { engine: postgresql }
+      storage:  { s3: {} }
       cache:    { engine: memcached }
       mail:     { smtp: {} }
 
@@ -466,9 +466,8 @@ a service outside it.
 
 `service` and `adapter` are each exclusive: a profile that lists one lists
 nothing else. An adapter has `launch: none`, exposes nothing, provides and
-integrates nothing, is never placed, and carries `spec.adapter` (what it
-adapts, how it speaks as the person, the reviewed list of its tools;
-[agentic-ai.md](agentic-ai.md)).
+integrates nothing, is never placed, and carries `spec.adapter`, which names
+the app it adapts ([agentic-ai.md](agentic-ai.md)).
 
 *Class `service` is an option that exists in the schema and is not
 implemented.* Engines are delivered as Argo CD applications from
@@ -728,8 +727,7 @@ An `expose[]` entry declares one entry point. Its fields:
 | `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter |
 | `subDomain` | host label in the tenant's zone; empty means the component's name |
 | `apex` | a perimeter entry on the cluster's bare domain; `authMode: none`, no `subDomain` ([routing.md §5](routing.md)) |
-| `paths`, `denyPaths`, `stripPrefix` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
-| `source` | pins the caller before `authMode` is considered: exactly one of `cidrs` or `component`; `component` is preferred because CIDRs age badly |
+| `paths`, `denyPaths` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
 | `forwardToken` | passes the edge access token to the backend; `trustTier: platform` only, because that token is valid at the director and at every sibling |
 | `exchangeToken` | the bouncer hands the backend a token exchanged at the tenant's realm for one whose audience is this app and nothing else; any trust tier; gateway and `oidc` only |
 | `clientAuthorization: app` | the `Authorization` header is the app's own and the edge leaves it alone; a request, in force once approved |
@@ -740,9 +738,8 @@ An `expose[]` entry declares one entry point. Its fields:
 `authMode` is required with no default because `none` has to be a word
 somebody wrote and a reviewer can find. `surface` is one field and not a
 separate public-surfaces list because the two surfaces differ in namespace,
-credential, policy and blast radius. A gateway entry is behind the session or
-pins its caller; what needs neither is a perimeter surface. Collabora's WOPI
-callbacks are safe at `authMode: none` only because the caller is pinned.
+credential, policy and blast radius. A gateway entry is behind the session;
+what needs no session is a perimeter surface.
 
 A component asks for `forwardToken` or for `exchangeToken`, never both, and
 `clientAuthorization` excludes either across all its entries: one policy
@@ -822,8 +819,7 @@ which:
 ```yaml
 spec:
   launch: tile                  # at least one expose entry (or package.api) carries a tile
-  # launch: from                # opened by another component …
-  # launchFrom: file-store      #   … named by the contract it provides
+  # launch: from                # opened by another component
   # launch: none                # the launcher itself, or no human surface
 ```
 
@@ -901,8 +897,7 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
 - the package is a chart, a composition, the two together, an `api` or an
   `addon`, and nothing else; `customization.addon` is refused;
 - `launch` is required; `tile` needs a tile on an exposure or on
-  `package.api`, a tile means `launch: tile`, `from` needs `launchFrom` and
-  `launchFrom` is meaningless otherwise;
+  `package.api`, and a tile means `launch: tile`;
 - `forwardToken`, `requires.services.rights`, `.vouching`, `.logDestination`,
   `valueMapping.platform.storeUrlKey` and `.desktopUrlKey` require
   `trustTier: platform`; so does `requires.services.llm` on a placed profile;
@@ -916,8 +911,7 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
   there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
   only; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
   exclude `forwardToken` and each other; `apex` is a perimeter entry with
-  `authMode: none` and no `subDomain`; a gateway entry is `oidc` or pins its
-  `source`; `source` is exactly one of `cidrs` or `component`;
+  `authMode: none` and no `subDomain`; a gateway entry is `oidc`;
 - an OIDC audience is the profile's own name, a dash and a label;
   `backchannelLogout.exposure` names an entry routing to the component's own
   Service.

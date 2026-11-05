@@ -41,8 +41,7 @@ func newPostgresProfile(name string) *gentianov1alpha1.ComponentProfile {
 
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{
-					Engine:            gentianov1alpha1.DatabaseEnginePostgreSQL,
-					DatabasePerTenant: true,
+					Engine: gentianov1alpha1.DatabaseEnginePostgreSQL,
 				},
 			}},
 		},
@@ -116,7 +115,7 @@ func TestDB_NoPostgresApps(t *testing.T) {
 }
 
 // TestDB_CrossplaneAppProvisionedByOperator verifies that Crossplane apps with
-// databasePerTenant are provisioned by the operator in the kernel namespace,
+// a database are provisioned by the operator in the kernel namespace,
 // not deferred to composition-owned db-init Jobs. This is the SEC-1 hardening:
 // tenant-namespace init Jobs no longer read kernel credentials from OpenBao, so
 // the operator must own the role/database provisioning for every engine=postgres
