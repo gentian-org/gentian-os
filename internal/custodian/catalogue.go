@@ -12,6 +12,7 @@ package custodian
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -113,6 +114,16 @@ type Viewer struct {
 	// check asks the store about one scope, remembered for the request. Nil
 	// allows nothing.
 	check func(relation, scope, tenant string) bool
+	// failed is the first question check could not get answered, nil when
+	// every one was. Nil reports none.
+	failed func() error
+}
+
+func (v Viewer) failure() error {
+	if v.failed == nil {
+		return nil
+	}
+	return v.failed()
 }
 
 // List returns the requirements visible to one viewer.
@@ -163,6 +174,11 @@ func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 		st.Satisfied, st.Pending, st.Reason = c.probeStatus(ctx, r.Name)
 		out = append(out, st)
 	}
+	// A scope the store could not be asked about is not one the caller may
+	// not see: answering without it would report a requirement as absent.
+	if err := v.failure(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAuthorizationUnavailable, err)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
@@ -182,7 +198,13 @@ func (v Viewer) canWrite(scope, tenant string) bool {
 	return v.check != nil && v.check(relationWrite, scope, tenant)
 }
 
-// Get returns one requirement, or an error the handler maps to 404.
+// ErrRequirementNotFound is a requirement that does not exist, or that the
+// caller may not see. The two are one answer, so that a caller learns nothing
+// about a scope they cannot read.
+var ErrRequirementNotFound = errors.New("no such requirement, or not visible at this scope")
+
+// Get returns one requirement. ErrRequirementNotFound when the caller has no
+// such requirement to see; any other error is a failure to read the catalog.
 func (c *Catalogue) Get(ctx context.Context, name string, v Viewer) (*Status, error) {
 	all, err := c.List(ctx, v)
 	if err != nil {
@@ -193,7 +215,7 @@ func (c *Catalogue) Get(ctx context.Context, name string, v Viewer) (*Status, er
 			return &all[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no such requirement, or not visible at this scope: %s", name)
+	return nil, fmt.Errorf("%w: %s", ErrRequirementNotFound, name)
 }
 
 // probeStatus reads ESO's verdict from the probe ExternalSecret: satisfied,

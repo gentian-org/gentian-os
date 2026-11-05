@@ -170,7 +170,9 @@ func (a *GraphAuthorizer) Object(scope, tenant string) (string, bool) {
 // store that does not answer fails the request rather than narrowing it: an
 // administrator shown an empty list because a lookup failed would conclude
 // that nothing is required. Everything else is asked when it is needed and
-// remembered for the request.
+// remembered for the request; a question that fails then is kept on the
+// Viewer, and the catalog fails the request with it rather than hide a
+// requirement.
 func (s *Server) viewOf(ctx context.Context, p Principal) (Viewer, error) {
 	asked := map[string]bool{}
 	var failed error
@@ -196,7 +198,7 @@ func (s *Server) viewOf(ctx context.Context, p Principal) (Viewer, error) {
 		asked[key] = allowed
 		return allowed
 	}
-	v := Viewer{check: check}
+	v := Viewer{check: check, failed: func() error { return failed }}
 	v.ClusterAdmin = check(relationWrite, scopeCluster, "")
 	// Where the caller stands counts only if they may act there. A member of
 	// a tenant who administers nothing has no tenant as far as credentials
