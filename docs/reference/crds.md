@@ -24,16 +24,17 @@ The custom resource definitions of the `gentianos.io` API group, with every fiel
 | [IntegrationBinding](#11-integrationbinding) | Namespaced | IntegrationBinding is the Schema for the integrationbindings API. |
 | [MailboxRemoval](#12-mailboxremoval) | Cluster | MailboxRemoval records what whoever removed a person decided about that person's mailbox, and what became of it. |
 | [OIDCPackCatalog](#13-oidcpackcatalog) | Cluster | OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. |
-| [PlatformSecurityPolicy](#14-platformsecuritypolicy) | Cluster | PlatformSecurityPolicy is the cluster singleton where platform administrators approve MAC waivers and other cluster-wide security posture settings. |
-| [ProfileBuild](#15-profilebuild) | Cluster | ProfileBuild is one build of a profile, as a catalog published it: the bundle at one digest, kept on the cluster for as long as a tenant runs it. |
-| [ResourcePlan](#16-resourceplan) | Cluster | ResourcePlan is a named preset of tenant resource limits. |
-| [Tenant](#17-tenant) | Cluster | Tenant is the Schema for the tenants API. |
-| [TenantBackupPolicy](#18-tenantbackuppolicy) | Namespaced | TenantBackupPolicy overrides the cluster backup policy for one tenant. |
-| [TenantDomain](#19-tenantdomain) | Cluster | TenantDomain moves the tenant it is named after to spec.domain. |
-| [TenantExport](#20-tenantexport) | Namespaced | TenantExport captures one tenant's data into an encrypted bundle. |
-| [TenantExportSchedule](#21-tenantexportschedule) | Namespaced | TenantExportSchedule creates TenantExports on a cron schedule. |
-| [TenantRestore](#22-tenantrestore) | Namespaced | TenantRestore restores a tenant's data from a bundle. |
-| [XTenant](#23-xtenant) | Cluster |  |
+| [PlanOrdering](#14-planordering) | Cluster | PlanOrdering is the cluster's notice on how to order another plan. |
+| [PlatformSecurityPolicy](#15-platformsecuritypolicy) | Cluster | PlatformSecurityPolicy is the cluster singleton where platform administrators approve MAC waivers and other cluster-wide security posture settings. |
+| [ProfileBuild](#16-profilebuild) | Cluster | ProfileBuild is one build of a profile, as a catalog published it: the bundle at one digest, kept on the cluster for as long as a tenant runs it. |
+| [ResourcePlan](#17-resourceplan) | Cluster | ResourcePlan is a named preset of tenant resource limits. |
+| [Tenant](#18-tenant) | Cluster | Tenant is the Schema for the tenants API. |
+| [TenantBackupPolicy](#19-tenantbackuppolicy) | Namespaced | TenantBackupPolicy overrides the cluster backup policy for one tenant. |
+| [TenantDomain](#20-tenantdomain) | Cluster | TenantDomain moves the tenant it is named after to spec.domain. |
+| [TenantExport](#21-tenantexport) | Namespaced | TenantExport captures one tenant's data into an encrypted bundle. |
+| [TenantExportSchedule](#22-tenantexportschedule) | Namespaced | TenantExportSchedule creates TenantExports on a cron schedule. |
+| [TenantRestore](#23-tenantrestore) | Namespaced | TenantRestore restores a tenant's data from a bundle. |
+| [XTenant](#24-xtenant) | Cluster |  |
 
 ## 1. App
 
@@ -269,7 +270,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
-| `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress or clusterRoles. |
+| `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
 | `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
 | `spec.profileRef` | object | yes | `ProfileRef` names the catalog entry this is an instance of. |
 | `spec.profileRef.digest` | string |  | `Digest` pins the profile bundle this instance was installed from. |
@@ -496,6 +497,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `spec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `spec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.extensions[].kernelRequirements.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -645,6 +647,12 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
 | `spec.requires.platform` | string |  | `Platform` is the oldest platform version line this build runs on, as a floor: ">=0.5", or "0.5" which means the same. |
 | `spec.requires.privileges` | object |  | `Privileges` escape the default posture. |
+| `spec.requires.privileges.apiExtensions` | []object |  | `APIExtensions` are resource types the component adds to the cluster's API. |
+| `spec.requires.privileges.apiExtensions[].definitions` | []object (free-form) | yes | `Definitions` are the CustomResourceDefinitions, apiextensions.k8s.io/v1, as they are installed. |
+| `spec.requires.privileges.apiExtensions[].group` | string | yes | `Group` is the API group every definition is in: the add-on's own, never one of Kubernetes' or the platform's. |
+| `spec.requires.privileges.apiExtensions[].name` | string | yes | `Name` is what a PrivilegeGrant refers to (apiExtensions/\<name>). |
+| `spec.requires.privileges.apiExtensions[].reason` | string | yes | `Reason` is what the approver reads. |
+| `spec.requires.privileges.apiExtensions[].serviceAccount` | string | yes | `ServiceAccount` is the account the component's chart runs its pods under, in the component's namespace: the one that reads the types and writes their status. |
 | `spec.requires.privileges.clusterRoles` | []object |  | `ClusterRoles` the component's ServiceAccount needs. |
 | `spec.requires.privileges.clusterRoles[].name` | string | yes | `Name` is the platform's name of the role, and what a PrivilegeGrant refers to (clusterRoles/\<name>). |
 | `spec.requires.privileges.clusterRoles[].reason` | string | yes | `Reason` is what the approver reads. |
@@ -755,6 +763,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `spec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `spec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.requires.services.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1017,7 +1026,27 @@ OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. Shipp
 | `spec.packs{}.serviceClient` | boolean |  | `ServiceClient` provisions a confidential client for a backend service rather than an application users log in to. |
 | `status` | object |  | OIDCPackCatalogStatus is optional observed state. |
 
-## 14. PlatformSecurityPolicy
+## 14. PlanOrdering
+
+| Attribute | Value |
+|---|---|
+| Group | `gentianos.io` |
+| Version | `v1alpha1` |
+| Scope | Cluster |
+| Plural | `planorderings` |
+| Short names |  |
+
+PlanOrdering is the cluster's notice on how to order another plan.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `spec` | object | yes | PlanOrderingSpec says where a tenant orders another resource plan. |
+| `spec.email` | string |  | `Email` is an address to write to. |
+| `spec.phone` | string |  | `Phone` is a number to call, as it is dialed from abroad. |
+| `spec.text` | map[string]string | yes | `Text` is the notice by language: a two-letter code, such as en or de, and what to show a person reading in it. |
+| `spec.url` | string |  | `URL` is where to order, opened in a new page. |
+
+## 15. PlatformSecurityPolicy
 
 | Attribute | Value |
 |---|---|
@@ -1049,7 +1078,7 @@ PlatformSecurityPolicy is the cluster singleton where platform administrators ap
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 
-## 15. ProfileBuild
+## 16. ProfileBuild
 
 | Attribute | Value |
 |---|---|
@@ -1261,6 +1290,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `status.profileSpec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1410,6 +1440,12 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
 | `status.profileSpec.requires.platform` | string |  | `Platform` is the oldest platform version line this build runs on, as a floor: ">=0.5", or "0.5" which means the same. |
 | `status.profileSpec.requires.privileges` | object |  | `Privileges` escape the default posture. |
+| `status.profileSpec.requires.privileges.apiExtensions` | []object |  | `APIExtensions` are resource types the component adds to the cluster's API. |
+| `status.profileSpec.requires.privileges.apiExtensions[].definitions` | []object (free-form) | yes | `Definitions` are the CustomResourceDefinitions, apiextensions.k8s.io/v1, as they are installed. |
+| `status.profileSpec.requires.privileges.apiExtensions[].group` | string | yes | `Group` is the API group every definition is in: the add-on's own, never one of Kubernetes' or the platform's. |
+| `status.profileSpec.requires.privileges.apiExtensions[].name` | string | yes | `Name` is what a PrivilegeGrant refers to (apiExtensions/\<name>). |
+| `status.profileSpec.requires.privileges.apiExtensions[].reason` | string | yes | `Reason` is what the approver reads. |
+| `status.profileSpec.requires.privileges.apiExtensions[].serviceAccount` | string | yes | `ServiceAccount` is the account the component's chart runs its pods under, in the component's namespace: the one that reads the types and writes their status. |
 | `status.profileSpec.requires.privileges.clusterRoles` | []object |  | `ClusterRoles` the component's ServiceAccount needs. |
 | `status.profileSpec.requires.privileges.clusterRoles[].name` | string | yes | `Name` is the platform's name of the role, and what a PrivilegeGrant refers to (clusterRoles/\<name>). |
 | `status.profileSpec.requires.privileges.clusterRoles[].reason` | string | yes | `Reason` is what the approver reads. |
@@ -1520,6 +1556,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `status.profileSpec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `status.profileSpec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.requires.services.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1544,7 +1581,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.trustTier` | string | yes | `TrustTier` is the review level of this entry. |
 | `status.profileSpec.version` | string | yes | `Version` is the catalog entry's version, not the upstream project's. |
 
-## 16. ResourcePlan
+## 17. ResourcePlan
 
 | Attribute | Value |
 |---|---|
@@ -1571,11 +1608,12 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
 | `spec.quotas.requestsMemory` | int-or-string |  | `RequestsMemory` caps the sum of container memory **requests** in the namespace — reserved capacity, priced, as RequestsCPU is. |
 | `spec.quotas.storage` | int-or-string |  | `Storage` is the total storage quota (PVCs + S3 buckets). |
-| `spec.selfServiceDisabled` | boolean |  | `SelfServiceDisabled` withholds the plan from tenant administrators. |
+| `spec.retired` | boolean |  | `Retired` withholds the plan from every new choice and keeps it for the tenants already on it. |
 | `spec.tier` | integer (int32) | yes | `Tier` orders plans from smallest to largest. |
+| `spec.units` | integer (int32) |  | `Units` is how many node units the plan is, for a commerce backend that sells a number of nodes rather than a named plan: it moves a tenant to the plan whose… |
 | `status` | object |  | ResourcePlanStatus reports observed plan state. |
 
-## 17. Tenant
+## 18. Tenant
 
 | Attribute | Value |
 |---|---|
@@ -1771,7 +1809,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `status.readyApps` | integer |  | `ReadyApps` is the number of apps that have been successfully provisioned. |
 | `status.resourcePlan` | string |  | `ResourcePlan` is the plan whose selection was last recorded in the tenant's usage history: the value of the resource-plan annotation at the time the plan event… |
 
-## 18. TenantBackupPolicy
+## 19. TenantBackupPolicy
 
 | Attribute | Value |
 |---|---|
@@ -1809,7 +1847,7 @@ TenantBackupPolicy overrides the cluster backup policy for one tenant. Namespace
 | `status.effectiveSchedule` | string |  |  |
 | `status.observedGeneration` | integer (int64) |  |  |
 
-## 19. TenantDomain
+## 20. TenantDomain
 
 | Attribute | Value |
 |---|---|
@@ -1826,7 +1864,7 @@ TenantDomain moves the tenant it is named after to spec.domain. It is not a fiel
 | `spec` | object |  | TenantDomainSpec binds a tenant to a custom domain. |
 | `spec.domain` | string | yes | `Domain` is where the tenant is served instead of \<tenant>.\<kernelDomain>: its zone, its hosts, its mail and its people's logins all move to it. |
 
-## 20. TenantExport
+## 21. TenantExport
 
 | Attribute | Value |
 |---|---|
@@ -1927,7 +1965,7 @@ TenantExport captures one tenant's data into an encrypted bundle.
 | `status.quiesced` | []string |  | `Quiesced` names the apps currently paused for writes. |
 | `status.startedAt` | string (date-time) |  | `StartedAt` is when the first app began capturing. |
 
-## 21. TenantExportSchedule
+## 22. TenantExportSchedule
 
 | Attribute | Value |
 |---|---|
@@ -1972,7 +2010,7 @@ TenantExportSchedule creates TenantExports on a cron schedule.
 | `status.nextScheduleTime` | string (date-time) |  | `NextScheduleTime` is when the next export is due. |
 | `status.observedGeneration` | integer (int64) |  |  |
 
-## 22. TenantRestore
+## 23. TenantRestore
 
 | Attribute | Value |
 |---|---|
@@ -2103,7 +2141,7 @@ TenantRestore restores a tenant's data from a bundle.
 | `status.sourceTenant` | string |  | `SourceTenant` is the tenant the bundle was taken of, as its manifest records it: the tenant restored into, as a bundle of any other is refused. |
 | `status.startedAt` | string (date-time) |  |  |
 
-## 23. XTenant
+## 24. XTenant
 
 | Attribute | Value |
 |---|---|

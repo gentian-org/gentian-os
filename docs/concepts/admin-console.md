@@ -308,8 +308,8 @@ console is the shape.
 | Capability | Tenant admin | Platform admin |
 |---|---|---|
 | **Current ceiling** | Own tenant: enforced limits paired with committed use, and live consumption where a metrics source exists | Any tenant, plus an all-tenants headroom table |
-| **Plan catalog** | Plans they may select, each blocked one carrying its reason | The whole catalog, including plans withheld from self-service |
-| **Change plan** | Self-service, held to the tenant's entitlement ceiling | Any plan; may **force** a shrink below current use |
+| **Plan catalog** | The cluster's plans, each one the tenant could not move to carrying its reason | Same |
+| **Another plan** | The cluster's notice on where to order one; no choice | Changed in the Operations Console or with `kubectl gentian resources set` |
 | **Usage history** | Own tenant, per resource, over 7d–12m | Any tenant |
 | **Billed intervals** | The stretches the window resolves to, with the SKU in effect over each | Same |
 
@@ -320,13 +320,14 @@ can be any number that was never sold, so every ceiling reachable through the
 console is one the platform has priced — which is what makes a month resolve to
 SKUs rather than to numbers somebody downstream has to interpret.
 
-**The write is a commit, not a patch.** Selecting a plan is the director
-committing `resource-plan.yaml` to the deployments repository as the caller, after
-checking `can_set_plan` and validating the choice against the operator's answer
-for that tenant — so the console and the GitOps repository cannot disagree
-about a tenant's ceiling, and the console decides nothing itself. The reads
-are the operator's, relayed by the usher; `kubectl gentian resources` reads
-them the same way and writes through the director (`set`).
+**The write is a commit, not a patch, and it is the cluster's.** Moving a
+tenant is the director committing `resource-plan.yaml` to the deployments
+repository as the cluster's administrator who asked, after checking
+`can_configure` on the cluster and validating the choice against the
+operator's answer for that tenant. A tenant orders another plan where the
+cluster's notice says. The reads are the operator's, relayed by the usher;
+`kubectl gentian resources` reads them the same way and writes through the
+director (`set`).
 
 **A downgrade below current use is refused.** Kubernetes does not evict pods to
 fit a shrunken quota — it refuses the *next* create — so shrinking a tenant too

@@ -158,17 +158,21 @@ func TestScopeFollowsTheKindNotTheProfile(t *testing.T) {
 }
 
 // What a console is told about who answers is PrivilegeScope in other words,
-// never a decision of its own: the perimeter approver for egress, the
-// security officer for everything else, an unknown kind included.
+// never a decision of its own: the perimeter approver for egress, break-glass
+// for an API extension and a role that writes, the security officer for
+// everything else, an unknown kind or role included.
 func TestTheApproverIsTheScopeInAConsolesWords(t *testing.T) {
-	for kind, want := range map[string]string{
-		security.PrivilegeEgress:       security.PrivilegeApproverPerimeter,
-		security.PrivilegePodSecurity:  security.PrivilegeApproverSecurityOfficer,
-		security.PrivilegeClusterRoles: security.PrivilegeApproverSecurityOfficer,
-		"something-new":                security.PrivilegeApproverSecurityOfficer,
+	for ref, want := range map[string]string{
+		"egress/smtp":                 security.PrivilegeApproverPerimeter,
+		"podSecurity/host-path":       security.PrivilegeApproverSecurityOfficer,
+		"clusterRoles/no-such-role":   security.PrivilegeApproverSecurityOfficer,
+		"clusterRoles/tenant-exports": security.PrivilegeApproverBreakGlass,
+		"apiExtensions/schedules":     security.PrivilegeApproverBreakGlass,
+		"something-new/x":             security.PrivilegeApproverSecurityOfficer,
+		"not-a-ref":                   security.PrivilegeApproverSecurityOfficer,
 	} {
-		if got := security.PrivilegeApprover(kind); got != want {
-			t.Errorf("%s is answered by %q, want %q", kind, got, want)
+		if got := security.PrivilegeApprover(ref); got != want {
+			t.Errorf("%s is answered by %q, want %q", ref, got, want)
 		}
 	}
 }

@@ -70,6 +70,47 @@ tenantDNS01ClusterIssuer: ""
 # for. List more than one to allow independent recovery keys.
 backupRecipients: []
 
+# The vault's daily snapshot (templates/openbao-snapshots.yaml,
+# docs/guides/recovery.md §4): a Raft snapshot, encrypted to the backup
+# recipient above (or the one the recovery kit wrote to the vault) before it
+# leaves the pod, written to the bucket below in the platform's object store.
+# A vault still on file storage is reported, not snapshotted.
+openbaoSnapshots:
+  enabled: true
+  # Every day at 02:17 UTC.
+  schedule: "17 2 * * *"
+  # The newest this many are kept; older ones are deleted after a new one is
+  # written.
+  keep: 14
+  # How old the newest snapshot may be before the operator calls it stale on
+  # the Cluster claim (status.openbaoSnapshots): a day and a margin for a run
+  # that waited or retried. A Go duration.
+  staleAfter: 30h
+  # The bucket the operator makes, with a key for each instance that may
+  # write under that instance's prefix of it alone.
+  bucket: gentian-openbao-snapshots
+  # The vault role the job logs in to and the audience of its token: the
+  # Cluster composition's openbao-snapshot role, which reads
+  # sys/storage/raft/snapshot and nothing else.
+  vaultRole: openbao-snapshot
+  vaultAudience: vault://openbao-snapshot
+  # The transit seal that unseals the vault, on the same schedule, into the
+  # same bucket under openbao-transit/: without the seal's key no snapshot of
+  # the vault unseals. Its role, openbao-transit-snapshot, is written in the
+  # seal (kernel/openbao/transit-snapshot-policy.hcl).
+  transit:
+    enabled: true
+    vaultRole: openbao-transit-snapshot
+    vaultAudience: vault://openbao-transit-snapshot
+  # Where the ciphertext is staged before the upload.
+  workSizeLimit: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
 # tenantProvisioning controls operator orchestration behavior. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, portal redirect)
 # so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).
@@ -685,6 +726,7 @@ usage:
         displayName: Base · 1 node
         description: One node — a workspace running Nextcloud, Odoo and the App Store together.
         tier: 0
+        units: 1
         default: true
         productSku: gentian-resources-nodes-1
         quotas:
@@ -697,6 +739,7 @@ usage:
         displayName: 2 nodes
         description: Twice the reserved capacity, for a workspace running several apps.
         tier: 10
+        units: 2
         productSku: gentian-resources-nodes-2
         quotas:
           requestsCpu: "8"
@@ -707,6 +750,7 @@ usage:
       nodes-4:
         displayName: 4 nodes
         tier: 20
+        units: 4
         productSku: gentian-resources-nodes-4
         quotas:
           requestsCpu: "16"
@@ -717,6 +761,7 @@ usage:
       nodes-8:
         displayName: 8 nodes
         tier: 30
+        units: 8
         productSku: gentian-resources-nodes-8
         quotas:
           requestsCpu: "32"
@@ -728,6 +773,7 @@ usage:
         displayName: 16 nodes
         description: The largest catalogue plan. Beyond this, arrange a ceiling with the platform operator.
         tier: 40
+        units: 16
         productSku: gentian-resources-nodes-16
         quotas:
           requestsCpu: "64"

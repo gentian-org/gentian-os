@@ -91,7 +91,8 @@ Reaching the bundle straight from object storage, with no cluster
   --s3-region NAME
   --s3-addressing-style path|virtualHost   how the bucket is named (default path)
   --s3-access-key K  or AWS_ACCESS_KEY_ID
-  --s3-secret-key S  or AWS_SECRET_ACCESS_KEY
+  --s3-secret-key S  or AWS_SECRET_ACCESS_KEY (preferred: a key given as a flag
+                     shows in the process list and in shell history)
 
   Credentials are taken from these flags first, then the environment, then the
   cluster -- so this works when there is no cluster left to ask.
@@ -101,9 +102,10 @@ Examples
   scripts/recovery.sh inspect --tenant corp --from-vault
 
   # nothing but a bucket, a key and the printed QR code
+  read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
+  AWS_ACCESS_KEY_ID=EXO... \
   scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
                               --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
-                              --s3-access-key EXO... --s3-secret-key ... \
                               --qr backup-key.png
   scripts/recovery.sh tenant  --tenant corp --export policy-20260904-0300 \
                               --qr backup-key.png --confirm corp

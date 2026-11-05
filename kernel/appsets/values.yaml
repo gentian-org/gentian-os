@@ -2,7 +2,12 @@
 # files address a kernel namespace as ns.<function>.placeholder and the
 # wrapper resolves it from the layout the installer passes in.
 stage: dev
+# The git revision the Applications follow: the installer's checkout commit,
+# or a release tag.
 targetRevision: develop
+# The tag of the images built from that revision (gentian.os.revision.placeholder).
+# Empty uses targetRevision, which is right for a branch or a release tag.
+imageTag: ""
 kernelDomain: ""
 gentianOsRepo: https://github.com/gentian-org/gentian-os
 deploymentsRepo: ""

@@ -111,7 +111,7 @@ try_load_creds_from_openbao() {
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
         # Missing paths (404) are normal before OpenBao is bootstrapped — must not abort install.
         bao_curl -sf --max-time 5 \
-            -H "X-Vault-Token: ${token}" \
+            -H @<(printf 'X-Vault-Token: %s\n' "${token}") \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
             | jq -r "$2 // empty" 2>/dev/null || true
     }
@@ -290,7 +290,7 @@ init_openbao() {
                 # on a bare 403 — so ask OpenBao first, and when it is dead say
                 # which kind of dead: revoked on purpose, or orphaned by a
                 # re-initialisation.
-                if bao_curl -sf -H "X-Vault-Token: ${stored_token}" \
+                if bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${stored_token}") \
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
                     info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
                     if [[ "$(kubectl get configmap gentian-handover \
@@ -413,7 +413,7 @@ init_openbao() {
 
         bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
             -H "Content-Type: application/json" \
-            -d "{\"key\": \"${unseal_key}\"}" | jq .
+            --data-binary @<(printf '{"key": "%s"}' "${unseal_key}") | jq .
         export BAO_TOKEN="$root_token"
         success "OpenBao initialized and unsealed (Shamir)."
     fi
@@ -603,12 +603,12 @@ seed_secrets() {
     if [[ -n "${CF_API_TOKEN:-}" && -n "${KERNEL_DOMAIN:-}" ]]; then
         info "Resolving Cloudflare Zone ID for domain ${KERNEL_DOMAIN}..."
         zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${KERNEL_DOMAIN}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+            -H @<(printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}") | jq -r '.result[0].id // empty')
         if [[ -z "${zone_id}" && "${KERNEL_DOMAIN}" == *.*.* ]]; then
             local apex_domain
             apex_domain=$(echo "${KERNEL_DOMAIN}" | awk -F. '{print $(NF-1)"."$NF}')
             zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${apex_domain}" \
-                -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+                -H @<(printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}") | jq -r '.result[0].id // empty')
         fi
         if [[ -n "${zone_id}" ]]; then
             info "Resolved Cloudflare Zone ID: ${zone_id}"
@@ -879,4 +879,123 @@ YAML
             info "The custodian restarted to trust the vault's CA."
     fi
     success "The vault's TLS is signed by openbao-ca, and its clients trust that CA."
+}
+
+# openbao_storage_for_render [openbao|openbao-transit] — the storage backend
+# B-01 renders for the vault (openbao, the default) or for the transit seal
+# that unseals it (openbao-transit): raft or file (kernel/bootstrap/chart,
+# openbao.storage and openbao.transitStorage).
+#
+# What the claim says (openbao.storage, one setting for both; a new claim says
+# raft, one that says nothing is file), unless that would start the running
+# instance on a backend its volume holds no data for. Raft started on a volume
+# of file data comes up uninitialized: an empty vault, or a seal without the
+# key that unseals the vault. So an instance that exists, runs the other
+# backend today, and whose volume does not say it was moved (the annotation
+# gentianos.io/openbao-storage the move sets, docs/guides/recovery.md §5)
+# keeps the backend it has, and this says why on stderr; stdout is the
+# rendered YAML. The two instances are decided apart, each by its own volume.
+#
+# Which backend an instance runs is read from its Application. One whose
+# Application names none, the seal before its configuration moved into the
+# bootstrap chart, runs file storage: the only backend before Raft.
+#
+# A volume or Application is absent only when the API server says NotFound;
+# any other failure to read them returns 1 with nothing on stdout, and the
+# caller stops rather than render a backend it could not check.
+#
+# Read only. The claim is read here rather than only by
+# load_deployments_cluster_settings, because on a new cluster step 0 writes
+# the claim after the settings were loaded.
+openbao_storage_for_render() {
+    local instance="${1:-openbao}" want claim live annotated ns gitops pvc
+    case "${instance}" in
+        openbao) ns="$(ns_kernel secrets)" ;;
+        openbao-transit) ns="$(ns_kernel seal)" ;;
+        *) error "openbao_storage_for_render: no instance ${instance}" >&2; return 1 ;;
+    esac
+    pvc="data-${instance}-0"
+    if [[ -z "${OPENBAO_STORAGE:-}" ]]; then
+        claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}/kernel/claims/cluster.yaml"
+        if [[ -r "${claim}" ]]; then
+            claim_setting OPENBAO_STORAGE openbao.storage "${claim}"
+        fi
+    fi
+    want="${OPENBAO_STORAGE:-file}"
+    case "${want}" in
+        raft|file) ;;
+        *)
+            warn "openbao.storage on the claim is \"${want}\"; it is raft or file. Rendering file." >&2
+            want="file" ;;
+    esac
+    gitops="$(ns_kernel gitops)"
+    # Absent means the API server said NotFound. Any other failure -- an API
+    # server that timed out, a token that expired -- says nothing about the
+    # volume, and reading it as "absent" would render the claim's backend
+    # onto a volume of the other's data: a vault that restarts empty. So the
+    # step stops, and says why.
+    local rc=0
+    # No volume yet: a new cluster, which starts on what the claim says.
+    _openbao_kube_get pvc "${pvc}" -n "${ns}" -o name >/dev/null || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) printf '%s' "${want}"; return 0 ;;
+        *) error "The volume ${pvc} in ${ns} could not be read; not choosing ${instance}'s storage blind." >&2
+           return 1 ;;
+    esac
+    # No Application to read: nothing says what the volume holds, and the
+    # claim answers, as it did when the volume was made.
+    live="$(_openbao_kube_get application "${instance}" -n "${gitops}" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.server.standalone.config}')" || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) printf '%s' "${want}"; return 0 ;;
+        *) error "The Application ${instance} in ${gitops} could not be read; not choosing ${instance}'s storage blind." >&2
+           return 1 ;;
+    esac
+    if [[ "${live}" == *'storage "raft"'* ]]; then
+        live="raft"
+    else
+        live="file"
+    fi
+    if [[ "${live}" == "${want}" ]]; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    if ! annotated="$(_openbao_kube_get pvc "${pvc}" -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-storage}')"; then
+        error "The volume ${pvc} in ${ns} could not be read; not choosing ${instance}'s storage blind." >&2
+        return 1
+    fi
+    if [[ "${annotated}" == "${want}" ]]; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    warn "The claim asks for ${instance} on ${want} storage; it runs on ${live}, and its" >&2
+    warn "  volume ${pvc} does not say its data was moved (gentianos.io/openbao-storage)." >&2
+    warn "  Keeping ${live}: ${want} on this volume would start it empty." >&2
+    warn "  The move is docs/guides/recovery.md §5." >&2
+    printf '%s' "${live}"
+}
+
+# _openbao_kube_get <kubectl get arguments...> — what kubectl get prints, on
+# stdout. Returns 0 when it answered, 3 when the API server said NotFound, and
+# 1 for any other failure, whose message it passes on to stderr: only a
+# definite NotFound may be read as "absent".
+_openbao_kube_get() {
+    local err out rc=0
+    err="$(mktemp)"
+    out="$(kubectl get "$@" 2>"${err}")" || rc=$?
+    if (( rc == 0 )); then
+        rm -f "${err}"
+        printf '%s' "${out}"
+        return 0
+    fi
+    if grep -q '(NotFound)' "${err}"; then
+        rm -f "${err}"
+        return 3
+    fi
+    cat "${err}" >&2
+    rm -f "${err}"
+    return 1
 }

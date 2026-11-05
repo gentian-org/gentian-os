@@ -26,14 +26,16 @@ import (
 // nothing else: it reads no cluster and decides no policy, so the reconciler,
 // the director and a test all reach the same verdict from the same two objects.
 
-// The three kinds, spelled as PrivilegeGrant.Privilege's pattern requires.
+// The four kinds, spelled as PrivilegeGrant.Privilege's pattern requires.
 // Who approves follows from the kind: pod security and cluster roles weaken
 // something that protects the node, so they are the platform operator's;
-// egress leaves the tenant's own namespace and is the tenant's.
+// egress leaves the tenant's own namespace and is the tenant's; an API
+// extension changes the cluster's API for every tenant, and is break-glass's.
 const (
-	PrivilegePodSecurity  = "podSecurity"
-	PrivilegeEgress       = "egress"
-	PrivilegeClusterRoles = "clusterRoles"
+	PrivilegePodSecurity   = "podSecurity"
+	PrivilegeEgress        = "egress"
+	PrivilegeClusterRoles  = "clusterRoles"
+	PrivilegeAPIExtensions = "apiExtensions"
 )
 
 // PrivilegeRef is the <kind>/<name> a grant names. Built here rather than
@@ -63,22 +65,34 @@ func PrivilegeScope(kind string) string {
 }
 
 // Who answers a request, as a console names the person: the tenant's
-// perimeter approver (tenant#can_approve_privilege) or the cluster's
-// security officer (cluster#can_approve).
+// perimeter approver (tenant#can_approve_privilege), the cluster's security
+// officer (cluster#can_approve), or break-glass (cluster#can_set_admission).
 const (
 	PrivilegeApproverPerimeter       = "perimeter-approver"
 	PrivilegeApproverSecurityOfficer = "security-officer"
+	PrivilegeApproverBreakGlass      = "break-glass"
 )
 
-// PrivilegeApprover is PrivilegeScope in the words a console shows, so that
-// a console asks which relation a request needs instead of deciding it from
-// the kind again. It is derived from PrivilegeScope and nothing else: the
-// director's authorization of an approval (mayApprove) reads the same
-// function, so what a console offers and what the director allows cannot
-// drift apart.
-func PrivilegeApprover(kind string) string {
-	if PrivilegeScope(kind) == "tenant" {
+// PrivilegeApprover says who answers the request ref (<kind>/<name>), in the
+// words a console shows, so that a console asks which relation a request
+// needs instead of deciding it again. The director's authorization of an
+// approval (mayApprove) reads the same function, so what a console offers and
+// what the director allows cannot drift apart.
+//
+// It follows PrivilegeScope, with one step up at cluster scope: what lets a
+// component write through the Kubernetes API -- a type of its own, or a role
+// of the set that writes -- is break-glass's, as the cluster's admission is.
+// A ref that is not one yields the security officer, the strictest of the
+// ordinary answers.
+func PrivilegeApprover(ref string) string {
+	kind, name := SplitPrivilegeRef(ref)
+	switch {
+	case PrivilegeScope(kind) == "tenant":
 		return PrivilegeApproverPerimeter
+	case kind == PrivilegeAPIExtensions:
+		return PrivilegeApproverBreakGlass
+	case kind == PrivilegeClusterRoles && PlatformClusterRoles[name].Writes:
+		return PrivilegeApproverBreakGlass
 	}
 	return PrivilegeApproverSecurityOfficer
 }
@@ -100,6 +114,9 @@ func RequestedPrivileges(profile *gentianov1alpha1.ComponentProfile) []string {
 	}
 	for i := range p.ClusterRoles {
 		out = append(out, PrivilegeRef(PrivilegeClusterRoles, p.ClusterRoles[i].Name))
+	}
+	for i := range p.APIExtensions {
+		out = append(out, PrivilegeRef(PrivilegeAPIExtensions, p.APIExtensions[i].Name))
 	}
 	sort.Strings(out)
 	return out
@@ -225,6 +242,12 @@ func PrivilegeReason(profile *gentianov1alpha1.ComponentProfile, ref string) str
 		for i := range p.ClusterRoles {
 			if p.ClusterRoles[i].Name == name {
 				return p.ClusterRoles[i].Reason
+			}
+		}
+	case PrivilegeAPIExtensions:
+		for i := range p.APIExtensions {
+			if p.APIExtensions[i].Name == name {
+				return p.APIExtensions[i].Reason
 			}
 		}
 	}

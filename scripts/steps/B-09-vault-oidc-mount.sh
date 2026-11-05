@@ -64,7 +64,7 @@ _v5_oidc_configured() {
 }
 
 _v5_oidc_auth_list() {
-    bao_curl -s --max-time 10 -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/sys/auth"
+    bao_curl -s --max-time 10 -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") "${BAO_ADDR}/v1/sys/auth"
 }
 
 check() {
@@ -134,7 +134,7 @@ apply() {
     info "Enabling auth mount oidc/..."
     local code
     code="$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST \
-        -H "X-Vault-Token: ${BAO_TOKEN}" -H "Content-Type: application/json" \
+        -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") -H "Content-Type: application/json" \
         -d '{"type":"oidc"}' "${BAO_ADDR}/v1/sys/auth/oidc")"
     case "${code}" in
     20*)

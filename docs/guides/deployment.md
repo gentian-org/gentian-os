@@ -305,10 +305,14 @@ references.** In order of strength:
   `GENTIAN_OS_BRANCH=v1.2.3`, `<branch>-<short-sha>` for a branch. Set
   `GENTIAN_OS_IMAGE_TAG` only to run something else.
 
-`GENTIAN_OS_BRANCH` (`install.env`) is the ref every in-cluster Application
-tracks — the kernel ApplicationSets, the operator Application and the
-bootstrap Applications all follow it. It decides which gentian-os a cluster
-**runs**, which need not be the one you are installing **from**.
+`GENTIAN_OS_BRANCH` (`install.env`) is the ref a cluster runs. It decides
+which gentian-os a cluster **runs**, which need not be the one you are
+installing **from**. For a release tag, every in-cluster Application on the
+gentian-os repository — the kernel ApplicationSets, the operator Application
+and the bootstrap Applications — follows the tag. For a branch they follow
+the commit of the checkout `install.sh` runs from, the commit the operator
+image is built from, not the branch tip: a commit merged later reaches the
+cluster with the next installer run, together with its build.
 
 Left unset it is the branch of the checkout `install.sh` runs from, in every
 place the installer uses it — an observation, not a guess. Where there is no branch to read, which is exactly

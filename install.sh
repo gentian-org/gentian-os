@@ -206,9 +206,10 @@ Other options:
                         export, import, purge and the bundle need no extension
   --no-extra-services   leave out the store's extra services, which a cluster
                         otherwise gets from the store's catalog: the
-                        Operations Console (platform tenant), the App Store app
-                        and the Aluvian Center (every other tenant, new
-                        ones included, while the cluster offers a store),
+                        Operations Console and the operations sync (platform
+                        tenant), the App Store app and the Aluvian Center
+                        (every other tenant, new ones included, while the
+                        cluster offers a store),
                         and the store's vendor as every tenant's partner.
                         Recorded on the Cluster claim (spec.catalogue.
                         extraServices: false), so a later run keeps them out;

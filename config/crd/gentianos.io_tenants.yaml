@@ -1109,7 +1109,7 @@ spec:
                       description: Privilege names one entry of the profile's request,
                         as <kind>/<name>.
                       maxLength: 80
-                      pattern: ^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      pattern: ^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     reason:
                       description: |-

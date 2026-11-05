@@ -325,3 +325,42 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		t.Fatalf("vouching profiles = %q after steward stopped vouching, want scribe alone", got)
 	}
 }
+
+// A token for the director is the cluster's administrators', who sign in at
+// the platform tenant's realm: the director scopes a profile names are
+// written in that tenant's projection, and in no other's.
+func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	platform := platformTenantFixture()
+	acme := acmeTenantFixture()
+	syncer := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "syncer"}}
+	syncer.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{
+			Keys:     gentianov1alpha1.VouchingKeys{Service: "syncer", Port: 8080},
+			Director: []gentianov1alpha1.DirectorScope{gentianov1alpha1.DirectorScopePlansApply, gentianov1alpha1.DirectorScopePlansRead},
+		},
+	}}
+	comp := func(namespace string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "syncer", Namespace: namespace}}
+		c.Spec.ProfileRef.Name = "syncer"
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		platform.DeepCopy(), acme.DeepCopy(), syncer,
+		comp(platform.NamespaceName()), comp(acme.NamespaceName()),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, platform.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath+" plans-apply,plans-read" {
+		t.Fatalf("platform: %q", got)
+	}
+	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath {
+		t.Fatalf("another tenant was given director scopes: %q", got)
+	}
+}

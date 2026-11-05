@@ -1065,7 +1065,7 @@ load_deployments_cluster_settings() {
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES DNS_RECORDS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
-             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
+             LETSENCRYPT_EMAIL KV_MOUNT OPENBAO_STORAGE ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
              MAIL_EGRESS_HOST; do
         [[ -n "${!v:-}" ]] || continue
@@ -1095,6 +1095,11 @@ load_deployments_cluster_settings() {
         # setting, free to disagree with no precedence between them to appeal to.
         claim_setting LETSENCRYPT_EMAIL certManager.letsencryptEmail "${claim_file}"
         claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
+        # The vault's storage backend, raft or file (B-01). The XRD's default
+        # is file, so a claim written before the field keeps the backend its
+        # vault's data is in; openbao_storage_for_render refuses a switch the
+        # volume was not migrated for.
+        claim_setting OPENBAO_STORAGE   openbao.storage              "${claim_file}"
         # Which Let's Encrypt endpoint. Read here rather than from the stage
         # profile that deployment.md points at, because the issuers are applied
         # at A-09 and a stage profile is Helm values Argo CD renders later —
@@ -2157,6 +2162,16 @@ check_prereqs() {
     if [[ -n "${_os_tag}" && -n "${GENTIAN_OS_IMAGE_TAG:-}" && "${_os_tag}" != "${GENTIAN_OS_IMAGE_TAG}" ]]; then
         info "  The cluster's values file says ${_os_tag}; this run renders ${GENTIAN_OS_IMAGE_TAG}."
     fi
+    # A prod cluster never runs a moving tag: a pod that restarts there would
+    # pull whatever the tag means at that second, with no rollout and no record.
+    if [[ "${GENTIAN_DEPLOYMENTS_STAGE:-}" == "prod" && -n "${GENTIAN_OS_IMAGE_TAG:-}" ]] \
+        && gentian_os_image_tag_moves "${GENTIAN_OS_IMAGE_TAG}"; then
+        error "  ${_os_repo}:${GENTIAN_OS_IMAGE_TAG} is a moving tag, and this is a prod cluster."
+        error "  Install from a release tag (GENTIAN_OS_BRANCH=v<version>), or a git checkout"
+        error "  of a branch CI publishes from, or set GENTIAN_OS_IMAGE_TAG to a version or"
+        error "  <branch>-<short-sha>."
+        _os_ok=0
+    fi
     if [[ "${_os_ok}" != "1" ]]; then
         missing=$((missing + 1))
     fi
@@ -2818,6 +2833,15 @@ _verify_gentian_os_ref_exists() {
 # checkout's build (_v5_os_build_pinned). `./install.sh --only B-01` is that
 # and nothing else.
 # =============================================================================
+# gentian_os_image_tag_moves TAG — true when TAG is not one CI publishes once
+# and never again: a release version (1.2.3) or <branch>-<short-sha>.
+gentian_os_image_tag_moves() {
+    case "$1" in
+        *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*|[0-9]*.[0-9]*.[0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
 resolve_gentian_os_image_tag() {
     # The ref first, whether or not the tag is given: every Application
     # follows it either way. With GENTIAN_OS_IMAGE_TAG set this returned
@@ -2825,15 +2849,12 @@ resolve_gentian_os_image_tag() {
     resolve_gentian_os_branch
     if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
         export GENTIAN_OS_IMAGE_TAG
-        case "${GENTIAN_OS_IMAGE_TAG}" in
-            *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*|[0-9]*.[0-9]*.[0-9]*) ;;
-            *)
-                warn "GENTIAN_OS_IMAGE_TAG=${GENTIAN_OS_IMAGE_TAG} names a tag that moves."
-                warn "  A Deployment on a moving tag never rolls by itself, and a pod that"
-                warn "  restarts picks up whatever the tag means then. Unset it to pin the"
-                warn "  image built from this checkout's commit."
-                ;;
-        esac
+        if gentian_os_image_tag_moves "${GENTIAN_OS_IMAGE_TAG}"; then
+            warn "GENTIAN_OS_IMAGE_TAG=${GENTIAN_OS_IMAGE_TAG} names a tag that moves."
+            warn "  A Deployment on a moving tag never rolls by itself, and a pod that"
+            warn "  restarts picks up whatever the tag means then. Unset it to pin the"
+            warn "  image built from this checkout's commit."
+        fi
         return 0
     fi
     case "${GENTIAN_OS_BRANCH}" in
@@ -2867,6 +2888,29 @@ resolve_gentian_os_image_tag() {
             fi
             ;;
     esac
+}
+
+# =============================================================================
+# gentian_os_revision — the git revision every Application on the gentian-os
+# repository follows: the commit of this checkout, which is the commit the
+# operator image is built from (resolve_gentian_os_image_tag). A release tag
+# is the tag. Without a checkout to read, the ref.
+#
+# Not the branch: an Application that follows a branch takes every commit
+# merged after this checkout at once, beside a binary from before them. A
+# release that removed a step and the vault rights it used left the old
+# migrator running against the new rights, refused, until the install failed.
+# A run of the installer from a newer checkout moves the revision with the
+# image.
+# =============================================================================
+gentian_os_revision() {
+    local ref sha
+    ref="$(gentian_os_ref)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "${ref}"; return 0 ;;
+    esac
+    sha="$(git -C "${SCRIPT_DIR:-.}" rev-parse HEAD 2>/dev/null || true)"
+    printf '%s\n' "${sha:-${ref}}"
 }
 
 # =============================================================================

@@ -79,7 +79,7 @@ type Config struct {
 // ways to read, and no way to ask for anything to be done.
 type Lifecycle interface {
 	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
-	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
+	Plans(ctx context.Context, tenant string) ([]lifecycle.Plan, error)
 }
 
 // Server is the usher's HTTP surface.
@@ -200,6 +200,14 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 		user, err := authz.User(ident.Subject)
 		if err != nil {
 			fail(w, http.StatusUnauthorized, "unauthenticated")
+			return
+		}
+		// A token a component obtained for the person reaches only the
+		// routes its scopes name (authn/delegated.go), here as at the
+		// director.
+		if !ident.MayCall(pattern) {
+			s.cfg.Log.WarnContext(ctx, "delegated token refused outside its scopes", "client", ident.Client, "route", pattern)
+			fail(w, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
 			return
 		}
 		target, err := obj(s, r)

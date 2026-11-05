@@ -28,6 +28,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -399,6 +400,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	componentDiscovery, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create discovery client")
+		os.Exit(1)
+	}
 	if err := (&controller.ComponentReconciler{
 		Definitions:       held,
 		Client:            mgr.GetClient(),
@@ -419,6 +425,10 @@ func main() {
 		// What a component that asked where the App Store is gets told.
 		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
 		WatchClusterClaim:      true,
+		// An API extension's definitions, by name and uncached
+		// (component_api_extensions.go), and its group's other types.
+		CRDReader: mgr.GetAPIReader(),
+		Discovery: componentDiscovery,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
@@ -763,6 +773,29 @@ func main() {
 	}); err != nil {
 		setupLog.Error(err, "unable to add the usage statistics reporter to manager")
 		os.Exit(1)
+	}
+
+	// The vault's daily snapshot: its bucket and key, and how old the newest
+	// one is on the Cluster claim (status.openbaoSnapshots). The snapshot is
+	// taken by the CronJob the chart puts in the vault's namespace.
+	if controller.EnvBool("OPENBAO_SNAPSHOTS") {
+		staleAfter, err := time.ParseDuration(envOrDefault("OPENBAO_SNAPSHOT_STALE_AFTER", "30h"))
+		if err != nil {
+			setupLog.Error(err, "OPENBAO_SNAPSHOT_STALE_AFTER is not a duration")
+			os.Exit(1)
+		}
+		if err := mgr.Add(&controller.OpenBaoSnapshots{
+			Client:     mgr.GetClient(),
+			Reader:     mgr.GetAPIReader(),
+			Seeder:     tenantReconciler.Seeder,
+			Bucket:     envOrDefault("OPENBAO_SNAPSHOT_BUCKET", "gentian-openbao-snapshots"),
+			StaleAfter: staleAfter,
+			// The chart says false when it takes no snapshot of the seal.
+			TransitDisabled: envOrDefault("OPENBAO_TRANSIT_SNAPSHOTS", "true") == "false",
+		}); err != nil {
+			setupLog.Error(err, "unable to add the vault snapshot report to manager")
+			os.Exit(1)
+		}
 	}
 
 	// No custodian here. It was a runnable of this manager, which put the

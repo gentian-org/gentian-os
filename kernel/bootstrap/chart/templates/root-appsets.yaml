@@ -25,12 +25,15 @@ spec:
     - /metadata/finalizers
   source:
     repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     path: kernel/appsets
     helm:
       valuesObject:
         stage: {{ .Values.stage | quote }}
-        targetRevision: {{ .Values.gentianOsBranch | quote }}
+        targetRevision: {{ include "gentianOsRevision" . | quote }}
+        # The tag of the images built beside the manifests, from the same
+        # commit: the operator's, which the Keycloak event listener shares.
+        imageTag: {{ .Values.operator.tag | default .Values.gentianOsBranch | quote }}
         kernelDomain: {{ .Values.kernelDomain | quote }}
         gentianOsRepo: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" | quote }}
         deploymentsRepo: {{ .Values.deployments.repo | quote }}

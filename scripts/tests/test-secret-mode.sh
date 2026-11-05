@@ -30,9 +30,10 @@
 #   - the kernel realm's mail login is the same value however often it is
 #     asked for, in both modes.
 #   - _derived (scripts/lib/derive.sh) gives every value in
-#     scripts/tests/derivation-vectors.txt, the file the Go derivation in
-#     internal/vaultmigrate is checked against too, and stops when the salt is
-#     not set.
+#     scripts/tests/derivation-vectors.txt, and stops when the salt is not set.
+#   - the Secrets create_crossplane_secrets writes reach kubectl as files on
+#     a pipe: no derived value and not the master password is one of its
+#     arguments.
 #   - gentian_settle_derivation (scripts/lib/derive.sh) takes the stored
 #     master password and salt over the shell's, gives a cluster seeded
 #     before salts existed its empty salt, and draws a salt only when there
@@ -266,8 +267,12 @@ lib() {
                         [[ -f "${VAULT}/${field}" ]] || return 2
                         cat "${VAULT}/${field}" ;;
                     "kv patch"|"kv put")
-                        for arg in "$@"; do
-                            [[ "${arg}" == *=* && "${arg}" != -* ]] && printf "%s" "${arg#*=}" > "${VAULT}/${arg%%=*}"
+                        # The fields arrive as a JSON object on stdin.
+                        [[ "${*: -1}" == - ]] || return 1
+                        local key json
+                        json="$(cat)"
+                        for key in $(jq -r "keys[]" <<<"${json}"); do
+                            jq -j --arg k "${key}" ".[\$k]" <<<"${json}" > "${VAULT}/${key}"
                         done ;;
                     *) return 1 ;;
                 esac
@@ -332,11 +337,13 @@ check "random: _derive gives a value of its own on each call" \
 # administrator from: s3-admin and the value derived under "s3".
 fresh
 VAULT_UP='' lib derived 'CROSSPLANE_NAMESPACE=xp-test
-    kubectl() { local a; for a; do [[ "${a}" == --from-literal=data.json=* ]] && printf "%s %s\n" "$4" "${a#--from-literal=data.json=}" >> "${K8S}/applied"; done; return 0; }
+    kubectl() { local a; printf "%s\n" "$*" >> "${K8S}/argv"; for a; do [[ "${a}" == --from-file=data.json=* ]] && printf "%s %s\n" "$4" "$(cat "${a#--from-file=data.json=}")" >> "${K8S}/applied"; done; return 0; }
     create_crossplane_secrets' >/dev/null
 s3_seed="$(awk '$1 == "gentian-os-kernel-storage-s3" { print $2 }' "${SB}/k8s/applied" 2>/dev/null)"
 check "derived: the installer seeds the object store's administrator as s3-admin with the written-down value" \
     '[[ "$(jq -r .root_user <<<"${s3_seed}")" == "s3-admin" && "$(jq -r .root_password <<<"${s3_seed}")" == "${G_S3}" ]]' "${s3_seed}"
+check "derived: no derived value and not the master password is one of kubectl's arguments" \
+    '[[ -s "${SB}/k8s/argv" ]] && ! grep -qF -e "${G_S3}" -e "${G_PG}" -e "${MASTER}" "${SB}/k8s/argv"' "$(cat "${SB}/k8s/argv" 2>/dev/null)"
 
 fresh
 a="$(lib random "_headlamp_derive_secret")"

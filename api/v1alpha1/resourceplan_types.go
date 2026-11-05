@@ -75,8 +75,7 @@ type ResourcePlanSpec struct {
 
 	// Tier orders plans from smallest to largest. It is the only ordering the
 	// platform uses: quantities can move in different directions between two
-	// plans (more CPU, less storage), so "bigger" cannot be derived from them,
-	// and an entitlement ceiling has to compare something total.
+	// plans (more CPU, less storage), so "bigger" cannot be derived from them.
 	//
 	// Tiers need not be contiguous; leaving gaps allows a plan to be inserted
 	// later without renumbering the ones already sold.
@@ -107,12 +106,20 @@ type ResourcePlanSpec struct {
 	// +optional
 	Default bool `json:"default,omitempty"`
 
-	// SelfServiceDisabled withholds the plan from tenant administrators. The
-	// plan stays selectable by cluster administrators and by the CLI, so it
-	// serves the case of a negotiated or bespoke ceiling that should not appear
-	// in a tenant's own list of upgrades.
+	// Units is how many node units the plan is, for a commerce backend that
+	// sells a number of nodes rather than a named plan: it moves a tenant to
+	// the plan whose units are the number bought. Zero means the plan is not
+	// a whole number of node units.
 	// +optional
-	SelfServiceDisabled bool `json:"selfServiceDisabled,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	Units int32 `json:"units,omitempty"`
+
+	// Retired withholds the plan from every new choice and keeps it for the
+	// tenants already on it. A plan's quantities cannot change under the
+	// tenants on it, so a different ceiling is a new plan, and the one it
+	// replaces is retired until nobody is on it.
+	// +optional
+	Retired bool `json:"retired,omitempty"`
 }
 
 // ResourcePlanStatus reports observed plan state.
@@ -127,19 +134,6 @@ type ResourcePlanList struct {
 }
 
 const (
-	// MaxResourceTierAnnotation caps the plans a tenant may be moved onto.
-	//
-	// On the Tenant rather than passed by the caller, because a ceiling a
-	// request supplies is a ceiling a request can omit. The API resolves it
-	// from cluster state on every call, so a client that knows nothing about
-	// entitlements cannot buy an upgrade by leaving a field out.
-	//
-	// Set by the cluster operator, or by whatever commerce integration a
-	// deployment runs — the platform reads it and does not care which. Absent
-	// means uncapped, matching how an unreachable commerce backend leaves the
-	// App Store's catalog usable rather than blocking it.
-	MaxResourceTierAnnotation = "gentianos.io/max-resource-tier"
-
 	// ResourcePlanAnnotation records the plan a tenant was last set to.
 	//
 	// The quotas are the truth — they are what the cluster enforces — but they
@@ -149,8 +143,8 @@ const (
 	// itself worth showing rather than resolving silently.
 	//
 	// Written by the director, into the tenant's resource-plan.yaml patch in
-	// the deployments repository, when someone who may set the plan chooses
-	// one. The operator reads it once Argo CD has synced it, and records the
+	// the deployments repository, when the cluster's administrator moves the
+	// tenant. The operator reads it once Argo CD has synced it, and records the
 	// change in the tenant's usage history from there — so the billing record
 	// says what landed, not what was asked for.
 	ResourcePlanAnnotation = "gentianos.io/resource-plan"

@@ -101,6 +101,9 @@ func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ cal
 //	                          tenant on it. cluster#can_approve, the security
 //	                          officer's verb, and a tenant administrator's
 //	                          authority inside their own tenant is not it.
+//	apiExtensions, and a      these let a component write through the
+//	clusterRole that writes   cluster's API: cluster#can_set_admission,
+//	                          break-glass's, as the cluster's admission is.
 //
 // The two are alternatives rather than both. A security officer is
 // deliberately not a perimeter approver, and requiring both relations would
@@ -110,13 +113,15 @@ func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ cal
 // "can_approve cluster:main" -- because the route's own relation is can_view
 // and a trailer saying that would name the wrong authority for the one thing
 // an audit of a privilege grant is for.
-func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, kind string) (string, bool) {
+func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, ref string) (string, bool) {
+	kind, _ := security.SplitPrivilegeRef(ref)
 	relation, target, refusal := "can_approve_privilege", "", ""
-	// security.PrivilegeApprover is the one place the kind decides the
+	// security.PrivilegeApprover is the one place the request decides the
 	// approver; the operator reports the same answer on each pending
 	// request (pendingPrivilegeApprovals), which is how a console knows
 	// whom to offer the button without deciding it again.
-	if security.PrivilegeApprover(kind) == security.PrivilegeApproverPerimeter {
+	approver := security.PrivilegeApprover(ref)
+	if approver == security.PrivilegeApproverPerimeter {
 		tenant, err := tenantObject(r)
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "invalid name")
@@ -136,6 +141,10 @@ func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, kin
 		}
 		relation, target = "can_approve", authz.Cluster(s.cfg.Cluster)
 		refusal = "a " + kind + " privilege weakens what protects the node; approving one is the security officer's"
+		if approver == security.PrivilegeApproverBreakGlass {
+			relation = "can_set_admission"
+			refusal = ref + " lets a component write through the cluster's API; approving it is break-glass's"
+		}
 	}
 	ok, err := s.can(r.Context(), *c, relation, target)
 	if err != nil {
@@ -159,7 +168,7 @@ func (s *Server) privilegeRef(w http.ResponseWriter, r *http.Request) (install, 
 	kind = r.PathValue("kind")
 	name := r.PathValue("name")
 	switch kind {
-	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles:
+	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles, security.PrivilegeAPIExtensions:
 	default:
 		s.fail(w, r, http.StatusNotFound, "no such privilege kind: "+kind)
 		return "", "", "", false
@@ -173,11 +182,11 @@ func (s *Server) privilegeRef(w http.ResponseWriter, r *http.Request) (install, 
 
 // grantPrivilege records one approval as a commit.
 func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) {
-	install, kind, ref, ok := s.privilegeRef(w, r)
+	install, _, ref, ok := s.privilegeRef(w, r)
 	if !ok {
 		return
 	}
-	if _, ok := s.mayApprove(w, r, &c, kind); !ok {
+	if _, ok := s.mayApprove(w, r, &c, ref); !ok {
 		return
 	}
 	var body grantPrivilegeRequest
@@ -219,7 +228,7 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 // request pending again and holds, which is where it was before the approval:
 // a revocation takes something away rather than breaking something.
 func (s *Server) revokePrivilege(w http.ResponseWriter, r *http.Request, c call) {
-	install, kind, ref, ok := s.privilegeRef(w, r)
+	install, _, ref, ok := s.privilegeRef(w, r)
 	if !ok {
 		return
 	}
@@ -227,7 +236,7 @@ func (s *Server) revokePrivilege(w http.ResponseWriter, r *http.Request, c call)
 	// requirement on the way out matters as much as on the way in: a tenant
 	// administrator who could revoke a pod-security waiver could stop a
 	// component the platform operator approved.
-	if _, ok := s.mayApprove(w, r, &c, kind); !ok {
+	if _, ok := s.mayApprove(w, r, &c, ref); !ok {
 		return
 	}
 	res, err := s.cfg.Repo.RevokePrivilege(r.Context(), r.PathValue("t"), install, ref, c.meta)

@@ -317,7 +317,10 @@ func TestAReadThatFailsInPassingKeepsWhatWasEstablished(t *testing.T) {
 
 // The operator may read exactly the definitions it checks: no fewer, or the
 // check answers "unreadable" for a kind on a correctly installed cluster, and
-// no more.
+// no more. Its one other grant on definitions is an add-on's
+// (internal/controller/component_api_extensions.go): get, create and update
+// by name, never list, watch or delete, held by admission to the definitions
+// of a profile (charts/gentian-os/templates/api-extensions-guard.yaml).
 func TestTheClusterRoleNamesExactlyTheDefinitionsChecked(t *testing.T) {
 	raw, err := os.ReadFile("../../../charts/gentian-os/templates/clusterrole.yaml")
 	if err != nil {
@@ -341,6 +344,12 @@ func TestTheClusterRoleNamesExactlyTheDefinitionsChecked(t *testing.T) {
 	var found bool
 	for _, rule := range role.Rules {
 		if len(rule.APIGroups) != 1 || rule.APIGroups[0] != "apiextensions.k8s.io" {
+			continue
+		}
+		if len(rule.ResourceNames) == 0 {
+			if !reflect.DeepEqual(rule.Resources, []string{"customresourcedefinitions"}) || !reflect.DeepEqual(rule.Verbs, []string{"get", "create", "update"}) {
+				t.Errorf("the operator's grant for an add-on's definitions must be get, create and update and nothing else, got %v on %v", rule.Verbs, rule.Resources)
+			}
 			continue
 		}
 		found = true

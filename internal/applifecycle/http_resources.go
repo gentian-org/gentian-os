@@ -35,13 +35,16 @@ func (h *HTTPServer) registerResourceRoutes(mux router) {
 	mux.Read("GET /v1/resources", h.handleAllResourceStates)
 	mux.Read("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
 	// No PUT. Choosing a plan is a commit to the deployments repository, and
-	// the director is the one writer to it: it checks can_set_plan, writes
+	// the director is the one writer to it: it checks can_configure, writes
 	// the tenant's resource-plan.yaml as the person, and this API reads the
 	// result back once Argo CD has synced it. The reads here are what the
 	// usher answers a person with and what the director validates a choice
 	// against.
 	mux.Read("GET /v1/tenants/{tenant}/resources/usage", h.handleResourceUsage)
 	mux.Read("GET /v1/tenants/{tenant}/resources/report", h.handleResourceReport)
+	// Every tenant's billed intervals in one answer, for a commerce backend
+	// that invoices the cluster's tenants a month at a time.
+	mux.Read("GET /v1/resources/report", h.handleAllResourceReports)
 }
 
 func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request) {
@@ -66,15 +69,7 @@ func (h *HTTPServer) handleAllResourceStates(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *HTTPServer) handleResourcePlans(w http.ResponseWriter, r *http.Request) {
-	// No maxTier parameter: the entitlement ceiling is read from the Tenant, so
-	// a caller cannot raise it by leaving a field out. selfService is the
-	// director's assertion, made from whether the caller may configure the
-	// cluster, and it can only ever withhold plans.
-	plans, err := h.Service.Plans(
-		r.Context(),
-		r.PathValue("tenant"),
-		boolParam(r, "selfService"),
-	)
+	plans, err := h.Service.Plans(r.Context(), r.PathValue("tenant"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
@@ -123,6 +118,23 @@ func (h *HTTPServer) handleResourceReport(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+// handleAllResourceReports answers every tenant's report over one window. A
+// tenant whose report cannot be made is named under unavailable, as in the
+// cluster's view of ceilings, so a bill is never silently missing one.
+func (h *HTTPServer) handleAllResourceReports(w http.ResponseWriter, r *http.Request) {
+	from, to, err := usageWindow(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	reports, unavailable, err := h.Service.AllUsageReports(r.Context(), from, to)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": from, "to": to, "tenants": reports, "unavailable": unavailable})
 }
 
 func usageWindow(r *http.Request) (time.Time, time.Time, error) {
@@ -174,9 +186,4 @@ func usageStep(r *http.Request, window time.Duration) (time.Duration, error) {
 		return 0, errors.New("stepSeconds must be a positive integer")
 	}
 	return time.Duration(secs) * time.Second, nil
-}
-
-func boolParam(r *http.Request, name string) bool {
-	v := r.URL.Query().Get(name)
-	return v == "true" || v == "1"
 }

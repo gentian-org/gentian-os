@@ -93,8 +93,10 @@ _portal_random_secret() {
         value=$(openssl rand -hex 24)
     fi
     if [[ -z "${stored}" ]]; then
-        bao kv patch -mount=secret identity/portal-admin "${field}=${value}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin "${field}=${value}" >/dev/null 2>&1 || true
+        jq -n --arg f "${field}" --rawfile v <(printf '%s' "${value}") '{($f): $v}' \
+            | bao kv patch -mount=secret identity/portal-admin - >/dev/null 2>&1 || \
+            jq -n --arg f "${field}" --rawfile v <(printf '%s' "${value}") '{($f): $v}' \
+            | bao kv put -mount=secret identity/portal-admin - >/dev/null 2>&1 || true
     fi
     echo -n "${value}"
 }
@@ -127,7 +129,7 @@ ensure_grafana_oidc_secret() {
     # ensure_litellm_sso_secret for what kubectl's own line did to one).
     kubectl create secret generic grafana-oidc -n "${ns}" \
         --from-literal=client_id="grafana" \
-        --from-literal=client_secret="${secret}" \
+        --from-file=client_secret=<(printf '%s' "${secret}") \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     echo "${secret}"
 }
@@ -186,7 +188,7 @@ ensure_headlamp_kubeconfig() {
     updated="${out%$'\n'}"
     if [[ "${updated}" != "${config}" ]]; then
         kubectl create secret generic headlamp-kubeconfig -n "${ns}" \
-            --from-literal=config="${updated}" \
+            --from-file=config=<(printf '%s' "${updated}") \
             --dry-run=client -o yaml | kubectl apply -f - >&2
         # A mounted Secret is re-read from the API server, but only on the
         # kubelet's own schedule; a restart makes the new file immediate.
@@ -222,7 +224,7 @@ ensure_headlamp_oidc_secret() {
     # it too early. ensure_headlamp_kubeconfig does it after the last render.
     kubectl create secret generic headlamp-oidc -n "${ns}" \
         --from-literal=OIDC_CLIENT_ID="headlamp" \
-        --from-literal=OIDC_CLIENT_SECRET="${secret}" \
+        --from-file=OIDC_CLIENT_SECRET=<(printf '%s' "${secret}") \
         --from-literal=OIDC_ISSUER_URL="https://id.${kernel_domain}/auth/realms/${kernel_realm}" \
         --from-literal=OIDC_SCOPES="openid,profile,email,groups" \
         --dry-run=client -o yaml | kubectl apply -f - >&2
@@ -260,7 +262,7 @@ ensure_argocd_oidc_secret() {
     # by the same bug, in the same way, at the same time.
     kubectl create secret generic gentian-argocd -n "${ns}" \
         --from-literal=client_id="gentian-argocd" \
-        --from-literal=client_secret="${secret}" \
+        --from-file=client_secret=<(printf '%s' "${secret}") \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     # Also patch the actual argocd-secret in the argocd namespace
     kubectl patch secret argocd-secret -n "$(_pl_gitops_ns)" --type merge \
@@ -293,7 +295,7 @@ ensure_litellm_sso_secret() {
     # surfacing to the browser as an opaque 500.
     kubectl create secret generic litellm-dashboard-sso -n "${ns}" \
         --from-literal=client_id="litellm-dashboard" \
-        --from-literal=client_secret="${secret}" \
+        --from-file=client_secret=<(printf '%s' "${secret}") \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     echo "${secret}"
 }
@@ -637,7 +639,7 @@ _apply_keycloak_smtp_secret() {
         --from-literal=smtp_host="${KC_SMTP_HOST}" \
         --from-literal=smtp_port="${KC_SMTP_PORT}" \
         --from-literal=smtp_user="${KC_SMTP_USER}" \
-        --from-literal=smtp_password="${KC_SMTP_PASSWORD}" \
+        --from-file=smtp_password=<(printf '%s' "${KC_SMTP_PASSWORD}") \
         --from-literal=smtp_ssl="${KC_SMTP_SSL}" \
         --from-literal=smtp_starttls="${KC_SMTP_STARTTLS}" \
         --from-literal=smtp_from="${KC_SMTP_FROM}" \
@@ -975,20 +977,19 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=require_mfa="${require_mfa}"
         --from-literal=platform_admin_group="${platform_admin_group}"
         --from-literal=legacy_username="${legacy_username}"
-        --from-literal=argocd_client_secret="${argocd_secret}"
-        --from-literal=headlamp_client_secret="${headlamp_secret}"
-        --from-literal=grafana_client_secret="${grafana_secret}"
         --from-literal=llm_support="${llm_support}"
-        --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
+    # The client secrets and the SMTP password are not in this list: they
+    # reach kubectl as files on a pipe, added to its own command line below.
+    local smtp_password=""
     if _keycloak_smtp_settings; then
+        smtp_password="${KC_SMTP_PASSWORD}"
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=true
             --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
             --from-literal=smtp_host="${KC_SMTP_HOST}"
             --from-literal=smtp_port="${KC_SMTP_PORT}"
             --from-literal=smtp_user="${KC_SMTP_USER}"
-            --from-literal=smtp_password="${KC_SMTP_PASSWORD}"
             --from-literal=smtp_ssl="${KC_SMTP_SSL}"
             --from-literal=smtp_starttls="${KC_SMTP_STARTTLS}"
             --from-literal=smtp_from="${KC_SMTP_FROM}"
@@ -1008,7 +1009,6 @@ run_keycloak_portal_bootstrap_job() {
             --from-literal=smtp_host=""
             --from-literal=smtp_port=""
             --from-literal=smtp_user=""
-            --from-literal=smtp_password=""
             --from-literal=smtp_ssl="false"
             --from-literal=smtp_starttls="true"
             --from-literal=smtp_from=""
@@ -1017,6 +1017,11 @@ run_keycloak_portal_bootstrap_job() {
 
     kubectl create secret generic portal-bootstrap-credentials -n "${ns}" \
         "${bootstrap_secret_args[@]}" \
+        --from-file=argocd_client_secret=<(printf '%s' "${argocd_secret}") \
+        --from-file=headlamp_client_secret=<(printf '%s' "${headlamp_secret}") \
+        --from-file=grafana_client_secret=<(printf '%s' "${grafana_secret}") \
+        --from-file=litellm_sso_client_secret=<(printf '%s' "${litellm_sso_secret}") \
+        --from-file=smtp_password=<(printf '%s' "${smtp_password}") \
         --dry-run=client -o yaml | kubectl apply -f -
 
     local smtp_shell refresh_shell job_image
@@ -1967,7 +1972,7 @@ platform_admin_requires_mfa() {
 # for a person, and again after any call that was refused.
 _activation_admin_token() {
     curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
-        --data-urlencode "username=$2" --data-urlencode "password=$3" \
+        --data-urlencode "username=$2" --data-urlencode password@<(printf '%s' "$3") \
         "$1/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty'
 }
 
@@ -1976,7 +1981,7 @@ _activation_admin_token() {
 # The status is kept: under curl -f a refusal and a failure looked alike and
 # neither said why.
 _activation_request() {
-    curl -sS --max-time "${5:-15}" -w '\n%{http_code}' -X "$1" -H "$2" -H "Content-Type: application/json" \
+    curl -sS --max-time "${5:-15}" -w '\n%{http_code}' -X "$1" -H @<(printf '%s\n' "$2") -H "Content-Type: application/json" \
         "$3" -d "$4" 2>/dev/null || true
 }
 
@@ -2050,14 +2055,14 @@ issue_admin_activation() {
         return 1
     fi
     local auth="Authorization: Bearer ${token}"
-    uid="$(curl -sS --max-time 15 -H "${auth}" \
+    uid="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") \
         "${base}/admin/realms/${realm}/users?username=${username}&exact=true" | jq -r '.[0].id // empty')"
     if [[ -z "${uid}" ]]; then
         warn "  ${username} does not exist in realm ${realm}."
         _activation_later "${again}" "${username}" "${given_email}"
         return 1
     fi
-    creds="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}/credentials")"
+    creds="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/users/${uid}/credentials")"
     has_pw="$(printf '%s' "${creds}" | jq '[.[] | select(.type=="password")] | length > 0' 2>/dev/null || echo false)"
     # Forced (./install.sh --activate-admin): a new link even for an account
     # that has a password, which is how a holder who lost it gets back in.
@@ -2079,7 +2084,7 @@ issue_admin_activation() {
     # tunnel cluster, or any cluster whose relay is not supplied yet, cannot
     # mail the link, and asking for an address to mail it to only sets up a
     # failure. Ask only when there is a mail server to send through.
-    if curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}" 2>/dev/null \
+    if curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}" 2>/dev/null \
         | jq -e '(.smtpServer.host // "") != "" and (.smtpServer.from // "") != ""' >/dev/null 2>&1; then
         can_mail=true
     fi
@@ -2109,16 +2114,16 @@ issue_admin_activation() {
     # the client the way the director's invitations read it. A redirect the
     # client does not list is refused, and its list is the OIDC callbacks.
     local client="gentian-edge-${realm}" redirect
-    redirect="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/clients?clientId=${client}" \
+    redirect="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/clients?clientId=${client}" \
         | jq -r '.[0].rootUrl // .[0].baseUrl // empty' 2>/dev/null)"
     [[ -n "${redirect}" ]] && redirect="${redirect%/}/"
     if [[ -n "${email}" && "${can_mail}" != "true" ]]; then
         # Given ahead of time (in install.env): kept as the recovery address
         # for later resets, not mailed to now.
         local cur0 upd0
-        cur0="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
+        cur0="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/users/${uid}")"
         upd0="$(printf '%s' "${cur0}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
-        curl -sf --max-time 15 -X PUT -H "${auth}" -H "Content-Type: application/json" \
+        curl -sf --max-time 15 -X PUT -H @<(printf '%s\n' "${auth}") -H "Content-Type: application/json" \
             "${base}/admin/realms/${realm}/users/${uid}" -d "${upd0}" >/dev/null &&
             info "  ${email} is kept as the recovery address for later resets."
         email=""
@@ -2130,7 +2135,7 @@ issue_admin_activation() {
         # records that only when the link names the action. It adds no step.
         # The link shown below does not carry it: nothing reached the address.
         mailed_actions="$(jq -c '["VERIFY_EMAIL"] + .' <<<"${actions}")"
-        cur="$(curl -sS --max-time 15 -H "${auth}" "${base}/admin/realms/${realm}/users/${uid}")"
+        cur="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/users/${uid}")"
         upd="$(printf '%s' "${cur}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
         # What Keycloak answered, kept: the two calls fail for different
         # reasons -- a refused credential, an address the realm rejects, a

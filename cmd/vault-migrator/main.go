@@ -50,7 +50,7 @@ func main() {
 
 	var err error
 	for range attempts {
-		err = vaultmigrate.Run(ctx, vault, secrets.Mount, names, vaultmigrate.Seeds, log.Info)
+		err = vaultmigrate.Run(ctx, vault, secrets.Mount, names, log.Info)
 		if err == nil {
 			log.Info("the vault is what this release needs")
 			return

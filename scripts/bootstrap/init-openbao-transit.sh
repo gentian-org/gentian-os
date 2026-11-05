@@ -104,7 +104,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
     fi
     curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/unseal" \
       -H "Content-Type: application/json" \
-      -d "{\"key\": \"${UNSEAL_KEY}\"}" >/dev/null
+      --data-binary @<(printf '{"key": "%s"}' "${UNSEAL_KEY}") >/dev/null
     success "Transit unsealed."
   else
     success "Transit already unsealed."
@@ -125,7 +125,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
       -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [[ -n "${EXISTING_APP_TOKEN}" ]]; then
       APP_LOOKUP_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "X-Vault-Token: ${EXISTING_APP_TOKEN}" \
+        -H @<(printf 'X-Vault-Token: %s\n' "${EXISTING_APP_TOKEN}") \
         "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
       if [[ "${APP_LOOKUP_HTTP}" == "200" ]]; then
         success "openbao-transit-token Secret already present and valid — transit bootstrap is complete."
@@ -143,7 +143,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
     # If the hostpath data was wiped or the instance was re-keyed, the cached
     # token will be stale and we must fall back to prompting the user.
     LOOKUP_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-      -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+      -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
       "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
     if [[ "${LOOKUP_HTTP}" != "200" ]]; then
       warn "Cached token in ${TRANSIT_INIT_FILE} rejected by transit (HTTP ${LOOKUP_HTTP}). Falling back to prompt."
@@ -166,7 +166,7 @@ if [[ "$INIT_STATUS" == "true" ]]; then
       exit 1
     fi
     LOOKUP_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-      -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+      -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
       "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
     if [[ "${LOOKUP_HTTP}" != "200" ]]; then
       error "Root token rejected by transit (HTTP ${LOOKUP_HTTP}). Check the token and retry."
@@ -205,13 +205,13 @@ else
   # Unseal
   curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/unseal" \
     -H "Content-Type: application/json" \
-    -d "{\"key\": \"${TRANSIT_UNSEAL_KEY}\"}" >/dev/null
+    --data-binary @<(printf '{"key": "%s"}' "${TRANSIT_UNSEAL_KEY}") >/dev/null
   success "Transit initialized and unsealed."
 fi
 
 # ─── Enable transit secrets engine (idempotent) ───────────────────────────────
 MOUNTS=$(curl -sf \
-  -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+  -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
   "${TRANSIT_ADDR}/v1/sys/mounts")
 
 if echo "$MOUNTS" | jq -e '."transit/"' >/dev/null 2>&1; then
@@ -219,7 +219,7 @@ if echo "$MOUNTS" | jq -e '."transit/"' >/dev/null 2>&1; then
 else
   info "Enabling transit secrets engine..."
   curl -sf -X POST \
-    -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+    -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
     -H "Content-Type: application/json" \
     -d '{"type": "transit"}' \
     "${TRANSIT_ADDR}/v1/sys/mounts/transit" >/dev/null
@@ -228,7 +228,7 @@ fi
 
 # ─── Create autounseal key (idempotent) ───────────────────────────────────────
 KEY_STATUS=$(curl -s \
-  -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+  -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
   "${TRANSIT_ADDR}/v1/transit/keys/autounseal" 2>/dev/null \
   | jq -r '.data.name // empty')
 
@@ -237,7 +237,7 @@ if [[ "$KEY_STATUS" == "autounseal" ]]; then
 else
   info "Creating transit/keys/autounseal (aes256-gcm96)..."
   curl -sf -X POST \
-    -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+    -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
     -H "Content-Type: application/json" \
     -d '{"type": "aes256-gcm96"}' \
     "${TRANSIT_ADDR}/v1/transit/keys/autounseal" >/dev/null
@@ -252,11 +252,49 @@ path "auth/token/renew-self"      { capabilities = ["update"] }
 path "auth/token/lookup-self"     { capabilities = ["read"]   }'
 POLICY_JSON=$(python3 -c "import json,sys; print(json.dumps({'policy': sys.stdin.read()}))" <<< "$POLICY_HCL")
 curl -sf -X PUT \
-  -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+  -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
   -H "Content-Type: application/json" \
   -d "$POLICY_JSON" \
   "${TRANSIT_ADDR}/v1/sys/policies/acl/transit-autounseal" >/dev/null
 success "Policy transit-autounseal written."
+
+# ─── The seal's snapshot role (idempotent) ───────────────────────────────────
+# The CronJob openbao-transit-snapshot in this namespace reads a Raft snapshot
+# of the seal every day (charts/gentian-os/templates/openbao-snapshots.yaml,
+# docs/guides/recovery.md §4). It logs in with a token of its own
+# ServiceAccount, issued for this audience alone, and the role may read the
+# snapshot and nothing else: no default policy, five minutes to live. The
+# seal checks the token with the Kubernetes API (its own ServiceAccount is a
+# token reviewer, the chart's authDelegator).
+write_transit_snapshot_role() {
+  local mounts
+  mounts=$(curl -sf -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" "${TRANSIT_ADDR}/v1/sys/auth")
+  if ! echo "$mounts" | jq -e '."kubernetes/"' >/dev/null 2>&1; then
+    curl -sf -X POST -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+      -d '{"type": "kubernetes"}' "${TRANSIT_ADDR}/v1/sys/auth/kubernetes" >/dev/null
+  fi
+  curl -sf -X POST -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+    -d '{"kubernetes_host": "https://kubernetes.default.svc"}' \
+    "${TRANSIT_ADDR}/v1/auth/kubernetes/config" >/dev/null
+  jq -n --rawfile policy "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/kernel/openbao/transit-snapshot-policy.hcl" \
+      '{policy: $policy}' |
+    curl -sf -X PUT -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+      -d @- "${TRANSIT_ADDR}/v1/sys/policies/acl/openbao-transit-snapshot" >/dev/null
+  jq -n --arg ns "${TRANSIT_NS}" '{
+      bound_service_account_names: ["openbao-transit-snapshot"],
+      bound_service_account_namespaces: [$ns],
+      audience: "vault://openbao-transit-snapshot",
+      token_policies: ["openbao-transit-snapshot"],
+      token_no_default_policy: true,
+      token_ttl: 300,
+      token_max_ttl: 300
+    }' |
+    curl -sf -X POST -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+      -d @- "${TRANSIT_ADDR}/v1/auth/kubernetes/role/openbao-transit-snapshot" >/dev/null
+}
+info "Writing the seal's snapshot role openbao-transit-snapshot..."
+write_transit_snapshot_role
+success "Role openbao-transit-snapshot written."
 
 # ─── Create autounseal token + k8s Secret (idempotent + validating) ──────────
 # Important: a Secret left over from a prior install can hold a token from a
@@ -275,7 +313,7 @@ if kubectl get secret openbao-transit-token -n "${TRANSIT_NS}" >/dev/null 2>&1; 
     -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
   if [[ -n "$EXISTING_TOKEN" ]]; then
     LOOKUP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-      -H "X-Vault-Token: ${EXISTING_TOKEN}" \
+      -H @<(printf 'X-Vault-Token: %s\n' "${EXISTING_TOKEN}") \
       "${TRANSIT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
     if [[ "$LOOKUP_CODE" == "200" ]]; then
       success "k8s Secret openbao-transit-token already exists and token validates. Skipping."
@@ -293,7 +331,7 @@ fi
 if [[ "$NEED_NEW_TOKEN" == "1" ]]; then
   info "Creating periodic orphan autounseal token (period=8760h)..."
   TOKEN_RESP=$(curl -sf -X POST \
-    -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+    -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
     -H "Content-Type: application/json" \
     -d '{"policies":["transit-autounseal"],"period":"8760h","orphan":true,"no_parent":true,"display_name":"openbao-primary-autounseal"}' \
     "${TRANSIT_ADDR}/v1/auth/token/create-orphan")
@@ -308,7 +346,7 @@ if [[ "$NEED_NEW_TOKEN" == "1" ]]; then
   info "Creating k8s Secret openbao-transit-token in namespace ${TRANSIT_NS}..."
   kubectl create secret generic openbao-transit-token \
     -n "${TRANSIT_NS}" \
-    --from-literal=token="${AUTOUNSEAL_TOKEN}"
+    --from-file=token=<(printf '%s' "${AUTOUNSEAL_TOKEN}")
   success "k8s Secret openbao-transit-token created."
 fi
 
@@ -326,7 +364,7 @@ fi
 info "Creating/updating k8s Secret openbao-transit-unseal in namespace ${TRANSIT_NS}..."
 kubectl create secret generic openbao-transit-unseal \
   -n "${TRANSIT_NS}" \
-  --from-literal=unseal-key="${TRANSIT_UNSEAL_KEY}" \
+  --from-file=unseal-key=<(printf '%s' "${TRANSIT_UNSEAL_KEY}") \
   --dry-run=client -o yaml | kubectl apply -f -
 success "k8s Secret openbao-transit-unseal created/updated."
 
@@ -346,7 +384,7 @@ success "k8s Secret openbao-transit-unseal created/updated."
 # safe rather than merely convenient.
 info "Revoking the openbao-transit root token — its bootstrap work is done..."
 if curl -sf -X POST \
-    -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+    -H @<(printf 'X-Vault-Token: %s\n' "${TRANSIT_ROOT_TOKEN}") \
     "${TRANSIT_ADDR}/v1/auth/token/revoke-self" >/dev/null 2>&1; then
   success "openbao-transit root token revoked."
 else

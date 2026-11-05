@@ -96,7 +96,8 @@
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
 #                                                             approve one request: egress (the tenant's perimeter approver),
-#                                                             podSecurity or clusterRoles (the cluster's security officer)
+#                                                             podSecurity or clusterRoles (the cluster's security officer),
+#                                                             apiExtensions or a role that writes (break-glass)
 #   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
 #                                                             decline one, with the same right; the app keeps waiting
 #   kubectl gentian approvals list                             what awaits the security officer and the perimeter
@@ -116,8 +117,19 @@
 #
 #   kubectl gentian resources plans --tenant <tenant>
 #   kubectl gentian resources show --tenant <tenant>
-#   kubectl gentian resources set --tenant <tenant> --plan <plan>
+#   kubectl gentian resources set --tenant <tenant> --plan <plan> [--force]
+#                                                               move a tenant; the cluster's administrator's
 #   kubectl gentian resources report --tenant <tenant> --from <time> --to <time>
+#   kubectl gentian resources report --all --from <time> --to <time>
+#                                                               every tenant's billed intervals
+#   kubectl gentian resources catalog                           the cluster's plans, with the tenants on each
+#   kubectl gentian resources catalog set <plan> --file <plan.json>
+#                                                               add or change a plan; the file is the plan as the
+#                                                               director takes it (displayName, tier, units, quotas, ...)
+#   kubectl gentian resources catalog remove <plan>             remove a plan no tenant is on
+#   kubectl gentian resources ordering                          where a tenant orders another plan
+#   kubectl gentian resources ordering set --file <notice.json> {"text": {"en": ...}, "url" | "email" | "phone": ...}
+#   kubectl gentian resources ordering clear                    tenants are told to ask the cluster's administrator
 #
 #   kubectl gentian version
 #
@@ -282,7 +294,7 @@ cmd_login() {
         sleep "${interval}"
         answer="$(curl -sS --max-time 20 -d client_id=gentian-cli \
             -d grant_type=urn:ietf:params:oauth:grant-type:device_code \
-            --data-urlencode "device_code=${device}" \
+            --data-urlencode device_code@<(printf '%s' "${device}") \
             "${_ISSUER}/protocol/openid-connect/token")"
         err="$(printf '%s' "${answer}" | jq -r '.error // empty')"
         case "${err}" in
@@ -314,7 +326,7 @@ cmd_logout() {
         refresh="$(jq -r '.refresh_token // empty' "${_TOKEN_FILE}")"
         if [[ -n "${refresh}" ]]; then
             curl -sS --max-time 10 -o /dev/null -d client_id=gentian-cli \
-                --data-urlencode "refresh_token=${refresh}" "${_ISSUER}/protocol/openid-connect/logout" || true
+                --data-urlencode refresh_token@<(printf '%s' "${refresh}") "${_ISSUER}/protocol/openid-connect/logout" || true
         fi
         rm -f "${_TOKEN_FILE}"
     fi
@@ -336,7 +348,7 @@ _access_token() {
     refresh="$(jq -r '.refresh_token // empty' "${_TOKEN_FILE}")"
     [[ -n "${refresh}" ]] || die "the session has ended: kubectl gentian login"
     answer="$(curl -sS --max-time 20 -d client_id=gentian-cli -d grant_type=refresh_token \
-        --data-urlencode "refresh_token=${refresh}" "${_ISSUER}/protocol/openid-connect/token")"
+        --data-urlencode refresh_token@<(printf '%s' "${refresh}") "${_ISSUER}/protocol/openid-connect/token")"
     [[ -n "$(printf '%s' "${answer}" | jq -r '.access_token // empty')" ]] ||
         die "the session has ended: kubectl gentian login"
     _store_token "${answer}"
@@ -519,11 +531,11 @@ _ask() {
     out="$(mktemp)"
     if [[ -n "${body}" ]]; then
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${base}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
+            --data-binary @<(printf '%s' "${body}") "${base}${path}")"
     else
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" "${base}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${base}${path}")"
     fi
     if [[ "${status}" -ge 300 ]]; then
         local msg
@@ -550,11 +562,11 @@ _try() {
     out="$(mktemp)"
     if [[ -n "${body}" ]]; then
         _TRY_STATUS="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${_DIR_BASE}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
+            --data-binary @<(printf '%s' "${body}") "${_DIR_BASE}${path}")"
     else
         _TRY_STATUS="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
-            -H "Authorization: Bearer ${token}" "${_DIR_BASE}${path}")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${_DIR_BASE}${path}")"
     fi
     if [[ "${_TRY_STATUS}" -ge 300 ]]; then
         _TRY_ANSWER="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
@@ -811,11 +823,11 @@ cmd_tenants_import() {
     [[ -z "${bucket}" || -n "${prefix}" ]] || die "--bucket needs --prefix"
     if [[ -n "${idfile}" ]]; then
         identity="$(grep -v '^#' "${idfile}")"
-        dec="$(jq -n --arg i "${identity}" '{identity:$i}')"
+        dec="$(jq -n --rawfile i <(printf '%s' "${identity}") '{identity:$i}')"
     elif [[ -n "${ask_pw}" ]]; then
         [[ -t 0 ]] || die "--passphrase needs a terminal"
         read -r -s -p "Passphrase: " passphrase; echo
-        dec="$(jq -n --arg p "${passphrase}" '{passphrase:$p}')"
+        dec="$(jq -n --rawfile p <(printf '%s' "${passphrase}") '{passphrase:$p}')"
     else
         die "say how to open the bundle: --identity-file <f> or --passphrase"
     fi
@@ -831,7 +843,7 @@ cmd_tenants_import() {
         bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
     # The tenant's name is the bundle's: an import does not rename.
-    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --argjson k "${keep}" --argjson r "${reuse}" '{bundle:$b, decryption:$d, keepCustomDomain:$k} + (if $r then {reuseName:true} else {} end)')"
+    body="$(jq -n --argjson b "${bundle}" --rawfile d <(printf '%s' "${dec}") --argjson k "${keep}" --argjson r "${reuse}" '{bundle:$b, decryption:($d | fromjson), keepCustomDomain:$k} + (if $r then {reuseName:true} else {} end)')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
     printf '%s' "${answer}" | jq -r '.warning // empty | "WARNING: \(.)"' >&2
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
@@ -871,7 +883,7 @@ _upload() {
     _connect
     out="$(mktemp)"
     status="$(curl -sS -o "${out}" -w '%{http_code}' -X POST \
-        -H "Authorization: Bearer ${token}" -H "Content-Type: application/x-tar" \
+        -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/x-tar" \
         --data-binary "@${file}" "${_DIR_BASE}${path}")"
     if [[ "${status}" -ge 300 ]]; then
         echo "error: $(jq -r '.error // .detail // .' "${out}" 2>/dev/null || cat "${out}")"
@@ -1063,8 +1075,8 @@ _purge_app_when_gone() {
     while :; do
         token="$(_access_token)"
         status="$(curl -sS -o "${out}" -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
-            -d "${body}" "${_DIR_BASE}/v1/tenants/${t}/actions/purge-app")"
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
+            --data-binary @<(printf '%s' "${body}") "${_DIR_BASE}/v1/tenants/${t}/actions/purge-app")"
         [[ "${status}" -lt 300 ]] && break
         msg="$(jq -r '.error // .message // .detail // empty' "${out}" 2>/dev/null || true)"
         if [[ "${status}" != "409" ]]; then
@@ -2721,10 +2733,11 @@ cmd_apps() {
 # person answers each request (the Component reads "waiting for approval of
 # <kind>/<name>"). This is the answer: one commit through the director, with
 # the approver taken from the session and the reason in their words. Who may
-# answer is the director's to decide by the kind: an egress request is the
+# answer is the director's to decide by the request: an egress request is the
 # tenant administrator's, a podSecurity or clusterRoles one the cluster's
-# security officer's. Without a request named, it lists what the app is
-# waiting for, as the cluster has it.
+# security officer's, an apiExtensions one or a cluster role that writes
+# break-glass's. Without a request named, it lists what the app is waiting
+# for, as the cluster has it.
 cmd_apps_approve() {
     local usage_text app="" privilege="" reason="" expires="" t answer kind name
     usage_text='usage: kubectl gentian apps approve <app> --tenant <tenant>
@@ -2786,8 +2799,8 @@ _privilege_ref() {
     PRIV_KIND="${privilege%%/*}"
     PRIV_NAME="${privilege#*/}"
     case "${PRIV_KIND}" in
-        egress|podSecurity|clusterRoles) ;;
-        *) die "the request is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles: not '${privilege}'" ;;
+        egress|podSecurity|clusterRoles|apiExtensions) ;;
+        *) die "the request is <kind>/<name>, the kind one of egress, podSecurity, clusterRoles or apiExtensions: not '${privilege}'" ;;
     esac
     [[ "${privilege}" == */* && -n "${PRIV_NAME}" && "${PRIV_NAME}" != */* ]] ||
         die "the request is <kind>/<name>, as the app's state names it: not '${privilege}'"
@@ -2887,7 +2900,7 @@ cmd_credentials() {
                         # A file ends in a newline more often than not, and the
                         # custodian refuses a value that does: the last one goes.
                         value="${value%$'\n'}"
-                        fields="$(jq -c --arg k "${key}" --arg v "${value}" '. + {($k): $v}' <<<"${fields}")"
+                        fields="$(jq -c --arg k "${key}" --rawfile v <(printf '%s' "${value}") '. + {($k): $v}' <<<"${fields}")"
                         ;;
                     *) die "unexpected argument $1" ;;
                 esac
@@ -2927,12 +2940,14 @@ cmd_resources() {
                 esac
             done
             [[ -n "${plan}" ]] || die "--plan is required"
-            _call PUT "/v1/tenants/${t}/resources" "$(jq -n --arg p "${plan}" --argjson f "${force}" '{plan:$p, force:$f}')" >/dev/null
+            _discover
+            _call PUT "/v1/clusters/${_CLUSTER}/tenants/${t}/resources" "$(jq -n --arg p "${plan}" --argjson f "${force}" '{plan:$p, force:$f}')" >/dev/null
             echo "Plan ${plan} chosen for ${t}: committed."
             ;;
         report)
-            t="$(_tenant_flag "$@")"
-            local from="" to=""
+            local from="" to="" all="false" window
+            for arg in "$@"; do [[ "${arg}" == "--all" ]] && all="true"; done
+            [[ "${all}" == "true" ]] || t="$(_tenant_flag "$@")"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --from) from="${2:?}"; shift 2 ;;
@@ -2941,13 +2956,84 @@ cmd_resources() {
                 esac
             done
             [[ -n "${from}" && -n "${to}" ]] || die "--from and --to are required (RFC 3339)"
-            _call_usher GET "/v1/tenants/${t}/resources/report?from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')" |
+            window="from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')"
+            if [[ "${all}" == "true" ]]; then
+                _discover
+                _call_usher GET "/v1/clusters/${_CLUSTER}/resources/report?${window}" |
+                    jq -r '(["TENANT","PLAN","DAYS","FROM","TO","SKU"] | @tsv),
+                           (.tenants[] | .tenant as $t | (.intervals // [])[] | [$t, .plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv),
+                           (.unavailable[] | [.tenant, "unavailable: " + .reason] | @tsv)' |
+                    column -t -s $'\t'
+                return 0
+            fi
+            _call_usher GET "/v1/tenants/${t}/resources/report?${window}" |
                 jq -r 'if .incomplete then "Nothing is known about the plan in force when this window opened; the first interval starts later.\n" else "" end,
                        (["PLAN","DAYS","FROM","TO","SKU"] | @tsv),
                        ((.intervals // [])[] | [.plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv)' |
                 column -t -s $'\t'
             ;;
-        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>" ;;
+        catalog)
+            local action="${1:-list}" name="" file="" answer
+            shift || true
+            _discover
+            case "${action}" in
+                list)
+                    answer="$(_call GET "/v1/clusters/${_CLUSTER}/resource-plans")" || exit 1
+                    printf '%s' "${answer}" |
+                        jq -r '(["PLAN","TIER","UNITS","CPU","MEMORY","STORAGE","SKU","","TENANTS"] | @tsv),
+                               (.plans[] | [.name, (.tier|tostring), ((.units // 0)|tostring), (.quotas.requestsCpu // "-"), (.quotas.requestsMemory // "-"), (.quotas.storage // "-"), (.productSku // "-"),
+                                            ((if .default then "default " else "" end) + (if .retired then "retired" else "" end)), ((.tenants // []) | join(","))] | @tsv)' |
+                        column -t -s $'\t'
+                    ;;
+                set)
+                    name="${1:-}"
+                    shift || true
+                    while [[ $# -gt 0 ]]; do
+                        case "$1" in
+                            --file|-f) file="${2:?}"; shift 2 ;;
+                            *) shift ;;
+                        esac
+                    done
+                    [[ -n "${name}" && -f "${file}" ]] || die "usage: kubectl gentian resources catalog set <plan> --file <plan.json>"
+                    jq -e 'type == "object"' "${file}" >/dev/null 2>&1 || die "${file} is not a JSON object"
+                    _call PUT "/v1/clusters/${_CLUSTER}/resource-plans/${name}" "$(jq -c . "${file}")" >/dev/null
+                    echo "Plan ${name} written: committed."
+                    ;;
+                remove)
+                    name="${1:-}"
+                    [[ -n "${name}" ]] || die "usage: kubectl gentian resources catalog remove <plan>"
+                    _call DELETE "/v1/clusters/${_CLUSTER}/resource-plans/${name}" >/dev/null
+                    echo "Plan ${name} removed: committed."
+                    ;;
+                *) die "usage: kubectl gentian resources catalog [list|set <plan> --file <plan.json>|remove <plan>]" ;;
+            esac
+            ;;
+        ordering)
+            local action="${1:-show}" file=""
+            shift || true
+            _discover
+            case "${action}" in
+                show) _call GET "/v1/clusters/${_CLUSTER}/plan-ordering" | jq . ;;
+                set)
+                    while [[ $# -gt 0 ]]; do
+                        case "$1" in
+                            --file|-f) file="${2:?}"; shift 2 ;;
+                            *) shift ;;
+                        esac
+                    done
+                    [[ -f "${file}" ]] || die "usage: kubectl gentian resources ordering set --file <notice.json>"
+                    jq -e 'type == "object"' "${file}" >/dev/null 2>&1 || die "${file} is not a JSON object"
+                    _call PUT "/v1/clusters/${_CLUSTER}/plan-ordering" "$(jq -c . "${file}")" >/dev/null
+                    echo "Notice on ordering another plan set: committed."
+                    ;;
+                clear)
+                    _call DELETE "/v1/clusters/${_CLUSTER}/plan-ordering" >/dev/null
+                    echo "Notice on ordering another plan removed: committed."
+                    ;;
+                *) die "usage: kubectl gentian resources ordering [show|set --file <notice.json>|clear]" ;;
+            esac
+            ;;
+        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>, or resources catalog|ordering" ;;
     esac
 }
 
@@ -2960,7 +3046,8 @@ usage() {
 #
 # What waits for an approver: every tenant's pending privilege, as the cluster
 # has it, with who answers it -- the security officer for a podSecurity
-# waiver or a cluster role, the perimeter approver for egress. The usher's
+# waiver or a cluster role that reads, break-glass for an API extension or a
+# cluster role that writes, the perimeter approver for egress. The usher's
 # list, read by whoever holds cluster#can_approve, can_approve_perimeter or
 # can_configure. Each line says who asked, when, and what the app's profile
 # gives as its reason, and whether it was declined and by whom; the answer is
