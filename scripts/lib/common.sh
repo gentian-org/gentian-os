@@ -2157,6 +2157,16 @@ check_prereqs() {
     if [[ -n "${_os_tag}" && -n "${GENTIAN_OS_IMAGE_TAG:-}" && "${_os_tag}" != "${GENTIAN_OS_IMAGE_TAG}" ]]; then
         info "  The cluster's values file says ${_os_tag}; this run renders ${GENTIAN_OS_IMAGE_TAG}."
     fi
+    # A prod cluster never runs a moving tag: a pod that restarts there would
+    # pull whatever the tag means at that second, with no rollout and no record.
+    if [[ "${GENTIAN_DEPLOYMENTS_STAGE:-}" == "prod" && -n "${GENTIAN_OS_IMAGE_TAG:-}" ]] \
+        && gentian_os_image_tag_moves "${GENTIAN_OS_IMAGE_TAG}"; then
+        error "  ${_os_repo}:${GENTIAN_OS_IMAGE_TAG} is a moving tag, and this is a prod cluster."
+        error "  Install from a release tag (GENTIAN_OS_BRANCH=v<version>), or a git checkout"
+        error "  of a branch CI publishes from, or set GENTIAN_OS_IMAGE_TAG to a version or"
+        error "  <branch>-<short-sha>."
+        _os_ok=0
+    fi
     if [[ "${_os_ok}" != "1" ]]; then
         missing=$((missing + 1))
     fi
@@ -2818,6 +2828,15 @@ _verify_gentian_os_ref_exists() {
 # checkout's build (_v5_os_build_pinned). `./install.sh --only B-01` is that
 # and nothing else.
 # =============================================================================
+# gentian_os_image_tag_moves TAG — true when TAG is not one CI publishes once
+# and never again: a release version (1.2.3) or <branch>-<short-sha>.
+gentian_os_image_tag_moves() {
+    case "$1" in
+        *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*|[0-9]*.[0-9]*.[0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
 resolve_gentian_os_image_tag() {
     # The ref first, whether or not the tag is given: every Application
     # follows it either way. With GENTIAN_OS_IMAGE_TAG set this returned
@@ -2825,15 +2844,12 @@ resolve_gentian_os_image_tag() {
     resolve_gentian_os_branch
     if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
         export GENTIAN_OS_IMAGE_TAG
-        case "${GENTIAN_OS_IMAGE_TAG}" in
-            *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*|[0-9]*.[0-9]*.[0-9]*) ;;
-            *)
-                warn "GENTIAN_OS_IMAGE_TAG=${GENTIAN_OS_IMAGE_TAG} names a tag that moves."
-                warn "  A Deployment on a moving tag never rolls by itself, and a pod that"
-                warn "  restarts picks up whatever the tag means then. Unset it to pin the"
-                warn "  image built from this checkout's commit."
-                ;;
-        esac
+        if gentian_os_image_tag_moves "${GENTIAN_OS_IMAGE_TAG}"; then
+            warn "GENTIAN_OS_IMAGE_TAG=${GENTIAN_OS_IMAGE_TAG} names a tag that moves."
+            warn "  A Deployment on a moving tag never rolls by itself, and a pod that"
+            warn "  restarts picks up whatever the tag means then. Unset it to pin the"
+            warn "  image built from this checkout's commit."
+        fi
         return 0
     fi
     case "${GENTIAN_OS_BRANCH}" in

@@ -104,8 +104,8 @@ operator:
   image: ghcr.io/gentian-org/gentian-os
   # An exact published tag. The installer sets it to the image built from the
   # checkout's own commit (`<branch>-<sha>`), so the manifests Argo CD syncs
-  # and the binary the kubelet pulls come from one commit. Empty falls back to
-  # the branch tag, which moves and therefore never rolls a Deployment by
+  # and the binary the kubelet pulls come from one commit. Required when the
+  # operator is enabled: a branch tag moves and never rolls a Deployment by
   # itself.
   tag: ""
 
