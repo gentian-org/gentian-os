@@ -79,6 +79,10 @@ type ImportedTenant struct {
 	// Pending is recorded beside the manifest. Its CustomDomain, when set, is
 	// declared as the tenant's TenantDomain in the same commit.
 	Pending PendingImport
+	// ReuseName is the cluster administrator's approval to import under the
+	// name of a retired tenant (ErrNameUsedBefore): the recovery of that
+	// tenant from its own bundle.
+	ReuseName bool
 }
 
 // DeclareTenant is CreateTenant from a bundle's manifest: the settings the
@@ -173,7 +177,7 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 `, name, imported.Origin)
 		return append([]byte(header), body...), nil
 	}
-	return g.createTenant(ctx, name, manifest, beside,
+	return g.createTenant(ctx, name, manifest, beside, imported.ReuseName,
 		fmt.Sprintf("Import tenant %s", name), "imported", meta)
 }
 

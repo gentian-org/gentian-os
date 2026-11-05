@@ -122,6 +122,9 @@ type Result struct {
 	Changed bool
 	// Commit is the pushed commit when Changed; the handle a caller is given.
 	Commit string
+	// Warning is what the caller must be told about a change that went
+	// through, such as an approved reuse of a retired tenant's name.
+	Warning string
 }
 
 // landed reads the commit just pushed. It runs under the same lock as the

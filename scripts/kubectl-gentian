@@ -19,14 +19,15 @@
 #   kubectl gentian tenants show <name>
 #   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues]
 #                                  [--self-sign-up]
-#                                  [--country <ISO 3166-1 alpha-2, e.g. CH>]
+#                                  [--country <ISO 3166-1 alpha-2, e.g. CH>] [--reuse-name]
 #                                  (sign-up is off, and is said out loud when it is on:
-#                                  anybody may make an account)
+#                                  anybody may make an account; --reuse-name approves
+#                                  the name of a retired tenant, whose rights it inherits)
 #   kubectl gentian tenants set <name> [--admins-add-catalogues=true|false]
 #                                      [--country <alpha-2> | --country ""]   "" names none
 #   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
 #   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
-#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain]
+#   kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain] [--reuse-name]
 #   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]
 #                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
 #                                  (the bundle's custom domain is kept unless --drop-custom-domain)
@@ -608,8 +609,8 @@ cmd_tenants_show() {
 }
 
 cmd_tenants_create() {
-    local name="" display="" mfa="true" catalogues="false" signup="false" country="" answer
-    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues] [--self-sign-up] [--country <alpha-2>]"
+    local name="" display="" mfa="true" catalogues="false" signup="false" country="" reuse="false" answer
+    local usage_text="usage: kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues] [--self-sign-up] [--country <alpha-2>] [--reuse-name]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --display-name) display="${2:?}"; shift 2 ;;
@@ -618,6 +619,8 @@ cmd_tenants_create() {
             --self-sign-up) signup="true"; shift ;;
             # The country the tenant is in, ISO 3166-1 alpha-2 (CH, DE).
             --country) country="${2:?--country <alpha-2>}"; shift 2 ;;
+            # Approves the name of a retired tenant: what recovering it needs.
+            --reuse-name) reuse="true"; shift ;;
             -*) die "unknown option $1" ;;
             *) name="$1"; shift ;;
         esac
@@ -636,11 +639,13 @@ cmd_tenants_create() {
         echo "  realm can send. For a tenant whose apps serve the public; not for a workspace." >&2
     fi
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants" \
-        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson c "${catalogues}" --argjson s "${signup}" --arg k "${country}" \
+        "$(jq -n --arg n "${name}" --arg d "${display}" --argjson m "${mfa}" --argjson c "${catalogues}" --argjson s "${signup}" --arg k "${country}" --argjson r "${reuse}" \
             '{name:$n, displayName:$d, requireMFA:$m}
              + (if $c then {catalogue:{delegated:true}} else {} end)
              + (if $s then {signUp:true} else {} end)
-             + (if $k != "" then {country:$k} else {} end)')")" || exit 1
+             + (if $k != "" then {country:$k} else {} end)
+             + (if $r then {reuseName:true} else {} end)')")" || exit 1
+    printf '%s' "${answer}" | jq -r '.warning // empty | "WARNING: \(.)"' >&2
     echo "Tenant ${name} committed; the platform is provisioning it."
     if [[ "${catalogues}" == "true" ]]; then
         echo "Its administrators may add catalogs for their tenant."
@@ -778,7 +783,7 @@ cmd_tenants_retire() {
 # with it unless --drop-custom-domain says not to.
 cmd_tenants_import() {
     local file="" idfile="" ask_pw="" name="" identity="" passphrase="" dec body answer bundle st phase msg last=""
-    local bucket="" prefix="" endpoint="" style="" keep=true domain=""
+    local bucket="" prefix="" endpoint="" style="" keep=true domain="" reuse=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --identity-file) idfile="${2:?}"; shift 2 ;;
@@ -788,12 +793,14 @@ cmd_tenants_import() {
             --endpoint) endpoint="${2:?}"; shift 2 ;;
             --addressing-style) style="${2:?}"; shift 2 ;;
             --drop-custom-domain) keep=false; shift ;;
+            # Approves the name of a retired tenant: recovering that tenant.
+            --reuse-name) reuse=true; shift ;;
             -*) die "unknown flag $1" ;;
             *) file="$1"; shift ;;
         esac
     done
     if [[ -z "${file}" && -z "${bucket}" ]]; then
-        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase) [--drop-custom-domain]"
+        die "usage: kubectl gentian tenants import <file.gentian> | --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]  (--identity-file <f> | --passphrase) [--drop-custom-domain] [--reuse-name]"
     fi
     case "${style}" in
         ""|path|virtualHost) ;;
@@ -824,8 +831,9 @@ cmd_tenants_import() {
         bundle="$(jq -n --arg b "${bucket}" --arg p "${prefix}" --arg e "${endpoint}" --arg s "${style}" '{bucket:$b, prefix:$p} + (if $e == "" then {} else {endpoint:$e} end) + (if $s == "" then {} else {addressingStyle:$s} end)')"
     fi
     # The tenant's name is the bundle's: an import does not rename.
-    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --argjson k "${keep}" '{bundle:$b, decryption:$d, keepCustomDomain:$k}')"
+    body="$(jq -n --argjson b "${bundle}" --argjson d "${dec}" --argjson k "${keep}" --argjson r "${reuse}" '{bundle:$b, decryption:$d, keepCustomDomain:$k} + (if $r then {reuseName:true} else {} end)')"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/import" "${body}")" || exit 1
+    printf '%s' "${answer}" | jq -r '.warning // empty | "WARNING: \(.)"' >&2
     name="$(printf '%s' "${answer}" | jq -r '.tenant')"
     domain="$(printf '%s' "${answer}" | jq -r '.customDomain // ""')"
     echo "Tenant ${name} declared ($(printf '%s' "${answer}" | jq -r '.commit' | cut -c1-8)); the operator provisions it, then the bundle is restored."

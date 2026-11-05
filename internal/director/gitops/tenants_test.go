@@ -207,6 +207,51 @@ func TestRetiringATenantRemovesItsDirectory(t *testing.T) {
 	}
 }
 
+// Rights, memberships and cache keys address a tenant by name and outlive it.
+// A new tenant, made or imported, under a retired tenant's name is refused;
+// with the cluster administrator's approval it goes through, says what it
+// inherits, and the commit records it: the recovery of that tenant.
+func TestARetiredTenantsNameIsReusedOnlyWithApproval(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	res, err := g.CreateTenant(ctx, gitops.NewTenant{Name: "acme"}, tenantMeta())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Warning != "" {
+		t.Fatalf("a name never used warns: %s", res.Warning)
+	}
+	if _, err := g.RetireTenant(ctx, "acme", tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = g.CreateTenant(ctx, gitops.NewTenant{Name: "acme"}, tenantMeta())
+	var used *gitops.NameUsedBeforeError
+	if !errors.As(err, &used) || !errors.Is(err, gitops.ErrNameUsedBefore) || used.Name != "acme" || used.Retired.IsZero() {
+		t.Fatalf("create under a retired name: err = %v, want ErrNameUsedBefore naming acme and when", err)
+	}
+	spec := &gentianov1alpha1.TenantSpec{DisplayName: "Acme"}
+	if _, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme", Spec: spec, Origin: "test"}, tenantMeta()); !errors.Is(err, gitops.ErrNameUsedBefore) {
+		t.Fatalf("import under a retired name: err = %v, want ErrNameUsedBefore", err)
+	}
+	if tree := dt.Git(t, "", "--git-dir", remote, "ls-tree", "-r", "--name-only", "main"); strings.Contains(tree, "tenants/acme/") {
+		t.Fatalf("a refused create wrote the tenant:\n%s", tree)
+	}
+
+	res, err = g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "acme", Spec: spec, Origin: "test", ReuseName: true}, tenantMeta())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Warning, "rights, memberships and cache keys") {
+		t.Fatalf("an approved reuse does not warn: %+v", res)
+	}
+	if msg := dt.Git(t, "", "--git-dir", remote, "log", "-1", "--format=%B", "main"); !strings.Contains(msg, "Approved reuse of a retired tenant's name") {
+		t.Fatalf("the commit does not record the approved reuse:\n%s", msg)
+	}
+}
+
 // The platform tenant carries the kernel realm every administrator signs in
 // against. Retiring it is not a tenant going away, it is the cluster locking
 // everyone out, so the director refuses however the request was authorized.

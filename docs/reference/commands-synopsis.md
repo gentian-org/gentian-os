@@ -20,14 +20,15 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian tenants show <name>
   kubectl gentian tenants create <name> [--display-name <text>] [--no-mfa] [--admins-add-catalogues]
                                  [--self-sign-up]
-                                 [--country <ISO 3166-1 alpha-2, e.g. CH>]
+                                 [--country <ISO 3166-1 alpha-2, e.g. CH>] [--reuse-name]
                                  (sign-up is off, and is said out loud when it is on:
-                                 anybody may make an account)
+                                 anybody may make an account; --reuse-name approves
+                                 the name of a retired tenant, whose rights it inherits)
   kubectl gentian tenants set <name> [--admins-add-catalogues=true|false]
                                      [--country <alpha-2> | --country ""]   "" names none
   kubectl gentian tenants activate-admin <name> [--recovery-email <address>]
   kubectl gentian tenants retire <name> [--purge [--keep-bundles]] [--yes]
-  kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain]
+  kubectl gentian tenants import <file.gentian> [--identity-file <f> | --passphrase] [--drop-custom-domain] [--reuse-name]
   kubectl gentian tenants import --bucket <b> --prefix <p> [--endpoint <url> [--addressing-style path|virtualHost]]
                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
                                  (the bundle's custom domain is kept unless --drop-custom-domain)

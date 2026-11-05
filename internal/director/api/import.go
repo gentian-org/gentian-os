@@ -62,6 +62,8 @@ type ImportStatus struct {
 	Tenant  string `json:"tenant"`
 	Phase   string `json:"phase"` // declared | provisioning | awaiting-key | restoring | ready | failed
 	Message string `json:"message,omitempty"`
+	// Warning is set when the import reused a retired tenant's name.
+	Warning string `json:"warning,omitempty"`
 	Commit  string `json:"commit,omitempty"`
 	Restore string `json:"restore,omitempty"`
 	// Bundle names what was imported, for the record.
@@ -121,6 +123,9 @@ type importRequest struct {
 	// custom domain is bound to it again here. Unset is yes; false makes the
 	// tenant at <tenant>.<kernel domain>, as a move to another domain.
 	KeepCustomDomain *bool `json:"keepCustomDomain,omitempty"`
+	// ReuseName approves importing under the name of a tenant this cluster
+	// retired (gitops.ErrNameUsedBefore): recovering that tenant.
+	ReuseName bool `json:"reuseName,omitempty"`
 }
 
 type importSource struct {
@@ -343,7 +348,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		spec = &withPlaced
 	}
 	res, err := s.cfg.Repo.DeclareTenant(ctx, gitops.ImportedTenant{
-		Name: name, Spec: spec, Origin: origin, Pending: pending,
+		Name: name, Spec: spec, Origin: origin, Pending: pending, ReuseName: req.ReuseName,
 	}, c.meta)
 	switch {
 	case errors.Is(err, gitops.ErrTenantExists):
@@ -352,6 +357,9 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 	case errors.Is(err, gitops.ErrDomainHeld), errors.Is(err, gitops.ErrInvalidDomain):
 		// Bound elsewhere between the check above and the commit.
 		s.importDomainRefused(w, r, err)
+		return
+	case errors.Is(err, gitops.ErrNameUsedBefore):
+		s.nameUsedBefore(w, r, err)
 		return
 	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
 		s.fail(w, r, http.StatusConflict, err.Error())
@@ -366,6 +374,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		st.Message = "the tenant is committed with its custom domain " + customDomain + "; the operator provisions it next. " +
 			dnsNote(customDomain)
 	}
+	st.Warning = res.Warning
 	s.placePlatformAppsNow()
 	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
 		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
@@ -391,6 +400,22 @@ func (s *Server) importDomainRefused(w http.ResponseWriter, r *http.Request, err
 		s.repoError(w, r, err)
 	}
 	return false
+}
+
+// nameUsedBefore refuses a tenant under a retired tenant's name, saying how
+// to approve the reuse. nameUsedBefore carries the name and when its tenant
+// was retired, so a console can ask for the approval without reading the
+// sentence.
+func (s *Server) nameUsedBefore(w http.ResponseWriter, r *http.Request, err error) {
+	answer := map[string]any{
+		"error":      err.Error() + ` ("reuseName": true; kubectl gentian: --reuse-name)`,
+		"request_id": reqID(r.Context()),
+	}
+	var used *gitops.NameUsedBeforeError
+	if errors.As(err, &used) {
+		answer["nameUsedBefore"] = map[string]any{"name": used.Name, "retired": used.Retired.UTC().Format(time.RFC3339)}
+	}
+	s.json(w, http.StatusConflict, answer)
 }
 
 // resumeImport goes on with an import that was begun and has not finished.

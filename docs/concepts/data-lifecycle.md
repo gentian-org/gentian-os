@@ -330,7 +330,11 @@ backup asked for some apps only names the ones it left out.
 **Retire and delete.** Every tenant starts with the policy *keep the data*.
 *Retiring* removes the tenant from git; its apps stop, its addresses and mail
 routing go, its realm is switched off, and all data stays. Creating a tenant
-of the same name again finds it. *Deleting* first changes the policy to
+of the same name again finds it, and the rights, memberships and cache keys
+the old tenant left, since they address a tenant by its name. So a new tenant
+under a retired tenant's name, created or imported, is refused unless the
+cluster administrator approves the reuse (`--reuse-name`): recovering that
+tenant is the case for it, and the commit records the approval. *Deleting* first changes the policy to
 *delete the data*, waits until the cluster has taken that in, and only then
 removes the tenant. The bundles go too, unless the tenant was told to keep
 them.

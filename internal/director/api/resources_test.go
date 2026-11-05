@@ -478,6 +478,32 @@ func TestATenantIsCreatedWithItsCountry(t *testing.T) {
 	}
 }
 
+// A retired tenant's name is refused for a new tenant, saying why and how to
+// approve; approved, the tenant is created and the answer carries the warning.
+func TestARetiredTenantsNameNeedsTheReuseApproved(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	tenants := "/v1/clusters/" + dt.Cluster + "/tenants"
+	if code, out := h.do(t, "POST", tenants, alice, `{"name":"acme"}`); code != http.StatusAccepted {
+		t.Fatalf("create = %d %v", code, out)
+	}
+	if code, out := h.do(t, "DELETE", tenants+"/acme", alice, ""); code != http.StatusAccepted {
+		t.Fatalf("retire = %d %v", code, out)
+	}
+	before := h.tip(t)
+	code, out := h.do(t, "POST", tenants, alice, `{"name":"acme"}`)
+	if msg, _ := out["error"].(string); code != http.StatusConflict || !strings.Contains(msg, `"reuseName": true`) || h.tip(t) != before {
+		t.Fatalf("create under a retired name = %d %v", code, out)
+	}
+	if used, _ := out["nameUsedBefore"].(map[string]any); used["name"] != "acme" || used["retired"] == "" {
+		t.Fatalf("the refusal does not name the retired tenant: %v", out)
+	}
+	code, out = h.do(t, "POST", tenants, alice, `{"name":"acme","reuseName":true}`)
+	if warning, _ := out["warning"].(string); code != http.StatusAccepted || !strings.Contains(warning, "pass to this one") {
+		t.Fatalf("approved reuse = %d %v", code, out)
+	}
+}
+
 func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
 	h, _ := startWithOperator(t)
 	before := h.tip(t)

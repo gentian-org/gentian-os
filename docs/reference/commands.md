@@ -122,6 +122,15 @@ kubectl gentian tenants set acme --country DE
 kubectl gentian tenants set acme --country ""
 ```
 
+The name of a tenant this cluster retired is refused, for `tenants create` and
+`tenants import` alike: the rights and memberships that tenant left are still
+addressed by it. `--reuse-name` approves the reuse, to recover that tenant;
+the answer warns what the new tenant inherits and the commit records it.
+
+```bash
+kubectl gentian tenants import acme-nightly.gentian --identity-file acme-key.txt --reuse-name
+```
+
 Who the tenant is — legal name, currency, time zone, fiscal year start,
 address, website, email, phone, VAT and register numbers (`spec.organization`)
 and its display name — is filled in by its administrators under Tenant
