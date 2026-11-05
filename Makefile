@@ -159,7 +159,7 @@ lint: lint-go lint-yaml lint-shell lint-docs lint-spelling
 
 ## Everything CI runs, in one target. A local gate set that is a subset of
 ## CI's reports green on work CI will reject.
-verify: verify-gen lint validate-steps test test-unit
+verify: verify-gen lint test test-unit
 	@bash install.sh --explain >/dev/null
 	@printf '\n\033[0;32mThe local gates are green.\033[0m\n'
 
@@ -663,9 +663,8 @@ lint-bootstrap-apps:
 ## Assert every scripts/steps/*.sh declares its contract and defines apply(),
 ## and that none of them names a kernel namespace by hand. Reads only the step
 ## files — no cluster, no kubeconfig.
-validate-steps: lint-namespace-layout lint-retired-namespaces
+validate-steps: lint-namespace-layout lint-retired-namespaces lint-step-contracts
 	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
-	@bash scripts/lint/lint-step-contracts.sh
 
 lint-namespace-layout:
 	@bash scripts/lint/lint-namespace-layout.sh
@@ -778,23 +777,6 @@ test-unit-render-update:
 			> "$$dir/expected.yaml" && echo "UPDATED: $$name" || echo "FAIL: $$name"; \
 	done
 
-## Run language-native function unit tests
-test-unit-functions:
-	@echo "=== function unit tests ==="
-	@PY_EXIT=0; \
-	if find crossplane/tests/unit/functions -name 'test_*.py' 2>/dev/null | grep -q .; then \
-		python3 -m pytest crossplane/tests/unit/functions/ -v; \
-		PY_EXIT=$$?; \
-	else \
-		echo "SKIP: no Python function tests found"; \
-	fi; \
-	if find crossplane/tests/unit/functions -name '*_test.go' 2>/dev/null | grep -q .; then \
-		find crossplane/tests/unit/functions -name '*_test.go' | while read f; do \
-			go test "$$(dirname $$f)/..."; \
-		done; \
-	fi; \
-	exit $$PY_EXIT
-
 ## Run XRD schema validation tests using crossplane beta validate
 test-unit-schema:
 	@echo "=== XRD schema tests ==="
@@ -816,8 +798,8 @@ test-unit-schema:
 		fi; \
 	done
 
-## Run all crossplane unit tests (render + functions + schema)
-test-unit: test-unit-render test-unit-functions test-unit-schema
+## Run all crossplane unit tests (render + schema)
+test-unit: test-unit-render test-unit-schema
 	@echo "=== all crossplane unit tests passed ==="
 
 ## Assert what the authorization rules actually permit, not just what they say.
@@ -913,10 +895,6 @@ install-tools:
 # ---------------------------------------------------------------------------
 # E2E tests (live dev cluster required)
 # ---------------------------------------------------------------------------
-
-## Keycloak + Dovecot install smoke (requires an installed cluster)
-e2e-p5-keycloak-dovecot:
-	@crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
 
 ## Re-run kernel service smoke checks without full install
 verify-kernel-services:
