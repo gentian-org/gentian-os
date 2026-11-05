@@ -13,25 +13,20 @@
 # is deployed some minutes after the claims phase begins, and every step that
 # reaches the cluster from outside is racing it.
 #
-# Carried over from v4's D-03 with three changes, each because v5 differs:
+# external-dns runs in the edge namespace and is found by label, because the
+# release name is not fixed. The second hostname is platform.<kernel>, which
+# the platform tenant's desktop serves.
 #
-#   external-dns runs in the edge namespace rather than one of its own, and is
-#   found by label because the release name is not fixed.
-#
-#   The second hostname is platform.<kernel>, not portal.<kernel>: the portal
-#   in the edge namespace was retired in S7 and the platform tenant's desktop
-#   serves platform.<kernel>.
-#
-#   It runs right after the operator and right before D-03-portal-login, the
-#   first step to reach the cluster from outside. Not earlier: on a tunnel
-#   cluster the kernel hostnames are published from a DNSEndpoint the
-#   operator writes, and on a static-ip one external-dns reads them off the
-#   kernel Gateway the operator reconciles -- so before D-01 nothing can have
-#   published them. It sat at the end of the claims phase and, on the first
-#   fresh install, waited out its fifteen minutes for a record that only the
-#   next phase could create. Not later: a slow publish would surface in
-#   D-03 as Keycloak being unreachable rather than as DNS not yet live --
-#   the exact confusion this step was written about.
+# It runs right after the operator and right before D-03-portal-login, the
+# first step to reach the cluster from outside. Not earlier: on a tunnel
+# cluster the kernel hostnames are published from a DNSEndpoint the
+# operator writes, and on a static-ip one external-dns reads them off the
+# kernel Gateway the operator reconciles -- so before D-01 nothing can have
+# published them. It sat at the end of the claims phase and, on the first
+# fresh install, waited out its fifteen minutes for a record that only the
+# next phase could create. Not later: a slow publish would surface in
+# D-03 as Keycloak being unreachable rather than as DNS not yet live --
+# the exact confusion this step was written about.
 #
 # Non-fatal by design. A cluster reached over a private DNS view, or one whose
 # records an operator maintains by hand, is legitimate — this says so and moves

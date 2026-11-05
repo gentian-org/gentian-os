@@ -16,8 +16,7 @@
 # rather than a throwaway pod -- which on microk8s is the hostpath first-bind
 # wedge the function documents.
 #
-# Names no namespace of its own: prewarm_cluster works in kube-system, so this
-# is v4's step unchanged.
+# Names no namespace of its own: prewarm_cluster works in kube-system.
 
 apply() {
     prewarm_cluster

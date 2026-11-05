@@ -131,7 +131,7 @@ apply() {
     case "${mode}" in
         acme-dns01|acme-http01)
             # The gateway the HTTP-01 solver routes through lives in the edge
-            # namespace on v5, not in v4's platform-kernel.
+            # namespace.
             export KERNEL_PUBLIC_GATEWAY_NAMESPACE="${KERNEL_PUBLIC_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
             _v5_apply_internal_ca
             apply_gentian_cluster_issuers
@@ -187,9 +187,8 @@ EOF
 destroy() {
     # Only the issuers this installer labeled, and the internal CA's
     # ServiceAccount and token Role. A ClusterIssuer somebody else put on this
-    # cluster is not ours to remove -- v4's step ended with a `delete
-    # clusterissuer --all`, which on a shared cluster takes out everyone
-    # else's anchors too. The CA itself stays in the vault: a reinstall gets
+    # cluster is not ours to remove: a `delete clusterissuer --all` would take
+    # out everyone else's anchors on a shared cluster. The CA itself stays in the vault: a reinstall gets
     # the same one back.
     local ns; ns="$(_v5_cert_manager_namespace)"
     kubectl delete clusterissuer -l app.kubernetes.io/managed-by=gentian-install \

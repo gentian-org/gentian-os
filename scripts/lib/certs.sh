@@ -99,9 +99,8 @@ gentian_dns_credential_secret_name() {
 
 # gentian_cert_manager_namespace — where cert-manager runs on THIS cluster.
 #
-# Not a constant: the v4 layout gave cert-manager a namespace of its own, the
-# v5 layout runs it at the edge beside the Gateway, and a distro addon puts it
-# wherever it likes. The webhook Deployment is the one object every
+# Not a constant: the layout runs it at the edge beside the Gateway, and a
+# distro addon puts it wherever it likes. The webhook Deployment is the one object every
 # installation has exactly one of, so it is what the question is asked of, and
 # the answer is cached in CERT_MANAGER_NAMESPACE for the rest of the run.
 gentian_cert_manager_namespace() {

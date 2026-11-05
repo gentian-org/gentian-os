@@ -1723,9 +1723,9 @@ _is_testnet_ip() {
 # registrations remain. A healthy, running Kyverno is left untouched.
 #
 # Presence is read from the workload, not from a namespace name: which
-# namespace Kyverno lives in is the layout's business (kyverno under v4,
-# kernel-admission under v5), and asking for one name would tear the live
-# webhooks off a perfectly healthy Kyverno installed under the other.
+# namespace Kyverno lives in is the layout's business, or a distribution's,
+# and asking for one name would tear the live webhooks off a perfectly
+# healthy Kyverno installed under another.
 # =============================================================================
 cleanup_orphaned_kyverno_webhooks() {
     kubectl get deployments --all-namespaces \

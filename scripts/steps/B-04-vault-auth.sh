@@ -5,7 +5,7 @@
 # provides: the vault's KV mount, the crossplane-write policy, and the openbao-crossplane-token Secret in the provisioning namespace
 # mutates: vault secrets engines, policies and tokens; Secret openbao-crossplane-token in the provisioning namespace
 
-# What v4's B-05 did, addressed through the layout: Crossplane's provider-vault
+# Crossplane's provider-vault
 # is what configures the vault's Kubernetes auth and every role from the
 # Cluster claim, so this step gives it a token that may do that and no more.
 

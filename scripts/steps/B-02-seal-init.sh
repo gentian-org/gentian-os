@@ -8,7 +8,7 @@
 # The seal and the vault are two namespaces on purpose: the seal's unseal key
 # stays in kernel-seal, a separate RBAC and backup domain, and the only thing
 # that crosses to kernel-secrets is the token the vault uses to ask the seal
-# to unseal it. That copy is what this step adds to the v4 script's work.
+# to unseal it. This step makes that copy.
 
 _seal_ns()  { ns_kernel seal; }
 _vault_ns() { ns_kernel secrets; }

@@ -34,9 +34,8 @@ _kit_path() {
     echo "${SCRIPT_DIR}/gentian-recovery-kit-${id}.${ext}"
 }
 
-# The kit's own reads name a namespace only through these, and both default to
-# v4's names, so exporting them is the whole of the layout work. Same pattern
-# as B-08.
+# The kit's own reads name a namespace only through these, so exporting them
+# from the layout is the whole of the layout work. Same pattern as B-08.
 _kit_export_layout() {
     export GENTIAN_SYSTEM_NAMESPACE OPENBAO_NAMESPACE
     GENTIAN_SYSTEM_NAMESPACE="$(ns_kernel control)"

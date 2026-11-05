@@ -30,11 +30,10 @@
 
 _v5_oidc_ns() { ns_kernel secrets; }
 
-# The address and token, resolved the way every other v5 vault step does.
-# Steps cannot assume BAO_ADDR points anywhere: this one inherited
-# http://127.0.0.1:8200 with nothing listening in v4 and failed on connection
-# refused, which reads as OpenBao being down rather than as nobody having
-# opened a tunnel.
+# The address and token, resolved the way every other vault step does. Steps
+# cannot assume BAO_ADDR points anywhere: an inherited http://127.0.0.1:8200
+# with nothing listening fails on connection refused, which reads as OpenBao
+# being down rather than as nobody having opened a tunnel.
 _v5_oidc_bao() {
     local addr token
     addr="$(OPENBAO_NAMESPACE="$(_v5_oidc_ns)" gentian_service_addr openbao "$(_v5_oidc_ns)" 8200 https 2>/dev/null)" || return 1

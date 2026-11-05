@@ -17,12 +17,10 @@
 # "somebody has actually logged in" guard unsatisfiable, which is why the
 # bootstrap root token could never be revoked.
 #
-# This is v4's D-07 with its layout assumptions corrected: the claim is read
-# from the provisioning namespace rather than crossplane-system, Keycloak is
-# found in the authentication namespace rather than platform-kernel, the
-# gateway certificate is read from the edge namespace, and the vault address
-# and token are resolved the way every other v5 vault step resolves them
-# rather than assumed to be in the environment.
+# The claim is read from the provisioning namespace, Keycloak is found in the
+# authentication namespace, the gateway certificate is read from the edge
+# namespace, and the vault address and token are resolved the way every other
+# vault step resolves them rather than assumed to be in the environment.
 #
 # Nothing here defers as its normal mode. The deferrals below are a safety net
 # for a cluster whose Keycloak is late, not the mechanism by which an install
@@ -30,10 +28,9 @@
 
 # Where the vault is, and the token to reach it with.
 #
-# v4 assumed BAO_TOKEN was already in the environment and that the vault was
-# in a namespace called openbao. On v5 it is in the secrets namespace, and a
-# step run on its own has no token in the shell -- so this resolves both the
-# way B-09 does, which is the pattern every v5 vault step follows.
+# The vault is in the secrets namespace, and a step run on its own has no
+# token in the shell -- so this resolves both the way B-09 does, which is the
+# pattern every vault step follows.
 _oidc_ns() { ns_kernel secrets; }
 
 _oidc_bao_addr() {
@@ -76,10 +73,9 @@ _oidc_values() {
     OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-openbao}"
     # Where the composed client secret lands. The claim may say, and usually
     # does not: spec.openbao has no default object, so its nested defaults
-    # never materialize and the field comes back empty. v4 fell back to the
-    # literal "openbao", which is v4's namespace -- on v5 the secret is in the
-    # secrets namespace, and looking in the wrong one makes this step defer
-    # for ever on a cluster where the secret is present.
+    # never materialize and the field comes back empty. The secret is then in
+    # the secrets namespace, and looking in another makes this step defer for
+    # ever on a cluster where the secret is present.
     OIDC_SECRET_NS="${OIDC_SECRET_NS:-$(_oidc_ns)}"
 }
 
@@ -127,8 +123,7 @@ _oidc_write_config() {
 # when neither secret carries a certificate. The caller removes it.
 _oidc_gateway_ca_file() {
     local ns tmp ns_secret key value
-    # The gateway's certificate is in the edge namespace on v5, which is where
-    # C-03 puts it, not in the services namespace v4 had.
+    # The gateway's certificate is in the edge namespace, where C-03 puts it.
     ns="$(ns_kernel edge)"
     tmp="$(mktemp)"
     for ns_secret in "${ns}:wildcard-tls" "cert-manager:wildcard-kernel-tls"; do

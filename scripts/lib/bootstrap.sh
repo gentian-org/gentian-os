@@ -502,7 +502,7 @@ for x in items:
     if "keycloak.crossplane.io" in x.get("apiVersion", ""):
         continue
     # The vault OIDC roles need the auth/oidc backend, which is configured
-    # once Keycloak answers (D-07 in v4): as Keycloak-dependent as the above.
+    # once Keycloak answers (D-04): as Keycloak-dependent as the above.
     if "jwt.vault.upbound.io" in x.get("apiVersion", ""):
         continue
     # The system-tier engines. Their Helm values are ConfigMaps and a Secret

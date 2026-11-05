@@ -8,11 +8,9 @@
 # =============================================================================
 # gentian_argocd_namespace — where Argo CD actually runs.
 #
-# v4 installs it into a namespace called argocd; v5's layout puts it in the
-# gitops namespace that kernel/namespaces.yaml names. The literal was fine
-# while there was one layout and is not any more: the bootstrap repo-creds
-# bridge below landed in `argocd` on a v5 cluster, where nothing reads it, and
-# the Applications that need it could not resolve their source.
+# The gitops namespace that kernel/namespaces.yaml names. The bootstrap
+# repo-creds bridge below has to land there, or the Applications that need it
+# cannot resolve their source.
 # =============================================================================
 gentian_argocd_namespace() {
     if [[ -n "${ARGOCD_NAMESPACE:-}" ]]; then
