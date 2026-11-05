@@ -440,8 +440,10 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 	}, true
 }
 
-// guarded registers a route with the relation it requires. There is no other
-// way to register a route a user can call.
+// guarded registers a route with the relation it requires. Together with
+// action, which registers an action the same way, and identified, for a
+// caller asking about themselves, it is how a route a user can call is
+// registered.
 //
 // This API serves three kinds of thing and says which in the route itself:
 //
