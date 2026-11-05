@@ -262,6 +262,12 @@ func (g *GitOps) writePlansLocked(ctx context.Context, message string, meta Meta
 	changed := listed != string(kustomization)
 	paths := []string{}
 	for _, w := range writes {
+		// The name becomes a file name: checked here, where the path is
+		// made, and not only where the plan was, so no path a caller
+		// supplied reaches the checkout.
+		if !dnsLabel.MatchString(w.Plan.Name) {
+			return Result{}, fmt.Errorf("%w: %q", ErrInvalidName, w.Plan.Name)
+		}
 		path := filepath.Join(dir, planFile(w.Plan.Name))
 		existing, err := os.ReadFile(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {

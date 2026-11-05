@@ -46,7 +46,7 @@ func TestThePlansAreStartedFromTheValuesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	dt.Git(t, checkout, "add", ".")
-	dt.Git(t, checkout, "commit", "-m", "step 0")
+	dt.Git(t, checkout, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-m", "step 0")
 	dt.Git(t, checkout, "push")
 	g := gitops.NewGitOps(checkout, remote, dt.Cluster, director)
 
