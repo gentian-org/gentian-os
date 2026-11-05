@@ -26,7 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/kernel/tenantshell"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 var xTenantListGVK = schema.GroupVersionKind{
@@ -48,7 +50,7 @@ func startXTenantShellSimulator(ctx context.Context, c client.Client) {
 	go func() {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
-		cfg := tenantshell.DefaultConfig()
+		cfg := netpolicy.DefaultConfig()
 		var kubeAPIEndpts *discoveryv1.EndpointSlice
 		endpts := &discoveryv1.EndpointSlice{}
 		if err := c.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, endpts); err == nil {
@@ -65,7 +67,7 @@ func startXTenantShellSimulator(ctx context.Context, c client.Client) {
 	}()
 }
 
-func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantshell.Config, kubeAPIEndpts *discoveryv1.EndpointSlice) {
+func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg netpolicy.Config, kubeAPIEndpts *discoveryv1.EndpointSlice) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(xTenantListGVK)
 	if err := c.List(ctx, list); err != nil {
@@ -88,13 +90,13 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg tenantsh
 			ObjectMeta: metav1.ObjectMeta{Name: tenantName},
 			Spec:       tenantSpecFromXR(spec),
 		}
-		nsName := tenantshell.NamespaceName(tenant)
-		createIfMissing(ctx, c, tenantshell.Namespace(tenantName, nsName))
-		createIfMissing(ctx, c, tenantshell.LimitRange(tenantName, nsName))
-		if rq := tenantshell.ResourceQuota(tenantName, nsName, tenant.Spec.Quotas); rq != nil {
+		nsName := shellNamespaceName(tenant)
+		createIfMissing(ctx, c, shellNamespace(tenantName, nsName))
+		createIfMissing(ctx, c, shellLimitRange(tenantName, nsName))
+		if rq := shellResourceQuota(tenantName, nsName, tenant.Spec.Quotas); rq != nil {
 			createIfMissing(ctx, c, rq)
 		}
-		createIfMissing(ctx, c, tenantshell.NetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts))
+		createIfMissing(ctx, c, netpolicy.BaselineNetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts))
 		patchXTenantReady(ctx, c, xr)
 	}
 	simulateXTenantDeletionCascade(ctx, c, list.Items)
@@ -150,7 +152,7 @@ func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, active
 	}
 	for i := range claimList.Items {
 		claim := &claimList.Items[i]
-		tenantName := claim.GetLabels()[tenantshell.TenantLabel]
+		tenantName := claim.GetLabels()[meta.TenantLabel]
 		if tenantName == "" {
 			continue
 		}
@@ -165,13 +167,13 @@ func simulateXTenantDeletionCascade(ctx context.Context, c client.Client, active
 func simulateXTenantShellTeardown(ctx context.Context, c client.Client, activeTenants map[string]struct{}) {
 	nsList := &corev1.NamespaceList{}
 	if err := c.List(ctx, nsList, client.MatchingLabels{
-		tenantshell.ManagedByLabel: tenantshell.ManagedByValue,
+		meta.ManagedByLabel: meta.ManagedByValue,
 	}); err != nil {
 		return
 	}
 	for i := range nsList.Items {
 		ns := &nsList.Items[i]
-		tenantName := ns.GetLabels()[tenantshell.TenantLabel]
+		tenantName := ns.GetLabels()[meta.TenantLabel]
 		if tenantName == "" {
 			continue
 		}
@@ -284,4 +286,59 @@ func startNamespaceFinalizer(ctx context.Context, c client.Client) {
 			}
 		}
 	}()
+}
+
+// The tenant shell the tenant-default Composition composes, as the simulator
+// creates it: the namespace, its LimitRange and its ResourceQuota.
+
+func shellLabels(tenantName string) map[string]string {
+	return map[string]string{
+		meta.TenantLabel:    tenantName,
+		meta.ManagedByLabel: meta.ManagedByValue,
+	}
+}
+
+func shellNamespaceName(tenant *gentianov1alpha1.Tenant) string {
+	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.Namespace != "" {
+		return tenant.Spec.Isolation.Namespace
+	}
+	return "tenant-" + tenant.Name
+}
+
+func shellNamespace(tenantName, nsName string) *corev1.Namespace {
+	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName, Labels: shellLabels(tenantName)}}
+}
+
+func shellLimitRange(tenantName, nsName string) *corev1.LimitRange {
+	return &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-limits", Namespace: nsName, Labels: shellLabels(tenantName)},
+		Spec: corev1.LimitRangeSpec{
+			Limits: []corev1.LimitRangeItem{{
+				Type: corev1.LimitTypeContainer,
+				Default: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("500m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
+				},
+				DefaultRequest: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+				Max: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			}},
+		},
+	}
+}
+
+func shellResourceQuota(tenantName, nsName string, quotas *gentianov1alpha1.TenantQuotas) *corev1.ResourceQuota {
+	hard := tenantshell.ResourceListFromQuotas(quotas)
+	if len(hard) == 0 {
+		return nil
+	}
+	return &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-quota", Namespace: nsName, Labels: shellLabels(tenantName)},
+		Spec:       corev1.ResourceQuotaSpec{Hard: hard},
+	}
 }
