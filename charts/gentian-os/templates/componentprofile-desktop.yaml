@@ -92,7 +92,6 @@ spec:
     services:
       database:
         engine: postgresql
-        databasePerTenant: true
       # The assistant on the desktop calls models with a key that is this
       # tenant's desktop's alone. Optional: on a cluster that serves no
       # models the desktop comes up without the assistant.

@@ -22,9 +22,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BundleSourceSpec is S3 storage outside the cluster that bundles are read
-// from: another cluster's destination, an old cluster's store, a provider's
-// bucket a tenant's bundles were left in.
+// BundleSourceSpec is S3 storage outside the cluster that holds bundles: the
+// cluster's, which its administrator imports tenants from -- another
+// cluster's destination, an old cluster's store, a provider's bucket a
+// tenant's bundles were left in -- or a tenant's own, which that tenant's
+// exports are written to and its recovery reads.
 //
 // The address is declared here, in git, by the director; the keys are not.
 // They are a CredentialRequirement the operator derives from this object and
@@ -60,6 +62,15 @@ type BundleSourceSpec struct {
 	// +optional
 	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
 
+	// Tenant makes this a tenant's own store, declared by its administrator,
+	// its keys in the tenant's part of the vault. Its name is then
+	// <tenant>.<name>, so that no tenant can declare a store under another's
+	// name or the cluster's. Empty is one of the cluster's.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	Tenant string `json:"tenant,omitempty"`
+
 	// Description says what the storage is, for whoever picks a bundle
 	// from it.
 	// +optional
@@ -86,20 +97,19 @@ type BundleSourceStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
-// BundleSource is a place outside the cluster bundles are imported from,
-// declared by the cluster's administrator.
-//
-// Cluster-scoped, and the cluster's: what it reaches is read to make a
-// tenant, which is the cluster's administrator's to do. A tenant's own
-// destination is its BackupPolicy's, and is read for its recovery as it is.
+// BundleSource is a place outside the cluster that holds bundles: the
+// cluster's, declared by its administrator and read to make a tenant; or a
+// tenant's own (spec.tenant), declared by that tenant's administrator,
+// written to by its exports and read for its recovery.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 48 && self.metadata.name.matches('^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')",message="a bundle source's name is a DNS label of at most 48 characters"
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63 && (has(self.spec.tenant) && size(self.spec.tenant) > 0 ? (self.metadata.name.startsWith(self.spec.tenant + '.') && self.metadata.name.matches('^[a-z0-9-]+[.][a-z0-9]([a-z0-9-]*[a-z0-9])?$')) : (size(self.metadata.name) <= 48 && self.metadata.name.matches('^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')))",message="a bundle source's name is a DNS label of at most 48 characters; a tenant's own is <tenant>.<label>, 63 at most"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=bsrc
 // +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.spec.endpoint`
 // +kubebuilder:printcolumn:name="Bucket",type=string,JSONPath=`.spec.bucket`
 // +kubebuilder:printcolumn:name="Prefix",type=string,JSONPath=`.spec.prefix`
+// +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="Credential",type=boolean,JSONPath=`.status.credentialSatisfied`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type BundleSource struct {

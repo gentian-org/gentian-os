@@ -182,8 +182,8 @@ spec:
                 properties:
                   adapter:
                     description: |-
-                      Adapter is what an adapter adapts and the reviewed list of its tools.
-                      Present exactly when the class is adapter.
+                      Adapter is what an adapter adapts. Present exactly when the class is
+                      adapter.
                     properties:
                       adapts:
                         description: |-
@@ -213,124 +213,7 @@ spec:
                         required:
                         - profile
                         type: object
-                      speaksAs:
-                        allOf:
-                        - enum:
-                          - token
-                          - app-token
-                          - headers
-                        - enum:
-                          - token
-                          - app-token
-                          - headers
-                        description: |-
-                          SpeaksAs is how a call reaches the app as the person on whose behalf it
-                          is made, in the order of preference the platform has: a short token for
-                          this app from the identity provider, a per-person token of the app's
-                          own, or the platform's identity headers. An adapter never acts as
-                          itself where a person's data is concerned.
-                        type: string
-                      tools:
-                        description: |-
-                          Tools are the operations this adapter offers, each at a version. A
-                          change to what a tool does, what it needs or its class is a new
-                          version, so an adapter update never widens what a person allowed.
-                        items:
-                          description: ToolSpec is one named operation on the adapted
-                            app.
-                          properties:
-                            class:
-                              allOf:
-                              - enum:
-                                - read
-                                - change
-                                - irreversible
-                              - enum:
-                                - read
-                                - change
-                                - irreversible
-                              description: |-
-                                Class is whether the tool reads, changes, or changes irreversibly. A
-                                tool with no class counts as irreversible, and so does one that
-                                reaches outside the platform: what has left cannot be taken back.
-                              type: string
-                            description:
-                              additionalProperties:
-                                type: string
-                              description: |-
-                                Description is the tool in plain words, by language (en, de, ...). It
-                                is the text a person reads when asked to allow it.
-                              maxProperties: 16
-                              minProperties: 1
-                              type: object
-                            identifiers:
-                              description: |-
-                                Identifiers are the fields of the answer that the app made up, such as
-                                the number of a new task, by their JSON pointer into the answer. A plan
-                                replayed against the real app puts the real value in their place.
-                              items:
-                                maxLength: 256
-                                type: string
-                              maxItems: 32
-                              type: array
-                              x-kubernetes-list-type: set
-                            input:
-                              description: Input is the JSON Schema of the tool's
-                                arguments.
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                            name:
-                              description: Name of the tool, for example create-task.
-                              maxLength: 63
-                              minLength: 1
-                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                              type: string
-                            output:
-                              description: Output is the JSON Schema of the tool's
-                                answer.
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                            reverse:
-                              description: Reverse is the tool of this adapter that
-                                undoes this one.
-                              properties:
-                                name:
-                                  maxLength: 63
-                                  minLength: 1
-                                  type: string
-                                version:
-                                  pattern: ^v[0-9]+$
-                                  type: string
-                              required:
-                              - name
-                              - version
-                              type: object
-                            version:
-                              description: Version of the tool, for example v1.
-                              maxLength: 8
-                              pattern: ^v[0-9]+$
-                              type: string
-                          required:
-                          - description
-                          - name
-                          - version
-                          type: object
-                        maxItems: 256
-                        minItems: 1
-                        type: array
-                        x-kubernetes-list-map-keys:
-                        - name
-                        - version
-                        x-kubernetes-list-type: map
-                    required:
-                    - speaksAs
-                    - tools
                     type: object
-                    x-kubernetes-validations:
-                    - message: a tool's reverse names a tool of this adapter, at a
-                        version it lists
-                      rule: self.tools.all(t, !has(t.reverse) || self.tools.exists(u,
-                        u.name == t.reverse.name && u.version == t.reverse.version))
                   backup:
                     description: Backup declares what a consistent copy of this component
                       consists of.
@@ -380,22 +263,6 @@ spec:
                           - openBaoPath
                           type: object
                         type: array
-                      consistency:
-                        default: app
-                        description: |-
-                          Consistency selects whether all of this app's stores must be captured
-                          inside one quiesce window. Defaults to app.
-                        enum:
-                        - app
-                        - perStore
-                        type: string
-                      minRestoreVersion:
-                        description: |-
-                          MinRestoreVersion refuses to restore a bundle into an app older than this
-                          version, expressed as the app version the profile's chart deploys.
-                          Restoring older data into a newer app is allowed — that just runs the
-                          app's own migrations — but the reverse silently corrupts.
-                        type: string
                       quiesce:
                         description: Quiesce controls how writes are paused while
                           the app is captured.
@@ -1091,35 +958,6 @@ spec:
                           maxItems: 64
                           type: array
                           x-kubernetes-list-type: set
-                        source:
-                          description: Source restricts who may call this entry, before
-                            authMode is considered.
-                          properties:
-                            cidrs:
-                              description: CIDRs admitted, after the real client IP
-                                is resolved at the edge.
-                              items:
-                                maxLength: 43
-                                type: string
-                              maxItems: 64
-                              type: array
-                              x-kubernetes-list-type: set
-                            component:
-                              description: |-
-                                Component names another installed component whose pods may call this
-                                entry. Preferred over CIDRs, which age badly.
-                              maxLength: 63
-                              type: string
-                          type: object
-                          x-kubernetes-validations:
-                          - message: exactly one of cidrs or component
-                            rule: (has(self.cidrs) && self.cidrs.size() > 0) != (has(self.component)
-                              && self.component.size() > 0)
-                        stripPrefix:
-                          description: |-
-                            StripPrefix removes the matched path prefix before the request reaches
-                            the backend.
-                          type: boolean
                         subDomain:
                           description: |-
                             SubDomain is the host label of this entry in the tenant's zone. Empty
@@ -1304,10 +1142,8 @@ spec:
                           to an app'
                         rule: '!has(self.apex) || !self.apex || self.authMode == ''none'''
                       - message: a gateway entry is behind the zone's session (authMode
-                          oidc) or pins its caller (source). What needs neither is
-                          a perimeter surface
+                          oidc). What needs no session is a perimeter surface
                         rule: self.surface != 'gateway' || self.authMode == 'oidc'
-                          || has(self.source)
                     maxItems: 32
                     type: array
                     x-kubernetes-list-map-keys:
@@ -1490,12 +1326,16 @@ spec:
                                     permanently diff against GitOps tooling that applies CRD defaults
                                     server-side.
                                   type: boolean
-                                databasePerTenant:
-                                  default: true
+                                connectionLimit:
                                   description: |-
-                                    DatabasePerTenant creates a separate database for each tenant (default true).
-                                    Set to false only for shared-schema apps.
-                                  type: boolean
+                                    ConnectionLimit is the most connections the app's account may hold at
+                                    once on the shared server, which every tenant's apps use. Unset is
+                                    DefaultDatabaseConnectionLimit; a profile raises it for an app whose
+                                    pools need more, within the maximum.
+                                  format: int32
+                                  maximum: 100
+                                  minimum: 1
+                                  type: integer
                                 engine:
                                   default: postgresql
                                   description: Engine selects the database engine.
@@ -1983,11 +1823,6 @@ spec:
                                   description: S3 requests a per-tenant S3 bucket
                                     from the platform's object store.
                                   properties:
-                                    bucketPerTenant:
-                                      default: true
-                                      description: BucketPerTenant creates a dedicated
-                                        bucket for each tenant. Defaults to true.
-                                      type: boolean
                                     objectLock:
                                       description: |-
                                         ObjectLock makes the bucket with S3 Object Lock, which cannot be
@@ -2330,14 +2165,6 @@ spec:
                     - tile
                     - from
                     - none
-                    type: string
-                  launchFrom:
-                    description: |-
-                      LaunchFrom names the contract whose provider opens this component.
-                      Required when Launch is "from", meaningless otherwise. It records what
-                      the model could not say before: which component opens this one.
-                    maxLength: 63
-                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
                   package:
                     description: Package is how the component is deployed.
@@ -3137,6 +2964,86 @@ spec:
                           receiving: each is granted per install, by a named person, and recorded
                           on the Component.
                         properties:
+                          apiExtensions:
+                            description: |-
+                              APIExtensions are resource types the component adds to the cluster's
+                              API. Cluster scope, and approved by break-glass alone: a type is there
+                              for every tenant, and outlives the install that brought it.
+                            items:
+                              description: |-
+                                APIExtensionRequest asks for resource types of the component's own.
+
+                                The definitions are the CustomResourceDefinitions themselves, so that what
+                                an approver reads is what is installed: a chart's CRDs are never installed
+                                (app charts render with skipCRDs, and a tenant chart may not write one).
+                                The operator installs them once a live grant for apiExtensions/<name> is on
+                                the install, and only as new types of a group no other definition on the
+                                cluster is in: every definition is in Group, names a resource of its own,
+                                and has no conversion webhook. They are never removed by the operator --
+                                removing a type deletes every object of it -- and the component's
+                                ServiceAccount reads them, and writes their status, only while the grant
+                                lives.
+                              properties:
+                                definitions:
+                                  description: |-
+                                    Definitions are the CustomResourceDefinitions, apiextensions.k8s.io/v1,
+                                    as they are installed.
+                                  items:
+                                    type: object
+                                    x-kubernetes-preserve-unknown-fields: true
+                                  maxItems: 8
+                                  minItems: 1
+                                  type: array
+                                  x-kubernetes-preserve-unknown-fields: true
+                                group:
+                                  description: |-
+                                    Group is the API group every definition is in: the add-on's own,
+                                    never one of Kubernetes' or the platform's.
+                                  maxLength: 200
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$
+                                  type: string
+                                  x-kubernetes-validations:
+                                  - message: the group is the add-on's own, never
+                                      Kubernetes' or the platform's
+                                    rule: '!(self == ''gentianos.io'' || self.endsWith(''.gentianos.io'')
+                                      || self == ''k8s.io'' || self.endsWith(''.k8s.io'')
+                                      || self == ''kubernetes.io'' || self.endsWith(''.kubernetes.io''))'
+                                name:
+                                  description: |-
+                                    Name is what a PrivilegeGrant refers to (apiExtensions/<name>). Unique
+                                    within the profile.
+                                  maxLength: 63
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                reason:
+                                  description: Reason is what the approver reads.
+                                  minLength: 10
+                                  type: string
+                                serviceAccount:
+                                  description: |-
+                                    ServiceAccount is the account the component's chart runs its pods
+                                    under, in the component's namespace: the one that reads the types and
+                                    writes their status. Not "default", which every pod without an account
+                                    of its own runs under.
+                                  maxLength: 253
+                                  pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                                  type: string
+                                  x-kubernetes-validations:
+                                  - message: the component's own ServiceAccount, not
+                                      default
+                                    rule: self != 'default'
+                              required:
+                              - definitions
+                              - group
+                              - name
+                              - reason
+                              - serviceAccount
+                              type: object
+                            maxItems: 4
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
                           clusterRoles:
                             description: |-
                               ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
@@ -3606,12 +3513,16 @@ spec:
                                   permanently diff against GitOps tooling that applies CRD defaults
                                   server-side.
                                 type: boolean
-                              databasePerTenant:
-                                default: true
+                              connectionLimit:
                                 description: |-
-                                  DatabasePerTenant creates a separate database for each tenant (default true).
-                                  Set to false only for shared-schema apps.
-                                type: boolean
+                                  ConnectionLimit is the most connections the app's account may hold at
+                                  once on the shared server, which every tenant's apps use. Unset is
+                                  DefaultDatabaseConnectionLimit; a profile raises it for an app whose
+                                  pools need more, within the maximum.
+                                format: int32
+                                maximum: 100
+                                minimum: 1
+                                type: integer
                               engine:
                                 default: postgresql
                                 description: Engine selects the database engine. Defaults
@@ -4099,11 +4010,6 @@ spec:
                                 description: S3 requests a per-tenant S3 bucket from
                                   the platform's object store.
                                 properties:
-                                  bucketPerTenant:
-                                    default: true
-                                    description: BucketPerTenant creates a dedicated
-                                      bucket for each tenant. Defaults to true.
-                                    type: boolean
                                   objectLock:
                                     description: |-
                                       ObjectLock makes the bucket with S3 Object Lock, which cannot be
@@ -4323,10 +4229,14 @@ spec:
                     type: object
                   sessionMaxAge:
                     description: |-
-                      SessionMaxAge caps the app's own session, for apps that run their own
-                      login. The edge bounds reachability; it does not refresh the groups an
-                      app captured at its own login, so this — not the access-token lifetime —
-                      bounds what a user may still do inside the app after their rights change.
+                      SessionMaxAge caps, at the realm, how long a sign-in through the app's
+                      own OIDC clients lasts: the operator sets it as the clients' session
+                      lifespan, and past that age from sign-in the realm refuses their
+                      refresh, so the app cannot renew its tokens for that person without a
+                      new sign-in, which reads the person's groups again. It does not end a
+                      session the app keeps in its own cookie: an app that does not go back
+                      to the realm once a person is signed in keeps that session for as long
+                      as the app itself allows. Unset, the clients keep the realm's limits.
                     type: string
                   trustTier:
                     description: |-
@@ -4485,13 +4395,6 @@ spec:
                     has(self.__package__.addon)].exists_one(x, x)'
                 - message: an addon is package.addon on this kind, not customization.addon
                   rule: '!has(self.customization) || !has(self.customization.addon)'
-                - message: 'launch from needs launchFrom: which contract''s provider
-                    opens this'
-                  rule: self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size()
-                    > 0)
-                - message: launchFrom is meaningless unless launch is from
-                  rule: self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size()
-                    == 0
                 - message: 'launch tile needs a tile on an exposure or on package.api:
                     an app nobody can open is installed and lost'
                   rule: self.launch != 'tile' || (has(self.expose) && self.expose.exists(e,
@@ -4503,8 +4406,8 @@ spec:
                     own, never also the app it adapts'
                   rule: '!has(self.classes) || !(''adapter'' in self.classes) || self.classes.size()
                     == 1'
-                - message: 'spec.adapter is for class adapter, and class adapter needs
-                    it: the reviewed list of its tools'
+                - message: spec.adapter is for class adapter, and class adapter needs
+                    it
                   rule: (has(self.classes) && 'adapter' in self.classes) == has(self.adapter)
                 - message: 'an adapter has launch none: nobody opens it'
                   rule: '!has(self.adapter) || self.launch == ''none'''

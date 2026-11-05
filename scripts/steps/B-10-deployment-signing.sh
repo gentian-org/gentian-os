@@ -66,7 +66,7 @@ check() {
     # Secret is External Secrets' to make, and a step that checked the Secret
     # would report satisfied for a vault that had lost the key.
     [[ -n "${BAO_TOKEN:-}" && -n "${BAO_ADDR:-}" ]] || return "${CHECK_UNDEFINED}"
-    bao_curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
+    bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
         "${BAO_ADDR}/v1/$(_signing_vault_path)" 2>/dev/null |
         grep -q '"private"' || return "${CHECK_MISSING}"
 }
@@ -145,8 +145,8 @@ PYEOF
     secret_json="$(gentian_export_secret_key director |
         python3 -c 'import json,sys; print(json.dumps({"private": sys.stdin.read()}))')"
     body="$(bao_curl -s -o /dev/null -w '%{http_code}' \
-        -H "X-Vault-Token: ${BAO_TOKEN}" -H "Content-Type: application/json" \
-        -X POST -d "{\"data\": ${secret_json}}" \
+        -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") -H "Content-Type: application/json" \
+        -X POST --data-binary @<(printf '{"data": %s}' "${secret_json}") \
         "${BAO_ADDR}/v1/$(_signing_vault_path)")"
     if [[ "${body}" -lt 200 || "${body}" -ge 300 ]]; then
         error "Writing the director's signing key to the vault answered HTTP ${body}."

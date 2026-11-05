@@ -78,6 +78,20 @@ func newIdentityScope(in *Input) *identityScope {
 	return id
 }
 
+// capSession sets the realm's cap on an app client's sessions from the
+// profile's spec.sessionMaxAge: past that age from sign-in the realm refuses
+// the client's refresh, so the app cannot renew its tokens for that person
+// without a new sign-in. It does not reach a session the app keeps in its
+// own cookie. Unset, the client keeps the realm's own limits.
+//
+// The lifespan only, not the idle timeout: the field bounds how long a
+// sign-in may be used, which is an age, not a period of quiet.
+func (id *identityScope) capSession(fp map[string]interface{}) {
+	if max := id.profile.SessionMaxAge; max != nil && max.Duration > 0 {
+		fp["clientSessionMaxLifespan"] = max.Duration.String()
+	}
+}
+
 // services are the profile's requires.services, never nil.
 func (id *identityScope) services() *gentianov1alpha1.ServiceRequirements {
 	if id.profile.Requires == nil || id.profile.Requires.Services == nil {

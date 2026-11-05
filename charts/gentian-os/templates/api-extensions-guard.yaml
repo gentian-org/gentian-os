@@ -1,0 +1,88 @@
+# What the operator may write of the cluster's API: an add-on's own types.
+#
+# The operator installs the CustomResourceDefinitions a profile brings, once
+# break-glass granted apiExtensions/<name> on the install
+# (internal/controller/component_api_extensions.go). To do that it may create
+# and update definitions, which Kubernetes cannot hold to names; this holds
+# its writes to the rules the operator itself checks
+# (internal/security/api_extensions.go), so that a fault in the operator
+# cannot change a type it did not install:
+#
+#   - a definition it writes carries gentianos.io/api-extension, the profile;
+#   - one it changes carried the same profile's label before;
+#   - its group is neither Kubernetes' nor the platform's;
+#   - it is namespaced;
+#   - it has no conversion webhook, which the API server would call on every
+#     read of the type.
+#
+# Every other writer of definitions -- the installer, Helm for the kernel,
+# Crossplane for its providers -- is not looked at.
+{{- $operator := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "gentian-os.serviceAccountName" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gentian-api-extensions
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["apiextensions.k8s.io"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["customresourcedefinitions"]
+  matchConditions:
+  - name: the-operator
+    expression: request.userInfo.username == {{ $operator | quote }}
+  variables:
+  - name: profile
+    expression: >-
+      has(object.metadata.labels) && 'gentianos.io/api-extension' in object.metadata.labels
+      ? object.metadata.labels['gentianos.io/api-extension'] : ''
+  - name: profileBefore
+    expression: >-
+      oldObject == null ? '' :
+      (has(oldObject.metadata.labels) && 'gentianos.io/api-extension' in oldObject.metadata.labels
+       ? oldObject.metadata.labels['gentianos.io/api-extension'] : '')
+  - name: group
+    expression: object.spec.group
+  validations:
+  - expression: variables.profile != ''
+    reason: Forbidden
+    messageExpression: >-
+      'the operator writes only the definitions of a profile, labeled gentianos.io/api-extension; '
+      + object.metadata.name + ' is not one'
+  - expression: request.operation == 'CREATE' || variables.profileBefore == variables.profile
+    reason: Forbidden
+    messageExpression: >-
+      'the operator changes only a definition it installed for the same profile; '
+      + object.metadata.name + " is not " + variables.profile + "'s"
+  - expression: >-
+      variables.group.contains('.')
+      && !(variables.group in ['k8s.io', 'kubernetes.io', 'gentianos.io'])
+      && !variables.group.endsWith('.k8s.io')
+      && !variables.group.endsWith('.kubernetes.io')
+      && !variables.group.endsWith('.gentianos.io')
+    reason: Forbidden
+    messageExpression: >-
+      "an add-on's types are in its own group, never Kubernetes' or the platform's: "
+      + variables.group
+  - expression: object.spec.scope == 'Namespaced'
+    reason: Forbidden
+    message: an add-on's type is namespaced
+  - expression: >-
+      !has(object.spec.conversion) || !has(object.spec.conversion.strategy)
+      || object.spec.conversion.strategy == 'None'
+    reason: Forbidden
+    message: an add-on's type has no conversion webhook
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gentian-api-extensions
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  policyName: gentian-api-extensions
+  validationActions: [Deny]

@@ -216,9 +216,7 @@ func TestComponentProfileRules(t *testing.T) {
 		// media type over bytes that are not one is not a PNG either.
 		{"an SVG tile", "  classes: [app]\n  launch: tile\n  trustTier: certified" + strings.Replace(tile, "data:image/png;base64,iVBORw0KGgo", "data:image/svg+xml;base64,PHN2Zy8+", 1), "logo"},
 		{"a PNG media type over an SVG", "  classes: [app]\n  launch: tile\n  trustTier: certified" + strings.Replace(tile, "iVBORw0KGgo", "PHN2Zy8+", 1), "logo"},
-		{"opened by another component", "  classes: [app]\n  launch: from\n  launchFrom: file-store\n  trustTier: certified" + gateway, ""},
-		{"launch from with nothing named", "  classes: [app]\n  launch: from\n  trustTier: certified" + gateway, "launch from needs launchFrom"},
-		{"launchFrom without launch from", "  classes: [app]\n  launch: none\n  launchFrom: file-store\n  trustTier: certified" + gateway, "launchFrom is meaningless"},
+		{"opened by another component", "  classes: [app]\n  launch: from\n  trustTier: certified" + gateway, ""},
 
 		{"authMode has no default", app + "\n  expose:\n  - {name: web, surface: gateway, backend: {service: x, port: 80}}\n", "authMode"},
 		{"surface has no default", app + "\n  expose:\n  - {name: web, authMode: oidc, backend: {service: x, port: 80}}\n", "surface"},
@@ -233,7 +231,7 @@ func TestComponentProfileRules(t *testing.T) {
 		// The two entry types an approver decides beside a plain public
 		// address, and the modes that promised a check nothing makes.
 		{"a public entry whose callers the app checks", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: app, paths: [/dav/], backend: {service: x, port: 80}}\n", ""},
-		{"authMode app behind sign-in", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: app, source: {component: c}, backend: {service: x, port: 80}}\n", "authMode app is for a perimeter entry"},
+		{"authMode app behind sign-in", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: app, backend: {service: x, port: 80}}\n", "authMode app is for a perimeter entry"},
 		{"a password the proxy would have to check", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: basic, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
 		{"a token the edge would have to verify", app + "\n  expose:\n  - {name: api, surface: perimeter, authMode: jwt, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
 		{"a bearer the edge would have to verify", app + "\n  expose:\n  - {name: api, surface: perimeter, authMode: bearer, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
@@ -244,18 +242,20 @@ func TestComponentProfileRules(t *testing.T) {
 		{"the Authorization header is the app's own", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n", ""},
 		{"clientAuthorization is one word", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: platform, backend: {service: x, port: 80}}\n", "Unsupported value"},
 		{"clientAuthorization on a public entry", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: app, clientAuthorization: app, backend: {service: x, port: 80}}\n", "clientAuthorization is for a gateway entry behind the session"},
-		{"clientAuthorization without a session", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c}, clientAuthorization: app, backend: {service: x, port: 80}}\n", "clientAuthorization is for a gateway entry behind the session"},
+		{"clientAuthorization without a session", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, clientAuthorization: app, backend: {service: x, port: 80}}\n", "clientAuthorization is for a gateway entry behind the session"},
 		{"the app's own header and the platform's token in one", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, forwardToken: true, backend: {service: x, port: 80}}\n", "clientAuthorization excludes forwardToken and exchangeToken: the Authorization header"},
 		{"the app's own header and an exchanged token in one", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, exchangeToken: true, backend: {service: x, port: 80}}\n", "clientAuthorization excludes forwardToken and exchangeToken: the Authorization header"},
 		{"the app's own header beside an entry that asks for an exchanged token", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n  - {name: api, surface: gateway, authMode: oidc, subDomain: api, exchangeToken: true, backend: {service: x, port: 80}}\n", "across a component's entries"},
 		{"the app's own header beside an entry that forwards the platform's token", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n  - {name: api, surface: gateway, authMode: oidc, subDomain: api, forwardToken: true, backend: {service: x, port: 80}}\n", "excludes forwardToken and exchangeToken across a component's entries"},
 		{"a service asks no tenant's approver", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, clientAuthorization: app, backend: {service: x, port: 80}}\n", "a service does not declare clientAuthorization"},
 
-		{"a pinned caller, by component", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", ""},
-		{"a gateway entry with no session and no pinned caller", app + "\n  expose:\n  - {name: open, surface: gateway, authMode: none, backend: {service: x, port: 80}}\n", "behind the zone's session"},
+		// A gateway entry is served only behind the session. The pinned
+		// caller (source) that once stood in for it was never routed, and
+		// the API server prunes the field, so an entry declaring it is an
+		// entry with no session.
+		{"a gateway entry that pins its caller instead", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", "behind the zone's session"},
+		{"a gateway entry with no session", app + "\n  expose:\n  - {name: open, surface: gateway, authMode: none, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 		{"a gateway entry with a bearer and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, backend: {service: x, port: 80}}\n", "behind the zone's session"},
-		{"a source that pins nothing", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
-		{"a source that pins both ways", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c, cidrs: [10.0.0.0/8]}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
 
 		// An exposure may route into another component: an addon's tile points
 		// into its base, and a bound shared-app routes into shared-<app>.
@@ -426,44 +426,21 @@ func TestAdapterProfileRules(t *testing.T) {
 	adapter := `
   adapter:
     adapts: {profile: openproject, versions: ["15.4.0"]}
-    speaksAs: token
-    tools:
-    - name: create-task
-      version: v1
-      description: {en: "Create a task in a project", de: "Eine Aufgabe in einem Projekt anlegen"}
-      class: change
-      input: {type: object, properties: {title: {type: string}}, required: [title]}
-      output: {type: object, properties: {id: {type: integer}}}
-      identifiers: [/id]
-      reverse: {name: delete-task, version: v1}
-    - name: delete-task
-      version: v1
-      description: {en: "Delete a task"}
-      class: change
-    - name: list-tasks
-      version: v1
-      description: {en: "List the tasks of a project"}
-      class: read
 `
 	head := "  classes: [adapter]\n  launch: none\n  trustTier: certified"
 	cases := []struct{ name, spec, want string }{
 		{"an adapter", head + adapter, ""},
 
 		{"an adapter that is also an app", "  classes: [adapter, app]\n  launch: none\n  trustTier: certified" + adapter, "adapter is exclusive"},
-		{"an adapter with no tools", head + "\n  adapter: {adapts: {profile: openproject}, speaksAs: token, tools: []}\n", "tools"},
 		{"an adapter without its block", head + "\n", "spec.adapter is for class adapter"},
-		{"an app with a tool list", "  classes: [app]\n  launch: none\n  trustTier: certified" + adapter, "spec.adapter is for class adapter"},
-		{"an adapter someone opens", "  classes: [adapter]\n  launch: from\n  launchFrom: tasks\n  trustTier: certified" + adapter, "an adapter has launch none"},
+		{"an app with an adapter block", "  classes: [app]\n  launch: none\n  trustTier: certified" + adapter, "spec.adapter is for class adapter"},
+		{"an adapter someone opens", "  classes: [adapter]\n  launch: from\n  trustTier: certified" + adapter, "an adapter has launch none"},
 		{"an adapter on the gateway", head + adapter + "  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", "an adapter exposes nothing"},
 		{"an adapter that provides a contract", head + adapter + "  provides:\n  - {name: tools}\n", "an adapter provides no contract"},
 		{"an adapter that integrates", head + adapter + "  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n", "an adapter declares no integrations"},
 		{"an adapter that vouches", "  classes: [adapter]\n  launch: none\n  trustTier: platform" + adapter + "  requires:\n    services:\n      vouching: {}\n", "an adapter does not vouch for people"},
 		{"an adapter placed on every tenant", head + adapter + "  defaultForTenants: true\n", "never placed by default"},
-		{"an adapter that adapts nothing", head + "\n  adapter: {speaksAs: token, tools: [{name: t, version: v1, description: {en: x}}]}\n", "spec.adapter.adapts names the app"},
-		{"a reverse that is not one of its tools", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: token\n    tools:\n    - {name: create-task, version: v1, description: {en: x}, reverse: {name: delete-task, version: v1}}\n", "a tool's reverse names a tool of this adapter"},
-		{"a tool with no description", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: token\n    tools:\n    - {name: t, version: v1, description: {}}\n", "description"},
-		{"an unknown way to speak as the person", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: service-account\n    tools:\n    - {name: t, version: v1, description: {en: x}}\n", "Unsupported value"},
-		{"an unknown tool class", head + "\n  adapter:\n    adapts: {profile: openproject}\n    speaksAs: token\n    tools:\n    - {name: t, version: v1, description: {en: x}, class: write}\n", "Unsupported value"},
+		{"an adapter that adapts nothing", head + "\n  adapter: {}\n", "spec.adapter.adapts names the app"},
 	}
 	for _, c := range cases {
 		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
@@ -481,7 +458,7 @@ spec:
   classes: [adapter]
   launch: none
   trustTier: certified
-  adapter: {speaksAs: token, tools: [{name: search, version: v1, description: {en: "Search the web"}, class: read}]}
+  adapter: {}
 `
 	for _, c := range []struct{ name, spec, want string }{
 		{"an adapter that is an API", "  package: {api: {baseUrl: \"https://tools.example\"}}\n", ""},

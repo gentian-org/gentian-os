@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# =============================================================================
+# ======================================================================
 # scripts/tests/test-bootstrap-switches.sh
 # =============================================================================
 # The bootstrap chart has three switches the installer turns on phase by
@@ -24,6 +24,7 @@ render() {
         -f "${NAMESPACES}" -f kernel/platforms.yaml \
         --set-string "appsets.enabled=$1" \
         --set-string "operator.enabled=$2" \
+        --set-string "operator.tag=develop-abc1234" \
         --set-string "headlamp.oidc.enabled=$3" \
         --set-string "kernelDomain=k.example" \
         --set-string "cluster=c" \
@@ -205,6 +206,13 @@ check "openbao.transitStorage that is neither is refused" \
     "$(has "$(render false false false --set-string openbao.transitStorage=consul)" 'it is raft or file' && echo 1 || echo 0)"
 check "openbao.storage that is neither is refused" \
     "$(has "$(render false false false --set-string openbao.storage=consul)" 'it is raft or file' && echo 1 || echo 0)"
+=======
+# The operator's image is the tag the installer resolved, never a branch name
+# the chart falls back to: a branch tag moves.
+check "operator: no image tag refuses to render" \
+    "$(has "$(render false true false --set-string operator.tag=)" 'operator.tag' && echo 1 || echo 0)"
+check "operator: the tag the installer resolved is the image" \
+    "$(has "$(render false true false)" 'tag: "develop-abc1234"' && echo 1 || echo 0)"
 
 echo ""
 if (( fail > 0 )); then

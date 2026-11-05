@@ -68,7 +68,7 @@ for cmd in openssl python3 sha1sum curl jq; do
 done
 
 # Try to read existing master-password and salt from OpenBao
-existing_secret=$(bao_curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+existing_secret=$(bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
@@ -148,10 +148,10 @@ kv_put() {
     echo "  Writing ${full_path}..."
     local result http_code body
     result=$(bao_curl -s -w "\n%{http_code}" \
-        -H "X-Vault-Token: ${BAO_TOKEN}" \
+        -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
         -H "Content-Type: application/json" \
         -X POST \
-        -d "{\"data\": ${json_data}}" \
+        --data-binary @<(printf '{"data": %s}' "${json_data}") \
         "${BAO_ADDR}/v1/${full_path}")
     http_code=$(echo "$result" | tail -1)
     body=$(echo "$result" | head -n -1)
@@ -178,7 +178,7 @@ kv_put_once() {
     local check_path="secret/data/gentian-os/kernel/${path}"
     local existing
     existing=$(bao_curl -sf \
-        -H "X-Vault-Token: ${BAO_TOKEN}" \
+        -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
         "${BAO_ADDR}/v1/${check_path}" 2>/dev/null || true)
     if echo "${existing}" | grep -q '"data":{'; then
         echo "  Skipping gentian-os/kernel/${path} (already exists — use 'bao kv patch' to update)"
@@ -195,7 +195,7 @@ echo "Writing secrets to OpenBao..."
 # into its HKDF-SHA256 deriver to produce per-tenant per-app credentials
 # deterministically. Path matches secrets.MasterPasswordPath in
 # internal/kernel/secrets/paths.go.
-kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" --arg s "${DERIVATION_SALT}" '{value: $v, salt: $s}')"
+kv_put_once "internal/master-password" "$(jq -n --rawfile v <(printf '%s' "${MASTER_PASSWORD}") --rawfile s <(printf '%s' "${DERIVATION_SALT}") '{value: $v, salt: $s}')"
 
 # --- PostgreSQL ---
 # --- CNPG superuser (shared CloudNativePG Cluster in platform-kernel) ------
@@ -293,7 +293,7 @@ EOF
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
 # oidc_client_secret: generated on first seed when absent.
-_DOVECOT_EXISTING=$(bao_curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
+_DOVECOT_EXISTING=$(bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
   echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"
@@ -327,8 +327,8 @@ fi
 # --- Postfix (SMTP relay credentials) ---
 if [ -n "$SMTP_RELAY_USER" ] && [ -n "$SMTP_RELAY_PASS" ]; then
     kv_put_once "mail/postfix" "$(jq -n \
-        --arg relay_username "${SMTP_RELAY_USER}" \
-        --arg relay_password "${SMTP_RELAY_PASS}" \
+        --rawfile relay_username <(printf '%s' "${SMTP_RELAY_USER}") \
+        --rawfile relay_password <(printf '%s' "${SMTP_RELAY_PASS}") \
         '{"relay_username": $relay_username, "relay_password": $relay_password}')"
 else
     echo ""
@@ -354,7 +354,7 @@ kv_put "mail/smtp" "$(jq -n \
   --arg port "${EXTERNAL_SMTP_PORT}" \
   --arg ssl "${EXTERNAL_SMTP_SSL}" \
   --arg starttls "${EXTERNAL_SMTP_STARTTLS}" \
-  --arg username "${SMTP_RELAY_USER}" \
+  --rawfile username <(printf '%s' "${SMTP_RELAY_USER}") \
   '{
     "mode": $mode,
     "host": $host,
@@ -378,7 +378,7 @@ DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
 # external-dns's and cert-manager's; the operator no longer writes DNS records.
 if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put "dns/cloudflare" "$(jq -n \
-        --arg api_token "${CF_API_TOKEN}" \
+        --rawfile api_token <(printf '%s' "${CF_API_TOKEN}") \
         --arg zone_id "${CF_ZONE_ID:-}" \
         --arg tunnel_cname "${CF_TUNNEL_CNAME:-}" \
         '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
@@ -436,7 +436,7 @@ LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
 # A path that cannot be read is not the same as a path that is not there, and
 # only the second may be filled with new values.
 if [ "${SECRET_MODE}" = "random" ]; then
-    _llm_read=$(bao_curl -s -w "\n%{http_code}" -H "X-Vault-Token: ${BAO_TOKEN}" \
+    _llm_read=$(bao_curl -s -w "\n%{http_code}" -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
         "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/llm" 2>/dev/null || true)
     _llm_code=$(echo "${_llm_read}" | tail -1)
     case "${_llm_code}" in

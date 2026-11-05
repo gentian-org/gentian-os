@@ -122,9 +122,9 @@ func (s *Server) requestPrivilege(w http.ResponseWriter, r *http.Request, c call
 func (s *Server) pendingPrivilegeRef(w http.ResponseWriter, r *http.Request, privilege string) (string, bool) {
 	kind, name := security.SplitPrivilegeRef(privilege)
 	switch kind {
-	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles:
+	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles, security.PrivilegeAPIExtensions:
 	default:
-		s.fail(w, r, http.StatusBadRequest, "the privilege is <kind>/<name>, the kind one of egress, podSecurity or clusterRoles")
+		s.fail(w, r, http.StatusBadRequest, "the privilege is <kind>/<name>, the kind one of egress, podSecurity, clusterRoles or apiExtensions")
 		return "", false
 	}
 	if !gitops.ValidName(name) || !gitops.ValidName(r.PathValue("p")) {
@@ -152,11 +152,10 @@ func (s *Server) declinePrivilege(w http.ResponseWriter, r *http.Request, c call
 		s.fail(w, r, http.StatusBadRequest, `body must be {"privilege": "<kind>/<name>", "reason": "..."}`)
 		return
 	}
-	kind, ok := s.pendingPrivilegeRef(w, r, body.Privilege)
-	if !ok {
+	if _, ok := s.pendingPrivilegeRef(w, r, body.Privilege); !ok {
 		return
 	}
-	if _, ok := s.mayApprove(w, r, &c, kind); !ok {
+	if _, ok := s.mayApprove(w, r, &c, body.Privilege); !ok {
 		return
 	}
 	// As much as a grant asks for, and for the same reader: the person who

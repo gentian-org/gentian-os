@@ -111,11 +111,11 @@ require_token() {
 
 cf() {
 	local method="$1" path="$2" data="${3:-}"
-	local args=(-sS -X "$method" -H "Authorization: Bearer $CF_API_TOKEN")
+	local args=(-sS -X "$method")
 	if [ -n "$data" ]; then
 		args+=(-H 'Content-Type: application/json' --data "$data")
 	fi
-	curl "${args[@]}" "$API$path"
+	curl "${args[@]}" -H @<(printf 'Authorization: Bearer %s\n' "$CF_API_TOKEN") "$API$path"
 }
 
 ok() {

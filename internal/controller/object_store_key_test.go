@@ -39,7 +39,7 @@ func TestTheBucketJobReadsTheAppsKeyFromASecretItOwns(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "wiki"},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
-				Storage: &gentianov1alpha1.StorageRequirement{S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true}},
+				Storage: &gentianov1alpha1.StorageRequirement{S3: &gentianov1alpha1.S3Requirement{}},
 			}},
 		},
 	}

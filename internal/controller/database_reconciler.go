@@ -120,6 +120,17 @@ func schemaPreferenceFor(profile *gentianov1alpha1.ComponentProfile) gentianov1a
 	return gentianov1alpha1.SchemaPreferenceAppSchema
 }
 
+// connectionLimitFor is the most connections the app's account may hold on
+// the shared server: the profile's, or the default. One app's pools must not
+// be able to take the server from every other tenant's apps.
+func connectionLimitFor(profile *gentianov1alpha1.ComponentProfile) int32 {
+	if profile != nil && profile.Services() != nil && profile.Services().Database != nil &&
+		profile.Services().Database.ConnectionLimit != nil {
+		return *profile.Services().Database.ConnectionLimit
+	}
+	return gentianov1alpha1.DefaultDatabaseConnectionLimit
+}
+
 // allowsDynamicDatabaseCreation reports whether the app may create databases of
 // its own at runtime. Only apps whose whole purpose is letting a user make
 // databases should ask for it — every database created this way is owned by the
@@ -243,12 +254,12 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, dbName, appName string) *u
 // the Secret of the Job's name, which the Job owns (jobSecret); it is in no
 // Job spec, no ConfigMap and no composed Object. Without it the Job
 // generates a random password locally (legacy behavior).
-func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string, withPassword bool, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
+func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string, withPassword bool, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	roleName := roleUserName(tenant.Name, appName)
 	jobName := roleJobName(tenant.Name, appName)
-	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB))
+	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB, connLimit))
 	if withPassword {
 		container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", jobName, jobSecretPasswordKey))
 	}
@@ -306,7 +317,10 @@ func provisioningSecurityContext() *corev1.SecurityContext {
 
 // --- Shell scripts -----------------------------------------------------------
 
-func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) string {
+//
+// connLimit caps the connections the role may hold (CONNECTION LIMIT); 0 is
+// none, for the platform's own services, whose pools are known.
+func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) string {
 	// When ROLE_PW is provided (Inc 21a — Seeder enabled) the script applies
 	// that exact password to the role via CREATE/ALTER ROLE WITH PASSWORD,
 	// keeping the live PostgreSQL password in lockstep with OpenBao. When
@@ -315,6 +329,10 @@ func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.Schema
 	// connect, but backends that only need the database to exist still work).
 	// The app's own schema first, unless the profile asked for public first
 	// (spec.kernelRequirements.database.schemaPreference).
+	pgLimit := int32(-1)
+	if connLimit > 0 {
+		pgLimit = connLimit
+	}
 	searchPath := fmt.Sprintf("\\\"%s\\\", public", dbName)
 	if schemaPref == gentianov1alpha1.SchemaPreferencePublic {
 		searchPath = fmt.Sprintf("public, \\\"%s\\\"", dbName)
@@ -326,10 +344,10 @@ if [ -z "${ROLE_PW:-}" ]; then
 fi
 ROLE_EXISTS=$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='%s'" postgres)
 if [ "${ROLE_EXISTS}" != "1" ]; then
-  psql -c "CREATE ROLE \"%s\" WITH LOGIN PASSWORD '${ROLE_PW}';" postgres
+  psql -c "CREATE ROLE \"%s\" WITH LOGIN CONNECTION LIMIT %d PASSWORD '${ROLE_PW}';" postgres
   echo "role %s created"
 else
-  psql -c "ALTER ROLE \"%s\" WITH LOGIN PASSWORD '${ROLE_PW}';" postgres
+  psql -c "ALTER ROLE \"%s\" WITH LOGIN CONNECTION LIMIT %d PASSWORD '${ROLE_PW}';" postgres
   echo "role %s password updated"
 fi
 DB_EXISTS=$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='%s'" postgres)
@@ -344,7 +362,7 @@ psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZA
 psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
 psql -c "ALTER ROLE \"%s\" SET search_path TO %s;" postgres
 echo "schema %s ensured"
-echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
+echo "privileges granted"`, roleName, roleName, pgLimit, roleName, roleName, pgLimit, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
 
 	// Stated both ways rather than only when enabled: a profile that turns the
 	// permission back off must actually lose it, and this Job is the only thing

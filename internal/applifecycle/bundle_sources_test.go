@@ -136,6 +136,58 @@ func TestATenantsSourcesAreWhereItsBackupsGo(t *testing.T) {
 	}
 }
 
+// A tenant's own store is listed with its sources and read with its own
+// keys; another tenant's is not reachable from it, the cluster's lists none of
+// them, and the cluster does not retire one.
+func TestATenantsStoreIsItsOwnAndNoOneElses(t *testing.T) {
+	store := func(tenant, label string) *gentianov1alpha1.BundleSource {
+		return &gentianov1alpha1.BundleSource{
+			ObjectMeta: metav1.ObjectMeta{Name: tenant + "." + label},
+			Spec: gentianov1alpha1.BundleSourceSpec{Tenant: tenant,
+				Endpoint: "https://sos.example", Bucket: tenant + "-offsite", Prefix: "gentian"},
+		}
+	}
+	corp := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "corp"}}
+	s, _ := sourcesService(t, corp, store("corp", "offsite"), store("acme", "offsite"), oldStore())
+	ctx := context.Background()
+
+	views, err := s.TenantSources(ctx, "corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 2 || views[1].Name != "corp.offsite" || views[1].Tenant != "corp" ||
+		views[1].CredentialRequirement != backup.SourceCredentialName("corp.offsite") {
+		t.Fatalf("sources %+v", views)
+	}
+	ref, err := s.ResolveSource(ctx, SourceRef{Tenant: "corp", Name: "corp.offsite", Prefix: "export-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Bucket != "corp-offsite" || ref.Prefix != "gentian/export-1" ||
+		ref.CredentialSecret != backup.SourceCredentialName("corp.offsite") {
+		t.Errorf("the store resolved to %+v", ref)
+	}
+	for _, name := range []string{"acme.offsite", "old-store"} {
+		if _, err := s.ResolveSource(ctx, SourceRef{Tenant: "corp", Name: name, Prefix: "x"}); !errors.Is(err, errNoSuchSource) {
+			t.Errorf("tenant corp reached %s: %v", name, err)
+		}
+	}
+
+	cluster, err := s.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cluster) != 1 || cluster[0].Name != "old-store" {
+		t.Errorf("the cluster's sources %+v", cluster)
+	}
+	if _, err := s.ResolveSource(ctx, SourceRef{Name: "corp.offsite", Prefix: "x"}); !errors.Is(err, errNoSuchSource) {
+		t.Errorf("the cluster read a tenant's store as its own: %v", err)
+	}
+	if err := s.RetireSource(ctx, "corp.offsite"); !errors.Is(err, errNoSuchSource) {
+		t.Errorf("the cluster retired a tenant's store: %v", err)
+	}
+}
+
 // A fetch is made suspended, confined, and only then let run; its way out
 // is owned by it and names the source's address alone.
 func TestAFetchRunsOnlyOnceItIsConfinedToItsSource(t *testing.T) {

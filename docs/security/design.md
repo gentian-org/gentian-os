@@ -71,7 +71,7 @@ One MariaDB server (`system-mariadb`) holds the databases of every tenant's Mari
 What it does not cover:
 
 - **No transport encryption is required** of an app's connection (no `REQUIRE SSL`, and the server does not set `require_secure_transport`); the account's host is `%`.
-- **No resource limits** are set on the account (`MAX_USER_CONNECTIONS` and the like): one app can exhaust the server's connections.
+- **Connections are the only resource limit.** The account holds at most `requires.services.database.connectionLimit` connections at once (`MAX_USER_CONNECTIONS`; 25 when the profile names none, at most 100), so one app cannot take every connection of the shared server. An app's PostgreSQL role is held to the same number (`CONNECTION LIMIT`). Its queries are not limited: one app's load still slows the others.
 - **The network keeps an app to the server it declared, and no further.** A tenant's namespace denies egress by default. An app's `kernel-access` policy opens the server of the engine its profile declares, on that engine's port: `system-mariadb` on 3306 for a MariaDB app, `system-postgresql` on 5432 for a PostgreSQL one, and nothing of the other. So an app in a tenant's namespace that declared no MariaDB database cannot reach the MariaDB server at all. The server's side keeps out the rest: its own policy admits tenant namespaces and the platform's named clients, and no other pod of the cluster (§2.7). Among the apps that do reach the server, the account's rights above are the only boundary between tenants.
 - **The admin credential** (`mariadb-admin`, root) is held by the operator's Jobs in `system-mariadb` and is not an app's.
 
@@ -111,7 +111,7 @@ SeaweedFS's master and filer gRPC ports (19333, 18888) are mutual TLS: they acce
 
 Closed, deliberately: PostgreSQL's metrics port (9187), and SeaweedFS's master and filer HTTP ports and its volume server's ports (reached inside the pod only; the kubelet's probes come from the node). Nothing the platform runs uses them; a cluster that brings a Prometheus adds a policy of its own selecting the same pods, since policies add up.
 
-**The rule has two sides, and neither is enough alone.** A server cannot tell one tenant's app from another's pod, so its policy admits every namespace labeled `gentianos.io/tier=tenant`. It keeps out everything that is not a tenant namespace or a client named above: the kernel's other namespaces, the other system namespaces, a tenant's DMZ, a namespace outside the layout. What keeps out an app that declared no such store is the tenant's side (§2.6): `tenant-isolation` denies egress for every pod of a tenant's namespace -- the platform tenant's and a single-tenancy cluster's `user` tenant included, since both are Tenants and the same reconcile writes it -- and `kernel-access-<app>` opens one store's port for the app that declared it. Two things on that side are wider than a declaring app: a component with a database requirement (the desktop) is opened the whole of `system-postgresql`, which the server narrows to 5432, and a capture pod (`gentian-tenant-export`) is opened the three stores a bundle can hold. A capture or restore pod has no way out of the cluster from that policy. A run whose bundle is at an external destination, and that has a step in the tenant's namespace (a volume), is given a policy of its own, `gentian-<export|restore>-destination-<run>`, selecting its own pods only, owned by the run and removed when it ends: egress to the destination's port (the endpoint's, or 443/80 by its scheme), to its address alone when the endpoint names one, and to any address on that port when it names a host by name -- a NetworkPolicy matches addresses, and a rule by name would need a CNI's own extension. A fetch of a bundle from a declared bundle source (storage outside the cluster an import reads from) runs as a Job in `system-s3` and is given `gentian-fetch-source-<fetch>`, owned by its Job, made before the Job is let run (it is created suspended) and deleted when it ends: egress to the source's address and port in the same form, to `system-s3` itself and to DNS, and nowhere else -- in a namespace that otherwise restricts no egress, this policy is what confines the pod. A fetch from a bucket of the cluster's own storage is given no way out at all. The source's keys are the custodian's to set (requirement `bundle-source-<name>`, vault `gentian-os/kernel/backup/sources/<name>`, written by the cluster's administrators only) and reach the Job by `secretKeyRef` from the ExternalSecret `bundle-source-<name>` in `system-s3`; nobody names a source's address or Secret in a request: a bundle is named by source and prefix and the operator finds both. Listing a source and reading a bundle's manifest are the operator's own reads, from `kernel-control`, as for any destination.
+**The rule has two sides, and neither is enough alone.** A server cannot tell one tenant's app from another's pod, so its policy admits every namespace labeled `gentianos.io/tier=tenant`. It keeps out everything that is not a tenant namespace or a client named above: the kernel's other namespaces, the other system namespaces, a tenant's DMZ, a namespace outside the layout. What keeps out an app that declared no such store is the tenant's side (§2.6): `tenant-isolation` denies egress for every pod of a tenant's namespace -- the platform tenant's and a single-tenancy cluster's `user` tenant included, since both are Tenants and the same reconcile writes it -- and `kernel-access-<app>` opens one store's port for the app that declared it. Two things on that side are wider than a declaring app: a component with a database requirement (the desktop) is opened the whole of `system-postgresql`, which the server narrows to 5432, and a capture pod (`gentian-tenant-export`) is opened the three stores a bundle can hold. A capture or restore pod has no way out of the cluster from that policy. A run whose bundle is at an external destination, and that has a step in the tenant's namespace (a volume), is given a policy of its own, `gentian-<export|restore>-destination-<run>`, selecting its own pods only, owned by the run and removed when it ends: egress to the destination's port (the endpoint's, or 443/80 by its scheme), to its address alone when the endpoint names one, and to any address on that port when it names a host by name -- a NetworkPolicy matches addresses, and a rule by name would need a CNI's own extension. A fetch of a bundle from a declared bundle source (storage outside the cluster an import reads from) runs as a Job in `system-s3` and is given `gentian-fetch-source-<fetch>`, owned by its Job, made before the Job is let run (it is created suspended) and deleted when it ends: egress to the source's address and port in the same form, to `system-s3` itself and to DNS, and nowhere else -- in a namespace that otherwise restricts no egress, this policy is what confines the pod. A fetch from a bucket of the cluster's own storage is given no way out at all. The source's keys are the custodian's to set (requirement `bundle-source-<name>`, vault `gentian-os/kernel/backup/sources/<name>`, written by the cluster's administrators only; for a tenant's own store, `<tenant>.<name>` with `spec.tenant`, which its exports write to, `gentian-os/tenants/<t>/backup/sources/<name>`, written by that tenant's administrators and read by ESO under the `tenants/+/backup/*` grant that already excludes the escrowed identity) and reach the Job by `secretKeyRef` from the ExternalSecret `bundle-source-<name>` in `system-s3`; nobody names a source's address or Secret in a request: a bundle is named by source and prefix and the operator finds both. Listing a source and reading a bundle's manifest are the operator's own reads, from `kernel-control`, as for any destination.
 
 **A pod of the server's own namespace is admitted without a label.** The operator's Jobs there carry none on their pods, and a pod there can mount the store's admin Secret, so a label would keep nobody out. The boundary is who may create a pod in a system namespace.
 
@@ -733,7 +733,7 @@ sections above; the network side is [networking.md §1](../concepts/networking.m
 | L1 | Edge session | who is this, in which realm? | `SecurityPolicy.oidc`, one confidential client per tenant zone, the kernel realm for the platform tenant's zone and the kernel consoles ([routing.md §4.1](../concepts/routing.md)) |
 | L1′ | Perimeter | which paths, how much, does a credential pass? | the publishing proxy in the tenant's DMZ: declared paths only, one reading of a path, identity headers and cookies removed, `Authorization` removed unless approved as `authMode: app` (§2.14). It verifies no caller |
 | L2 | Reachability | may this person reach this component at all? | the bouncer, asking OpenFGA the route's relation over the stored membership projection; cached per `(sub, sid, route)`, evicted on the change log |
-| L3 | App session and authorization | what may they do inside? | the app, from the identity headers or its own session with its own client and audience, capped by `sessionMaxAge` |
+| L3 | App session and authorization | what may they do inside? | the app, from the identity headers or its own session with its own client and audience; `sessionMaxAge` caps how long the realm renews that client's sign-in, not the app's own cookie |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy from `requires`, `integrations` and granted privileges (§2.6–§2.9, §2.13); Kyverno for what a pod may be |
 
 The edge decides reachability and the app decides everything finer, so the
@@ -784,17 +784,23 @@ refresh at the realm, and the bouncer runs as several replicas that keep no
 state between them. The bound on how long a signed-out person is still let
 through is the access token's lifetime, which the realm sets; that lifetime
 is the control. The realm tells an app of a sign-out inside the cluster where
-the app can be told (§2.15), and the hard bound on what a person may do
-*inside* an app is the app's own session, which a profile caps with
-`sessionMaxAge`.
+the app can be told (§2.15), and the bound on what a person may do
+*inside* an app is the app's own session. A profile's `sessionMaxAge` caps
+that sign-in at the realm: past that age the realm refuses the refresh of the
+app's clients, so the app cannot renew its tokens without a new sign-in. It
+does not end a session the app keeps in its own cookie; for an app that does
+not go back to the realm once a person is signed in, the app's own session
+setting is the bound.
 
 **Platform rights follow the store; app rights follow the token.** Membership
 reaches OpenFGA from the realm's signed events through the operator (§3.0),
 and the bouncer evicts on the next poll, so a withdrawn platform right is gone
 without any token being touched. Apps read groups from their own tokens, so a
-changed membership reaches an app at that person's next sign-in to it; a
-profile whose app keeps its own session declares `sessionMaxAge` so the bound
-is a number somebody chose.
+changed membership reaches an app at that person's next sign-in to it. A
+profile declares `sessionMaxAge` so that the realm forces that sign-in at an
+age somebody chose, for an app that renews its tokens at the realm; an app
+that keeps its own cookie session without doing so is bounded by its own
+session setting alone.
 
 **WebSockets** are authorized at upgrade; the connection carries no duration
 limit (§3.0).
@@ -905,7 +911,7 @@ the code does.
 | The rights check for a component (`requires.services.rights`) | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](../concepts/mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
 | A tenant's backup and deletion | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artifacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](../concepts/data-lifecycle.md)) |
-| Approval path for profile-declared egress | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). The set is empty, so no role is bound on any cluster. The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
+| Approval path for profile-declared egress | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). Resource types of a component's own are installed only once break-glass granted them (§3.4b). The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | `kernel/security/kyverno/policies/` |
 | Who may ask the internal CA for a certificate | Kernel and system namespaces only (§12.4) |
 | The internal CA's key | Generated in the vault's PKI engine and never out of it; cert-manager may only ask it to sign, for the role's names (§12.4). Not renewed while the vault is sealed |
@@ -1004,7 +1010,7 @@ Field reference and deployment flow: [app-catalog.md](../concepts/app-catalog.md
 | Contracts the app **provides** to other apps | `spec.provides[]` | `{ name, protocol?, endpoint? }` |
 | Contracts the app **may consume** from other apps | `spec.integrations[]` | `{ contract, provider?, capabilities? }` |
 | Platform services (identity, database, object storage, cache, mail, model gateway, …) | `spec.requires.services` | Separate from contracts |
-| What goes beyond the default posture (pod-security waiver, egress, cluster roles) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
+| What goes beyond the default posture (pod-security waiver, egress, cluster roles, API extensions) | `spec.requires.privileges` | Requests, answered per install (§3.0) |
 | Where the chart takes what was provided | `spec.package.valueMapping` | Chart value keys per service |
 
 A contract is a name (`file-store`, `project-management`) two profiles agree on. Nothing in the cluster holds a contract's definition or checks a call against one. A provider may say where it answers one (`endpoint`: a Service of its own, the port its pods listen on, a path); the binding carries that, the consumer is told the address and a grant opens that port only. What is asked there is the two apps' business.
@@ -1062,7 +1068,6 @@ spec:
           accessType: CONFIDENTIAL
       database:
         engine: postgresql
-        databasePerTenant: true
 
   provides:                          # contracts this app serves to other apps
     - name: project-management
@@ -1154,7 +1159,7 @@ Revoking a grant removes the network path and both key Secrets in one reconcile.
 
 #### 3a. Cluster roles — named by the platform, never written by a profile
 
-Referred to as §3.4a. An app that needs to read something of the cluster through the Kubernetes API asks for a cluster role **by name**:
+Referred to as §3.4a. An app that needs to read something of the cluster through the Kubernetes API, or to write one of the platform's kinds, asks for a cluster role **by name**:
 
 ```yaml
 spec:
@@ -1172,17 +1177,56 @@ The operator binds the role to that ServiceAccount, in the component's own names
 |---|---|---|
 | The name is in the platform's set | The platform, in this repository | `UnknownRole` |
 | The cluster permits it for this profile: `PlatformSecurityPolicy.spec.allowedClusterRoles[]`, `{profile, role}` | Whoever holds `can_set_admission` on the cluster (`PUT /v1/clusters/{c}/platform-security`, `{"allowedClusterRoles": […]}`) | `NotAllowed` |
-| A live grant `clusterRoles/<name>` is on the install | The security officer (`cluster#can_approve`), as for a pod-security waiver | `NotGranted` |
+| A live grant `clusterRoles/<name>` is on the install | The security officer (`cluster#can_approve`), as for a pod-security waiver; break-glass (`cluster#can_set_admission`) for a role that writes | `NotGranted` |
 
 The Component's `ClusterRolesBound` condition names each request and what became of it. Two more reasons bind nothing: `NoServiceAccount` (the entry names none, or names `default`, which every pod without an account of its own runs under) and `RoleNotInstalled` (the platform's `ClusterRole` object is not on the cluster, or does not carry the platform's label). A binding goes at the component's next reconcile when the grant is withdrawn or has expired, when the cluster stops permitting it (a change of the policy wakes the component), when the profile stops asking, and with the component. Nothing reconciles at the moment a grant expires.
 
 **A profile's own rules are never made into a role.** `rules` is accepted on an entry; such an entry binds nothing and the condition says `FreeFormRules`. The install waits for the grant of every privilege the profile asks for, this kind included.
 
-**The set is the platform's and is empty.** No profile of the catalog asks for a cluster role. With an empty set the operator has no permission on RBAC objects and asks the API server for none. A role is added in this repository, never by a catalog or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
+**The set is the platform's.** It holds one role:
 
-1. The `ClusterRole` in `charts/gentian-os/templates/profile-cluster-roles.yaml`, named `gentian-profile-role-<name>` and labeled `gentianos.io/profile-cluster-role: <name>`. Read verbs only, named resources, no Secrets, no wildcard, nothing of RBAC or admission, no `nodes/proxy`, no impersonation; the test refuses anything else.
-2. The name, with what it allows in an approver's words, in `PlatformClusterRoles`.
+| Role | Allows | Approved by |
+|---|---|---|
+| `tenant-exports` | start, read and remove `TenantExport`s in every tenant's namespace | break-glass |
+
+An export a component starts is held by admission (`charts/gentian-os/templates/tenant-export-guard.yaml`) to what the tenant and the cluster declared: it goes to the cluster's storage, the tenant's backup policy or a store the tenant declared, never to an endpoint the export names, and it is encrypted to the cluster's recovery keys, with no recipients of its own and no passphrase. The operator's own exports, for the Admin Console's export and the platform's schedules, and a person's are not held by it.
+
+A role is added in this repository, never by a catalog or a tenant, in three places that a test holds together (`internal/security/cluster_roles_test.go`):
+
+1. The `ClusterRole` in `charts/gentian-os/templates/profile-cluster-roles.yaml`, named `gentian-profile-role-<name>` and labeled `gentianos.io/profile-cluster-role: <name>`. Read verbs only, named resources, no Secrets, no wildcard, nothing of RBAC or admission, no `nodes/proxy`, no impersonation; the test refuses anything else. A role marked as one that writes may also create, update, patch and delete, kinds of `gentianos.io` only.
+2. The name, with what it allows in an approver's words and whether it writes, in `PlatformClusterRoles`. A role that writes is break-glass's to approve (`security.PrivilegeApprover`).
 3. The operator's own permissions, as markers beside the reconciler: read on `clusterroles`, read, create and delete on `clusterrolebindings`, and `bind` on `clusterroles` held to the names of the set.
+
+#### 3b. API extensions — a component's own types, approved by break-glass
+
+Referred to as §3.4b. A component that needs resource types of its own writes them out in its profile, so that what is approved is what is installed:
+
+```yaml
+spec:
+  requires:
+    privileges:
+      apiExtensions:
+        - name: schedules
+          group: backup.example.org      # the component's own group
+          serviceAccount: backup         # reads the types, writes their status
+          definitions:                   # CustomResourceDefinitions, apiextensions.k8s.io/v1
+            - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, ...}
+          reason: "The add-on's schedules."
+```
+
+A chart's own definitions are never installed: app charts render with `skipCRDs`, and a tenant's chart may not write a definition. The operator installs the profile's (`internal/controller/component_api_extensions.go`) once a live grant `apiExtensions/<name>` is on the install, which only break-glass gives (`cluster#can_set_admission`), and only when every definition:
+
+| Holds | Reason on the Component when it does not |
+|---|---|
+| is a `CustomResourceDefinition` of the request's group, named `<plural>.<group>`, namespaced, without a conversion webhook (the API server would call the component on every read) | `InvalidDefinition` |
+| is in a group that is neither Kubernetes' (`*.k8s.io`, `*.kubernetes.io`) nor the platform's (`*.gentianos.io`), and serves no type of anybody else | `InvalidDefinition`, `GroupTaken` |
+| is a new type, or one the operator installed for the same profile | `TypeTaken` |
+
+The `APIExtensionsInstalled` condition names each request and what became of it; a granted request that could not be installed holds the install. The admission guard `charts/gentian-os/templates/api-extensions-guard.yaml` holds the operator's own writes of definitions to the same rules, so a fault in the operator cannot change a type it did not install. The operator lists no definitions; it reads them by name and learns a group's other types from discovery.
+
+The component's ServiceAccount reads its types, and writes their status, through one ClusterRole, `gentian-api-extensions`, whose rules the operator keeps to the installed types and which it binds to the account while the grant lives. The operator may change that role and no other (`escalate` and `bind` held to its name). Every component bound to it reads every add-on's types; none writes an object of them. The objects are declared by people, through the director, as files of a tenant's directory (`PUT /v1/tenants/{t}/extensions/{group}/{resource}/{name}`, `can_set_policy`), or of the platform tenant's for what is the cluster's (`PUT /v1/clusters/{c}/extensions/…`, `can_configure`), each checked against its type's schema before it is committed, and only of a type installed and granted now.
+
+A grant that is withdrawn or has expired unbinds the role at the next reconcile, and the install waits again. The types stay: removing a definition deletes every object of it, which is a person's decision.
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
@@ -1464,9 +1508,8 @@ hex(HMAC-SHA256(key = MASTER_PASSWORD + DERIVATION_SALT,
                 message = "<context>:<purpose>"))    # 64 hex characters
 ```
 
-The key reaches the HMAC through the environment, never as an argument. The
-release migrator's `derive` (`internal/vaultmigrate`) computes the same value
-in Go, and both are checked against `scripts/tests/derivation-vectors.txt`.
+The key reaches the HMAC through the environment, never as an argument, and
+`scripts/tests/derivation-vectors.txt` holds the values it must give.
 
 The salt is 16 random bytes generated at the first install and stored beside
 the master password.

@@ -83,7 +83,7 @@ Then pick **one** of these three ways to name it:
 |---|---|
 | `--tenant corp` | the cluster is up. Takes the newest completed backup and says which one it chose. |
 | `--tenant corp --export <name>` | you want a specific one — `kubectl get tenantexports -n tenant-corp` lists them. |
-| `--s3-endpoint URL --s3-bucket B --s3-prefix P` | there is no cluster to ask. Add `--s3-access-key` / `--s3-secret-key`, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. |
+| `--s3-endpoint URL --s3-bucket B --s3-prefix P` | there is no cluster to ask. Set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, or add `--s3-access-key` / `--s3-secret-key` (see the warning below). |
 
 `show-key` needs none of them — it only deals with the key.
 
@@ -115,9 +115,10 @@ you actually have:
 scripts/recovery.sh inspect --tenant corp
 
 # same question, from a laptop, with nothing but the bucket and the paper key
-scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
+read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
+AWS_ACCESS_KEY_ID=... scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
     --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
-    --s3-access-key ... --s3-secret-key ... --qr backup-key.png
+    --qr backup-key.png
 
 # put a workspace back from a specific backup
 scripts/recovery.sh tenant --tenant corp --export policy-20260904-0300 \
@@ -225,17 +226,23 @@ does not. With the bucket, its credentials and the key, `inspect` works from a
 laptop:
 
 ```bash
-scripts/recovery.sh inspect \
+read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
+AWS_ACCESS_KEY_ID=... scripts/recovery.sh inspect \
   --s3-endpoint https://sos-ch-dk-2.exo.io \
   --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
-  --s3-access-key ... --s3-secret-key ... \
   --qr backup-key.png
 ```
 
-Credentials come from those flags first, then `AWS_ACCESS_KEY_ID` /
-`AWS_SECRET_ACCESS_KEY`, and only then from the cluster — so this answers "is
-the data still there and can I open it" while the cluster is still gone. Worth
-doing before you start rebuilding, because the answer changes what you do next.
+Credentials come from `--s3-access-key` / `--s3-secret-key` first, then
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, and only then from the cluster —
+so this answers "is the data still there and can I open it" while the cluster
+is still gone. Worth doing before you start rebuilding, because the answer
+changes what you do next.
+
+Prefer the environment variable for the secret key. A key given as
+`--s3-secret-key` is part of the command line: other users of the machine can
+read it in the process list while the command runs, and it lands in your shell
+history.
 
 ### What does not come back
 

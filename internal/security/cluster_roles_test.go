@@ -69,25 +69,42 @@ func TestTheClusterRoleSetAndTheChartAgree(t *testing.T) {
 			t.Errorf("the chart ships %q and PlatformClusterRoles does not name it", name)
 		}
 	}
-	for name, what := range security.PlatformClusterRoles {
+	for name, role := range security.PlatformClusterRoles {
 		if !shipped[name] {
 			t.Errorf("PlatformClusterRoles names %q and the chart ships no such ClusterRole", name)
 		}
-		if strings.TrimSpace(what) == "" {
+		if strings.TrimSpace(role.What) == "" {
 			t.Errorf("%q says nothing about what it allows; an approver reads that", name)
 		}
 	}
 }
 
-// A role of the set is narrow and reads. Anything broader is not added by
-// editing the file: this fails, and the decision is the owner's.
+// A role of the set is narrow, and reads unless it is marked as one that
+// writes. Anything broader is not added by editing the file: this fails, and
+// the decision is the owner's.
 func TestNoClusterRoleOfTheSetIsBroad(t *testing.T) {
 	for _, role := range shippedClusterRoles(t) {
 		if role.AggregationRule != nil {
 			t.Errorf("%s aggregates other roles, so its rules are not the ones written here", role.Name)
 		}
-		for _, problem := range broadRules(role.Rules) {
+		writes := security.PlatformClusterRoles[role.Labels[security.ClusterRoleNameLabel]].Writes
+		for _, problem := range broadRules(role.Rules, writes) {
 			t.Errorf("%s: %s", role.Name, problem)
+		}
+	}
+}
+
+// A role that writes is break-glass's to approve; one that reads is the
+// security officer's.
+func TestARoleThatWritesIsApprovedByBreakGlass(t *testing.T) {
+	for name, role := range security.PlatformClusterRoles {
+		want := security.PrivilegeApproverSecurityOfficer
+		if role.Writes {
+			want = security.PrivilegeApproverBreakGlass
+		}
+		ref := security.PrivilegeRef(security.PrivilegeClusterRoles, name)
+		if got := security.PrivilegeApprover(ref); got != want {
+			t.Errorf("%s is approved by %q, want %q", ref, got, want)
 		}
 	}
 }
@@ -110,17 +127,41 @@ func TestBroadRulesAreRecognised(t *testing.T) {
 		"a wildcard in a name": {APIGroups: []string{""}, Resources: []string{"pods/*"}, Verbs: read},
 	}
 	for name, rule := range broad {
-		if len(broadRules([]rbacv1.PolicyRule{rule})) == 0 {
+		if len(broadRules([]rbacv1.PolicyRule{rule}, false)) == 0 {
 			t.Errorf("%s was taken as narrow", name)
 		}
 	}
 	narrow := rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: read}
-	if problems := broadRules([]rbacv1.PolicyRule{narrow}); len(problems) != 0 {
+	if problems := broadRules([]rbacv1.PolicyRule{narrow}, false); len(problems) != 0 {
 		t.Errorf("reading nodes was refused: %v", problems)
+	}
+
+	// A role that writes is held as well: to the platform's own kinds, and
+	// to no verb beyond the four.
+	write := []string{"get", "create", "delete"}
+	broadWrites := map[string]rbacv1.PolicyRule{
+		"a core kind":       {APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: write},
+		"another's kind":    {APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: write},
+		"escalate":          {APIGroups: []string{"gentianos.io"}, Resources: []string{"tenantexports"}, Verbs: []string{"escalate"}},
+		"deletecollection":  {APIGroups: []string{"gentianos.io"}, Resources: []string{"tenantexports"}, Verbs: []string{"deletecollection"}},
+		"secrets":           {APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: write},
+		"a platform policy": {APIGroups: []string{"gentianos.io"}, Resources: []string{"*"}, Verbs: write},
+	}
+	for name, rule := range broadWrites {
+		if len(broadRules([]rbacv1.PolicyRule{rule}, true)) == 0 {
+			t.Errorf("a role that writes: %s was taken as narrow", name)
+		}
+	}
+	exports := rbacv1.PolicyRule{APIGroups: []string{"gentianos.io"}, Resources: []string{"tenantexports"}, Verbs: write}
+	if problems := broadRules([]rbacv1.PolicyRule{exports}, true); len(problems) != 0 {
+		t.Errorf("writing exports was refused: %v", problems)
+	}
+	if problems := broadRules([]rbacv1.PolicyRule{exports}, false); len(problems) == 0 {
+		t.Error("a role not marked as one that writes was let write")
 	}
 }
 
-func broadRules(rules []rbacv1.PolicyRule) []string {
+func broadRules(rules []rbacv1.PolicyRule, writes bool) []string {
 	var problems []string
 	if len(rules) == 0 {
 		problems = append(problems, "it has no rules")
@@ -132,9 +173,24 @@ func broadRules(rules []rbacv1.PolicyRule) []string {
 		if len(rule.Resources) == 0 || len(rule.APIGroups) == 0 {
 			problems = append(problems, "a rule names no resource or no API group")
 		}
+		wrote := false
 		for _, verb := range rule.Verbs {
-			if verb != "get" && verb != "list" && verb != "watch" {
-				problems = append(problems, "verb "+verb+" is not a read")
+			switch verb {
+			case "get", "list", "watch":
+			case "create", "update", "patch", "delete":
+				wrote = true
+				if !writes {
+					problems = append(problems, "verb "+verb+" is not a read")
+				}
+			default:
+				problems = append(problems, "verb "+verb+" is neither a read nor a write of one object")
+			}
+		}
+		if wrote {
+			for _, group := range rule.APIGroups {
+				if group != "gentianos.io" {
+					problems = append(problems, "it writes in "+group+", which is not the platform's")
+				}
 			}
 		}
 		for _, group := range rule.APIGroups {

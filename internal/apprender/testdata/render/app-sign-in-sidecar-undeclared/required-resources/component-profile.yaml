@@ -24,7 +24,6 @@ spec:
       # No identity requirement: the app signs nobody in through the platform.
       database:
         engine: postgresql
-        databasePerTenant: true
   secrets:
     generated:
       - name: app_secret

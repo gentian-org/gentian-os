@@ -59,18 +59,16 @@ func TestBootstrapIsWhereTheStoreAndTheModelComeFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var latest struct {
-		Models []map[string]any `json:"authorization_models"`
-	}
-	if err := c.get(ctx, "/stores/"+store+"/authorization-models?page_size=10", &latest); err != nil {
+	latest, _, err := c.fga.ReadModels(ctx, store, 10, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(latest.Models) != 1 {
-		t.Fatalf("%d models in the store, want 1", len(latest.Models))
+	if len(latest) != 1 {
+		t.Fatalf("%d models in the store, want 1", len(latest))
 	}
 	var want map[string]any
 	_ = json.Unmarshal(modelV1, &want)
-	if !sameModel(latest.Models[0], want) {
+	if !sameModel(latest[0], want) {
 		t.Fatal("the store's model is not the embedded one")
 	}
 }

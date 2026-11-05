@@ -35,6 +35,8 @@ type PlanSummary struct {
 	Description string            `json:"description,omitempty"`
 	Tier        int32             `json:"tier"`
 	ProductSku  string            `json:"productSku,omitempty"`
+	Units       int32             `json:"units,omitempty"`
+	Retired     bool              `json:"retired,omitempty"`
 	Quotas      map[string]string `json:"quotas"`
 	// Current marks the plan the tenant is on.
 	Current bool `json:"current,omitempty"`
@@ -63,6 +65,9 @@ const (
 	PlanBlockedEntitlement PlanBlock = "entitlement"
 	// PlanBlockedFit: the tenant's committed usage does not fit under the plan.
 	PlanBlockedFit PlanBlock = "fit"
+	// PlanBlockedRetired: the plan is kept for the tenants on it and offered
+	// to no other.
+	PlanBlockedRetired PlanBlock = "retired"
 )
 
 // ResourceStateResult is a tenant's ceiling, consumption and plan.
@@ -217,11 +222,17 @@ func (s *Service) Plans(
 			Description: plan.Spec.Description,
 			Tier:        plan.Spec.Tier,
 			ProductSku:  plan.Spec.ProductSku,
+			Units:       plan.Spec.Units,
+			Retired:     plan.Spec.Retired,
 			Quotas:      quotaMap(&plan.Spec.Quotas),
 			Current:     plan.Name == currentName,
 			Selectable:  true,
 		}
 		switch {
+		case plan.Spec.Retired && plan.Name != currentName:
+			summary.Selectable = false
+			summary.Blocked = "this plan is retired: kept for the tenants on it, offered to no other"
+			summary.BlockedBy = PlanBlockedRetired
 		case selfService && plan.Spec.SelfServiceDisabled:
 			summary.Selectable = false
 			summary.Blocked = "this plan is arranged with the platform operator, not self-service"

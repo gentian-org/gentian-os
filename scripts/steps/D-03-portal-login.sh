@@ -40,13 +40,13 @@ _d02_component_chart_version() {
     local token manifest config_digest version
     token="$(curl -sf --max-time 20 "https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io" | jq -r '.token // empty')"
     [[ -n "${token}" ]] || { error "could not get a pull token for ${repo} from ghcr.io"; return 1; }
-    manifest="$(curl -sf --max-time 20 -H "Authorization: Bearer ${token}" \
+    manifest="$(curl -sf --max-time 20 -H @<(printf 'Authorization: Bearer %s\n' "${token}") \
         -H "Accept: application/vnd.oci.image.manifest.v1+json" \
         "https://ghcr.io/v2/${repo}/manifests/${moving}")" \
         || { error "chart ${repo}:${moving} is not published; merge to the branch this cluster follows first"; return 1; }
     config_digest="$(jq -r '.config.digest // empty' <<<"${manifest}")"
     [[ -n "${config_digest}" ]] || { error "chart ${repo}:${moving} has no config blob"; return 1; }
-    version="$(curl -sfL --max-time 20 -H "Authorization: Bearer ${token}" \
+    version="$(curl -sfL --max-time 20 -H @<(printf 'Authorization: Bearer %s\n' "${token}") \
         "https://ghcr.io/v2/${repo}/blobs/${config_digest}" | jq -r '.appVersion // empty')"
     case "${version}" in
         "${moving}".*) echo "${version}" ;;

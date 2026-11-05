@@ -133,8 +133,8 @@ spec:
     services:
       identity:                   # exactly one of oidc | saml | sidecar (iam.md §1.11)
         sidecar: { entryPaths: ["/login"] }
-      database: { engine: postgresql, databasePerTenant: true }
-      storage:  { s3: { bucketPerTenant: true } }
+      database: { engine: postgresql }
+      storage:  { s3: {} }
       cache:    { engine: memcached }
       mail:     { smtp: {} }
 
@@ -466,9 +466,8 @@ a service outside it.
 
 `service` and `adapter` are each exclusive: a profile that lists one lists
 nothing else. An adapter has `launch: none`, exposes nothing, provides and
-integrates nothing, is never placed, and carries `spec.adapter` (what it
-adapts, how it speaks as the person, the reviewed list of its tools;
-[agentic-ai.md](agentic-ai.md)).
+integrates nothing, is never placed, and carries `spec.adapter`, which names
+the app it adapts ([agentic-ai.md](agentic-ai.md)).
 
 *Class `service` is an option that exists in the schema and is not
 implemented.* Engines are delivered as Argo CD applications from
@@ -657,18 +656,26 @@ spec:
           reason: "Outbound mail to the tenant's relay."
       clusterRoles:
         - name: read-nodes
-          rules: [...]
+          serviceAccount: dashboard
           reason: "The dashboard lists node capacity."
+      apiExtensions:
+        - name: schedules
+          group: backup.example.org
+          serviceAccount: backup
+          definitions: [...]          # CustomResourceDefinitions
+          reason: "The add-on's schedules."
 ```
 
-**Who approves follows from the kind, never from a field**, or a component
+**Who approves follows from the request, never from a field**, or a component
 could ask for the cheaper approver (`internal/security/privilege.go`, read by
 the director and by the console alike):
 
 | kind | scope | approver | relation |
 |---|---|---|---|
 | pod-security waiver | cluster: weakens an admission rule protecting the node | security officer | `cluster#can_approve` |
-| cluster role | cluster: reaches the Kubernetes API | security officer | `cluster#can_approve` |
+| cluster role that reads | cluster: reaches the Kubernetes API | security officer | `cluster#can_approve` |
+| cluster role that writes | cluster: writes through the Kubernetes API | break-glass | `cluster#can_set_admission` |
+| API extension | cluster: adds types to the cluster's API, for every tenant | break-glass | `cluster#can_set_admission` |
 | egress beyond baseline | tenant: leaves the tenant's own namespace | perimeter approver | `tenant#can_approve_privilege`, which is `can_expose` |
 
 The grant sits on the Component, written only by the director from the
@@ -728,8 +735,7 @@ An `expose[]` entry declares one entry point. Its fields:
 | `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter |
 | `subDomain` | host label in the tenant's zone; empty means the component's name |
 | `apex` | a perimeter entry on the cluster's bare domain; `authMode: none`, no `subDomain` ([routing.md §5](routing.md)) |
-| `paths`, `denyPaths`, `stripPrefix` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
-| `source` | pins the caller before `authMode` is considered: exactly one of `cidrs` or `component`; `component` is preferred because CIDRs age badly |
+| `paths`, `denyPaths` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
 | `forwardToken` | passes the edge access token to the backend; `trustTier: platform` only, because that token is valid at the director and at every sibling |
 | `exchangeToken` | the bouncer hands the backend a token exchanged at the tenant's realm for one whose audience is this app and nothing else; any trust tier; gateway and `oidc` only |
 | `clientAuthorization: app` | the `Authorization` header is the app's own and the edge leaves it alone; a request, in force once approved |
@@ -740,9 +746,8 @@ An `expose[]` entry declares one entry point. Its fields:
 `authMode` is required with no default because `none` has to be a word
 somebody wrote and a reviewer can find. `surface` is one field and not a
 separate public-surfaces list because the two surfaces differ in namespace,
-credential, policy and blast radius. A gateway entry is behind the session or
-pins its caller; what needs neither is a perimeter surface. Collabora's WOPI
-callbacks are safe at `authMode: none` only because the caller is pinned.
+credential, policy and blast radius. A gateway entry is behind the session;
+what needs no session is a perimeter surface.
 
 A component asks for `forwardToken` or for `exchangeToken`, never both, and
 `clientAuthorization` excludes either across all its entries: one policy
@@ -822,8 +827,7 @@ which:
 ```yaml
 spec:
   launch: tile                  # at least one expose entry (or package.api) carries a tile
-  # launch: from                # opened by another component …
-  # launchFrom: file-store      #   … named by the contract it provides
+  # launch: from                # opened by another component
   # launch: none                # the launcher itself, or no human surface
 ```
 
@@ -835,11 +839,20 @@ exposures and no tile (`none`: it is the launcher); the administration console
 has a tile on its `web` entry and none on `api`, which is what an API entry
 should be; Collabora is `from`, opened by Nextcloud and never from a launcher.
 
-`spec.sessionMaxAge` caps a component's **own** session, for one that
-establishes a login through its own client. The edge bounds reachability but
-does not refresh the group model a component captured at its own login, so
-this value bounds what a person may still do inside it after their rights
-change (AD-13, [decisions/index.md](../decisions/index.md)).
+`spec.sessionMaxAge` caps, at the realm, how long a sign-in through the
+component's own OIDC clients lasts. The operator sets it as the session
+lifespan of every such client it renders, the component's own and its
+extensions' (`clientSessionMaxLifespan`,
+`internal/apprender/identity.go`). Past that age from sign-in the realm
+refuses the client's refresh, so the component cannot renew its tokens for
+that person without a new sign-in, and a new sign-in reads the person's
+groups again. It does **not** end a session the component keeps in its own
+cookie: a component that does not go back to the realm once a person is
+signed in keeps that session for as long as the component itself allows, and
+only its own configuration shortens it. Unset, the clients keep the realm's
+limits. The edge bounds reachability and does not refresh the groups a
+component captured at its own sign-in (AD-13,
+[decisions/index.md](../decisions/index.md)).
 
 ### 17.5 Enablement: the tenant's half
 
@@ -901,8 +914,7 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
 - the package is a chart, a composition, the two together, an `api` or an
   `addon`, and nothing else; `customization.addon` is refused;
 - `launch` is required; `tile` needs a tile on an exposure or on
-  `package.api`, a tile means `launch: tile`, `from` needs `launchFrom` and
-  `launchFrom` is meaningless otherwise;
+  `package.api`, and a tile means `launch: tile`;
 - `forwardToken`, `requires.services.rights`, `.vouching`, `.logDestination`,
   `valueMapping.platform.storeUrlKey` and `.desktopUrlKey` require
   `trustTier: platform`; so does `requires.services.llm` on a placed profile;
@@ -916,8 +928,7 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
   there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
   only; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
   exclude `forwardToken` and each other; `apex` is a perimeter entry with
-  `authMode: none` and no `subDomain`; a gateway entry is `oidc` or pins its
-  `source`; `source` is exactly one of `cidrs` or `component`;
+  `authMode: none` and no `subDomain`; a gateway entry is `oidc`;
 - an OIDC audience is the profile's own name, a dash and a label;
   `backchannelLogout.exposure` names an entry routing to the component's own
   Service.

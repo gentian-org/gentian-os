@@ -88,6 +88,9 @@ func (id *identityScope) extensionClients() []*unstructured.Unstructured {
 		if !confidential {
 			fp["pkceCodeChallengeMethod"] = "S256"
 		}
+		// An extension runs in the app's pod and signs in for the app: the
+		// profile's cap is on its client too.
+		id.capSession(fp)
 		if len(postLogout) > 0 {
 			fp["validPostLogoutRedirectUris"] = identityStringList(postLogout)
 		}

@@ -26,9 +26,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
-// A set with one role, as a build that ships one would have it. The
-// platform's own set is empty, so the gate is shown on a set of the test's.
-var testClusterRoles = security.ClusterRoleSet{"read-nodes": "reads the nodes and their capacity"}
+// A set with one role that reads, so the gate is shown on a role whose
+// ClusterRole the test makes itself.
+var testClusterRoles = security.ClusterRoleSet{"read-nodes": {What: "reads the nodes and their capacity"}}
 
 type clusterRoleCase struct {
 	// Each of these is what is needed for the role to be bound; a case takes

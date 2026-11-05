@@ -521,21 +521,10 @@ spec:
   package: {chart: {repository: oci://example/charts, name: openproject-tools, version: "1.0.0"}}
   adapter:
     adapts: {profile: openproject, versions: ["15.4.0"]}   # the app it uses, in the same tenant
-    speaksAs: token                 # token | app-token | headers: how a call reaches the app as the person
-    tools:
-    - name: create-task
-      version: v1                   # what it does, needs or may do changes: a new version
-      description: {en: "Create a task in a project", de: "Eine Aufgabe in einem Projekt anlegen"}
-      class: change                 # read | change | irreversible; none counts as irreversible
-      input: {type: object, properties: {title: {type: string}}, required: [title]}
-      output: {type: object, properties: {id: {type: integer}}}
-      identifiers: [/id]            # fields of the answer the app made up
-      reverse: {name: delete-task, version: v1}
-    - {name: delete-task, version: v1, description: {en: "Delete a task"}, class: change}
 ```
 
-The descriptions are what a person reads when asked to allow a tool, so they are the reviewed text;
-what a running adapter says about itself is not consulted. Admission refuses an adapter that anybody
+Installing the adapter opens the way from its pods to the pods of the app it adapts and nowhere
+else in the tenant. Admission refuses an adapter that anybody
 opens, that exposes anything, that provides a contract or declares integrations, that vouches for
 people, that is an addon, or that is placed by default.
 
@@ -1113,11 +1102,15 @@ artifact was read with a credential earns its bytes nothing.
 - **A profile asks for a cluster role by name and cannot write one.** An entry under
   `requires.privileges.clusterRoles` names one of the roles the platform defines, and the
   ServiceAccount its chart runs under. The role is bound only where the platform has it, the
-  cluster's `PlatformSecurityPolicy` permits it for the profile, and the security officer granted
-  it on the install; otherwise nothing is bound and the Component says why (`ClusterRolesBound`).
-  Rules stated on an entry are ignored and make it bind nothing. The platform's set is empty,
-  so a catalog cannot obtain any access to the Kubernetes API for an app
+  cluster's `PlatformSecurityPolicy` permits it for the profile, and it was granted on the
+  install; otherwise nothing is bound and the Component says why (`ClusterRolesBound`).
+  Rules stated on an entry are ignored and make it bind nothing, so a catalog cannot obtain any
+  access to the Kubernetes API for an app beyond a role of the platform's
   ([security/design.md §3.4](../security/design.md)).
+- **A profile's own types are installed only once break-glass granted them.** An entry under
+  `requires.privileges.apiExtensions` writes out the definitions; the chart's own are never
+  installed. They must be new, namespaced types of the profile's own group, without a conversion
+  webhook ([security/design.md §3.4b](../security/design.md)).
 - **Nothing here is a license check.** Whether an app arrives is decided where its chart and images
   are pulled.
 

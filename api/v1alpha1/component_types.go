@@ -212,8 +212,8 @@ type ExposureEnablement struct {
 // +kubebuilder:validation:XValidation:rule="self.approver == oldSelf.approver && self.approvedAt == oldSelf.approvedAt",message="approver and approvedAt are immutable: a new approval is a new grant"
 type PrivilegeGrant struct {
 	// Privilege names one entry of the profile's request, as <kind>/<name>,
-	// where kind is podSecurity, egress or clusterRoles.
-	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// where kind is podSecurity, egress, clusterRoles or apiExtensions.
+	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=80
 	Privilege string `json:"privilege"`
 

@@ -608,12 +608,14 @@ openssl rand -hex 32 | kubectl gentian credentials set app-customers-aluvian-web
 
 An app whose profile asks for more than a tenant's apps get by default -- a
 way out to an address (`egress`), a relaxed pod security (`podSecurity`),
-cluster roles (`clusterRoles`) -- waits until a person answers each request;
+cluster roles (`clusterRoles`), types of its own (`apiExtensions`) -- waits
+until a person answers each request;
 its component reads `waiting for approval of <kind>/<name>`. The answer is a
 commit through the director, with you as the approver and your reason in it.
 An `egress` request is the tenant's perimeter approver's to answer (and the
-cluster's administrator's, in a tenant the cluster operates); the other two
-are the cluster's security officer's. The Admin Console's Apps page offers
+cluster's administrator's, in a tenant the cluster operates); a `podSecurity`
+request and a cluster role that reads are the cluster's security officer's;
+an `apiExtensions` request and a cluster role that writes are break-glass's. The Admin Console's Apps page offers
 the same as a button, to whoever holds the right the request needs.
 
 ```bash
@@ -625,13 +627,13 @@ kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 
-A `podSecurity` or `clusterRoles` request is the security officer's to
-answer, so the App Store's install step asks them for it (the director's
+A request the tenant cannot answer itself is the security officer's or
+break-glass's, so the App Store's install step asks for it (the director's
 `POST /v1/tenants/{t}/apps/{p}/actions/request-privilege`, recorded on the
 app's Component) and the platform console's Approvals page lists what was
 asked. The same list, from the command line, carries every tenant's
 pending privileges, each with who answers it (APPROVER: `security-officer`,
-or `perimeter-approver` for egress):
+`break-glass`, or `perimeter-approver` for egress):
 
 ```bash
 kubectl gentian approvals list     # every tenant's waiting privileges: who answers, who asked, when, why, and what was declined
@@ -1274,6 +1276,15 @@ kubectl describe tenantexport nightly-2026-08-18 -n tenant-demo
 Because the default mode needs no input, a `CronJob` that applies a resource
 like this is all a scheduled backup requires.
 
+To one of the tenant's own stores (§12a), whose keys are set:
+
+```yaml
+spec:
+  destination:
+    mode: source
+    source: demo.offsite   # <tenant>.<name>; another tenant's or the cluster's is refused
+```
+
 ### Watching one
 
 ```bash
@@ -1297,7 +1308,7 @@ reconcile, including after a restart.
 
 ### Deleting one
 
-Tenant admins delete backups from the Backup tab; this is the same operation:
+Tenant admins delete exports from the Export tab; this is the same operation:
 
 ```bash
 kubectl delete tenantexport nightly-2026-08-18 -n tenant-demo
@@ -1608,8 +1619,14 @@ at the import. The address is a commit (`BundleSource`, in
 the custodian as `bundle-source-<name>` (Admin Console, Credentials), stored
 at `gentian-os/kernel/backup/sources/<name>`, and read only by the platform.
 Reading needs only `s3:ListBucket` and `s3:GetObject`. A tenant's own sources
-are where its backups go: `storage` (its bucket here) and `destination` (its
-backup policy's, when it names one).
+are where its backups go: `storage` (its bucket here), `destination` (its
+backup policy's, when it names one), and the stores its administrator
+declares. A store is a `BundleSource` named `<tenant>.<name>` with
+`spec.tenant`, in `clusters/<c>/tenants/<t>/bundle-source-<name>.yaml`; its
+keys are set at the custodian as `bundle-source-<tenant>.<name>`, stored at
+`gentian-os/tenants/<t>/backup/sources/<name>`, and need writing and
+deleting as well as reading. An export writes to one with
+`destination: {mode: source, source: <tenant>.<name>}`.
 
 ```
 GET    /v1/clusters/{c}/bundle-sources                          declared, with whether the keys are there
@@ -1621,6 +1638,8 @@ GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's
 GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
 GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
 GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
+PUT    /v1/tenants/{t}/bundle-sources/{name}                    a store of the tenant's own, as <t>.<name>; the cluster's body
+DELETE /v1/tenants/{t}/bundle-sources/{name}                    removed from git, and so from the cluster
 POST   /v1/tenants/{t}/bundle-sources/{name}/actions/fetch      {prefix}: the tenant's administrator's fetch
 GET    /v1/tenants/{t}/bundle-fetches/{f}                       a fetch made on the tenant's route
 GET    /v1/tenants/{t}/bundles/{prefix}/download                its copy, or the tenant's upload

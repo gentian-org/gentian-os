@@ -63,17 +63,23 @@ validate_whitespace() {
 # =============================================================================
 # oci-registry — curl the v2 API root with the credential
 # =============================================================================
+# _v_basic <user> <password> — the header curl -u sends, for curl to read from
+# a pipe with -H @file: the credential is then not one of curl's arguments.
+_v_basic() {
+    printf 'Authorization: Basic %s\n' "$(printf '%s:%s' "$1" "$2" | base64 | tr -d '\n')"
+}
+
 validate_oci_registry() {
     local host="$1" user="$2" pass="$3" url code
     host="${host#https://}"; host="${host#http://}"; host="${host%%/*}"
     url="https://${host}/v2/"
 
-    local auth=()
-    [[ -n "${pass}" ]] && auth=(-u "${user}:${pass}")
+    local auth=""
+    [[ -n "${pass}" ]] && auth="$(_v_basic "${user}" "${pass}")"
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        -H @<(printf '%s' "${auth}") "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         # 200 is an authenticated OK. Some registries answer the v2 root with a
@@ -96,7 +102,7 @@ validate_oci_registry() {
 # git-https — the smart-HTTP ref advertisement, the cheapest authenticated read
 # =============================================================================
 validate_git_https() {
-    local repo="$1" user="$2" token="$3" url code auth=()
+    local repo="$1" user="$2" token="$3" url code auth=""
     local mode="${4:-basic}"
     repo="${repo%.git}"; repo="${repo%/}"
     url="${repo}.git/info/refs?service=git-upload-pack"
@@ -106,13 +112,13 @@ validate_git_https() {
     # perfectly good public repo as a rejected credential.
     case "${token:+${mode}}" in
         "")     ;;
-        bearer) auth=(-H "Authorization: Bearer ${token}") ;;
-        *)      auth=(-u "${user}:${token}") ;;
+        bearer) auth="$(printf 'Authorization: Bearer %s\n' "${token}")" ;;
+        *)      auth="$(_v_basic "${user}" "${token}")" ;;
     esac
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        -H @<(printf '%s' "${auth}") "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         200) return 0 ;;
@@ -159,7 +165,7 @@ validate_cloudflare_dns() {
     while [[ "${candidate}" == *.*.* || "${candidate}" == *.* ]]; do
         url="https://api.cloudflare.com/client/v4/zones?name=${candidate}"
         body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-            -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}" 2>/dev/null)" || body=$'\n000'
         code="${body##*$'\n'}"
         body="${body%$'\n'*}"
 
@@ -282,7 +288,7 @@ _validate_cloudflare_dns_write() {
     [[ -n "${zone_id}" ]] || return 0
 
     body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -X POST -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+        -X POST -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
         --data "{\"type\":\"TXT\",\"name\":\"${probe_name}\",\"content\":\"gentian-os installer permission probe\",\"ttl\":60}" \
         "${url}" 2>/dev/null)" || body=$'\n000'
     code="${body##*$'\n'}"
@@ -314,7 +320,7 @@ _validate_cloudflare_dns_write() {
     rec_id="$(jq -r '.result.id // empty' <<<"${body}" 2>/dev/null || true)"
     if [[ -n "${rec_id}" ]]; then
         if ! curl -s -o /dev/null --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-            -X DELETE -H "Authorization: Bearer ${token}" "${url}/${rec_id}" 2>/dev/null; then
+            -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}/${rec_id}" 2>/dev/null; then
             warn "Left the permission-probe record ${probe_name} behind; delete it by hand."
         fi
     fi
@@ -366,7 +372,7 @@ _validate_cloudflare_tunnel_scope() {
     fi
 
     body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+        -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}" 2>/dev/null)" || body=$'\n000'
     code="${body##*$'\n'}"
     body="${body%$'\n'*}"
 
@@ -458,7 +464,7 @@ validate_image_tag() {
     fi
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -H "Authorization: Bearer ${token}" \
+        -H @<(printf 'Authorization: Bearer %s\n' "${token}") \
         -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
         "https://ghcr.io/v2/${path}/manifests/${tag}" 2>/dev/null || echo 000)"
 
@@ -488,8 +494,8 @@ validate_image_tag() {
 }
 
 validate_oidc_discovery() {
-    local url="$1" token="${2:-}" code auth=()
-    [[ -n "${token}" ]] && auth=(-H "Authorization: Bearer ${token}")
+    local url="$1" token="${2:-}" code auth=""
+    [[ -n "${token}" ]] && auth="$(printf 'Authorization: Bearer %s' "${token}")"
 
     # GENTIAN_CURL_RESOLVE pins host:port:addr for this request, set by a caller
     # that has already resolved the name against the zone's own nameservers.
@@ -503,7 +509,7 @@ validate_oidc_discovery() {
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${resolve[@]}" "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        "${resolve[@]}" -H @<(printf '%s' "${auth}") "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         200) return 0 ;;

@@ -109,7 +109,7 @@ func TestAProfileTheAPIServerStoredVerifiesAgainstItsBundle(t *testing.T) {
 	})
 	// The premise: the server did default it, so the stored profile is not
 	// the document's own bytes read plainly.
-	if db := stored.Spec.Requires.Services.Database; db.Engine == "" || !db.DatabasePerTenant {
+	if db := stored.Spec.Requires.Services.Database; db.Engine == "" {
 		t.Fatalf("the API server defaulted nothing: %+v", db)
 	}
 	if r := profilebundle.Verify(stored, pinned); r != nil {

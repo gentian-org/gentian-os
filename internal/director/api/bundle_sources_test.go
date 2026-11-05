@@ -273,3 +273,33 @@ func TestATenantsAdministratorFetchesFromItsOwnSourcesAsTheTenant(t *testing.T) 
 		}
 	}
 }
+
+// A tenant's administrator declares and removes the tenant's own stores
+// under can_set_policy, named <tenant>.<label>; another tenant's is out of
+// reach, and the cluster's removal does not take a tenant's.
+func TestATenantsAdministratorDeclaresTheTenantsOwnStores(t *testing.T) {
+	h := startWith(t, &sourcingOperator{})
+	alice := h.token(t, "gentian", "alice")
+	tom := h.token(t, "tenant-demo", "tom")
+	store := `{"endpoint":"https://sos.example","bucket":"demo-offsite"}`
+
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/bundle-sources/offsite", tom, store)
+	if code != http.StatusAccepted || body["name"] != "demo.offsite" || body["credentialName"] != "bundle-source-demo.offsite" {
+		t.Fatalf("tom's store = %d %v", code, body)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/solo/bundle-sources/offsite", tom, store); code != http.StatusForbidden {
+		t.Errorf("tom declared a store of another tenant: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/bundle-sources/off.site", tom, store); code != http.StatusBadRequest {
+		t.Errorf("a label with a dot = %d", code)
+	}
+	if code, _ := h.do(t, "DELETE", "/v1/clusters/"+dt.Cluster+"/bundle-sources/demo.offsite", alice, ""); code != http.StatusBadRequest {
+		t.Errorf("the cluster's removal of a tenant's store = %d", code)
+	}
+	if code, body := h.do(t, "DELETE", "/v1/tenants/demo/bundle-sources/offsite", tom, ""); code != http.StatusAccepted {
+		t.Errorf("tom's removal = %d %v", code, body)
+	}
+	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/bundle-sources/offsite", tom, ""); code != http.StatusNotFound {
+		t.Errorf("removing it twice = %d", code)
+	}
+}

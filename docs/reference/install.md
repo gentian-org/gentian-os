@@ -90,7 +90,6 @@ the recovery kit. Who writes what:
 |---|---|
 | A workload's policy or auth role, a new KV path | Crossplane, from the Cluster and Tenant compositions |
 | A PKI role named `platform-*` | Crossplane, from the Cluster composition |
-| A key added to a kernel path that exists | `vault-migrator` |
 | The names `gentian-ca` may sign | `vault-migrator` |
 | Crossplane's own policy, `crossplane-write` | `vault-migrator` |
 | `vault-migrator`'s policy and role | Crossplane, from the Cluster composition |
@@ -98,11 +97,11 @@ the recovery kit. Who writes what:
 Crossplane may read `crossplane-write` and not change it, and may not touch the
 role `gentian-ca`. `vault-migrator` is a Job of the kernel chart that runs on
 every sync, logs in with its own ServiceAccount, and repeats nothing that is
-already right. It only adds names and keys: a rotated password stays. A policy
-it does not recognize is left as it is, and the Job fails and says so.
+already right. It only adds names. A policy it does not recognize is left as it
+is, and the Job fails and says so.
 
 To add to a release, change `internal/vaultmigrate/crossplane-write.hcl`, the one
-copy of the policy, or add to `Seeds` in `internal/vaultmigrate/migrate.go`, and
+copy of the policy, or add a step to `internal/vaultmigrate/migrate.go`, and
 give the policy `vault-migrator` in `crossplane/compositions/cluster-default.yaml`
 any path the new work needs. To see what it did:
 
@@ -626,7 +625,9 @@ the manifests Argo CD syncs and the binary the kubelet pulls come from one
 commit. A release tag resolves to its version. Set it only to run something
 else — and a value that names a moving tag is warned about, because a
 Deployment on one never rolls by itself and a pod that restarts picks up
-whatever the tag meant at that second. A set value is otherwise used as it
+whatever the tag meant at that second. On a `prod` stage pre-flight refuses
+a moving tag outright, whichever way it was reached: install a release from
+its tag. A set value is otherwise used as it
 stands, so a line left in `install.env` by an earlier install pins the
 cluster to that older build without a warning: remove it.
 

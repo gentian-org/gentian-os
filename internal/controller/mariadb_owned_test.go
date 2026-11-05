@@ -41,8 +41,8 @@ func scriptOf(job *batchv1.Job, container string) string {
 func TestMariaDBProvisioningGrantsWhatTheInventorySays(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	for _, dynamic := range []bool{false, true} {
-		script := scriptOf(makeMariaDBSetupJob(tenant, "shop-ce", true, dynamic), "provision-db")
-		if !strings.Contains(script, backup.MariaDBSetupScript("demo_shop_ce", "demo_shop_ce", dynamic)) {
+		script := scriptOf(makeMariaDBSetupJob(tenant, "shop-ce", true, dynamic, 25), "provision-db")
+		if !strings.Contains(script, backup.MariaDBSetupScript("demo_shop_ce", "demo_shop_ce", dynamic, 25)) {
 			t.Fatalf("dynamic=%v: the setup Job does not run the inventory's script:\n%s", dynamic, script)
 		}
 		if strings.Contains(script, "*.*") {

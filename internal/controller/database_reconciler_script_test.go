@@ -19,7 +19,7 @@ import (
 
 func TestBuildRoleScript_CreatesPostgreSQLSchema(t *testing.T) {
 	t.Parallel()
-	script := buildRoleScript("demo_xwiki", "demo_xwiki", gentianov1alpha1.SchemaPreferenceAppSchema, false)
+	script := buildRoleScript("demo_xwiki", "demo_xwiki", gentianov1alpha1.SchemaPreferenceAppSchema, false, 25)
 	for _, want := range []string{
 		`CREATE SCHEMA IF NOT EXISTS \"demo_xwiki\" AUTHORIZATION \"demo_xwiki\"`,
 		`GRANT ALL ON SCHEMA \"demo_xwiki\" TO \"demo_xwiki\"`,
@@ -35,21 +35,21 @@ func TestBuildRoleScript_CreatesPostgreSQLSchema(t *testing.T) {
 func TestBuildRoleScript_SchemaPreference(t *testing.T) {
 	t.Parallel()
 	// Default: the app's own schema resolves first.
-	appFirst := buildRoleScript("demo_ap", "demo_ap", gentianov1alpha1.SchemaPreferenceAppSchema, false)
+	appFirst := buildRoleScript("demo_ap", "demo_ap", gentianov1alpha1.SchemaPreferenceAppSchema, false, 25)
 	if !strings.Contains(appFirst, `search_path TO \"demo_ap\", public`) {
 		t.Fatalf("app-schema preference did not put the app schema first:\n%s", appFirst)
 	}
 
 	// Opting into public first is for an app whose migrations create tables in
 	// public and then look them up unqualified.
-	publicFirst := buildRoleScript("demo_ap", "demo_ap", gentianov1alpha1.SchemaPreferencePublic, false)
+	publicFirst := buildRoleScript("demo_ap", "demo_ap", gentianov1alpha1.SchemaPreferencePublic, false, 25)
 	if !strings.Contains(publicFirst, `search_path TO public, \"demo_ap\"`) {
 		t.Fatalf("public preference did not put public first:\n%s", publicFirst)
 	}
 
 	// An unset preference must behave exactly like the previous default, or every
 	// existing app silently changes search_path on the next reconcile.
-	unset := buildRoleScript("demo_ap", "demo_ap", "", false)
+	unset := buildRoleScript("demo_ap", "demo_ap", "", false, 25)
 	if unset != appFirst {
 		t.Fatal("unset preference must be identical to app-schema")
 	}
@@ -59,7 +59,7 @@ func TestBuildRoleScript_SchemaPreference(t *testing.T) {
 // would let a role keep CREATEDB forever after the profile turned it off, since
 // this Job is the only thing that ever reconciles the role.
 func TestBuildRoleScript_CreateDBIsConverged(t *testing.T) {
-	granted := buildRoleScript("demo_m", "demo_m", gentianov1alpha1.SchemaPreferenceAppSchema, true)
+	granted := buildRoleScript("demo_m", "demo_m", gentianov1alpha1.SchemaPreferenceAppSchema, true, 25)
 	if !strings.Contains(granted, `WITH CREATEDB;`) {
 		t.Errorf("allowDynamicDatabaseCreation did not grant CREATEDB:\n%s", granted)
 	}
@@ -67,8 +67,38 @@ func TestBuildRoleScript_CreateDBIsConverged(t *testing.T) {
 		t.Errorf("granting also revoked")
 	}
 
-	revoked := buildRoleScript("demo_m", "demo_m", gentianov1alpha1.SchemaPreferenceAppSchema, false)
+	revoked := buildRoleScript("demo_m", "demo_m", gentianov1alpha1.SchemaPreferenceAppSchema, false, 25)
 	if !strings.Contains(revoked, `WITH NOCREATEDB;`) {
 		t.Errorf("default did not revoke CREATEDB, so the permission would be sticky:\n%s", revoked)
+	}
+}
+
+// An app's role holds at most its connection limit on the shared server: the
+// profile's, or the default. The platform's own roles, given 0, hold none.
+func TestTheRoleIsHeldToItsConnectionLimit(t *testing.T) {
+	t.Parallel()
+	capped := buildRoleScript("demo_wiki", "demo_wiki", gentianov1alpha1.SchemaPreferenceAppSchema, false, 25)
+	for _, want := range []string{
+		`CREATE ROLE \"demo_wiki\" WITH LOGIN CONNECTION LIMIT 25 PASSWORD`,
+		`ALTER ROLE \"demo_wiki\" WITH LOGIN CONNECTION LIMIT 25 PASSWORD`,
+	} {
+		if !strings.Contains(capped, want) {
+			t.Errorf("the role script does not say %q", want)
+		}
+	}
+	if uncapped := buildRoleScript("apps", "apps", gentianov1alpha1.SchemaPreferencePublic, false, 0); !strings.Contains(uncapped, "CONNECTION LIMIT -1") {
+		t.Error("a limit of 0 does not leave the role uncapped")
+	}
+
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if got := connectionLimitFor(profile); got != gentianov1alpha1.DefaultDatabaseConnectionLimit {
+		t.Errorf("no requirement: limit %d, want the default", got)
+	}
+	limit := int32(60)
+	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Database: &gentianov1alpha1.DatabaseRequirement{ConnectionLimit: &limit},
+	}}
+	if got := connectionLimitFor(profile); got != 60 {
+		t.Errorf("the profile's limit: %d, want 60", got)
 	}
 }

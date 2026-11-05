@@ -82,11 +82,11 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 // When withPassword is set the pod reads the user's password from the Secret
 // of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
 // no ConfigMap and no composed Object.
-func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword, allowDynamic bool) *batchv1.Job {
+func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword, allowDynamic bool, connLimit int32) *batchv1.Job {
 	dbName := databaseName(tenant, appName)
 	dbUser := mariadbUserName(tenant.Name, appName)
 	jobName := mariadbSetupJobName(tenant.Name, appName)
-	c := mariadbContainer("provision-db", backup.MariaDBSetupScript(dbName, dbUser, allowDynamic))
+	c := mariadbContainer("provision-db", backup.MariaDBSetupScript(dbName, dbUser, allowDynamic, connLimit))
 	if withPassword {
 		c.Env = append(c.Env, meta.SecretEnv("DB_PASS", jobName, jobSecretPasswordKey))
 	}

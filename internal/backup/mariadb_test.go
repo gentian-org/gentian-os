@@ -70,8 +70,8 @@ func mariadbScripts(db, user string) map[string]string {
 		Encryption: Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, Recipients: []string{"age1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sxpzkh"}}}
 	d := Decryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, SecretName: "k", SecretKey: "identity"}
 	return map[string]string{
-		"provisioning":          MariaDBSetupScript(db, user, false),
-		"provisioning, dynamic": MariaDBSetupScript(db, user, true),
+		"provisioning":          MariaDBSetupScript(db, user, false, 25),
+		"provisioning, dynamic": MariaDBSetupScript(db, user, true, 25),
 		"purge":                 mariadbDestroyScript(db, user),
 		"export":                containerByName(MariaDBOwnedDumpJob(p, user, db), "mariadb-dump-owned").Args[0],
 		"restore":               containerByName(MariaDBOwnedRestoreJob(p, d, MariaDBOwnedArtefact("old_crm"), "old_crm", db, user), "mariadb-restore-owned").Args[0],
@@ -98,7 +98,7 @@ func TestMariaDBGrantsAreOnTheAppsDatabasesAndNothingElse(t *testing.T) {
 	}
 
 	for _, isDynamic := range []bool{false, true} {
-		script := MariaDBSetupScript("demo_crm", "demo_crm", isDynamic)
+		script := MariaDBSetupScript("demo_crm", "demo_crm", isDynamic, 25)
 		granted := 0
 		for _, line := range strings.Split(script, "\n") {
 			line = strings.TrimSpace(line)
@@ -229,7 +229,7 @@ func TestMariaDBOwnershipIsByAnUnderscoreDelimitedPrefix(t *testing.T) {
 	if !strings.HasSuffix(mariadbOthersSQL(crm, "demo_crm"), "AND "+heldByAnother) {
 		t.Errorf("the question of what is another account's is:\n%s", mariadbOthersSQL(crm, "demo_crm"))
 	}
-	static, dynamic := MariaDBSetupScript(crm, "demo_crm", false), MariaDBSetupScript(crm, "demo_crm", true)
+	static, dynamic := MariaDBSetupScript(crm, "demo_crm", false, 25), MariaDBSetupScript(crm, "demo_crm", true, 25)
 	covered := "AND BINARY 'demo_crm' LIKE BINARY g.Db LIMIT 1"
 	for name, script := range map[string]string{"static": static, "dynamic": dynamic} {
 		refuse, create := strings.Index(script, covered), strings.Index(script, "CREATE DATABASE IF NOT EXISTS `demo_crm`;")
@@ -363,5 +363,16 @@ func TestMariaDBScriptsRefuseANameThatIsNotThePlatforms(t *testing.T) {
 				t.Errorf("%s: user %q is not refused", act, bad)
 			}
 		}
+	}
+}
+
+// The app's user holds at most its connection limit on the shared server;
+// 0 is none, which MariaDB spells the same way.
+func TestTheMariaDBUserIsHeldToItsConnectionLimit(t *testing.T) {
+	if script := MariaDBSetupScript("demo_crm", "demo_crm", false, 25); !strings.Contains(script, "WITH MAX_USER_CONNECTIONS 25") {
+		t.Errorf("the setup script does not cap the user:\n%s", script)
+	}
+	if script := MariaDBSetupScript("demo_crm", "demo_crm", false, 0); !strings.Contains(script, "WITH MAX_USER_CONNECTIONS 0") {
+		t.Error("a limit of 0 does not leave the user uncapped")
 	}
 }

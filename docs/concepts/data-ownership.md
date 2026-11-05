@@ -148,7 +148,7 @@ protected inside a bundle is [security/design.md](../security/design.md) §6.4.
 
 | Flow | Who | What happens |
 |---|---|---|
-| **Export** | the tenant's administrator | Every store the inventory lists is captured, one app paused at a time, into a bundle in the cluster's own bucket; the bundle is downloaded as one `.gentian` file through the director |
+| **Export** | the tenant's administrator | Every store the inventory lists is captured, one app paused at a time, into a bundle in the cluster's own bucket or in a store of the tenant's own outside the cluster (a `BundleSource` its administrator declared, its keys in the tenant's part of the vault); the bundle is downloaded as one `.gentian` file through the director |
 | **Scheduled export** | declared in the tenant's backup policy, which an add-on manages (§5) | The same export, on a timer, to the destination the policy names |
 | **Import** | the cluster's administrator | The director reads `manifest.json`, declares the tenant from the bundle's `TenantSpec` with the same commit a create makes, waits for the platform to make the tenant and its apps empty, and restores into it — on this cluster or another |
 | **Restore** | an administrator | A bundle is loaded into the tenant it was taken of: pause, load, run the profile's restore commands, resume |

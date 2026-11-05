@@ -36,10 +36,11 @@ import (
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
-// BundleSourceReconciler turns a declared source into what reading it needs:
-// the credential requirement the custodian fills, its satisfaction probe, and
-// the Secret the keys are materialized into beside the object store, where
-// the Jobs that read a source run. The same three a backup destination is
+// BundleSourceReconciler turns a declared source into what reading and
+// writing it needs: the credential requirement the custodian fills, its
+// satisfaction probe, and the Secret the keys are materialized into beside
+// the object store, where the Jobs that read and write a source run. A
+// tenant's own store is the tenant's credential, at its part of the vault. The same three a backup destination is
 // given (BackupPolicyReconciler.ensureDestinationCredential), at the source's
 // own names, each owned by the source and collected with it.
 type BundleSourceReconciler struct {
@@ -77,31 +78,39 @@ func (r *BundleSourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			fmt.Sprintf("supply %s in the custodian: %s", name, why))
 	}
 	return ctrl.Result{}, r.report(ctx, source, metav1.ConditionTrue, "Ready",
-		fmt.Sprintf("bundles are read from %s/%s", source.Spec.Endpoint, source.Spec.Bucket))
+		fmt.Sprintf("bundles are kept at %s/%s", source.Spec.Endpoint, source.Spec.Bucket))
 }
 
 func (r *BundleSourceReconciler) ensureCredential(ctx context.Context, source *gentianov1alpha1.BundleSource) error {
 	name := backup.SourceCredentialName(source.Name)
-	vaultPath := backup.SourceVaultPath(source.Name)
+	vaultPath := backup.SourceVaultPath(source)
+	scope, description := "cluster", fmt.Sprintf(
+		"Access keys for %s, bucket %s, where bundles are read from to import a tenant. "+
+			"Issued by the storage provider; reading is all they need to allow.",
+		source.Spec.Endpoint, source.Spec.Bucket)
+	if source.Spec.Tenant != "" {
+		scope, description = "tenant", fmt.Sprintf(
+			"Access keys for %s, bucket %s, where this workspace's exports are written and its recovery reads. "+
+				"Issued by the storage provider; they need to allow reading, writing and deleting.",
+			source.Spec.Endpoint, source.Spec.Bucket)
+	}
 	owner := metav1.NewControllerRef(source, gentianov1alpha1.GroupVersion.WithKind("BundleSource"))
 	desired := &gentianov1alpha1.CredentialRequirement{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Labels: map[string]string{
 				"gentianos.io/credential-phase": "runtime",
-				"gentianos.io/credential-scope": "cluster",
+				"gentianos.io/credential-scope": scope,
 				managedByLabel:                  managedByValue,
 			},
 		},
 		Spec: gentianov1alpha1.CredentialRequirementSpec{
 			DisplayName: "Bundle Source Keys: " + source.Name,
-			Description: fmt.Sprintf(
-				"Access keys for %s, bucket %s, where bundles are read from to import a tenant. "+
-					"Issued by the storage provider; reading is all they need to allow.",
-				source.Spec.Endpoint, source.Spec.Bucket),
-			Phase:     "runtime",
-			Scope:     "cluster",
-			VaultPath: vaultPath,
+			Description: description,
+			Phase:       "runtime",
+			Scope:       scope,
+			Tenant:      source.Spec.Tenant,
+			VaultPath:   vaultPath,
 			Fields: []gentianov1alpha1.CredentialField{
 				{Key: backup.DestinationAccessKeyField, Format: "string", Secret: false},
 				{Key: backup.DestinationSecretKeyField, Format: "password", Secret: true},
@@ -142,7 +151,7 @@ func (r *BundleSourceReconciler) ensureCredential(ctx context.Context, source *g
 		map[string]string{
 			"gentianos.io/credential-requirement": name,
 			"gentianos.io/credential-phase":       "runtime",
-			"gentianos.io/credential-scope":       "cluster",
+			"gentianos.io/credential-scope":       scope,
 		}); err != nil {
 		return err
 	}

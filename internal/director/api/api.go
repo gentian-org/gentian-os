@@ -96,6 +96,8 @@ type Repository interface {
 	ClusterModels(ctx context.Context) (gitops.ModelSettings, error)
 	SetClusterModels(ctx context.Context, want gitops.ModelSettings, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
+	PlanDefinitions(ctx context.Context) ([]gitops.PlanDefinition, error)
+	WritePlans(ctx context.Context, message string, meta gitops.Meta, writes ...gitops.PlanWrite) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
@@ -157,6 +159,11 @@ type Repository interface {
 	BundleSources(ctx context.Context) ([]gitops.DeclaredBundleSource, error)
 	DeclareBundleSource(ctx context.Context, name string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
 	RemoveBundleSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	DeclareTenantBundleSource(ctx context.Context, tenant, label string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantBundleSource(ctx context.Context, tenant, label string, meta gitops.Meta) (gitops.Result, error)
+	DeclareExtensionObject(ctx context.Context, tenant string, o gitops.ExtensionObject, meta gitops.Meta) (gitops.Result, error)
+	RemoveExtensionObject(ctx context.Context, tenant, group, resource, name string, meta gitops.Meta) (gitops.Result, error)
+	PlatformTenant(ctx context.Context) (string, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -551,6 +558,12 @@ func (s *Server) routes() {
 		// never this route.
 		s.guarded("GET /v1/clusters/{c}/branding", "can_audit", s.clusterObject, s.clusterBranding)
 		s.guarded("PUT /v1/clusters/{c}/branding", "can_configure", s.clusterObject, s.setClusterBranding)
+		// The cluster's resource plans (resource_plans.go): read like a
+		// setting; written, and removed, by whoever may configure the
+		// cluster, which model v1 names as plans' relation.
+		s.guarded("GET /v1/clusters/{c}/resource-plans", "can_audit", s.clusterObject, s.clusterResourcePlans)
+		s.guarded("PUT /v1/clusters/{c}/resource-plans/{name}", "can_configure", s.clusterObject, s.setClusterResourcePlan)
+		s.guarded("DELETE /v1/clusters/{c}/resource-plans/{name}", "can_configure", s.clusterObject, s.removeClusterResourcePlan)
 		// The models the gateway offers, which are the claim's and nobody
 		// else's: read like a setting, written like one, and under
 		// /v1/clusters only, so that no relation on a tenant reaches them --
@@ -653,6 +666,10 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/bundle-sources", "can_configure", s.clusterObject, s.listClusterSources)
 			s.guarded("PUT /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.declareClusterSource)
 			s.guarded("DELETE /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.removeClusterSource)
+			// An add-on's objects of the cluster (extensions.go), declared
+			// in the platform tenant's directory.
+			s.guarded("PUT /v1/clusters/{c}/extensions/{group}/{resource}/{name}", "can_configure", s.clusterObject, s.declareClusterExtensionObject)
+			s.guarded("DELETE /v1/clusters/{c}/extensions/{group}/{resource}/{name}", "can_configure", s.clusterObject, s.removeClusterExtensionObject)
 			s.guarded("GET /v1/clusters/{c}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.clusterSourceBundles)
 			s.action("POST /v1/clusters/{c}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromClusterSource)
 			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources", "can_configure", s.clusterObject, s.tenantSources)
@@ -915,6 +932,16 @@ func (s *Server) routes() {
 		// backup policy are asked under. Only bundles of this tenant are
 		// listed; a destination's bucket may hold other tenants' too.
 		s.guarded("GET /v1/tenants/{t}/bundle-sources", "can_set_policy", tenantObject, s.tenantSources)
+		// The tenant's own stores, which its exports are written to: declared
+		// under the same relation, as <tenant>.<name>, their keys set at the
+		// custodian in the tenant's part of the vault.
+		s.guarded("PUT /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.declareTenantStore)
+		s.guarded("DELETE /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.removeTenantStore)
+		// An add-on's objects of the tenant (extensions.go): a backup
+		// schedule, say, of a type break-glass let the add-on bring.
+		// Declared under the relation the tenant's backup policy is.
+		s.guarded("PUT /v1/tenants/{t}/extensions/{group}/{resource}/{name}", "can_set_policy", tenantObject, s.declareTenantExtensionObject)
+		s.guarded("DELETE /v1/tenants/{t}/extensions/{group}/{resource}/{name}", "can_set_policy", tenantObject, s.removeTenantExtensionObject)
 		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
 		// Fetching one of them into the cluster's import storage, to rewrite
 		// it before it is restored: only a bundle whose header names the
@@ -2275,6 +2302,10 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 	case errors.Is(err, gitops.ErrInvalidBackupPolicy):
 		s.fail(w, r, http.StatusBadRequest, err.Error())
+	case errors.Is(err, gitops.ErrInvalidPlan):
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+	case errors.Is(err, gitops.ErrPlanNotFound):
+		s.fail(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, gitops.ErrNoPushCredential):
 		// 503, not 500: nothing is broken and the request was fine. The
 		// cluster has not been given a credential to write with, which is

@@ -113,6 +113,21 @@ type ResourcePlanSpec struct {
 	// in a tenant's own list of upgrades.
 	// +optional
 	SelfServiceDisabled bool `json:"selfServiceDisabled,omitempty"`
+
+	// Units is how many node units the plan is, for a commerce backend that
+	// sells a number of nodes rather than a named plan: it moves a tenant to
+	// the plan whose units are the number bought. Zero means the plan is not
+	// a whole number of node units.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	Units int32 `json:"units,omitempty"`
+
+	// Retired withholds the plan from every new choice and keeps it for the
+	// tenants already on it. A plan's quantities cannot change under the
+	// tenants on it, so a different ceiling is a new plan, and the one it
+	// replaces is retired until nobody is on it.
+	// +optional
+	Retired bool `json:"retired,omitempty"`
 }
 
 // ResourcePlanStatus reports observed plan state.

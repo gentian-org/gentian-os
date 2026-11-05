@@ -726,6 +726,7 @@ usage:
         displayName: Base · 1 node
         description: One node — a workspace running Nextcloud, Odoo and the App Store together.
         tier: 0
+        units: 1
         default: true
         productSku: gentian-resources-nodes-1
         quotas:
@@ -738,6 +739,7 @@ usage:
         displayName: 2 nodes
         description: Twice the reserved capacity, for a workspace running several apps.
         tier: 10
+        units: 2
         productSku: gentian-resources-nodes-2
         quotas:
           requestsCpu: "8"
@@ -748,6 +750,7 @@ usage:
       nodes-4:
         displayName: 4 nodes
         tier: 20
+        units: 4
         productSku: gentian-resources-nodes-4
         quotas:
           requestsCpu: "16"
@@ -758,6 +761,7 @@ usage:
       nodes-8:
         displayName: 8 nodes
         tier: 30
+        units: 8
         productSku: gentian-resources-nodes-8
         quotas:
           requestsCpu: "32"
@@ -769,6 +773,7 @@ usage:
         displayName: 16 nodes
         description: The largest catalogue plan. Beyond this, arrange a ceiling with the platform operator.
         tier: 40
+        units: 16
         productSku: gentian-resources-nodes-16
         quotas:
           requestsCpu: "64"

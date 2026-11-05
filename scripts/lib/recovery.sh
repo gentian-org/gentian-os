@@ -365,8 +365,8 @@ _kit_backup_identity() {
     # arrangement — the reverse would leave an identity escrowed for a recipient
     # nothing encrypts to.
     if _kit_escrow_enabled; then
-        if bao kv put -mount=secret "${_KIT_BACKUP_ESCROW_PATH}" \
-            "identity=${BACKUP_AGE_IDENTITY}" >/dev/null 2>&1; then
+        if jq -n --rawfile v <(printf '%s' "${BACKUP_AGE_IDENTITY}") '{identity: $v}' \
+            | bao kv put -mount=secret "${_KIT_BACKUP_ESCROW_PATH}" - >/dev/null 2>&1; then
             success "  Backup key generated. Public half and escrowed identity in OpenBao."
             if _kit_escrow_stated; then
                 warn "  This cluster escrows the backup identity (spec.backup.escrowIdentity)."

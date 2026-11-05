@@ -487,7 +487,7 @@ commit unless marked as a command.
 | Partners | Declare and remove a tenant's partners ([partners.md](partners.md)). |
 | Settings | Read and change the cluster's settings, its branding and its models; choose a tenant's resource plan; set a tenant's sign-in security policy; set a tenant's backup policy and the cluster's. |
 | Platform security and roles | Read and replace the list of exceptions to the cluster's default security rules, as git declares it; name and remove the holders of platform roles. |
-| Backup bundles | Upload or inspect a bundle; declare the storage outside the cluster an import may read from and fetch a bundle from it; restore (as part of an import). |
+| Backup bundles | Upload or inspect a bundle; declare the storage outside the cluster an import may read from, or a tenant's own store its exports are written to, and fetch a bundle from either; restore (as part of an import). |
 | Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
 | Commands relayed to the operator | Take a backup; delete a backup; send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |

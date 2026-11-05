@@ -106,6 +106,11 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 	}
 	if !chosen.Selectable {
 		switch chosen.BlockedBy {
+		case "retired":
+			// Kept for the tenants on it, offered to no other: a state of
+			// the catalog, not of the caller's entitlement.
+			s.fail(w, r, http.StatusConflict, chosen.Blocked)
+			return
 		case "fit":
 			if !body.Force {
 				// 409, not 400: the request is well formed and would be

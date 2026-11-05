@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -101,6 +102,12 @@ type ComponentReconciler struct {
 	// the platform's own (security.PlatformClusterRoles); a test names its
 	// own.
 	ClusterRoles security.ClusterRoleSet
+	// CRDReader gets CustomResourceDefinitions by name, uncached: the
+	// operator may not list or watch them (component_api_extensions.go).
+	CRDReader client.Reader
+	// Discovery tells which resources a group serves, for an API
+	// extension's check that its group is its own.
+	Discovery discovery.DiscoveryInterface
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -220,6 +227,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 			if err := r.deleteClusterRoles(ctx, comp); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.deleteAPIExtensionBindings(ctx, comp); err != nil {
 				return ctrl.Result{}, err
 			}
 			// The log destination's certificate lives in the observability
@@ -450,11 +460,22 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.ensureClusterRoles(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, err
 	}
+	// API extensions the same way: installed once granted, and the
+	// component's reading of them unbound when the grant goes.
+	noExtension, err := r.ensureAPIExtensions(ctx, comp, profile)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	comp.Status.PendingPrivileges = security.PendingPrivileges(profile, comp, time.Now())
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
 			componentRequeue)
+	}
+	// Granted and not installed: a component started without its types
+	// fails on its first read of them.
+	if noExtension != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, "APIExtensionRefused", noExtension, componentRequeue)
 	}
 
 	zone := r.zoneOf(tenant)
@@ -1169,9 +1190,8 @@ func (z edgeZone) listenerFor(host, kernelDomain string) string {
 // policy that puts a session and the authorization question in front of a
 // route is written for oidc entries only, so an entry with any other mode
 // would be a route on the authenticated Gateway with nothing in front of it
-// at all -- not the session, not even the bouncer. That includes an entry that
-// pins its caller with `source`: the schema admits it, and nothing enforces a
-// source yet, so routing it would publish it to everyone. What needs no
+// at all -- not the session, not even the bouncer. The schema refuses such an
+// entry; this holds for a profile admitted before it did. What needs no
 // session is a perimeter surface, enabled and published from the DMZ.
 func routableExposures(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) (routable, refused []*gentianov1alpha1.ExposureSpec) {
 	for i := range profile.Spec.Expose {

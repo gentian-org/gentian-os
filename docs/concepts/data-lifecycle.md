@@ -284,8 +284,10 @@ is named in the result, for whoever may grant it here, and
 storage; or a *bundle source*, storage outside the cluster declared like a
 backup destination: its address a commit (`BundleSource`), its keys set at
 the custodian into the vault, read by the platform alone. A tenant's own
-backup bucket and its policy's destination are its sources for its recovery,
-and list only its own bundles. A bundle is named by source and prefix, and
+backup bucket, its policy's destination and the stores its administrator
+declared (`<tenant>.<name>`, its keys in the tenant's part of the vault,
+which its exports can be written to) are its sources for its recovery, and
+list only its own bundles. A bundle is named by source and prefix, and
 the platform finds the address and the keys. Listing reads each bundle's
 plaintext `bundle-info.json`; an import or a restore reads the bundle where
 it is; a fetch copies it into `gentian-imports`, from where it is downloaded
