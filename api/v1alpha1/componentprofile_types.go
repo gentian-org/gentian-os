@@ -479,6 +479,15 @@ type PrivilegeRequest struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=32
 	ClusterRoles []ClusterRoleRequest `json:"clusterRoles,omitempty"`
+
+	// APIExtensions are resource types the component adds to the cluster's
+	// API. Cluster scope, and approved by break-glass alone: a type is there
+	// for every tenant, and outlives the install that brought it.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=4
+	APIExtensions []APIExtensionRequest `json:"apiExtensions,omitempty"`
 }
 
 // PodSecurityWaiver asks for one admission policy to be waived.
@@ -534,6 +543,49 @@ type ClusterRoleRequest struct {
 	// rules stays installable, binds nothing, and the Component says so.
 	// +optional
 	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
+	// Reason is what the approver reads.
+	// +kubebuilder:validation:MinLength=10
+	Reason string `json:"reason"`
+}
+
+// APIExtensionRequest asks for resource types of the component's own.
+//
+// The definitions are the CustomResourceDefinitions themselves, so that what
+// an approver reads is what is installed: a chart's CRDs are never installed
+// (app charts render with skipCRDs, and a tenant chart may not write one).
+// The operator installs them once a live grant for apiExtensions/<name> is on
+// the install, and only as new types of a group no other definition on the
+// cluster is in: every definition is in Group, names a resource of its own,
+// and has no conversion webhook. They are never removed by the operator --
+// removing a type deletes every object of it -- and the component's
+// ServiceAccount reads them, and writes their status, only while the grant
+// lives.
+type APIExtensionRequest struct {
+	// Name is what a PrivilegeGrant refers to (apiExtensions/<name>). Unique
+	// within the profile.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// Group is the API group every definition is in: the add-on's own,
+	// never one of Kubernetes' or the platform's.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:XValidation:rule="!(self == 'gentianos.io' || self.endsWith('.gentianos.io') || self == 'k8s.io' || self.endsWith('.k8s.io') || self == 'kubernetes.io' || self.endsWith('.kubernetes.io'))",message="the group is the add-on's own, never Kubernetes' or the platform's"
+	Group string `json:"group"`
+	// ServiceAccount is the account the component's chart runs its pods
+	// under, in the component's namespace: the one that reads the types and
+	// writes their status. Not "default", which every pod without an account
+	// of its own runs under.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self != 'default'",message="the component's own ServiceAccount, not default"
+	ServiceAccount string `json:"serviceAccount"`
+	// Definitions are the CustomResourceDefinitions, apiextensions.k8s.io/v1,
+	// as they are installed.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Definitions []runtime.RawExtension `json:"definitions"`
 	// Reason is what the approver reads.
 	// +kubebuilder:validation:MinLength=10
 	Reason string `json:"reason"`

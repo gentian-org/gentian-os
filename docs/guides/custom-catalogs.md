@@ -1114,11 +1114,15 @@ artifact was read with a credential earns its bytes nothing.
 - **A profile asks for a cluster role by name and cannot write one.** An entry under
   `requires.privileges.clusterRoles` names one of the roles the platform defines, and the
   ServiceAccount its chart runs under. The role is bound only where the platform has it, the
-  cluster's `PlatformSecurityPolicy` permits it for the profile, and the security officer granted
-  it on the install; otherwise nothing is bound and the Component says why (`ClusterRolesBound`).
-  Rules stated on an entry are ignored and make it bind nothing. The platform's set is empty,
-  so a catalog cannot obtain any access to the Kubernetes API for an app
+  cluster's `PlatformSecurityPolicy` permits it for the profile, and it was granted on the
+  install; otherwise nothing is bound and the Component says why (`ClusterRolesBound`).
+  Rules stated on an entry are ignored and make it bind nothing, so a catalog cannot obtain any
+  access to the Kubernetes API for an app beyond a role of the platform's
   ([security/design.md §3.4](../security/design.md)).
+- **A profile's own types are installed only once break-glass granted them.** An entry under
+  `requires.privileges.apiExtensions` writes out the definitions; the chart's own are never
+  installed. They must be new, namespaced types of the profile's own group, without a conversion
+  webhook ([security/design.md §3.4b](../security/design.md)).
 - **Nothing here is a license check.** Whether an app arrives is decided where its chart and images
   are pulled.
 

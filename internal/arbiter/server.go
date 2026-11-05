@@ -37,6 +37,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/gentian-org/gentian-os/internal/openfga"
 	"github.com/openfga/language/pkg/go/transformer"
 	"golang.org/x/time/rate"
 )
@@ -286,9 +287,9 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, e Entry, er
 		writeRefusal(w, ref)
 		return
 	}
-	var fe *fgaError
-	if errors.As(err, &fe) && fe.code == http.StatusBadRequest {
-		writeRefusal(w, &refusal{status: http.StatusBadRequest, code: "invalid_request", message: fe.message()})
+	var fe *openfga.Error
+	if errors.As(err, &fe) && fe.Code == http.StatusBadRequest {
+		writeRefusal(w, &refusal{status: http.StatusBadRequest, code: "invalid_request", message: fe.Message()})
 		return
 	}
 	var tooLarge *http.MaxBytesError
@@ -343,15 +344,6 @@ func (t Tuple) valid(what string) error {
 	return field(what+".object", t.Object, true)
 }
 
-// fgaTuple is a tuple as OpenFGA's API spells it.
-type fgaTuple struct {
-	User     string `json:"user,omitempty"`
-	Relation string `json:"relation,omitempty"`
-	Object   string `json:"object,omitempty"`
-}
-
-func toFGA(t Tuple) fgaTuple { return fgaTuple(t) }
-
 func contextual(tuples []Tuple) (map[string]any, error) {
 	if len(tuples) == 0 {
 		return nil, nil
@@ -401,7 +393,7 @@ func (s *Server) check(ctx context.Context, ids StoreIDs, _ Entry, r *http.Reque
 	var out struct {
 		Allowed bool `json:"allowed"`
 	}
-	if err := s.fga.do(ctx, http.MethodPost, storePath(ids.Store, "/check"), body, &out); err != nil {
+	if err := s.fga.Do(ctx, http.MethodPost, storePath(ids.Store, "/check"), body, &out); err != nil {
 		return nil, err
 	}
 	return CheckResponse{Allowed: out.Allowed}, nil
@@ -434,7 +426,7 @@ func (s *Server) batchCheck(ctx context.Context, ids StoreIDs, _ Entry, r *http.
 		} `json:"result"`
 	}
 	payload := map[string]any{"authorization_model_id": ids.Model, "checks": checks}
-	if err := s.fga.do(ctx, http.MethodPost, storePath(ids.Store, "/batch-check"), payload, &out); err != nil {
+	if err := s.fga.Do(ctx, http.MethodPost, storePath(ids.Store, "/batch-check"), payload, &out); err != nil {
 		return nil, err
 	}
 	results := make([]BatchCheckResult, len(req.Checks))
@@ -476,7 +468,7 @@ func (s *Server) listObjects(ctx context.Context, ids StoreIDs, _ Entry, r *http
 	var out struct {
 		Objects []string `json:"objects"`
 	}
-	if err := s.fga.do(ctx, http.MethodPost, storePath(ids.Store, "/list-objects"), body, &out); err != nil {
+	if err := s.fga.Do(ctx, http.MethodPost, storePath(ids.Store, "/list-objects"), body, &out); err != nil {
 		return nil, err
 	}
 	if out.Objects == nil {
@@ -545,7 +537,7 @@ func (s *Server) listUsers(ctx context.Context, ids StoreIDs, _ Entry, r *http.R
 			} `json:"wildcard"`
 		} `json:"users"`
 	}
-	if err := s.fga.do(ctx, http.MethodPost, storePath(ids.Store, "/list-users"), body, &out); err != nil {
+	if err := s.fga.Do(ctx, http.MethodPost, storePath(ids.Store, "/list-users"), body, &out); err != nil {
 		return nil, err
 	}
 	users := make([]string, 0, len(out.Users))
@@ -598,7 +590,7 @@ func (s *Server) readPage(ctx context.Context, storeID string, body map[string]a
 		} `json:"tuples"`
 		ContinuationToken string `json:"continuation_token"`
 	}
-	if err := s.fga.do(ctx, http.MethodPost, storePath(storeID, "/read"), body, &out); err != nil {
+	if err := s.fga.Do(ctx, http.MethodPost, storePath(storeID, "/read"), body, &out); err != nil {
 		return ReadResponse{}, err
 	}
 	resp := ReadResponse{Tuples: make([]Tuple, 0, len(out.Tuples)), ContinuationToken: out.ContinuationToken}
@@ -639,7 +631,7 @@ func (s *Server) write(ctx context.Context, ids StoreIDs, _ Entry, r *http.Reque
 		}
 		body[name] = map[string]any{"tuple_keys": keys}
 	}
-	if err := s.fga.do(ctx, http.MethodPost, storePath(ids.Store, "/write"), body, nil); err != nil {
+	if err := s.fga.Do(ctx, http.MethodPost, storePath(ids.Store, "/write"), body, nil); err != nil {
 		return nil, err
 	}
 	return struct{}{}, nil

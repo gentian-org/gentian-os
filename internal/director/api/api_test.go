@@ -655,6 +655,10 @@ var facts = dt.Table{
 	"user:tenant-demo/ines can_approve cluster:demo-cluster": true,
 	"user:tenant-demo/ines can_view tenant:demo":             true,
 	"user:sam can_view tenant:demo":                          true,
+	// bea holds break-glass for the occasion: can_set_admission, and
+	// can_view on the tenant she approves for. Not a security officer.
+	"user:bea can_set_admission cluster:demo-cluster": true,
+	"user:bea can_view tenant:demo":                   true,
 	// alice configures the cluster and is not a security officer -- the
 	// model's own fixture says can_approve: false for her.
 	"user:alice can_audit cluster:demo-cluster":            true,

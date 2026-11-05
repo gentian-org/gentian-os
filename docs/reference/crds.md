@@ -270,7 +270,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
-| `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress or clusterRoles. |
+| `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
 | `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
 | `spec.profileRef` | object | yes | `ProfileRef` names the catalog entry this is an instance of. |
 | `spec.profileRef.digest` | string |  | `Digest` pins the profile bundle this instance was installed from. |
@@ -647,6 +647,12 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
 | `spec.requires.platform` | string |  | `Platform` is the oldest platform version line this build runs on, as a floor: ">=0.5", or "0.5" which means the same. |
 | `spec.requires.privileges` | object |  | `Privileges` escape the default posture. |
+| `spec.requires.privileges.apiExtensions` | []object |  | `APIExtensions` are resource types the component adds to the cluster's API. |
+| `spec.requires.privileges.apiExtensions[].definitions` | []object (free-form) | yes | `Definitions` are the CustomResourceDefinitions, apiextensions.k8s.io/v1, as they are installed. |
+| `spec.requires.privileges.apiExtensions[].group` | string | yes | `Group` is the API group every definition is in: the add-on's own, never one of Kubernetes' or the platform's. |
+| `spec.requires.privileges.apiExtensions[].name` | string | yes | `Name` is what a PrivilegeGrant refers to (apiExtensions/\<name>). |
+| `spec.requires.privileges.apiExtensions[].reason` | string | yes | `Reason` is what the approver reads. |
+| `spec.requires.privileges.apiExtensions[].serviceAccount` | string | yes | `ServiceAccount` is the account the component's chart runs its pods under, in the component's namespace: the one that reads the types and writes their status. |
 | `spec.requires.privileges.clusterRoles` | []object |  | `ClusterRoles` the component's ServiceAccount needs. |
 | `spec.requires.privileges.clusterRoles[].name` | string | yes | `Name` is the platform's name of the role, and what a PrivilegeGrant refers to (clusterRoles/\<name>). |
 | `spec.requires.privileges.clusterRoles[].reason` | string | yes | `Reason` is what the approver reads. |
@@ -1434,6 +1440,12 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
 | `status.profileSpec.requires.platform` | string |  | `Platform` is the oldest platform version line this build runs on, as a floor: ">=0.5", or "0.5" which means the same. |
 | `status.profileSpec.requires.privileges` | object |  | `Privileges` escape the default posture. |
+| `status.profileSpec.requires.privileges.apiExtensions` | []object |  | `APIExtensions` are resource types the component adds to the cluster's API. |
+| `status.profileSpec.requires.privileges.apiExtensions[].definitions` | []object (free-form) | yes | `Definitions` are the CustomResourceDefinitions, apiextensions.k8s.io/v1, as they are installed. |
+| `status.profileSpec.requires.privileges.apiExtensions[].group` | string | yes | `Group` is the API group every definition is in: the add-on's own, never one of Kubernetes' or the platform's. |
+| `status.profileSpec.requires.privileges.apiExtensions[].name` | string | yes | `Name` is what a PrivilegeGrant refers to (apiExtensions/\<name>). |
+| `status.profileSpec.requires.privileges.apiExtensions[].reason` | string | yes | `Reason` is what the approver reads. |
+| `status.profileSpec.requires.privileges.apiExtensions[].serviceAccount` | string | yes | `ServiceAccount` is the account the component's chart runs its pods under, in the component's namespace: the one that reads the types and writes their status. |
 | `status.profileSpec.requires.privileges.clusterRoles` | []object |  | `ClusterRoles` the component's ServiceAccount needs. |
 | `status.profileSpec.requires.privileges.clusterRoles[].name` | string | yes | `Name` is the platform's name of the role, and what a PrivilegeGrant refers to (clusterRoles/\<name>). |
 | `status.profileSpec.requires.privileges.clusterRoles[].reason` | string | yes | `Reason` is what the approver reads. |

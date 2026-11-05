@@ -143,6 +143,14 @@ is "the installer resolves it to the same" \
 is "also when the image tag is given, which used to skip it" \
     "$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_IMAGE_TAG=1.2.3 -- "$(at)"'resolve_gentian_os_image_tag >/dev/null 2>&1; echo "${GENTIAN_OS_BRANCH:-unset} ${GENTIAN_OS_IMAGE_TAG}"')" \
     "feature-x 1.2.3"
+is "a release tag resolves to its version" \
+    "$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_BRANCH=v9.9.9 -- "$(at)"'resolve_gentian_os_image_tag >/dev/null 2>&1; echo "${GENTIAN_OS_IMAGE_TAG}"')" "9.9.9"
+is "a branch resolves to the image of the checkout's commit" \
+    "$(run GENTIAN_OS_REPO="${OSREMOTE}" -- "$(at)"'resolve_gentian_os_image_tag >/dev/null 2>&1; echo "${GENTIAN_OS_IMAGE_TAG}"')" \
+    "feature-x-$(git -C "${OS}" rev-parse --short=7 HEAD)"
+is "moving tags are told from pinned ones (what pre-flight refuses on prod)" \
+    "$(run -- 'for t in develop main 0.5 0.5.0 develop-abc1234 main-0123abc; do gentian_os_image_tag_moves "$t" && printf "%s:moves " "$t" || printf "%s:pinned " "$t"; done')" \
+    "develop:moves main:moves 0.5:moves 0.5.0:pinned develop-abc1234:pinned main-0123abc:pinned "
 g -C "${OS}" checkout --detach
 is "a detached checkout has no branch to read" "$(run -- "$(at)gentian_os_ref")" ""
 out="$(run GENTIAN_OS_REPO="${OSREMOTE}" -- "$(at)"'resolve_gentian_os_branch; echo "rc=$?"')"

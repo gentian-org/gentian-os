@@ -164,6 +164,9 @@ type Repository interface {
 	RemoveBundleSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	DeclareTenantBundleSource(ctx context.Context, tenant, label string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantBundleSource(ctx context.Context, tenant, label string, meta gitops.Meta) (gitops.Result, error)
+	DeclareExtensionObject(ctx context.Context, tenant string, o gitops.ExtensionObject, meta gitops.Meta) (gitops.Result, error)
+	RemoveExtensionObject(ctx context.Context, tenant, group, resource, name string, meta gitops.Meta) (gitops.Result, error)
+	PlatformTenant(ctx context.Context) (string, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -681,6 +684,10 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/bundle-sources", "can_configure", s.clusterObject, s.listClusterSources)
 			s.guarded("PUT /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.declareClusterSource)
 			s.guarded("DELETE /v1/clusters/{c}/bundle-sources/{name}", "can_configure", s.clusterObject, s.removeClusterSource)
+			// An add-on's objects of the cluster (extensions.go), declared
+			// in the platform tenant's directory.
+			s.guarded("PUT /v1/clusters/{c}/extensions/{group}/{resource}/{name}", "can_configure", s.clusterObject, s.declareClusterExtensionObject)
+			s.guarded("DELETE /v1/clusters/{c}/extensions/{group}/{resource}/{name}", "can_configure", s.clusterObject, s.removeClusterExtensionObject)
 			s.guarded("GET /v1/clusters/{c}/bundle-sources/{name}/bundles", "can_configure", s.clusterObject, s.clusterSourceBundles)
 			s.action("POST /v1/clusters/{c}/bundle-sources/{name}/actions/fetch", "can_configure", s.clusterObject, s.fetchFromClusterSource)
 			s.guarded("GET /v1/clusters/{c}/tenants/{t}/bundle-sources", "can_configure", s.clusterObject, s.tenantSources)
@@ -952,6 +959,11 @@ func (s *Server) routes() {
 		// custodian in the tenant's part of the vault.
 		s.guarded("PUT /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.declareTenantStore)
 		s.guarded("DELETE /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.removeTenantStore)
+		// An add-on's objects of the tenant (extensions.go): a backup
+		// schedule, say, of a type break-glass let the add-on bring.
+		// Declared under the relation the tenant's backup policy is.
+		s.guarded("PUT /v1/tenants/{t}/extensions/{group}/{resource}/{name}", "can_set_policy", tenantObject, s.declareTenantExtensionObject)
+		s.guarded("DELETE /v1/tenants/{t}/extensions/{group}/{resource}/{name}", "can_set_policy", tenantObject, s.removeTenantExtensionObject)
 		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
 		// Fetching one of them into the cluster's import storage, to rewrite
 		// it before it is restored: only a bundle whose header names the
