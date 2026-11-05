@@ -241,21 +241,36 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// export that resolved its destination afresh on every reconcile could
 		// have half its artifacts in one bucket and half in another if the
 		// policy changed while it ran.
-		eff, effErr := r.effectivePolicy(ctx, tenant)
-		if effErr != nil {
-			return r.fail(ctx, export, "PolicyUnusable", effErr.Error())
-		}
-		// The export's own choice, applied over the policy. Recorded on the
-		// bundle like everything else here, so a restore reads where this
-		// bundle actually went rather than where the policy points today.
-		eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant, export.Name)
-		export.Status.Bundle = &gentianov1alpha1.BundleRef{
-			Bucket:           eff.Bucket,
-			Prefix:           export.Name,
-			Endpoint:         eff.Endpoint,
-			Region:           eff.Region,
-			AddressingStyle:  eff.AddressingStyle,
-			CredentialSecret: eff.CredentialSecret,
+		if export.Spec.Destination.Resolved() == gentianov1alpha1.ExportDestinationSource {
+			// One of the tenant's own stores: its address and its keys, and
+			// no policy, which a store does not need.
+			store, why, err := r.exportStore(ctx, tenant, export.Spec.Destination.Source)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if why != "" {
+				return r.fail(ctx, export, "DestinationUnavailable", why)
+			}
+			bundle := backup.SourceBundle(store, export.Name)
+			export.Status.Bundle = &bundle
+		} else {
+			eff, effErr := r.effectivePolicy(ctx, tenant)
+			if effErr != nil {
+				return r.fail(ctx, export, "PolicyUnusable", effErr.Error())
+			}
+			// The export's own choice, applied over the policy. Recorded on
+			// the bundle like everything else here, so a restore reads where
+			// this bundle actually went rather than where the policy points
+			// today.
+			eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant, export.Name)
+			export.Status.Bundle = &gentianov1alpha1.BundleRef{
+				Bucket:           eff.Bucket,
+				Prefix:           export.Name,
+				Endpoint:         eff.Endpoint,
+				Region:           eff.Region,
+				AddressingStyle:  eff.AddressingStyle,
+				CredentialSecret: eff.CredentialSecret,
+			}
 		}
 		export.Status.Phase = gentianov1alpha1.TenantExportPhaseRunning
 		export.Status.StartedAt = ptrNow()
@@ -961,6 +976,33 @@ func (r *TenantExportReconciler) jobParams(
 		p.UploadCredentialsSecret = bundle.CredentialSecret
 	}
 	return p
+}
+
+// exportStore is the tenant's own store an export names, or why it cannot be
+// written to. A store of another tenant or of the cluster is refused: a
+// tenant writes only where its own administrator declared, with keys of its
+// own part of the vault. And one whose keys have not been supplied is refused
+// before anything is paused, rather than when the first upload fails.
+func (r *TenantExportReconciler) exportStore(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	name string,
+) (*gentianov1alpha1.BundleSource, string, error) {
+	store := &gentianov1alpha1.BundleSource{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, store); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Sprintf("no store %q is declared", name), nil
+		}
+		return nil, "", err
+	}
+	if store.Spec.Tenant != tenant.Name {
+		return nil, fmt.Sprintf("store %q is not tenant %s's own", name, tenant.Name), nil
+	}
+	if !store.Status.CredentialSatisfied {
+		return nil, fmt.Sprintf("the keys of store %q are not set: supply %s in the custodian",
+			name, backup.SourceCredentialName(name)), nil
+	}
+	return store, "", nil
 }
 
 // effectivePolicy resolves what this tenant's backups do right now.

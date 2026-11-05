@@ -81,3 +81,30 @@ func TestASourceIsGivenItsCredentialPathAsADestinationIs(t *testing.T) {
 		t.Errorf("the probe wakes %v", reqs)
 	}
 }
+
+// A tenant's own store is the tenant's credential: scoped to it, at its part
+// of the vault, which its administrators write and no other tenant reaches.
+func TestATenantsStoreIsGivenTheTenantsCredential(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	src := &gentianov1alpha1.BundleSource{
+		ObjectMeta: metav1.ObjectMeta{Name: "corp.offsite", UID: "u-corp"},
+		Spec:       gentianov1alpha1.BundleSourceSpec{Tenant: "corp", Endpoint: "https://s3.example", Bucket: "corp"},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(src).WithStatusSubresource(src).Build()
+	r := &BundleSourceReconciler{Client: c, Scheme: s}
+	ctx := context.Background()
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "corp.offsite"}}); err != nil {
+		t.Fatal(err)
+	}
+	var req gentianov1alpha1.CredentialRequirement
+	if err := c.Get(ctx, types.NamespacedName{Name: "bundle-source-corp.offsite"}, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Spec.VaultPath != "gentian-os/tenants/corp/backup/sources/offsite" || req.Spec.Scope != "tenant" ||
+		req.Spec.Tenant != "corp" || req.Labels["gentianos.io/credential-scope"] != "tenant" {
+		t.Errorf("requirement %+v", req)
+	}
+}

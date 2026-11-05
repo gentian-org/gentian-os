@@ -38,6 +38,13 @@ import (
 //
 //	clusters/<c>/kernel/claims/bundle-source-<name>.yaml
 //
+// A tenant's own store, which its exports are written to, is declared the
+// same way in the tenant's directory, by its administrator, as the
+// BundleSource <tenant>.<label> with spec.tenant set; its keys are set at the
+// custodian in the tenant's part of the vault.
+//
+//	clusters/<c>/tenants/<t>/bundle-source-<label>.yaml
+//
 // One file per source, rather than a list in one file: declaring one and
 // removing one are each a commit that touches nothing else.
 
@@ -110,8 +117,56 @@ func (g *GitOps) DeclareBundleSource(ctx context.Context, name string, d BundleS
 	if err := CheckBundleSource(name, &d); err != nil {
 		return Result{}, err
 	}
-	return g.writeClaimsFile(ctx, bundleSourceFile(name), renderBundleSource(name, d),
+	return g.writeClaimsFile(ctx, bundleSourceFile(name), renderBundleSource(name, "", d),
 		fmt.Sprintf("Declare bundle source %s: %s, bucket %s", name, d.Endpoint, d.Bucket), meta)
+}
+
+// TenantStoreName is the BundleSource a tenant's store is declared as, or an
+// error saying why the label cannot be one: the tenant, a dot, and the label.
+// No tenant's name and no label can hold a dot, so two tenants' stores, and a
+// tenant's and the cluster's, can never share a name.
+func TenantStoreName(tenant, label string) (string, error) {
+	if !ValidName(tenant) {
+		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	if !bundleSourceName.MatchString(label) {
+		return "", fmt.Errorf("%w: a store's name is lower-case letters, digits and hyphens, 48 at most", ErrInvalidBundleSource)
+	}
+	name := tenant + "." + label
+	if len(name) > 63 {
+		return "", fmt.Errorf("%w: the tenant's name and the store's together are 62 characters at most", ErrInvalidBundleSource)
+	}
+	return name, nil
+}
+
+// DeclareTenantBundleSource writes one of a tenant's own stores and commits it.
+func (g *GitOps) DeclareTenantBundleSource(ctx context.Context, tenant, label string, d BundleSourceDeclaration, meta Meta) (Result, error) {
+	name, err := TenantStoreName(tenant, label)
+	if err != nil {
+		return Result{}, err
+	}
+	d.Endpoint = strings.TrimSpace(d.Endpoint)
+	d.Description = strings.TrimSpace(d.Description)
+	if err := CheckBundleSource(label, &d); err != nil {
+		return Result{}, err
+	}
+	return g.writeTenantFile(ctx, tenant, bundleSourceFile(label), renderBundleSource(name, tenant, d), listResource,
+		fmt.Sprintf("Declare store %s of tenant %s: %s, bucket %s", label, tenant, d.Endpoint, d.Bucket), meta)
+}
+
+// RemoveTenantBundleSource stops declaring one of a tenant's stores. The
+// tenant's directory is synced with pruning, so the cluster deletes it, and
+// its keys go with the requirement made for it. What was written there stays.
+func (g *GitOps) RemoveTenantBundleSource(ctx context.Context, tenant, label string, meta Meta) (Result, error) {
+	if _, err := TenantStoreName(tenant, label); err != nil {
+		return Result{}, err
+	}
+	res, err := g.writeTenantFile(ctx, tenant, bundleSourceFile(label), "", listResource,
+		fmt.Sprintf("Remove store %s of tenant %s", label, tenant), meta)
+	if err == nil && res.Status == "unchanged" {
+		return Result{}, ErrBundleSourceNotFound
+	}
+	return res, err
 }
 
 // RemoveBundleSource stops declaring a source. What was fetched from it
@@ -171,11 +226,17 @@ func (g *GitOps) BundleSources(ctx context.Context) ([]DeclaredBundleSource, err
 	return out, nil
 }
 
-// renderBundleSource writes the object a reviewer reads in the commit.
-func renderBundleSource(name string, d BundleSourceDeclaration) string {
+// renderBundleSource writes the object a reviewer reads in the commit. A
+// tenant's own store carries the tenant; the cluster's carries none.
+func renderBundleSource(name, tenant string, d BundleSourceDeclaration) string {
 	var b strings.Builder
-	b.WriteString("# Managed by the director: storage outside the cluster that bundles are\n")
-	b.WriteString("# imported from, declared by whoever the commit names. Its keys are not\n")
+	if tenant == "" {
+		b.WriteString("# Managed by the director: storage outside the cluster that bundles are\n")
+		b.WriteString("# imported from, declared by whoever the commit names. Its keys are not\n")
+	} else {
+		b.WriteString("# Managed by the director: storage outside the cluster that this tenant's\n")
+		b.WriteString("# exports are written to, declared by whoever the commit names. Its keys are not\n")
+	}
 	b.WriteString("# here: they are set at the custodian, as bundle-source-" + name + ".\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: BundleSource\n")
@@ -186,7 +247,8 @@ func renderBundleSource(name string, d BundleSourceDeclaration) string {
 	// left bare YAML would read it as a number the definition refuses.
 	for _, f := range []struct{ key, value string }{
 		{"endpoint", d.Endpoint}, {"bucket", d.Bucket}, {"prefix", d.Prefix},
-		{"region", d.Region}, {"addressingStyle", d.AddressingStyle}, {"description", d.Description},
+		{"region", d.Region}, {"addressingStyle", d.AddressingStyle}, {"tenant", tenant},
+		{"description", d.Description},
 	} {
 		if f.value != "" {
 			b.WriteString("  " + f.key + ": " + strconv.Quote(f.value) + "\n")

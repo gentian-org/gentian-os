@@ -157,6 +157,8 @@ type Repository interface {
 	BundleSources(ctx context.Context) ([]gitops.DeclaredBundleSource, error)
 	DeclareBundleSource(ctx context.Context, name string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
 	RemoveBundleSource(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	DeclareTenantBundleSource(ctx context.Context, tenant, label string, d gitops.BundleSourceDeclaration, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantBundleSource(ctx context.Context, tenant, label string, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's listener as the director uses it: the commands
@@ -915,6 +917,11 @@ func (s *Server) routes() {
 		// backup policy are asked under. Only bundles of this tenant are
 		// listed; a destination's bucket may hold other tenants' too.
 		s.guarded("GET /v1/tenants/{t}/bundle-sources", "can_set_policy", tenantObject, s.tenantSources)
+		// The tenant's own stores, which its exports are written to: declared
+		// under the same relation, as <tenant>.<name>, their keys set at the
+		// custodian in the tenant's part of the vault.
+		s.guarded("PUT /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.declareTenantStore)
+		s.guarded("DELETE /v1/tenants/{t}/bundle-sources/{name}", "can_set_policy", tenantObject, s.removeTenantStore)
 		s.guarded("GET /v1/tenants/{t}/bundle-sources/{name}/bundles", "can_set_policy", tenantObject, s.tenantSourceBundles)
 		// Fetching one of them into the cluster's import storage, to rewrite
 		// it before it is restored: only a bundle whose header names the

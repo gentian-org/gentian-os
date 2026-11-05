@@ -42,7 +42,8 @@ import (
 
 // Where bundles are read from, besides an upload: the cluster's declared
 // sources (BundleSource), each S3 storage outside the cluster whose keys the
-// custodian holds; and a tenant's own, the places its backups are written to.
+// custodian holds; and a tenant's own, the places its backups are written to,
+// its own declared stores (BundleSource with spec.tenant) among them.
 //
 // A caller names a bundle by its source and its prefix there, never by an
 // address or a Secret: the platform finds the storage and the keys, so that
@@ -117,17 +118,27 @@ const listLimit = 500
 
 var errNoSuchSource = errors.New("no such source")
 
-// Sources lists the cluster's declared sources, by name.
+// Sources lists the cluster's declared sources, by name. A tenant's own
+// stores are the tenant's, listed with its sources and not here.
 func (s *Service) Sources(ctx context.Context) ([]SourceView, error) {
+	return s.declaredSources(ctx, "")
+}
+
+// declaredSources lists the BundleSources of one owner: the cluster's for
+// tenant empty, else that tenant's own stores.
+func (s *Service) declaredSources(ctx context.Context, tenantName string) ([]SourceView, error) {
 	var list gentianov1alpha1.BundleSourceList
 	if err := s.client.List(ctx, &list); err != nil {
 		return nil, fmt.Errorf("list bundle sources: %w", err)
 	}
-	out := make([]SourceView, 0, len(list.Items))
+	out := []SourceView{}
 	for i := range list.Items {
 		src := &list.Items[i]
+		if src.Spec.Tenant != tenantName {
+			continue
+		}
 		v := SourceView{
-			Name: src.Name, Kind: "declared", Endpoint: src.Spec.Endpoint, Bucket: src.Spec.Bucket,
+			Name: src.Name, Tenant: tenantName, Kind: "declared", Endpoint: src.Spec.Endpoint, Bucket: src.Spec.Bucket,
 			Prefix: src.Spec.Prefix, Region: src.Spec.Region, AddressingStyle: string(src.Spec.AddressingStyle),
 			Description:           src.Spec.Description,
 			CredentialRequirement: backup.SourceCredentialName(src.Name),
@@ -144,7 +155,8 @@ func (s *Service) Sources(ctx context.Context) ([]SourceView, error) {
 }
 
 // TenantSources lists a tenant's own: its backup bucket in the cluster's
-// storage, and its backup policy's external destination when there is one.
+// storage, its backup policy's external destination when there is one, and
+// the stores its administrator declared.
 func (s *Service) TenantSources(ctx context.Context, tenantName string) ([]SourceView, error) {
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
@@ -163,7 +175,11 @@ func (s *Service) TenantSources(ctx context.Context, tenantName string) ([]Sourc
 		v.Ready, v.Message = s.policyCredentialReady(ctx, tenantName)
 		out = append(out, v)
 	}
-	return out, nil
+	stores, err := s.declaredSources(ctx, tenantName)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, stores...), nil
 }
 
 // tenantEffective is where the tenant's backups go, the cluster's policy
@@ -212,13 +228,18 @@ func (s *Service) policyCredentialReady(ctx context.Context, tenantName string) 
 // sourceBase is where a source is, as a bundle reference whose prefix is
 // the source's own: the place each bundle below it is read with.
 func (s *Service) sourceBase(ctx context.Context, tenantName, name string) (gentianov1alpha1.BundleRef, error) {
-	if tenantName == "" {
+	if tenantName == "" || strings.HasPrefix(name, tenantName+".") {
+		// A declared one: the cluster's, or this tenant's own store. Each
+		// owner reads its own and no other's.
 		var src gentianov1alpha1.BundleSource
 		if err := s.client.Get(ctx, types.NamespacedName{Name: name}, &src); err != nil {
 			if apierrors.IsNotFound(err) {
 				return gentianov1alpha1.BundleRef{}, fmt.Errorf("%w: %q", errNoSuchSource, name)
 			}
 			return gentianov1alpha1.BundleRef{}, err
+		}
+		if src.Spec.Tenant != tenantName {
+			return gentianov1alpha1.BundleRef{}, fmt.Errorf("%w: %q", errNoSuchSource, name)
 		}
 		return backup.SourceBundle(&src, ""), nil
 	}
@@ -240,8 +261,8 @@ func (s *Service) sourceBase(ctx context.Context, tenantName, name string) (gent
 		return gentianov1alpha1.BundleRef{Bucket: eff.Bucket, Endpoint: eff.Endpoint, Region: eff.Region,
 			AddressingStyle: eff.AddressingStyle, CredentialSecret: eff.CredentialSecret}, nil
 	}
-	return gentianov1alpha1.BundleRef{}, fmt.Errorf("%w: a tenant's sources are %s and %s", errNoSuchSource,
-		TenantSourceStorage, TenantSourceDestination)
+	return gentianov1alpha1.BundleRef{}, fmt.Errorf("%w: a tenant's sources are %s, %s and its own stores, %s.<name>",
+		errNoSuchSource, TenantSourceStorage, TenantSourceDestination, tenantName)
 }
 
 // ResolveSource is the bundle a source reference names.
@@ -541,8 +562,17 @@ func (h *HTTPServer) registerSourceRoutes(mux router) {
 // declarations are synced without pruning (kernel/appsets/raw/11-claims.yaml),
 // so the director, having committed the removal, asks for this. Its
 // requirement, probe and Secret are owned by it and go with it.
+//
+// A tenant's own store is not the cluster's to retire this way: the tenant's
+// directory is synced with pruning, and removing its file is the whole of it.
 func (s *Service) RetireSource(ctx context.Context, name string) error {
-	src := &gentianov1alpha1.BundleSource{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	src := &gentianov1alpha1.BundleSource{}
+	if err := s.client.Get(ctx, types.NamespacedName{Name: name}, src); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if src.Spec.Tenant != "" {
+		return fmt.Errorf("%w: %q is tenant %s's own store", errNoSuchSource, name, src.Spec.Tenant)
+	}
 	if err := s.client.Delete(ctx, src); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete bundle source %s: %w", name, err)
 	}
@@ -551,7 +581,11 @@ func (s *Service) RetireSource(ctx context.Context, name string) error {
 
 func (h *HTTPServer) handleRetireSource(w http.ResponseWriter, r *http.Request) {
 	if err := h.Service.RetireSource(r.Context(), r.PathValue("name")); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		status := http.StatusInternalServerError
+		if errors.Is(err, errNoSuchSource) {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": r.PathValue("name"), "retired": true})

@@ -22,11 +22,11 @@ import (
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
-// A bundle source: S3 storage outside the cluster that bundles are read from
+// A bundle source: S3 storage outside the cluster that holds bundles
 // (BundleSource). Its keys are named, stored and materialized the way a
 // backup destination's are: a CredentialRequirement derived from the name, a
-// path under the kernel's subtree of the vault, and a Secret beside the
-// object store, where the Jobs that read it run.
+// path in the vault, and a Secret beside the object store, where the Jobs
+// that read and write it run.
 
 // SourceCredentialName is the CredentialRequirement carrying a source's keys,
 // and the Secret ESO materializes them into beside the object store. Derived
@@ -34,9 +34,16 @@ import (
 // DestinationCredentialName gives.
 func SourceCredentialName(source string) string { return "bundle-source-" + source }
 
-// SourceVaultPath is where a source's keys live in OpenBao: under the
-// kernel's subtree, which only the cluster's administrators write.
-func SourceVaultPath(source string) string { return "gentian-os/kernel/backup/sources/" + source }
+// SourceVaultPath is where a source's keys live in OpenBao. The cluster's are
+// under the kernel's subtree, which only the cluster's administrators write;
+// a tenant's own under that tenant's, which its administrators write and no
+// other tenant's reach.
+func SourceVaultPath(source *gentianov1alpha1.BundleSource) string {
+	if t := source.Spec.Tenant; t != "" {
+		return "gentian-os/tenants/" + t + "/backup/sources/" + strings.TrimPrefix(source.Name, t+".")
+	}
+	return "gentian-os/kernel/backup/sources/" + source.Name
+}
 
 // SourceBundle is the bundle at prefix below a source, as every reader of a
 // bundle takes it: the source's address, and the Secret its keys are in.
