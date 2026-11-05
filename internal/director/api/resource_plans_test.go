@@ -231,3 +231,53 @@ func TestAPlanIsRemovedOnlyWhenNobodyIsOnItAndItIsNotTheDefault(t *testing.T) {
 		t.Fatalf("removing a plan that is gone: %d", code)
 	}
 }
+
+const orderingPath = "/v1/clusters/" + dt.Cluster + "/plan-ordering"
+
+// The notice a tenant's screen shows in place of a choice is the cluster
+// administrator's to write, one action at most, and is cleared by removing
+// the file.
+func TestTheOrderingNoticeIsTheClusterAdministratorsCommit(t *testing.T) {
+	h, _ := startWithPlans(t)
+	alice := h.token(t, "gentian", "alice")
+	tom := h.token(t, "tenant-demo", "tom")
+
+	if code, body := h.do(t, http.MethodGet, orderingPath, alice, ""); code != http.StatusOK || body["set"] != false {
+		t.Fatalf("no notice yet: %d %v", code, body)
+	}
+	notice := `{"text":{"en":"Change your nodes in the Center","de":"Knoten im Center ändern"},"url":"https://center.example/tenants/{tenant}"}`
+	if code, _ := h.do(t, http.MethodPut, orderingPath, tom, notice); code != http.StatusForbidden {
+		t.Fatalf("a tenant's administrator wrote the notice: %d", code)
+	}
+	if code, body := h.do(t, http.MethodPut, orderingPath, alice, notice); code != http.StatusAccepted {
+		t.Fatalf("set: %d %v", code, body)
+	}
+	file := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/plan-ordering.yaml")
+	for _, want := range []string{"kind: PlanOrdering", "name: default", "https://center.example/tenants/{tenant}"} {
+		if !strings.Contains(file, want) {
+			t.Errorf("notice is missing %q:\n%s", want, file)
+		}
+	}
+	if code, body := h.do(t, http.MethodGet, orderingPath, alice, ""); code != http.StatusOK || body["set"] != true {
+		t.Fatalf("read back: %d %v", code, body)
+	}
+
+	for _, bad := range []string{
+		`{"text":{}}`,
+		`{"text":{"english":"x"}}`,
+		`{"text":{"en":"x"},"url":"http://plain.example"}`,
+		`{"text":{"en":"x"},"url":"https://a.example","email":"sales@a.example"}`,
+		`{"text":{"en":"x"},"phone":"044 000"}`,
+	} {
+		if code, body := h.do(t, http.MethodPut, orderingPath, alice, bad); code != http.StatusBadRequest {
+			t.Errorf("%s: %d %v", bad, code, body)
+		}
+	}
+
+	if code, body := h.do(t, http.MethodDelete, orderingPath, alice, ""); code != http.StatusAccepted {
+		t.Fatalf("clear: %d %v", code, body)
+	}
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/kernel/claims"); strings.Contains(out, "plan-ordering.yaml") {
+		t.Fatalf("the notice survived the clear:\n%s", out)
+	}
+}

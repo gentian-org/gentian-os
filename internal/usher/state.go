@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 )
 
@@ -92,6 +91,9 @@ func (s *Server) stateRoutes() {
 		// ceiling, what the platform keeps and for how long, what may escape
 		// the default posture, and how much customization it carries.
 		s.guarded("GET /v1/clusters/{c}/resources", "can_audit", clusterObject, s.clusterResources)
+		// Every tenant's billed intervals over one window: what a commerce
+		// backend invoices the cluster's tenants from.
+		s.guarded("GET /v1/clusters/{c}/resources/report", "can_audit", clusterObject, s.clusterResourceReport)
 		s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", clusterObject, s.relayCluster("/v1/backup-policy"))
 		s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", clusterObject, s.relayCluster("/v1/backup-schedules"))
 		s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", clusterObject, s.relayCluster("/v1/platform-security"))
@@ -171,28 +173,23 @@ func (s *Server) relayed(w http.ResponseWriter, r *http.Request, path string, al
 	_, _ = w.Write(body)
 }
 
+// clusterResourceReport relays the operator's report of every tenant over
+// the window asked, from and to and nothing else of the query.
+func (s *Server) clusterResourceReport(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/resources/report", "from", "to")
+}
+
 func (s *Server) unreachable(w http.ResponseWriter, r *http.Request, err error) {
 	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "error", err.Error())
 	fail(w, http.StatusBadGateway, "the operator's API did not answer")
 }
 
-// resourcePlans answers the catalog as it applies to this tenant and this
-// caller. The plans come from the operator, which marks the ones this tenant
-// may not move to and why. Whether the caller chooses for themselves, as a
-// tenant's administrator does, or for the cluster is decided here from the
-// store and never taken from the request: a plan the platform arranges by
-// hand is withheld from whoever may not configure the cluster.
+// resourcePlans answers the catalog as it applies to this tenant: the
+// plans come from the operator, which marks the ones this tenant may not
+// move to and why. Who moves it is the cluster's administrator; the tenant
+// reads what there is.
 func (s *Server) resourcePlans(w http.ResponseWriter, r *http.Request, c call) {
-	self := true
-	if s.cfg.Cluster != "" {
-		configures, err := s.cfg.Authz.Check(r.Context(), "", c.user, "can_configure", authz.Cluster(s.cfg.Cluster))
-		if err != nil {
-			fail(w, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		self = !configures
-	}
-	plans, err := s.cfg.Lifecycle.Plans(r.Context(), c.tenant, self)
+	plans, err := s.cfg.Lifecycle.Plans(r.Context(), c.tenant)
 	if err != nil {
 		var upstream *lifecycle.UpstreamError
 		if errors.As(err, &upstream) {

@@ -127,6 +127,7 @@ rules:
     - integrationbindings.gentianos.io
     - mailboxremovals.gentianos.io
     - oidcpackcatalogs.gentianos.io
+    - planorderings.gentianos.io
     - platformsecuritypolicies.gentianos.io
     - profilebuilds.gentianos.io
     - repositories.gentianos.io
@@ -374,6 +375,7 @@ rules:
     resources:
     - brandings
     - clusters
+    - planorderings
     - profilebuilds
     - repositories
     - resourceplans

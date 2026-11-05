@@ -192,19 +192,11 @@ spec:
                   tenants on it, so a different ceiling is a new plan, and the one it
                   replaces is retired until nobody is on it.
                 type: boolean
-              selfServiceDisabled:
-                description: |-
-                  SelfServiceDisabled withholds the plan from tenant administrators. The
-                  plan stays selectable by cluster administrators and by the CLI, so it
-                  serves the case of a negotiated or bespoke ceiling that should not appear
-                  in a tenant's own list of upgrades.
-                type: boolean
               tier:
                 description: |-
                   Tier orders plans from smallest to largest. It is the only ordering the
                   platform uses: quantities can move in different directions between two
-                  plans (more CPU, less storage), so "bigger" cannot be derived from them,
-                  and an entitlement ceiling has to compare something total.
+                  plans (more CPU, less storage), so "bigger" cannot be derived from them.
 
                   Tiers need not be contiguous; leaving gaps allows a plan to be inserted
                   later without renumbering the ones already sold.

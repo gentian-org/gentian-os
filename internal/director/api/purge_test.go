@@ -59,7 +59,7 @@ func (l *liveTenants) Get(_ context.Context, path string, _ url.Values) (int, []
 	return http.StatusOK, []byte(`{"name":"` + name + `","exists":true,"deletionPolicy":"` + p + `"}`), nil
 }
 
-func (l *liveTenants) Plans(context.Context, string, bool) ([]lifecycle.Plan, error) { return nil, nil }
+func (l *liveTenants) Plans(context.Context, string) ([]lifecycle.Plan, error) { return nil, nil }
 
 func (l *liveTenants) Stream(context.Context, string) (*http.Response, error) {
 	return nil, errors.New("no streams here")

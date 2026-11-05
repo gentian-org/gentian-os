@@ -593,8 +593,6 @@ var facts = dt.Table{
 	"user:mia can_enter tenant:demo":          true,
 	"user:tom can_enter tenant:demo":          true,
 	"user:tom can_administer tenant:demo":     true,
-	"user:tom can_set_plan tenant:demo":       true,
-	"user:alice can_set_plan tenant:demo":     true,
 	"user:tom can_set_policy tenant:demo":     true,
 	"user:tom can_grant tenant:demo":          true,
 	"user:alice can_set_policy tenant:demo":   true,

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/locales"
@@ -36,56 +35,30 @@ import (
 // plan back from git once Argo CD has synced it, like every other change to a
 // tenant.
 
-// selfService reports whether the caller chooses for themselves, as a tenant
-// administrator does, rather than for the cluster, as its operator does.
-// Decided here from the graph, not asserted by a front end: a plan the
-// platform arranges by hand is withheld from whoever may not configure the
-// cluster, whatever their screen claimed.
-func (s *Server) selfService(r *http.Request, c call) (bool, error) {
-	if s.cfg.Cluster == "" {
-		return true, nil
-	}
-	configures, err := s.can(r.Context(), c, "can_configure", authz.Cluster(s.cfg.Cluster))
-	if err != nil {
-		return false, err
-	}
-	return !configures, nil
-}
-
 type setResourcePlanRequest struct {
 	Plan string `json:"plan"`
 	// Force skips the downgrade guard: the plan is written although what the
-	// tenant has committed does not fit under it. Reserved for whoever may
-	// configure the cluster, who has decided the tenant will be shrunk and
-	// accepts the pods that will not come back as a known cost.
+	// tenant has committed does not fit under it. The cluster's
+	// administrator has decided the tenant will be shrunk and accepts the
+	// pods that will not come back as a known cost.
 	Force bool `json:"force,omitempty"`
 }
 
 // setResourcePlan writes the chosen plan to git.
 //
 // The choice is validated against the operator's answer for this tenant: a
-// plan the catalog does not have is 404, one this tenant may not move to is
-// refused with the operator's reason, and one the tenant's committed usage
-// does not fit under is 409 unless forced. What is written is the plan's
-// own quantities, so the ceiling the tenant ends up on is exactly one the
-// platform has priced.
+// plan the catalog does not have is 404, a retired one is 409, and one the
+// tenant's committed usage does not fit under is 409 unless forced. What is
+// written is the plan's own quantities, so the ceiling the tenant ends up on
+// is exactly one the platform has priced.
 func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call) {
 	var body setResourcePlanRequest
 	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Plan) == "" {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"plan": "<name>"}`)
 		return
 	}
-	self, err := s.selfService(r, c)
-	if err != nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return
-	}
-	if body.Force && self {
-		s.fail(w, r, http.StatusForbidden, "forcing a plan that does not fit is for whoever may configure the cluster")
-		return
-	}
 	tenant := r.PathValue("t")
-	plans, err := s.cfg.Lifecycle.Plans(r.Context(), tenant, self)
+	plans, err := s.cfg.Lifecycle.Plans(r.Context(), tenant)
 	if err != nil {
 		s.lifecycleError(w, r, err)
 		return
@@ -106,11 +79,6 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 	}
 	if !chosen.Selectable {
 		switch chosen.BlockedBy {
-		case "retired":
-			// Kept for the tenants on it, offered to no other: a state of
-			// the catalog, not of the caller's entitlement.
-			s.fail(w, r, http.StatusConflict, chosen.Blocked)
-			return
 		case "fit":
 			if !body.Force {
 				// 409, not 400: the request is well formed and would be
@@ -119,10 +87,8 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 				return
 			}
 		default:
-			// Above the entitlement, or arranged by hand: what is missing
-			// is an entitlement, not a permission, the same answer the
-			// store gives for an app the tenant has not bought.
-			s.fail(w, r, http.StatusPaymentRequired, chosen.Blocked)
+			// Retired: kept for the tenants on it, offered to no other.
+			s.fail(w, r, http.StatusConflict, chosen.Blocked)
 			return
 		}
 	}
