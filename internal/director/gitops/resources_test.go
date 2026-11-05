@@ -25,7 +25,7 @@ func planMeta(email string) gitops.Meta {
 		Author:    gitops.Person{Name: "Tom", Email: email},
 		Subject:   "u-tom",
 		RequestID: "req-plan-1",
-		Decision:  "can_set_plan tenant:demo",
+		Decision:  "can_configure cluster:demo-cluster",
 	}
 }
 

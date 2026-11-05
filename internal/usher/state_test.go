@@ -25,12 +25,11 @@ import (
 // what it was asked and answers with the path, so a test can tell which
 // question reached it.
 type fakeOperator struct {
-	paths       []string
-	queries     []url.Values
-	selfService []bool
-	status      int
-	body        string
-	err         error
+	paths   []string
+	queries []url.Values
+	status  int
+	body    string
+	err     error
 }
 
 func (f *fakeOperator) Get(_ context.Context, path string, query url.Values) (int, []byte, error) {
@@ -48,9 +47,8 @@ func (f *fakeOperator) Get(_ context.Context, path string, query url.Values) (in
 	return http.StatusOK, []byte(`{"asked":"` + path + `"}`), nil
 }
 
-func (f *fakeOperator) Plans(_ context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error) {
+func (f *fakeOperator) Plans(_ context.Context, tenant string) ([]lifecycle.Plan, error) {
 	f.paths = append(f.paths, "/v1/tenants/"+tenant+"/resources/plans")
-	f.selfService = append(f.selfService, selfService)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -93,6 +91,7 @@ func TestEachReadAsksItsRelationOnItsObject(t *testing.T) {
 		{"/v1/tenants/acme/integrations", "can_view", "tenant:acme", "/v1/tenants/acme/integrations"},
 		{"/v1/tenants/acme/notifications", "can_view", "tenant:acme", "/v1/tenants/acme/notifications"},
 		{"/v1/clusters/demo/resources", "can_audit", "cluster:demo", "/v1/resources"},
+		{"/v1/clusters/demo/resources/report", "can_audit", "cluster:demo", "/v1/resources/report"},
 		{"/v1/clusters/demo/backup-policy", "can_audit", "cluster:demo", "/v1/backup-policy"},
 		{"/v1/clusters/demo/backup-schedules", "can_audit", "cluster:demo", "/v1/backup-schedules"},
 		{"/v1/clusters/demo/platform-security", "can_audit", "cluster:demo", "/v1/platform-security"},
@@ -201,24 +200,14 @@ func TestTheOperatorsAnswerIsPassedThrough(t *testing.T) {
 	}
 }
 
-// Whether a caller chooses a plan for themselves is the store's answer and
-// never the request's: the tenant's administrator is shown the self-service
-// catalog, whoever may configure the cluster is shown all of it.
-func TestSelfServiceIsTheStoresAnswer(t *testing.T) {
+// The catalog is the same for whoever may see the tenant: nobody but the
+// cluster's administrator moves it, so nothing is withheld by who asks.
+func TestTheCatalogIsTheOperatorsAnswerForTheTenant(t *testing.T) {
 	op := &fakeOperator{}
-	s, _ := stateServer(op,
-		"user:ada can_view tenant:acme",
-		"user:pat can_view tenant:acme", "user:pat can_configure cluster:demo",
-	)
-	code, body := ask(t, s, "/v1/tenants/acme/resources/plans?selfService=false", "ada")
+	s, _ := stateServer(op, "user:ada can_view tenant:acme")
+	code, body := ask(t, s, "/v1/tenants/acme/resources/plans?selfService=true", "ada")
 	if code != http.StatusOK || body["tenant"] != "acme" || len(body["plans"].([]any)) != 1 {
 		t.Fatalf("plans: %d %v", code, body)
-	}
-	if _, _ = ask(t, s, "/v1/tenants/acme/resources/plans?selfService=true", "pat"); len(op.selfService) != 2 {
-		t.Fatalf("the operator was asked %d times", len(op.selfService))
-	}
-	if !op.selfService[0] || op.selfService[1] {
-		t.Fatalf("self-service was taken from the request: tenant admin %v, platform admin %v", op.selfService[0], op.selfService[1])
 	}
 }
 

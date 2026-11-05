@@ -44,7 +44,7 @@ func (o *requestingOperator) Get(context.Context, string, url.Values) (int, []by
 	return http.StatusNotFound, []byte(`{"detail":"no such read"}`), nil
 }
 
-func (o *requestingOperator) Plans(context.Context, string, bool) ([]lifecycle.Plan, error) {
+func (o *requestingOperator) Plans(context.Context, string) ([]lifecycle.Plan, error) {
 	return nil, nil
 }
 

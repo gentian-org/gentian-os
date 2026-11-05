@@ -234,7 +234,7 @@ type Plan struct {
 	Current     bool              `json:"current,omitempty"`
 	Selectable  bool              `json:"selectable"`
 	Blocked     string            `json:"blocked,omitempty"`
-	// BlockedBy is the rule behind Blocked: self-service, entitlement or fit.
+	// BlockedBy is the rule behind Blocked: fit or retired.
 	BlockedBy string `json:"blockedBy,omitempty"`
 }
 
@@ -248,14 +248,9 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("app-lifecycle API answered %d: %s", e.Status, e.Message)
 }
 
-// Plans fetches the catalog as it applies to one tenant. selfService
-// withholds the plans a tenant administrator may not pick for themselves.
-func (c *Client) Plans(ctx context.Context, tenant string, selfService bool) ([]Plan, error) {
-	q := url.Values{}
-	if selfService {
-		q.Set("selfService", "true")
-	}
-	status, body, err := c.Get(ctx, "/v1/tenants/"+url.PathEscape(tenant)+"/resources/plans", q)
+// Plans fetches the catalog as it applies to one tenant.
+func (c *Client) Plans(ctx context.Context, tenant string) ([]Plan, error) {
+	status, body, err := c.Get(ctx, "/v1/tenants/"+url.PathEscape(tenant)+"/resources/plans", nil)
 	if err != nil {
 		return nil, err
 	}
