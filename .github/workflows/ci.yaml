@@ -418,20 +418,23 @@ jobs:
           go-package: ./...
 
   # Gives the image built above its tags, which is what publishes it: a cluster
-  # follows tags. It waits for the Go jobs and for lint — the authorization
-  # policy tests are in lint — so no tag exists for a commit that failed any of
+  # follows tags. It waits for every check -- the Go jobs, lint (the
+  # authorization policy tests are in lint), the generated files and the
+  # Crossplane unit tests -- so no tag exists for a commit that failed any of
   # them.
   publish:
     name: Docker publish
     runs-on: ubuntu-latest
-    needs: [plan, go, envtest, lint, docker]
+    needs: [plan, go, envtest, lint, generate, crossplane-unit, docker]
     if: >-
       ${{ !cancelled()
       && needs.plan.outputs.publish == 'true'
       && needs.docker.result == 'success'
       && needs.go.result == 'success'
       && needs.envtest.result == 'success'
-      && needs.lint.result == 'success' }}
+      && needs.lint.result == 'success'
+      && needs.generate.result == 'success'
+      && needs.crossplane-unit.result == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -481,9 +484,12 @@ jobs:
           done <<< "${TAGS}"
           docker buildx imagetools create "${args[@]}" "ghcr.io/gentian-org/gentian-os@${DIGEST}"
 
+  # Pushes and signs from its build step, so it runs only once every check
+  # passed: a failed check publishes and signs nothing.
   keycloak-listener:
     name: Keycloak event listener image
     runs-on: ubuntu-latest
+    needs: [go, envtest, lint, generate, crossplane-unit]
     permissions:
       contents: read
       packages: write
@@ -575,9 +581,11 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
+  # As the listener: pushed and signed from its build step, after the checks.
   storage-tools:
     name: Storage tools image
     runs-on: ubuntu-latest
+    needs: [go, envtest, lint, generate, crossplane-unit]
     permissions:
       contents: read
       packages: write
