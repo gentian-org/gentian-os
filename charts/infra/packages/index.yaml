@@ -48,30 +48,6 @@ entries:
     urls:
     - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/openfga-0.3.10-gentian.1.tgz
     version: 0.3.10-gentian.1
-  postgresql:
-  - annotations:
-      category: Database
-    apiVersion: v2
-    created: "2026-11-01T16:14:02.897468173+01:00"
-    dependencies:
-    - name: common
-      repository: https://charts.bitnami.com/bitnami
-      tags:
-      - bitnami-common
-      version: 2.x.x
-    description: A Helm chart for running PostgreSQL (Postgres) database
-    digest: 763149d9e87f7a69333f529cb98f547b21f3a7776d639eeecdff71288576a1dd
-    home: https://zendis.de
-    keywords:
-    - postgresql
-    - postgres
-    - database
-    - sql
-    name: postgresql
-    type: application
-    urls:
-    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/postgresql-2.1.2.tgz
-    version: 2.1.2
   redis:
   - apiVersion: v2
     appVersion: 8.1.11
