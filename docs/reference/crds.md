@@ -16,7 +16,7 @@ The custom resource definitions of the `gentianos.io` API group, with every fiel
 | [AppPackage](#3-apppackage) | Cluster | AppPackage is a named addon preset for a family. |
 | [BackupPolicy](#4-backuppolicy) | Cluster | BackupPolicy is where a tenant's bundles go, how often, and how long they are kept. |
 | [Branding](#5-branding) | Cluster | Branding is the brand every page on the cluster shows: the concierge, the identity provider's screens, the desktop and the consoles. |
-| [BundleSource](#6-bundlesource) | Cluster | BundleSource is a place outside the cluster bundles are imported from, declared by the cluster's administrator. |
+| [BundleSource](#6-bundlesource) | Cluster | BundleSource is a place outside the cluster that holds bundles: the cluster's, declared by its administrator and read to make a tenant; or a tenant's own… |
 | [Component](#7-component) | Namespaced | Component is an installed instance of a ComponentProfile. |
 | [ComponentProfile](#8-componentprofile) | Cluster | ComponentProfile is a catalog entry for a system service, an app or an agent. |
 | [CredentialRequirement](#9-credentialrequirement) | Cluster | CredentialRequirement declares a secret that must be supplied from outside the cluster: a registry token, a DNS provider key, an SMTP relay password. |
@@ -203,17 +203,18 @@ Branding is the brand every page on the cluster shows: the concierge, the identi
 | Plural | `bundlesources` |
 | Short names | `bsrc` |
 
-BundleSource is a place outside the cluster bundles are imported from, declared by the cluster's administrator. Cluster-scoped, and the cluster's: what it reaches is read to make a tenant, which is the cluster's administrator's to do. A tenant's own destination is its BackupPolicy's, and is read for its recovery as it is.
+BundleSource is a place outside the cluster that holds bundles: the cluster's, declared by its administrator and read to make a tenant; or a tenant's own (spec.tenant), declared by that tenant's administrator, written to by its exports and read for its recovery.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `spec` | object |  | BundleSourceSpec is S3 storage outside the cluster that bundles are read from: another cluster's destination, an old cluster's store, a provider's bucket a… |
+| `spec` | object |  | BundleSourceSpec is S3 storage outside the cluster that holds bundles: the cluster's, which its administrator imports tenants from -- another cluster's… |
 | `spec.addressingStyle` | string |  | `AddressingStyle` is how a bucket is named in a request to Endpoint: path (the default when empty) or virtualHost. |
 | `spec.bucket` | string | yes | `Bucket` holds the bundles. |
 | `spec.description` | string |  | `Description` says what the storage is, for whoever picks a bundle from it. |
 | `spec.endpoint` | string | yes | `Endpoint` is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io. |
 | `spec.prefix` | string |  | `Prefix` is where in the bucket the bundles are, each one a prefix of its own directly below it. |
 | `spec.region` | string |  | `Region`, for a provider that requires one. |
+| `spec.tenant` | string |  | `Tenant` makes this a tenant's own store, declared by its administrator, its keys in the tenant's part of the vault. |
 | `status` | object |  | BundleSourceStatus reports whether the source can be read. |
 | `status.conditions` | []object |  | `Conditions` carries Ready: whether bundles can be read from here. |
 | `status.conditions[].lastTransitionTime` | string (date-time) | yes | `lastTransitionTime` is the last time the condition transitioned from one status to another. |
@@ -1847,8 +1848,9 @@ TenantExport captures one tenant's data into an encrypted bundle.
 | `spec.destination.credentialSecretRef` | string |  | `CredentialSecretRef` names a Secret in the tenant's namespace holding accessKey and secretKey for this endpoint. |
 | `spec.destination.credentialSource` | string |  | `CredentialSource` decides where mode: custom gets its keys. |
 | `spec.destination.endpoint` | string |  | `Endpoint` is the S3 API URL for mode: custom, e.g. https://sos-ch-dk-2.exo.io. |
-| `spec.destination.mode` | string |  | `Mode` selects between the policy's answer, the platform's own storage, and an endpoint named here. |
+| `spec.destination.mode` | string |  | `Mode` selects between the policy's answer, the platform's own storage, an endpoint named here, and one of the tenant's own stores. |
 | `spec.destination.region` | string |  | `Region`, for providers that require one — Exoscale SOS and AWS do, the platform's own object store does not. |
+| `spec.destination.source` | string |  | `Source` names the tenant's store for mode: source, by the BundleSource's name (\<tenant>.\<label>). |
 | `spec.encryption` | object |  | `Encryption` selects how the bundle is protected. |
 | `spec.encryption.mode` | string |  | `Mode` selects the protection. |
 | `spec.encryption.passphraseSecretRef` | object |  | `PassphraseSecretRef` names a Secret in this tenant's namespace holding the passphrase, used with mode: passphrase. |

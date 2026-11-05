@@ -65,7 +65,7 @@ type TenantExportSpec struct {
 }
 
 // ExportDestinationMode selects where one export's bundle is written.
-// +kubebuilder:validation:Enum=policy;platform;custom
+// +kubebuilder:validation:Enum=policy;platform;custom;source
 type ExportDestinationMode string
 
 const (
@@ -92,6 +92,12 @@ const (
 	// is a destination used once. They are staged beside the capture Jobs the
 	// way a passphrase is, and discarded with the export.
 	ExportDestinationCustom ExportDestinationMode = "custom"
+
+	// ExportDestinationSource writes to one of the tenant's own stores
+	// (BundleSource with spec.tenant), named by source: an address its
+	// administrator declared, authenticated with the keys the custodian
+	// holds for it. Below the store's prefix, the bundle is the export's name.
+	ExportDestinationSource ExportDestinationMode = "source"
 )
 
 // ExportCredentialSource selects which keys authenticate a custom destination.
@@ -133,10 +139,12 @@ func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint) > 0)",message="mode: custom requires an endpoint"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && size(self.credentialSecretRef) > 0)",message="credentialSource: transient requires credentialSecretRef"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'source' || (has(self.source) && size(self.source) > 0 && (!has(self.bucket) || size(self.bucket) == 0))",message="mode: source names the store, and takes its bucket from it"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'source' || !has(self.source) || size(self.source) == 0",message="source belongs to mode: source only"
 // +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0) && !has(self.addressingStyle))",message="endpoint, region, addressingStyle and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
-	// and an endpoint named here.
+	// an endpoint named here, and one of the tenant's own stores.
 	// +kubebuilder:default=policy
 	Mode ExportDestinationMode `json:"mode,omitempty"`
 
@@ -167,6 +175,13 @@ type ExportDestination struct {
 	// path (the default when empty) or virtualHost (BackupDestination).
 	// +optional
 	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
+
+	// Source names the tenant's store for mode: source, by the
+	// BundleSource's name (<tenant>.<label>). A store of another tenant, or
+	// one of the cluster's, is refused.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	Source string `json:"source,omitempty"`
 
 	// CredentialSource decides where mode: custom gets its keys.
 	//

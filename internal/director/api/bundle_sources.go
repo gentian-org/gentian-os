@@ -155,6 +155,55 @@ func (s *Server) declareClusterSource(w http.ResponseWriter, r *http.Request, c 
 	s.json(w, http.StatusAccepted, answer)
 }
 
+// declareTenantStore commits one of a tenant's own stores, named in the path
+// by its label; the answer names the store as an export and a listing do,
+// <tenant>.<label>. The keys are set at the custodian, as for the cluster's.
+func (s *Server) declareTenantStore(w http.ResponseWriter, r *http.Request, c call) {
+	tenant, label := r.PathValue("t"), r.PathValue("name")
+	var body gitops.BundleSourceDeclaration
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"endpoint": "https://…", "bucket": "…", "prefix": "…", "region": "…", "addressingStyle": "path|virtualHost"}`)
+		return
+	}
+	res, err := s.cfg.Repo.DeclareTenantBundleSource(r.Context(), tenant, label, body, c.meta)
+	if errors.Is(err, gitops.ErrInvalidBundleSource) || errors.Is(err, gitops.ErrInvalidName) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	name, _ := gitops.TenantStoreName(tenant, label)
+	answer := map[string]any{"status": res.Status, "name": name, "credentialName": backup.SourceCredentialName(name)}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	answer["message"] = "committed to the deployments repository; Argo CD applies it on the next sync, " +
+		"and its keys are set at the custodian as " + backup.SourceCredentialName(name) + " once it has"
+	s.json(w, http.StatusAccepted, answer)
+}
+
+// removeTenantStore stops declaring one of a tenant's stores. The tenant's
+// directory is synced with pruning, so the commit is the whole of it.
+func (s *Server) removeTenantStore(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.RemoveTenantBundleSource(r.Context(), r.PathValue("t"), r.PathValue("name"), c.meta)
+	switch {
+	case errors.Is(err, gitops.ErrInvalidBundleSource) || errors.Is(err, gitops.ErrInvalidName):
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, gitops.ErrBundleSourceNotFound):
+		s.fail(w, r, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusAccepted, map[string]any{"status": res.Status, "commit": res.Commit})
+}
+
 // removeClusterSource stops declaring a source, and has the cluster delete
 // it: the cluster's declarations are synced without pruning.
 func (s *Server) removeClusterSource(w http.ResponseWriter, r *http.Request, c call) {

@@ -67,6 +67,55 @@ func TestABundleSourceIsAFileOfTheClustersClaims(t *testing.T) {
 	}
 }
 
+// A tenant's store is a BundleSource of the tenant's own directory, named
+// <tenant>.<label> and carrying the tenant, listed in the tenant's
+// kustomization so that removing it prunes it.
+func TestATenantsStoreIsAFileOfTheTenantsDirectory(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	checkout := dt.Clone(t, remote)
+	g := gitops.NewGitOps(checkout, remote, dt.Cluster, director)
+	ctx := context.Background()
+	decl := gitops.BundleSourceDeclaration{Endpoint: "https://sos-ch-gva-2.exo.io", Bucket: "demo-offsite"}
+	if res, err := g.DeclareTenantBundleSource(ctx, "demo", "offsite", decl, repoMeta()); err != nil || !res.Changed {
+		t.Fatalf("declare: %+v, %v", res, err)
+	}
+	dir := filepath.Join(checkout, "clusters", dt.Cluster, "tenants", "demo")
+	raw, err := os.ReadFile(filepath.Join(dir, "bundle-source-offsite.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj gentianov1alpha1.BundleSource
+	if err := yaml.UnmarshalStrict(raw, &obj); err != nil {
+		t.Fatalf("the file is not a BundleSource: %v\n%s", err, raw)
+	}
+	if obj.Name != "demo.offsite" || obj.Spec.Tenant != "demo" || obj.Spec.Bucket != "demo-offsite" {
+		t.Errorf("declared %+v", obj)
+	}
+	if k, _ := os.ReadFile(filepath.Join(dir, "kustomization.yaml")); !strings.Contains(string(k), "bundle-source-offsite.yaml") {
+		t.Errorf("the tenant's kustomization does not list the store:\n%s", k)
+	}
+	if listed, _ := g.BundleSources(ctx); len(listed) != 0 {
+		t.Errorf("a tenant's store is listed among the cluster's: %+v", listed)
+	}
+
+	if _, err := g.RemoveTenantBundleSource(ctx, "demo", "offsite", repoMeta()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bundle-source-offsite.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the store's file is still there: %v", err)
+	}
+	if _, err := g.RemoveTenantBundleSource(ctx, "demo", "offsite", repoMeta()); !errors.Is(err, gitops.ErrBundleSourceNotFound) {
+		t.Errorf("removing it twice answered %v", err)
+	}
+	long := strings.Repeat("a", 48)
+	if _, err := g.DeclareTenantBundleSource(ctx, "demo", long+"x", decl, repoMeta()); !errors.Is(err, gitops.ErrInvalidBundleSource) {
+		t.Errorf("a label over 48 characters answered %v", err)
+	}
+	if _, err := gitops.TenantStoreName(strings.Repeat("t", 20), long); !errors.Is(err, gitops.ErrInvalidBundleSource) {
+		t.Errorf("a name over 63 characters answered %v", err)
+	}
+}
+
 // What the definition would refuse is refused before it is committed, and
 // an address with a login in it is refused outright.
 func TestABundleSourceTheDefinitionWouldRefuseIsNotCommitted(t *testing.T) {

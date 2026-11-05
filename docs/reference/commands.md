@@ -1274,6 +1274,15 @@ kubectl describe tenantexport nightly-2026-08-18 -n tenant-demo
 Because the default mode needs no input, a `CronJob` that applies a resource
 like this is all a scheduled backup requires.
 
+To one of the tenant's own stores (§12a), whose keys are set:
+
+```yaml
+spec:
+  destination:
+    mode: source
+    source: demo.offsite   # <tenant>.<name>; another tenant's or the cluster's is refused
+```
+
 ### Watching one
 
 ```bash
@@ -1297,7 +1306,7 @@ reconcile, including after a restart.
 
 ### Deleting one
 
-Tenant admins delete backups from the Backup tab; this is the same operation:
+Tenant admins delete exports from the Export tab; this is the same operation:
 
 ```bash
 kubectl delete tenantexport nightly-2026-08-18 -n tenant-demo
@@ -1608,8 +1617,14 @@ at the import. The address is a commit (`BundleSource`, in
 the custodian as `bundle-source-<name>` (Admin Console, Credentials), stored
 at `gentian-os/kernel/backup/sources/<name>`, and read only by the platform.
 Reading needs only `s3:ListBucket` and `s3:GetObject`. A tenant's own sources
-are where its backups go: `storage` (its bucket here) and `destination` (its
-backup policy's, when it names one).
+are where its backups go: `storage` (its bucket here), `destination` (its
+backup policy's, when it names one), and the stores its administrator
+declares. A store is a `BundleSource` named `<tenant>.<name>` with
+`spec.tenant`, in `clusters/<c>/tenants/<t>/bundle-source-<name>.yaml`; its
+keys are set at the custodian as `bundle-source-<tenant>.<name>`, stored at
+`gentian-os/tenants/<t>/backup/sources/<name>`, and need writing and
+deleting as well as reading. An export writes to one with
+`destination: {mode: source, source: <tenant>.<name>}`.
 
 ```
 GET    /v1/clusters/{c}/bundle-sources                          declared, with whether the keys are there
@@ -1621,6 +1636,8 @@ GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's
 GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
 GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
 GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
+PUT    /v1/tenants/{t}/bundle-sources/{name}                    a store of the tenant's own, as <t>.<name>; the cluster's body
+DELETE /v1/tenants/{t}/bundle-sources/{name}                    removed from git, and so from the cluster
 POST   /v1/tenants/{t}/bundle-sources/{name}/actions/fetch      {prefix}: the tenant's administrator's fetch
 GET    /v1/tenants/{t}/bundle-fetches/{f}                       a fetch made on the tenant's route
 GET    /v1/tenants/{t}/bundles/{prefix}/download                its copy, or the tenant's upload
