@@ -337,6 +337,12 @@ def install_help() -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str
     return help_for, header
 
 
+def previous_comment(body: str, arm: str) -> str:
+    """The comment line directly above a case arm, or empty."""
+    lines = body[: body.index(arm + ")")].rstrip(" ").split("\n")
+    return lines[-2].strip() if len(lines) >= 2 and lines[-2].strip().startswith("#") else ""
+
+
 def install_flags() -> list[list[str]]:
     """The flags parse_driver_args() accepts, in the order of its case arms."""
     text = (ROOT / "install.sh").read_text(encoding="utf-8")
@@ -347,6 +353,9 @@ def install_flags() -> list[list[str]]:
     rows = []
     for arm, code_text in arms:
         aliases = arm.split("|")
+        # A flag its arm marks unlisted is accepted and not documented.
+        if "# Unlisted:" in previous_comment(body, arm):
+            continue
         found = next((heredoc[a] for a in aliases if a in heredoc), None) or next(
             (header[a] for a in aliases if a in header), None
         )

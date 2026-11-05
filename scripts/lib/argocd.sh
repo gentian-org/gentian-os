@@ -548,6 +548,31 @@ request_argo_sync_if_stalled() {
         kubectl annotate application "${app}" -n "${ns}" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
         return 0
     fi
+    # An automated operation still Running on sources the Application no
+    # longer has. Argo CD copies the sources into the operation when it starts
+    # and retries that copy, and starts no new sync while it runs: a step that
+    # has just moved the Application (a new build, a new revision) waits out
+    # every retry of the old one first. D-01 sat on an operator build that
+    # could not make the vault's snapshot store, its ExternalSecrets failing on
+    # every retry, while the Application already named the build that makes
+    # it. Stopping it lets automated sync start again on what the Application
+    # says now. A sync a person asked for is theirs and left alone. Nulls and
+    # empty objects are dropped on both sides: they are how Argo CD's copy
+    # remembers a value removed by a merge, not a difference.
+    if [[ "${phase}" == "Running" ]] && jq -e '
+        def norm: walk(if type == "object" then with_entries(select(.value != null and .value != {})) else . end);
+        (.status.operationState.operation.initiatedBy.automated == true)
+        and ((.status.operationState.operation.sync.sources // [.status.operationState.operation.sync.source]
+              | map(select(. != null))) as $ran
+             | ($ran | length) > 0
+               and (($ran | norm) != ((.spec.sources // [.spec.source]) | map(select(. != null)) | norm)))
+        ' <<<"${json}" >/dev/null 2>&1; then
+        info "${app}: its automated sync is retrying sources the Application no longer has; stopping it so the current ones are synced."
+        # No status subresource on the Application CRD: a plain merge patch.
+        kubectl patch application "${app}" -n "${ns}" --type merge \
+            -p '{"status":{"operationState":{"phase":"Terminating"}}}' >/dev/null 2>&1 || true
+        return 0
+    fi
     # A sync that SUCCEEDED and an Application that is still OutOfSync: what
     # Argo CD applied changed nothing, and it goes on reporting a difference.
     # Seen when a CRD gained a field in the same sync as an object using it:

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
@@ -103,7 +103,7 @@ func (s *Server) requestAdminInvitation(w http.ResponseWriter, r *http.Request, 
 		Email:       email,
 		Principal:   c.subject,
 		Decision:    c.decision,
-		RequestID:   reqID(ctx),
+		RequestID:   guard.ID(ctx),
 		RequestedAt: now,
 		ExpiresAt:   now.Add(s.cfg.InvitationExpiry),
 	}
@@ -113,7 +113,7 @@ func (s *Server) requestAdminInvitation(w http.ResponseWriter, r *http.Request, 
 	defer cancel()
 	if err := s.cfg.Invitations.RequestInvitation(writeCtx, inv); err != nil {
 		s.cfg.Log.ErrorContext(ctx, "an administrator's invitation could not be kept",
-			"request_id", reqID(ctx), "tenant", tenant, "error", scrub(err.Error(), email))
+			"request_id", guard.ID(ctx), "tenant", tenant, "error", scrub(err.Error(), email))
 		s.fail(w, r, http.StatusServiceUnavailable, "the invitation could not be kept")
 		return
 	}
@@ -148,7 +148,7 @@ func (s *Server) adminInvitation(w http.ResponseWriter, r *http.Request, _ call)
 	state, err := s.cfg.Invitations.InvitationState(r.Context(), tenant)
 	if err != nil {
 		s.cfg.Log.ErrorContext(r.Context(), "the state of an administrator's invitation could not be read",
-			"request_id", reqID(r.Context()), "tenant", tenant, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "tenant", tenant, "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable, "the invitation's state could not be read")
 		return
 	}
@@ -172,7 +172,7 @@ func (s *Server) pendingAdminInvitations(w http.ResponseWriter, r *http.Request,
 		waiting, err := s.cfg.Invitations.PendingInvitations(r.Context())
 		if err != nil {
 			s.cfg.Log.ErrorContext(r.Context(), "the waiting invitations could not be read",
-				"request_id", reqID(r.Context()), "error", err.Error())
+				"request_id", guard.ID(r.Context()), "error", err.Error())
 			s.fail(w, r, http.StatusServiceUnavailable, "the waiting invitations could not be read")
 			return
 		}

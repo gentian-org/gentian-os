@@ -139,6 +139,9 @@ type PendingPrivilege struct {
 	// ExpiredAt is when a grant for this privilege stopped applying, for a
 	// request that was approved once and waits again.
 	ExpiredAt string `json:"expiredAt,omitempty"`
+	// Digest is, for an API extension, what an approval names: the digest of
+	// the request as the profile has it now (security.APIExtensionDigest).
+	Digest string `json:"digest,omitempty"`
 	// DeclinedBy, DeclinedAt and DeclineReason are an approver's no
 	// (privilege_requests.go): who, when and why. The privilege is still
 	// pending -- a decline installs nothing and the app keeps waiting -- but
@@ -165,6 +168,7 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 			ApprovedBy: security.PrivilegeApprover(ref),
 			Reason:     security.PrivilegeReason(profile, ref),
 			ExpiredAt:  expiredGrantAt(comp, ref, now),
+			Digest:     apiExtensionDigest(profile, ref),
 		}
 		if req, ok := requests[ref]; ok {
 			if p.ApprovedBy != security.PrivilegeApproverPerimeter {
@@ -175,6 +179,23 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 		out = append(out, p)
 	}
 	return out
+}
+
+// apiExtensionDigest is the digest an approval of ref must name, or "" for
+// anything that is not one of the profile's API extensions.
+func apiExtensionDigest(profile *gentianov1alpha1.ComponentProfile, ref string) string {
+	kind, name := security.SplitPrivilegeRef(ref)
+	p := profile.Privileges()
+	if kind != security.PrivilegeAPIExtensions || p == nil {
+		return ""
+	}
+	for i := range p.APIExtensions {
+		if p.APIExtensions[i].Name == name {
+			d, _ := security.APIExtensionDigest(&p.APIExtensions[i])
+			return d
+		}
+	}
+	return ""
 }
 
 // AppReservation is the sum of an app's container requests.

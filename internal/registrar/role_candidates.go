@@ -13,6 +13,7 @@ package registrar
 import (
 	"net/http"
 
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
@@ -79,7 +80,7 @@ func (s *Server) listRoleCandidates(w http.ResponseWriter, r *http.Request, _ ca
 		entry.Unavailable = true
 		complete = false
 		s.cfg.Log.WarnContext(r.Context(), "role candidates not read",
-			"request_id", reqID(r.Context()), "tenant", t.Name, "realm", t.Realm, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "tenant", t.Name, "realm", t.Realm, "error", err.Error())
 		out = append(out, entry)
 	}
 	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "complete": complete, "tenants": out})

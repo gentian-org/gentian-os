@@ -194,7 +194,11 @@ func PendingPrivileges(profile *gentianov1alpha1.ComponentProfile, comp *gentian
 	if len(requested) == 0 {
 		return nil
 	}
-	granted := GrantedPrivileges(comp, now)
+	var grants []gentianov1alpha1.PrivilegeGrant
+	if comp != nil {
+		grants = comp.Spec.Privileges
+	}
+	granted := LiveGrants(profile, grants, now)
 	var out []string
 	for _, ref := range requested {
 		if _, ok := granted[ref]; !ok {

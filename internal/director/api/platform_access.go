@@ -22,6 +22,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 )
 
 // Who on the cluster holds which role by name (spec.platformAccess.roleHolders
@@ -217,7 +218,7 @@ func (s *Server) tenantAdministrator(r *http.Request, tenant, subject string) (b
 	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return false, nil
 	}
-	return authz.TenantAdministrator(r.Context(), s.cfg.Authz, reqID(r.Context()), tenant, subject)
+	return authz.TenantAdministrator(r.Context(), s.cfg.Authz, guard.ID(r.Context()), tenant, subject)
 }
 
 func (s *Server) removeRoleHolder(w http.ResponseWriter, r *http.Request, c call) {

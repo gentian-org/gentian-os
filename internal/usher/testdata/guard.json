@@ -1,0 +1,550 @@
+[
+  {
+    "name": "guarded: allowed as the account",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:demo}"
+    }
+  },
+  {
+    "name": "guarded: allowed as the realm's holder",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_view tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:u1 holder:user:demo/u1 tenant:demo}"
+    }
+  },
+  {
+    "name": "guarded: allowed without a realm",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer norealm\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:bob can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:bob holder: tenant:demo}"
+    }
+  },
+  {
+    "name": "guarded: refused",
+    "exchange": {
+      "request": "GET /probe/tenants/other auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_view tenant:other",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:other"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: no bearer",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: not a bearer",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Basic YWRhOmFkYQ==\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: unknown token",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer nobody\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: a subject OpenFGA cannot hold",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer weird\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"identifier cannot be represented in OpenFGA: \\\"a b\\\"\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: a tenant name of 63",
+    "exchange": {
+      "request": "GET /probe/tenants/a23456789012345678901234567890123456789012345678901234567890123 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: an invalid tenant",
+    "exchange": {
+      "request": "GET /probe/tenants/Not_A_Name auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: the store fails",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 503,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: a minted id",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:demo}"
+    }
+  },
+  {
+    "name": "guarded: an id that is not kept",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"short\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:demo}"
+    }
+  },
+  {
+    "name": "guarded: an unknown token with a minted id",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer nobody\" id=\"\"",
+      "status": 401,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"\u003cminted\u003e\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"\u003cminted\u003e\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "cluster: allowed",
+    "exchange": {
+      "request": "GET /probe/clusters/c1 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_configure cluster:c1"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:}"
+    }
+  },
+  {
+    "name": "cluster: another cluster",
+    "exchange": {
+      "request": "GET /probe/clusters/c2 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "cluster: refused",
+    "exchange": {
+      "request": "GET /probe/clusters/c1 auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_configure cluster:c1",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_configure cluster:c1"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "action: allowed",
+    "exchange": {
+      "request": "POST /probe/tenants/demo/actions/go auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:demo}"
+    }
+  },
+  {
+    "name": "action: refused",
+    "exchange": {
+      "request": "POST /probe/tenants/demo/actions/go auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "action: the store fails",
+    "exchange": {
+      "request": "POST /probe/tenants/demo/actions/go auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 503,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "any: the second relation",
+    "exchange": {
+      "request": "GET /probe/any/demo auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_audit tenant:demo",
+        "request_id=\"req-0001-abcd\" user:gentian/ada can_audit tenant:demo",
+        "request_id=\"req-0001-abcd\" user:ada can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:demo}"
+    }
+  },
+  {
+    "name": "any: as the holder",
+    "exchange": {
+      "request": "GET /probe/any/demo auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_audit tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_audit tenant:demo",
+        "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_install_app tenant:demo",
+        "request_id=\"req-0001-abcd\" user:u1 can_view tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{user:user:u1 holder:user:demo/u1 tenant:demo}"
+    }
+  },
+  {
+    "name": "any: none held",
+    "exchange": {
+      "request": "GET /probe/any/other auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_audit tenant:other",
+        "request_id=\"req-0001-abcd\" user:gentian/ada can_audit tenant:other",
+        "request_id=\"req-0001-abcd\" user:ada can_install_app tenant:other",
+        "request_id=\"req-0001-abcd\" user:gentian/ada can_install_app tenant:other",
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:other",
+        "request_id=\"req-0001-abcd\" user:gentian/ada can_view tenant:other"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "any: the store fails",
+    "exchange": {
+      "request": "GET /probe/any/demo auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 503,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_audit tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "any: a tenant name of 53",
+    "exchange": {
+      "request": "GET /probe/any/a2345678901234567890123456789012345678901234567890123 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "delegated: a route no scope opens",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer vouched\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"this token was obtained on the person's behalf and does not reach this route\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"delegated token refused outside its scopes\" request_id=\"req-0001-abcd\" client=\"vouch-shop\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "delegated: a route no scope opens, minted id",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer vouched\" id=\"\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "{\"error\":\"this token was obtained on the person's behalf and does not reach this route\",\"request_id\":\"\u003cminted\u003e\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"delegated token refused outside its scopes\" request_id=\"\u003cminted\u003e\" client=\"vouch-shop\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "delegated: a route its scope opens",
+    "exchange": {
+      "request": "GET /v1/clusters/c1/resources auth=\"Bearer vouched\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_configure cluster:c1"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:}"
+    }
+  },
+  {
+    "name": "delegated: no scope for the route",
+    "exchange": {
+      "request": "GET /v1/clusters/c1/resources auth=\"Bearer unscoped\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"this token was obtained on the person's behalf and does not reach this route\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"delegated token refused outside its scopes\" request_id=\"req-0001-abcd\" client=\"vouch-shop\" route=\"GET /v1/clusters/{c}/resources\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "delegated: any of several relations",
+    "exchange": {
+      "request": "GET /probe/any/demo auth=\"Bearer vouched\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"this token was obtained on the person's behalf and does not reach this route\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"delegated token refused outside its scopes\" request_id=\"req-0001-abcd\" client=\"vouch-shop\" route=\"GET /probe/any/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "not delegated: a route no scope names",
+    "exchange": {
+      "request": "GET /v1/clusters/c1/resources auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_configure cluster:c1"
+      ],
+      "logs": null,
+      "handled": "{user:user:ada holder:user:gentian/ada tenant:}"
+    }
+  }
+]

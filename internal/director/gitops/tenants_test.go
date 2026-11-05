@@ -552,6 +552,26 @@ func TestATenantsMailModeIsOneLineOfItsManifest(t *testing.T) {
 	}
 }
 
+// A tenant directory without a kustomization still has its file removed, and
+// the answer says so.
+func TestRemovingATenantFileWithoutAKustomizationRemovesIt(t *testing.T) {
+	remote := dt.Remote(t, "acme")
+	path := "clusters/" + dt.Cluster + "/tenants/acme/" + gitops.TenantDomainFile
+	dt.Commit(t, remote, map[string]string{path: "apiVersion: gentianos.io/v1alpha1\nkind: TenantDomain\n"})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+
+	res, err := g.SetTenantDomain(context.Background(), "acme", "", tenantMeta())
+	if err != nil || res.Status != "updated" || !res.Changed {
+		t.Fatalf("remove: %+v, %v", res, err)
+	}
+	if left := dt.Git(t, "", "--git-dir", remote, "ls-tree", "--name-only", "main", path); left != "" {
+		t.Fatalf("%s is still on main", path)
+	}
+	if res, err := g.SetTenantDomain(context.Background(), "acme", "", tenantMeta()); err != nil || res.Changed {
+		t.Fatalf("removing it again: %+v, %v", res, err)
+	}
+}
+
 // A custom domain is one commit of the TenantDomain and its kustomization
 // entry, and removing it is one more. A name that is not a hostname, one on
 // the kernel domain and one another tenant holds are refused before git.

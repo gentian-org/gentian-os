@@ -21,6 +21,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 )
 
 // The cluster's resource plans: reading them, and changing them.
@@ -157,7 +158,7 @@ func (s *Server) setClusterResourcePlan(w http.ResponseWriter, r *http.Request, 
 		tenants, err := s.planTenants(r.Context())
 		if err != nil {
 			s.cfg.Log.WarnContext(r.Context(), "plan change refused: who is on it is unknown",
-				"request_id", reqID(r.Context()), "plan", body.Name, "error", err.Error())
+				"request_id", guard.ID(r.Context()), "plan", body.Name, "error", err.Error())
 			s.fail(w, r, http.StatusServiceUnavailable, "which tenants are on this plan could not be read from the operator; its quotas are not changed blind")
 			return
 		}
@@ -219,7 +220,7 @@ func (s *Server) removeClusterResourcePlan(w http.ResponseWriter, r *http.Reques
 	tenants, err := s.planTenants(r.Context())
 	if err != nil {
 		s.cfg.Log.WarnContext(r.Context(), "plan removal refused: who is on it is unknown",
-			"request_id", reqID(r.Context()), "plan", name, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "plan", name, "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable, "which tenants are on this plan could not be read from the operator; it is not removed blind")
 		return
 	}

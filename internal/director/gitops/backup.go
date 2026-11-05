@@ -290,10 +290,11 @@ func (g *GitOps) writeTenantFileLocked(ctx context.Context, tenant, name, body s
 	path := filepath.Join(dir, name)
 	kustomizationPath := filepath.Join(dir, "kustomization.yaml")
 
-	existing, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Result{}, err
+	existing, fileErr := os.ReadFile(path)
+	if fileErr != nil && !errors.Is(fileErr, os.ErrNotExist) {
+		return Result{}, fileErr
 	}
+	present := fileErr == nil
 	kustomization, err := os.ReadFile(kustomizationPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Result{}, err
@@ -302,10 +303,12 @@ func (g *GitOps) writeTenantFileLocked(ctx context.Context, tenant, name, body s
 	var listed string
 	var kustomizationChanged bool
 	if body == "" {
-		if errors.Is(err, os.ErrNotExist) || len(existing) == 0 {
+		// Nothing to remove only when there is neither the file nor an
+		// entry for it; a tenant directory may have no kustomization.
+		listed, kustomizationChanged = removeListed(string(kustomization), name, list)
+		if !present && !kustomizationChanged {
 			return Result{Status: "unchanged"}, nil
 		}
-		listed, kustomizationChanged = removeListed(string(kustomization), name, list)
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return Result{}, err
 		}

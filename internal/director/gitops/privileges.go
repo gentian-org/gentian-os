@@ -63,6 +63,8 @@ type PrivilegeGrant struct {
 	ApprovedAt string `json:"approvedAt"`
 	Reason     string `json:"reason"`
 	ExpiresAt  string `json:"expiresAt,omitempty"`
+	// Digest pins an apiExtensions grant to the definitions approved.
+	Digest string `json:"digest,omitempty"`
 }
 
 // Key is what makes a grant unique: one answer per privilege per install.
@@ -217,6 +219,9 @@ func renderPrivileges(tenant string, grants []PrivilegeGrant) string {
 		b.WriteString("      reason: " + yamlScalar(g.Reason) + "\n")
 		if g.ExpiresAt != "" {
 			b.WriteString("      expiresAt: " + g.ExpiresAt + "\n")
+		}
+		if g.Digest != "" {
+			b.WriteString("      digest: " + g.Digest + "\n")
 		}
 	}
 	return b.String()

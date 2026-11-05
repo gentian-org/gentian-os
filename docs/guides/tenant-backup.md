@@ -342,8 +342,8 @@ That is the guarantee you chose when you selected it.
 
 ## For cluster administrators
 
-The operator-side procedures — the `TenantExport`, `TenantRestore` and
-`TenantExportSchedule` resources, and a restore drill worth running before any
-of this is relied on — are in [commands.md](../reference/commands.md) §11–§15.
+The operator-side procedures — the `TenantExport` and `TenantRestore`
+resources, and a restore drill worth running before any of this is relied
+on — are in [commands.md](../reference/commands.md) §11–§13.
 The recovery procedures themselves are in
 [recovery.md](recovery.md).

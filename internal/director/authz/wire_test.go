@@ -286,7 +286,37 @@ func TestTheKernelClientsRequestsOnTheWire(t *testing.T) {
 	for _, tc := range cases {
 		rec := openfgatest.New(t, tc.replies...)
 		result := tc.run(t, rec.URL)
-		got = append(got, openfgatest.Case{Name: tc.name, Requests: rec.Requests(), Result: result})
+		got = append(got, openfgatest.Case{Name: tc.name, Requests: asModel(t, rec.Requests()), Result: result})
 	}
 	openfgatest.Compare(t, "kernel-wire", got)
+}
+
+// modelBody stands in the transcript for a request body that is the
+// embedded model.json. The model changes with the platform; what is held
+// here is that the body is that model, whatever it says.
+const modelBody = "<the embedded model.json>"
+
+// asModel replaces each body equal, as a JSON value, to the embedded
+// model with modelBody, and its length, which follows from the model, with
+// zero. A body that differs from the model in any way is kept as sent.
+func asModel(t *testing.T, reqs []openfgatest.Request) []openfgatest.Request {
+	t.Helper()
+	var model any
+	if err := json.Unmarshal(modelV1, &model); err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range reqs {
+		var body any
+		if json.Unmarshal([]byte(r.Body), &body) != nil {
+			continue
+		}
+		if got, err := json.Marshal(body); err == nil && string(got) == string(want) {
+			reqs[i].Body, reqs[i].ContentLength = modelBody, 0
+		}
+	}
+	return reqs
 }

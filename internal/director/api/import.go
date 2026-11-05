@@ -25,6 +25,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -410,7 +411,7 @@ func (s *Server) importDomainRefused(w http.ResponseWriter, r *http.Request, err
 func (s *Server) nameUsedBefore(w http.ResponseWriter, r *http.Request, err error) {
 	answer := map[string]any{
 		"error":      err.Error() + ` ("reuseName": true; kubectl gentian: --reuse-name)`,
-		"request_id": reqID(r.Context()),
+		"request_id": guard.ID(r.Context()),
 	}
 	var used *gitops.NameUsedBeforeError
 	if errors.As(err, &used) {
@@ -840,7 +841,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 			profile, err := s.cfg.Catalogue.Fetch(ctx, src.Source, w.name, digest)
 			if err != nil {
 				s.cfg.Log.InfoContext(ctx, "a catalog does not serve a build an import needs",
-					"request_id", reqID(ctx), "catalogue", src.Name, "profile", w.name, "digest", digest, "error", err.Error())
+					"request_id", guard.ID(ctx), "catalogue", src.Name, "profile", w.name, "digest", digest, "error", err.Error())
 				continue
 			}
 			got = &fetched{source: src, profile: profile, what: w.what}
@@ -873,7 +874,7 @@ func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentia
 		}
 		if res.Changed {
 			s.cfg.Log.InfoContext(ctx, "materialized a catalog entry for an import",
-				"request_id", reqID(ctx), "profile", f.profile.Name, "origin", f.source.origin(tenant), "commit", res.Commit)
+				"request_id", guard.ID(ctx), "profile", f.profile.Name, "origin", f.source.origin(tenant), "commit", res.Commit)
 		}
 	}
 	return nil, nil

@@ -38,8 +38,6 @@ package registrar
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -52,6 +50,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
@@ -185,10 +184,9 @@ func New(cfg Config) (*Server, error) {
 
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := requestID(r)
-	w.Header().Set("X-Request-Id", id)
+	r = guard.Identify(w, r)
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID{}, id)))
+	s.mux.ServeHTTP(w, r)
 }
 
 // Start serves until ctx is canceled. It satisfies manager.Runnable, so the
@@ -215,29 +213,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-type ctxRequestID struct{}
-
-// inboundID is what a request id from the gateway must look like to be kept.
-// It ends up in Keycloak's admin event and in the record, so it is matched,
-// not escaped.
-var inboundID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,64}$`)
-
-// requestID keeps the gateway's id so the audit logs join on one value
-// (security principle 7), and mints one for callers that arrive without.
-func requestID(r *http.Request) string {
-	if id := r.Header.Get("X-Request-Id"); inboundID.MatchString(id) {
-		return id
-	}
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-func reqID(ctx context.Context) string {
-	id, _ := ctx.Value(ctxRequestID{}).(string)
-	return id
 }
 
 // call is what a handler receives once the caller is known and allowed.
@@ -302,44 +277,21 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 func (s *Server) authorizeAs(
 	w http.ResponseWriter, r *http.Request, pattern string, relationFor func(*authn.Identity) string, obj object,
 ) (c call, ok bool) {
-	ctx := r.Context()
-	ident, err := s.cfg.Authn.FromRequest(r)
-	if err != nil {
-		s.cfg.Log.WarnContext(ctx, "authentication failed", "request_id", reqID(ctx), "reason", err.Error(), "route", pattern)
-		w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-registrar"`)
-		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
+	relations := func(ident *authn.Identity) []string { return []string{relationFor(ident)} }
+	g, ok := s.gate().Authorize(w, r, pattern, relations, obj)
+	if !ok {
 		return call{}, false
 	}
-	user, err := authz.User(ident.Subject)
-	if err != nil {
-		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
-		return call{}, false
-	}
-	target, err := obj(r)
-	if err != nil {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
-		return call{}, false
-	}
-	relation := relationFor(ident)
-	// As the account, and, refused, as a role holder of the token's realm
-	// (authz.CheckAs): the security officer reads here as the director lets
-	// them.
-	holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
-	allowed, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), user, holder, relation, target)
-	if err != nil {
-		// The decision point is unreachable: refuse, and say it is us.
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return call{}, false
-	}
-	if !allowed {
-		s.fail(w, r, http.StatusForbidden, "forbidden")
-		return call{}, false
-	}
-	name := ident.Email
+	name := g.Ident.Email
 	if name == "" {
-		name = ident.Name
+		name = g.Ident.Name
 	}
-	return call{subject: user[len("user:"):], name: name, realm: ident.Realm, decision: relation + " " + target}, true
+	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision()}, true
+}
+
+// gate is the guard of this registrar's routes.
+func (s *Server) gate() *guard.Guard {
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-registrar", Log: s.cfg.Log, Fail: s.fail}
 }
 
 // guarded registers a route with the relation it requires. There is no other
@@ -440,7 +392,7 @@ func (s *Server) routes() {
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {
-	s.json(w, code, map[string]any{"error": msg, "request_id": reqID(r.Context())})
+	s.json(w, code, map[string]any{"error": msg, "request_id": guard.ID(r.Context())})
 }
 
 func (s *Server) json(w http.ResponseWriter, code int, v any) {

@@ -883,8 +883,16 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 		if name == "" {
 			name = meta.Subject
 		}
-		if email == "" {
+		// A person without an address is known by their subject. A
+		// component holding a commission key has neither, and writes under
+		// the director's own address, as every other change the director
+		// makes on no person's behalf does; the trailer names the component.
+		switch {
+		case email != "":
+		case meta.Subject != "":
 			email = meta.Subject + "@users.gentian.invalid"
+		default:
+			email = g.committer.Email
 		}
 		args = append(args, "--author", fmt.Sprintf("%s <%s>", identClean(name), identClean(email)))
 	}

@@ -442,6 +442,23 @@ func (s *Server) writeVaultErr(w http.ResponseWriter, err error) {
 		fmt.Errorf("the custodian cannot reach or log in to OpenBao; this is not a problem with your account"))
 }
 
+// writeCatalogueErr answers a failure to find a requirement. Only a
+// requirement the caller cannot see is 404, whether it exists or not; a store
+// that cannot be asked is 503, and a catalog that cannot be read is 502. Both
+// are the custodian's fault, never the caller's, and say so.
+func (s *Server) writeCatalogueErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrRequirementNotFound):
+		writeErr(w, http.StatusNotFound, err)
+	case errors.Is(err, ErrAuthorizationUnavailable):
+		s.writeIdentityErr(w, err)
+	default:
+		ctrl.Log.WithName("custodian").Error(err, "the custodian cannot read the credential catalog")
+		writeErr(w, http.StatusBadGateway,
+			fmt.Errorf("the custodian cannot read the credential catalog; this is not a problem with your account"))
+	}
+}
+
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	c, err := s.identify(r.Context(), r)
 	if err != nil {
@@ -450,7 +467,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.Catalogue.List(r.Context(), c.view)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		s.writeCatalogueErr(w, err)
 		return
 	}
 	s.decorate(r.Context(), items)
@@ -465,7 +482,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.Catalogue.Get(r.Context(), r.PathValue("name"), c.view)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, err)
+		s.writeCatalogueErr(w, err)
 		return
 	}
 	one := []Status{*item}
@@ -517,7 +534,7 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	req, err := s.Catalogue.Get(r.Context(), name, c.view)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, err)
+		s.writeCatalogueErr(w, err)
 		return
 	}
 

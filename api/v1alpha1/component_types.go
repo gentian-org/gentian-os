@@ -234,6 +234,14 @@ type PrivilegeGrant struct {
 	// reviews.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// Digest pins an apiExtensions grant to the definitions it approved:
+	// sha256 of the request as the approver read it
+	// (security.APIExtensionDigest). A request whose definitions changed is
+	// not answered by it, and the install waits for a new approval.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest,omitempty"`
 }
 
 // ComponentStatus is the observed state of a Component.

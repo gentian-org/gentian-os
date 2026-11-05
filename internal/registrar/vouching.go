@@ -13,11 +13,11 @@ package registrar
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
@@ -59,7 +59,7 @@ import (
 // identify.
 func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		if holder := s.cfg.VouchingKeys.holder(bearerOf(r)); holder != nil {
+		if holder := s.cfg.VouchingKeys.holder(guard.Bearer(r)); holder != nil {
 			if c, ok := s.admitComponent(w, r, pattern, holder); ok {
 				h(w, r, c)
 			}
@@ -90,7 +90,7 @@ func (s *Server) admitComponent(w http.ResponseWriter, r *http.Request, pattern 
 	}
 	if holder.Tenant != tenant || holder.Component != profile {
 		s.cfg.Log.WarnContext(ctx, "refused: a component's key was used outside its own tenant and profile",
-			"request_id", reqID(ctx), "route", pattern, "key_tenant", holder.Tenant, "key_component", holder.Component,
+			"request_id", guard.ID(ctx), "route", pattern, "key_tenant", holder.Tenant, "key_component", holder.Component,
 			"tenant", tenant, "profile", profile)
 		s.fail(w, r, http.StatusForbidden,
 			"forbidden: a component's key reads and removes the links to that component, in its own tenant, and no others")
@@ -100,16 +100,6 @@ func (s *Server) admitComponent(w http.ResponseWriter, r *http.Request, pattern 
 		component: "component:" + holder.Tenant + "/" + holder.Component,
 		decision:  "own_key vouching:" + holder.Tenant + "/" + holder.Component,
 	}, true
-}
-
-// bearerOf is the request's bearer credential, or empty.
-func bearerOf(r *http.Request) string {
-	const prefix = "bearer "
-	h := r.Header.Get("Authorization")
-	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
-		return strings.TrimSpace(h[len(prefix):])
-	}
-	return ""
 }
 
 // vouchingProfile reads the profile in the request path. On failure it has
@@ -132,7 +122,7 @@ func (s *Server) ownToken(w http.ResponseWriter, r *http.Request, c call, realm 
 		return true
 	}
 	s.cfg.Log.WarnContext(r.Context(), "refused: a link is a person's own only with a token of the tenant's realm",
-		"request_id", reqID(r.Context()), "tenant", r.PathValue("t"), "realm", realm.Name(), "token_realm", c.realm)
+		"request_id", guard.ID(r.Context()), "tenant", r.PathValue("t"), "realm", realm.Name(), "token_realm", c.realm)
 	s.fail(w, r, http.StatusForbidden,
 		"forbidden: this token was issued by the realm "+c.realm+", and this tenant's people are in "+realm.Name()+
 			". Sign in to this tenant and ask again.")

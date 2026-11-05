@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 )
@@ -81,6 +82,13 @@ func (s *Server) stateRoutes() {
 	// name; what it did is read here, like a backup's.
 	s.guarded("GET /v1/tenants/{t}/restores/{name}", "can_view", tenantObject, s.tenantRestore)
 
+	// A tenant's objects of one add-on's type -- a backup schedule, say --
+	// with what the add-on reports of each: declared through the director
+	// under can_set_policy, read here by whoever may see the tenant, like
+	// its backup policy. The operator answers only for a type an add-on
+	// brought and holds a live grant for.
+	s.guarded("GET /v1/tenants/{t}/extensions/{group}/{resource}", "can_view", tenantObject, s.tenantExtensionObjects)
+
 	// What one tenant's apps consume from each other, and the notices
 	// published to its people.
 	s.guarded("GET /v1/tenants/{t}/integrations", "can_view", tenantObject, s.relay("/integrations"))
@@ -96,6 +104,9 @@ func (s *Server) stateRoutes() {
 		s.guarded("GET /v1/clusters/{c}/resources/report", "can_audit", clusterObject, s.clusterResourceReport)
 		s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", clusterObject, s.relayCluster("/v1/backup-policy"))
 		s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", clusterObject, s.relayCluster("/v1/backup-schedules"))
+		// The cluster's objects of one add-on's type: the platform tenant's,
+		// where the director writes them under can_configure.
+		s.guarded("GET /v1/clusters/{c}/extensions/{group}/{resource}", "can_audit", clusterObject, s.clusterExtensionObjects)
 		s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", clusterObject, s.relayCluster("/v1/platform-security"))
 		s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", clusterObject, s.relayCluster("/v1/customizations"))
 		// What the cluster last reported about itself, exactly as sent, and
@@ -150,6 +161,41 @@ func (s *Server) tenantRestore(w http.ResponseWriter, r *http.Request, c call) {
 	s.relayed(w, r, tenantPath(c, "/restores/"+url.PathEscape(r.PathValue("name"))))
 }
 
+// extensionPath is the operator's path below prefix for the add-on type in
+// the request's path, or false for a group or resource that cannot be one.
+func extensionPath(r *http.Request, prefix string) (string, bool) {
+	group, resource := r.PathValue("group"), r.PathValue("resource")
+	if !extensionGroup.MatchString(group) || !extensionResource.MatchString(resource) {
+		return "", false
+	}
+	return prefix + "/extensions/" + url.PathEscape(group) + "/" + url.PathEscape(resource), true
+}
+
+// extensionGroup is a DNS subdomain and extensionResource a DNS label: what a
+// type's group and plural are.
+var (
+	extensionGroup    = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	extensionResource = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+)
+
+func (s *Server) tenantExtensionObjects(w http.ResponseWriter, r *http.Request, c call) {
+	path, ok := extensionPath(r, tenantPath(c, ""))
+	if !ok {
+		fail(w, r, http.StatusBadRequest, "invalid name")
+		return
+	}
+	s.relayed(w, r, path)
+}
+
+func (s *Server) clusterExtensionObjects(w http.ResponseWriter, r *http.Request, _ call) {
+	path, ok := extensionPath(r, "/v1")
+	if !ok {
+		fail(w, r, http.StatusBadRequest, "invalid name")
+		return
+	}
+	s.relayed(w, r, path)
+}
+
 func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, c call) {
 	s.relayed(w, r, tenantPath(c, "/backups/"+url.PathEscape(r.PathValue("name"))))
 }
@@ -181,7 +227,7 @@ func (s *Server) clusterResourceReport(w http.ResponseWriter, r *http.Request, _
 
 func (s *Server) unreachable(w http.ResponseWriter, r *http.Request, err error) {
 	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "error", err.Error())
-	fail(w, http.StatusBadGateway, "the operator's API did not answer")
+	fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
 
 // resourcePlans answers the catalog as it applies to this tenant: the
@@ -193,7 +239,7 @@ func (s *Server) resourcePlans(w http.ResponseWriter, r *http.Request, c call) {
 	if err != nil {
 		var upstream *lifecycle.UpstreamError
 		if errors.As(err, &upstream) {
-			fail(w, upstream.Status, upstream.Message)
+			fail(w, r, upstream.Status, upstream.Message)
 			return
 		}
 		s.unreachable(w, r, err)
@@ -220,7 +266,7 @@ func (s *Server) clusterResources(w http.ResponseWriter, r *http.Request, _ call
 		if status == http.StatusOK {
 			status = http.StatusBadGateway
 		}
-		fail(w, status, lifecycle.ErrorMessage(body))
+		fail(w, r, status, lifecycle.ErrorMessage(body))
 		return
 	}
 	if answer.Tenants == nil {
