@@ -28,6 +28,10 @@ func TestTheUshersGuardOnTheWire(t *testing.T) {
 		"tenant":  {Subject: "u1", Realm: "demo", Name: "Una"},
 		"norealm": {Subject: "bob", Name: "Bob", Email: "bob@example.org"},
 		"weird":   {Subject: "a b", Realm: "demo"},
+		// Tokens a component obtained for ada by vouching: one with a
+		// director scope, one with none.
+		"vouched":  {Subject: "ada", Realm: "gentian", Client: "vouch-shop", Scopes: []string{"openid", "director-plans-read"}},
+		"unscoped": {Subject: "ada", Realm: "gentian", Client: "vouch-shop", Scopes: []string{"openid"}},
 	}
 	held := map[string]bool{
 		"user:ada can_view tenant:demo":           true,
@@ -47,6 +51,7 @@ func TestTheUshersGuardOnTheWire(t *testing.T) {
 		s.guarded("GET /probe/clusters/{c}", "can_configure", clusterObject, probe)
 		s.guarded("POST /probe/tenants/{t}/actions/go", "can_install_app", tenantObject, probe)
 		s.guardedAny("GET /probe/any/{t}", []string{"can_audit", "can_install_app", "can_view"}, tenantObject, probe)
+		s.guarded("GET /v1/clusters/{c}/resources", "can_configure", clusterObject, probe)
 		return s
 	}
 	const rid = "req-0001-abcd"
@@ -81,6 +86,12 @@ func TestTheUshersGuardOnTheWire(t *testing.T) {
 		{"any: none held", guardtest.Request{Method: "GET", Path: "/probe/any/other", Token: "ada", RequestID: rid}, nil},
 		{"any: the store fails", guardtest.Request{Method: "GET", Path: "/probe/any/demo", Token: "ada", RequestID: rid}, errors.New("down")},
 		{"any: a tenant name of 53", guardtest.Request{Method: "GET", Path: "/probe/any/a2345678901234567890123456789012345678901234567890123", Token: "ada", RequestID: rid}, nil},
+		{"delegated: a route no scope opens", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo", Token: "vouched", RequestID: rid}, nil},
+		{"delegated: a route no scope opens, minted id", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo", Token: "vouched"}, nil},
+		{"delegated: a route its scope opens", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resources", Token: "vouched", RequestID: rid}, nil},
+		{"delegated: no scope for the route", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resources", Token: "unscoped", RequestID: rid}, nil},
+		{"delegated: any of several relations", guardtest.Request{Method: "GET", Path: "/probe/any/demo", Token: "vouched", RequestID: rid}, nil},
+		{"not delegated: a route no scope names", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resources", Token: "ada", RequestID: rid}, nil},
 	}
 	var got []guardtest.Case
 	for _, c := range cases {

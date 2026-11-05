@@ -30,6 +30,10 @@ func TestTheDirectorsGuardOnTheWire(t *testing.T) {
 		"tenant":  {Subject: "u1", Realm: "demo", Name: "Una"},
 		"norealm": {Subject: "bob", Name: "Bob", Email: "bob@example.org"},
 		"weird":   {Subject: "a b", Realm: "demo"},
+		// Tokens a component obtained for ada by vouching: one with a
+		// director scope, one with none.
+		"vouched":  {Subject: "ada", Realm: "gentian", Client: "vouch-shop", Scopes: []string{"openid", "director-plans-read"}},
+		"unscoped": {Subject: "ada", Realm: "gentian", Client: "vouch-shop", Scopes: []string{"openid"}},
 	}
 	held := map[string]bool{
 		"user:ada can_view tenant:demo":           true,
@@ -56,6 +60,7 @@ func TestTheDirectorsGuardOnTheWire(t *testing.T) {
 		s.guarded("GET /probe/clusters/{c}", "can_configure", s.clusterObject, probe)
 		s.action("POST /probe/tenants/{t}/actions/go", "can_install_app", tenantObject, probe)
 		s.commissioned("GET /probe/tenants/{t}/partners", "can_view", tenantObject, probe)
+		s.guarded("GET /v1/clusters/{c}/resource-plans", "can_configure", s.clusterObject, probe)
 		return s
 	}
 	const rid = "req-0001-abcd"
@@ -97,6 +102,15 @@ func TestTheDirectorsGuardOnTheWire(t *testing.T) {
 		{"commissioned: the key elsewhere", guardtest.Request{Method: "GET", Path: "/probe/tenants/other/partners", Token: "the-key", RequestID: rid}, nil},
 		{"commissioned: the key, an invalid tenant", guardtest.Request{Method: "GET", Path: "/probe/tenants/Bad_/partners", Token: "the-key", RequestID: rid}, nil},
 		{"commissioned: no bearer", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo/partners", RequestID: rid}, nil},
+		{"delegated: a route no scope opens", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo", Token: "vouched", RequestID: rid}, nil},
+		{"delegated: a route no scope opens, minted id", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo", Token: "vouched"}, nil},
+		{"delegated: a route its scope opens", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resource-plans", Token: "vouched", RequestID: rid, Reason: "monthly plan check"}, nil},
+		{"delegated: a route its scope opens, without a reason", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resource-plans", Token: "vouched", RequestID: rid}, nil},
+		{"delegated: no scope for the route", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resource-plans", Token: "unscoped", RequestID: rid}, nil},
+		{"delegated: refused by the store", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resource-plans", Token: "vouched", RequestID: rid}, errors.New("down")},
+		{"delegated: an identified route", guardtest.Request{Method: "GET", Path: "/probe/me", Token: "unscoped", RequestID: rid}, nil},
+		{"delegated: the key route", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo/partners", Token: "unscoped", RequestID: rid}, nil},
+		{"not delegated: a route no scope names", guardtest.Request{Method: "GET", Path: "/v1/clusters/c1/resource-plans", Token: "ada", RequestID: rid}, nil},
 	}
 	var got []guardtest.Case
 	for _, c := range cases {

@@ -134,7 +134,9 @@ type Request struct {
 	Token, Authorization string
 	// RequestID is sent as X-Request-Id when set.
 	RequestID string
-	Body      string
+	// Reason is sent as X-Gentian-Reason when set.
+	Reason string
+	Body   string
 }
 
 // Exchange is a request and what came of it.
@@ -169,6 +171,9 @@ func Do(t *testing.T, h http.Handler, req Request, checks *Checks, logs *Logs, h
 	}
 	if req.RequestID != "" {
 		r.Header.Set("X-Request-Id", req.RequestID)
+	}
+	if req.Reason != "" {
+		r.Header.Set("X-Gentian-Reason", req.Reason)
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)

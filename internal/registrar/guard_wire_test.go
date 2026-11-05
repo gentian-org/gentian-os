@@ -30,6 +30,10 @@ func TestTheRegistrarsGuardOnTheWire(t *testing.T) {
 		"tenant":  {Subject: "u1", Realm: "demo", Name: "Una"},
 		"norealm": {Subject: "bob", Name: "Bob", Email: "bob@example.org"},
 		"weird":   {Subject: "a b", Realm: "demo"},
+		// Tokens a component obtained for ada by vouching: one with a
+		// director scope, one with none.
+		"vouched":  {Subject: "ada", Realm: "gentian", Client: "vouch-shop", Scopes: []string{"openid", "director-plans-read"}},
+		"unscoped": {Subject: "ada", Realm: "gentian", Client: "vouch-shop", Scopes: []string{"openid"}},
 	}
 	held := map[string]bool{
 		"user:ada can_view tenant:demo":           true,
@@ -91,6 +95,9 @@ func TestTheRegistrarsGuardOnTheWire(t *testing.T) {
 		{"link: the key, an invalid profile", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo/vouching/Bad_/people/x9", Token: "the-key", RequestID: rid}, nil},
 		{"link: no bearer", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo/vouching/shop/people/x9", RequestID: rid}, nil},
 		{"link: the store fails", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo/vouching/shop/people/u1", Token: "tenant", RequestID: rid}, errors.New("down")},
+		{"delegated: a route no scope opens", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo", Token: "vouched", RequestID: rid}, nil},
+		{"delegated: a route no scope opens, minted id", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo", Token: "vouched"}, nil},
+		{"delegated: a link route", guardtest.Request{Method: "GET", Path: "/probe/tenants/demo/vouching/shop/people/x9", Token: "unscoped", RequestID: rid}, nil},
 	}
 	var got []guardtest.Case
 	for _, c := range cases {

@@ -482,5 +482,53 @@
       "logs": null,
       "handled": ""
     }
+  },
+  {
+    "name": "delegated: a route no scope opens",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer vouched\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{subject:ada name: realm:gentian component: decision:can_view tenant:demo}"
+    }
+  },
+  {
+    "name": "delegated: a route no scope opens, minted id",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer vouched\" id=\"\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{subject:ada name: realm:gentian component: decision:can_view tenant:demo}"
+    }
+  },
+  {
+    "name": "delegated: a link route",
+    "exchange": {
+      "request": "GET /probe/tenants/demo/vouching/shop/people/x9 auth=\"Bearer unscoped\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_manage_users tenant:demo"
+      ],
+      "logs": null,
+      "handled": "{subject:ada name: realm:gentian component: decision:can_manage_users tenant:demo}"
+    }
   }
 ]
