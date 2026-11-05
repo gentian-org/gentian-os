@@ -46,11 +46,13 @@ import (
 // (charts/gentian-os/templates/openbao-snapshots.yaml); what it needs from the
 // operator, and what only the operator can say, is here:
 //
-//   - the store. A bucket in the platform's object store and a key that may
-//     write to it alone, made by a bucket Job as an app's are
-//     (backup.ObjectStorageProvisionContainerWith), kept in the vault at
-//     gentian-os/kernel/openbao-snapshots/storage, which the job's
-//     ExternalSecret reads;
+//   - the store. A bucket in the platform's object store and, for each
+//     instance, a key that may read, write and list its own prefix of it
+//     alone (openbao/, openbao-transit/), made by a bucket Job as an app's
+//     are (backup.ObjectStorageProvisionContainerWith) and kept in the vault
+//     at gentian-os/kernel/openbao-snapshots/<instance>, which that
+//     instance's job's ExternalSecret reads. Neither job can read or delete
+//     the other's snapshots;
 //   - the signal. How old the newest snapshot in that bucket is, and whether
 //     the vault is on Raft at all, written on the Cluster claim's status
 //     (status.openbaoSnapshots) beside the platform's version, and as metrics.
@@ -71,7 +73,12 @@ type OpenBaoSnapshots struct {
 	// reports the state Unknown.
 	Seeder *secrets.Seeder
 	// Bucket is where the snapshots are; the chart's openbaoSnapshots.bucket.
+	// The one source of the name: the records the jobs read follow it.
 	Bucket string
+	// TransitDisabled says the chart takes no snapshot of the transit seal
+	// (openbaoSnapshots.transit.enabled false): its store is not made and its
+	// report says Disabled.
+	TransitDisabled bool
 	// StaleAfter is how old the newest snapshot may be before it is stale.
 	StaleAfter time.Duration
 	// Interval is how often the signal is written; ten minutes by default.
@@ -82,19 +89,26 @@ type OpenBaoSnapshots struct {
 	Snapshots SnapshotLister
 	// Storage says which storage the vault is on; nil asks the vault.
 	Storage func(ctx context.Context) (string, error)
+
+	// pending is set while a store is being made, so the next pass comes
+	// soon rather than a tick later.
+	pending bool
 }
 
 // The vault snapshot's names, shared with the chart and the documentation.
 const (
-	// OpenBaoSnapshotStorePath is the store's record in the vault.
-	OpenBaoSnapshotStorePath = "gentian-os/kernel/openbao-snapshots/storage"
-	// openBaoSnapshotBucketJob makes the bucket and its key.
-	openBaoSnapshotBucketJob = "s3-bucket-kernel-openbao-snapshots"
-	// openBaoSnapshotKeyAnnotation names the key a bucket Job made, by a
-	// digest, so a key the vault holds anew is made again.
+	// openBaoSnapshotStoreCategory holds each instance's store record in the
+	// vault, gentian-os/kernel/openbao-snapshots/<instance>.
+	openBaoSnapshotStoreCategory = "openbao-snapshots"
+	// openBaoSnapshotKeyAnnotation names the key a bucket Job made, and the
+	// bucket and prefix it scoped it to, by a digest: a key the vault holds
+	// anew, or a bucket the chart names anew, is made again.
 	openBaoSnapshotKeyAnnotation = "gentianos.io/key-id"
+	openBaoSnapshotRegion        = "us-east-1"
 	defaultOpenBaoSnapshotStale  = 30 * time.Hour
 	defaultOpenBaoSnapshotTick   = 10 * time.Minute
+	// openBaoSnapshotPendingTick is the pass after one that made a store.
+	openBaoSnapshotPendingTick = 30 * time.Second
 )
 
 // The states status.openbaoSnapshots.state takes.
@@ -104,9 +118,11 @@ const (
 	SnapshotMissing = "Missing"
 	SnapshotNotRaft = "NotRaft"
 	SnapshotUnknown = "Unknown"
+	// SnapshotDisabled is an instance the chart takes no snapshot of.
+	SnapshotDisabled = "Disabled"
 )
 
-var openBaoSnapshotStates = []string{SnapshotCurrent, SnapshotStale, SnapshotMissing, SnapshotNotRaft, SnapshotUnknown}
+var openBaoSnapshotStates = []string{SnapshotCurrent, SnapshotStale, SnapshotMissing, SnapshotNotRaft, SnapshotUnknown, SnapshotDisabled}
 
 // SnapshotObject is one object of the snapshot bucket.
 type SnapshotObject struct {
@@ -127,7 +143,7 @@ type SnapshotReport struct {
 	// Storage is the vault's storage type, raft or file; empty when the
 	// vault could not be asked.
 	Storage string `json:"storage,omitempty"`
-	// State is Current, Stale, Missing, NotRaft or Unknown.
+	// State is Current, Stale, Missing, NotRaft, Unknown or Disabled.
 	State string `json:"state"`
 	// Newest is the newest snapshot's object key, and NewestAt when it was
 	// written; AgeSeconds how old it is.
@@ -156,14 +172,18 @@ func (o *OpenBaoSnapshots) Start(ctx context.Context) error {
 	}
 	for {
 		for _, rep := range o.Once(ctx) {
-			if rep.State != SnapshotCurrent {
+			if rep.State != SnapshotCurrent && rep.State != SnapshotDisabled {
 				logger.Info("snapshots are not current", "instance", rep.Instance, "state", rep.State, "message", rep.Message)
 			}
+		}
+		next := interval
+		if o.pending && openBaoSnapshotPendingTick < next {
+			next = openBaoSnapshotPendingTick
 		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(interval):
+		case <-time.After(next):
 		}
 	}
 }
@@ -180,10 +200,26 @@ type SnapshotInstance struct {
 	// Storage asks the instance which storage it is on; nil reads what its
 	// job last found (the object storage.<raft|file> under its prefix).
 	Storage func(ctx context.Context) (string, error)
+	// Disabled is an instance the chart takes no snapshot of.
+	Disabled bool
 }
 
 // prefix is the instance's key prefix in the bucket.
 func (i SnapshotInstance) prefix() string { return i.Name + "/" }
+
+// StorePath is the instance's store record in the vault: the bucket, and the
+// key that may write under the instance's prefix of it alone.
+func (i SnapshotInstance) StorePath() string {
+	return secrets.KernelPath(openBaoSnapshotStoreCategory, i.Name)
+}
+
+// bucketJob makes the bucket and the instance's key.
+func (i SnapshotInstance) bucketJob() string { return "s3-bucket-kernel-" + i.Name + "-snapshots" }
+
+// identity is the object store's name for the instance's key. An underscore,
+// which no bucket name holds, keeps it apart from every identity named after
+// a bucket.
+func (i SnapshotInstance) identity() string { return "kernel_" + i.Name + "-snapshot" }
 
 // snapshotName matches the instance's snapshot objects, without the prefix.
 func (i SnapshotInstance) snapshotName() *regexp.Regexp {
@@ -197,13 +233,14 @@ func (o *OpenBaoSnapshots) instances() []SnapshotInstance {
 		{Name: "openbao", Field: "openbaoSnapshots", What: "the vault",
 			Job: "openbao-snapshot in the vault's namespace", Storage: o.storage},
 		{Name: "openbao-transit", Field: "transitSnapshots", What: "the transit seal that unseals the vault",
-			Job: "openbao-transit-snapshot in the seal's namespace"},
+			Job: "openbao-transit-snapshot in the seal's namespace", Disabled: o.TransitDisabled},
 	}
 }
 
-// Once makes sure the store exists, judges each instance's newest snapshot
+// Once makes sure each instance's store exists, judges its newest snapshot
 // and writes the reports. Every failure ends up in a report rather than an
-// error: the report is what a person reads.
+// error: the report is what a person reads. The object store's Secret is read
+// once a pass, and the reports are written in one patch.
 func (o *OpenBaoSnapshots) Once(ctx context.Context) []SnapshotReport {
 	logger := log.FromContext(ctx).WithName("openbao-snapshots")
 	now := time.Now
@@ -214,12 +251,29 @@ func (o *OpenBaoSnapshots) Once(ctx context.Context) []SnapshotReport {
 	if stale <= 0 {
 		stale = defaultOpenBaoSnapshotStale
 	}
-	storeErr := o.EnsureStore(ctx)
-	if storeErr != nil {
-		logger.Error(storeErr, "the snapshot store could not be made; it is retried")
-	}
+	lister, endpoint, storeErr := o.connect(ctx)
+	o.pending = false
 	var reps []SnapshotReport
+	status := map[string]any{}
 	for _, inst := range o.instances() {
+		if inst.Disabled {
+			rep := DisabledOpenBaoSnapshots(now(), stale, o.Bucket, inst)
+			recordOpenBaoSnapshotMetrics(rep)
+			status[inst.Field] = rep
+			reps = append(reps, rep)
+			continue
+		}
+		ready, err := false, storeErr
+		if err == nil {
+			ready, err = o.EnsureStore(ctx, inst, endpoint)
+		}
+		switch {
+		case err != nil:
+			logger.Error(err, "the snapshot store could not be made; it is retried", "instance", inst.Name)
+		case !ready:
+			o.pending = true
+			logger.Info("making the snapshot store", "instance", inst.Name, "bucket", o.Bucket, "prefix", inst.prefix())
+		}
 		var storage string
 		var storageErr error
 		if inst.Storage != nil {
@@ -228,18 +282,42 @@ func (o *OpenBaoSnapshots) Once(ctx context.Context) []SnapshotReport {
 				logger.Info("which storage the instance is on could not be read", "instance", inst.Name, "error", storageErr.Error())
 			}
 		}
-		objects, listErr := o.list(ctx, inst.prefix())
+		var objects []SnapshotObject
+		listErr := storeErr
+		if lister != nil {
+			objects, listErr = lister.List(ctx, o.Bucket, inst.prefix())
+		}
 		rep := JudgeOpenBaoSnapshots(now(), stale, o.Bucket, inst, storage, storageErr, objects, listErr)
-		if storeErr != nil && rep.State != SnapshotCurrent {
-			rep.Message += " The store is not made yet: " + storeErr.Error()
+		if rep.State != SnapshotCurrent {
+			switch {
+			case err != nil:
+				rep.Message += " The snapshot store could not be made: " + err.Error()
+			case !ready:
+				rep.Message += " The operator is making the snapshot store."
+			}
 		}
 		recordOpenBaoSnapshotMetrics(rep)
-		if err := writeClusterStatus(ctx, o.Reader, o.Client, inst.Field, rep); err != nil {
-			logger.Error(err, "the snapshot report could not be written on the Cluster claim; it is retried", "instance", inst.Name)
-		}
+		status[inst.Field] = rep
 		reps = append(reps, rep)
 	}
+	if err := writeClusterStatus(ctx, o.Reader, o.Client, status); err != nil {
+		logger.Error(err, "the snapshot reports could not be written on the Cluster claim; they are retried")
+	}
 	return reps
+}
+
+// DisabledOpenBaoSnapshots is the report for an instance the chart takes no
+// snapshot of.
+func DisabledOpenBaoSnapshots(now time.Time, staleAfter time.Duration, bucket string, inst SnapshotInstance) SnapshotReport {
+	return SnapshotReport{
+		Instance:   inst.Name,
+		State:      SnapshotDisabled,
+		Bucket:     bucket,
+		StaleAfter: staleAfter.String(),
+		CheckedAt:  now.UTC().Format(time.RFC3339),
+		Message: fmt.Sprintf("No snapshot of %s is taken: this cluster's values switch it off (openbaoSnapshots.transit.enabled). "+
+			"Without one, no snapshot of the vault can be unsealed once the seal's volume is lost.", inst.What),
+	}
 }
 
 // JudgeOpenBaoSnapshots is the report for what was found of one instance:
@@ -347,15 +425,22 @@ func (o *OpenBaoSnapshots) storage(ctx context.Context) (string, error) {
 	return seal.StorageType, nil
 }
 
-func (o *OpenBaoSnapshots) list(ctx context.Context, prefix string) ([]SnapshotObject, error) {
-	if o.Snapshots != nil {
-		return o.Snapshots.List(ctx, o.Bucket, prefix)
-	}
-	mc, err := (&bundlestore.Store{Client: o.Reader}).Minio(ctx, &gentianov1alpha1.BundleRef{})
+// connect reads the object store's administrator Secret once: the endpoint
+// the jobs are told to write to, and a lister of the bucket with the
+// administrator's key. The lister is the injected one where there is one.
+func (o *OpenBaoSnapshots) connect(ctx context.Context) (SnapshotLister, string, error) {
+	mc, endpoint, err := (&bundlestore.Store{Client: o.Reader}).MinioAt(ctx, &gentianov1alpha1.BundleRef{})
 	if err != nil {
-		return nil, err
+		err = fmt.Errorf("the object store (%s/%s): %w", s3Namespace, storageAdminSecret, err)
 	}
-	return minioSnapshots{mc}.List(ctx, o.Bucket, prefix)
+	switch {
+	case o.Snapshots != nil:
+		return o.Snapshots, endpoint, err
+	case err != nil:
+		return nil, "", err
+	default:
+		return minioSnapshots{mc}, endpoint, nil
+	}
 }
 
 // minioSnapshots lists a bucket of the cluster's own store.
@@ -382,111 +467,117 @@ func (m minioSnapshots) List(ctx context.Context, bucket, prefix string) ([]Snap
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
-// EnsureStore makes the snapshot bucket and its key, as an app's bucket is
-// made: the key pair is seeded in the vault first, then a bucket Job in the
-// object store's namespace makes the bucket and an identity that may read,
-// write and list it alone, from a Secret owned by the Job and removed once
-// it has run. The Job stays once it has succeeded, annotated with a digest
-// of the key it made: that is the record the store exists, and a key the
-// vault holds anew is made again.
-func (o *OpenBaoSnapshots) EnsureStore(ctx context.Context) error {
+// EnsureStore makes the snapshot bucket and the instance's key, as an app's
+// bucket is made: the key pair is seeded in the vault first, then a bucket
+// Job in the object store's namespace makes the bucket and an identity that
+// may read, write and list the instance's prefix of it alone, from a Secret
+// owned by the Job and removed once it has run. The Job stays once it has
+// succeeded, annotated with a digest of the key, the bucket and the prefix:
+// that is the record the store exists, and a key the vault holds anew or a
+// bucket the chart names anew is made again.
+//
+// The record's address, bucket and region follow the operator's; only the
+// key pair is kept once made. So a bucket changed in the chart reaches the
+// jobs through their ExternalSecret, and the jobs write where the operator
+// reads.
+//
+// ready is false while the store is being made, which is no error.
+func (o *OpenBaoSnapshots) EnsureStore(ctx context.Context, inst SnapshotInstance, endpoint string) (ready bool, err error) {
 	if o.Seeder == nil {
-		return errors.New("the operator runs without a vault, and the key would have nowhere to be kept")
+		return false, errors.New("the operator runs without a vault, and the key would have nowhere to be kept")
 	}
-	endpoint, err := o.storeEndpoint(ctx)
-	if err != nil {
-		return err
+	if endpoint == "" {
+		return false, fmt.Errorf("%s/%s names no endpoint", s3Namespace, storageAdminSecret)
 	}
-	category, name := openBaoSnapshotStoreKey()
-	creds, err := o.Seeder.SeedKernelS3(ctx, category, name, secrets.S3Creds{
+	path := inst.StorePath()
+	creds, err := o.Seeder.SeedS3(ctx, path, secrets.S3Creds{
 		Endpoint: endpoint,
 		Bucket:   o.Bucket,
-		Region:   "us-east-1",
+		Region:   openBaoSnapshotRegion,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	if creds.Bucket == "" || creds.AccessKey == "" || creds.SecretKey == "" {
-		return fmt.Errorf("the record at %s holds no bucket or key", OpenBaoSnapshotStorePath)
+	if creds.AccessKey == "" || creds.SecretKey == "" {
+		return false, fmt.Errorf("the record at %s holds no key", path)
 	}
-	keyID := snapshotKeyID(creds.AccessKey)
+	if creds.Endpoint != endpoint || creds.Bucket != o.Bucket || creds.Region != openBaoSnapshotRegion {
+		creds.Endpoint, creds.Bucket, creds.Region = endpoint, o.Bucket, openBaoSnapshotRegion
+		if err := o.Seeder.Write(ctx, path, map[string]string{
+			"endpoint":   creds.Endpoint,
+			"bucket":     creds.Bucket,
+			"region":     creds.Region,
+			"access-key": creds.AccessKey,
+			"secret-key": creds.SecretKey,
+		}); err != nil {
+			return false, fmt.Errorf("point the record at %s to bucket %s: %w", path, o.Bucket, err)
+		}
+	}
+	keyID := snapshotKeyID(creds.AccessKey, creds.Bucket, inst.prefix())
 
+	// Read past the cache: a Job made a moment ago is there, and the key is
+	// handed to it on this pass, not the next.
+	name := types.NamespacedName{Name: inst.bucketJob(), Namespace: s3Namespace}
 	job := &batchv1.Job{}
-	err = o.Client.Get(ctx, types.NamespacedName{Name: openBaoSnapshotBucketJob, Namespace: s3Namespace}, job)
+	err = o.Reader.Get(ctx, name, job)
 	switch {
 	case apierrors.IsNotFound(err):
-		job = makeOpenBaoSnapshotBucketJob(creds.Bucket, keyID)
-		if err := o.Client.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("make the snapshot bucket Job: %w", err)
+		job = makeOpenBaoSnapshotBucketJob(inst, creds.Bucket, keyID)
+		if err := o.Client.Create(ctx, job); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return false, fmt.Errorf("make the snapshot bucket Job %s: %w", name.Name, err)
+			}
+			if err := o.Reader.Get(ctx, name, job); err != nil {
+				return false, err
+			}
 		}
-		return o.handKey(ctx, creds)
+		return false, o.handKey(ctx, job, creds)
 	case err != nil:
-		return err
+		return false, err
 	case job.DeletionTimestamp != nil:
-		return errors.New("the snapshot bucket Job is being removed; it is made again")
+		return false, nil
 	case job.Annotations[openBaoSnapshotKeyAnnotation] != keyID || jobIsFailed(job):
 		prop := metav1.DeletePropagationBackground
 		if err := o.Client.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("remove the snapshot bucket Job to run it again: %w", err)
+			return false, fmt.Errorf("remove the snapshot bucket Job %s to run it again: %w", name.Name, err)
 		}
-		return errors.New("the snapshot bucket Job failed or made another key; it is run again")
+		if jobIsFailed(job) {
+			return false, fmt.Errorf("the snapshot bucket Job %s failed; it is run again", name.Name)
+		}
+		return false, nil
 	case jobIsComplete(job):
-		return deleteJobSecret(ctx, o.Client, job)
+		return true, deleteJobSecret(ctx, o.Client, job)
 	default:
-		return o.handKey(ctx, creds)
+		return false, o.handKey(ctx, job, creds)
 	}
 }
 
-// handKey writes the Secret the bucket Job reads the key pair from.
-func (o *OpenBaoSnapshots) handKey(ctx context.Context, creds secrets.S3Creds) error {
-	job := &batchv1.Job{}
-	if err := o.Client.Get(ctx, types.NamespacedName{Name: openBaoSnapshotBucketJob, Namespace: s3Namespace}, job); err != nil {
-		return err
-	}
-	if err := ensureJobSecret(ctx, o.Client, job, backup.ObjectStorageKeySecret(job, creds.AccessKey, creds.SecretKey)); err != nil {
-		return err
-	}
-	return errors.New("the snapshot bucket Job is making the bucket")
+// handKey writes the Secret the bucket Job reads the key pair from, owned by
+// the Job it is given.
+func (o *OpenBaoSnapshots) handKey(ctx context.Context, job *batchv1.Job, creds secrets.S3Creds) error {
+	return ensureJobSecret(ctx, o.Client, job, backup.ObjectStorageKeySecret(job, creds.AccessKey, creds.SecretKey))
 }
 
-// storeEndpoint is the object store's S3 address, from its administrator's
-// Secret: what the job is told to write to.
-func (o *OpenBaoSnapshots) storeEndpoint(ctx context.Context) (string, error) {
-	secret := &corev1.Secret{}
-	if err := o.Client.Get(ctx, types.NamespacedName{Name: storageAdminSecret, Namespace: s3Namespace}, secret); err != nil {
-		return "", fmt.Errorf("the object store's address (%s/%s): %w", s3Namespace, storageAdminSecret, err)
-	}
-	endpoint := string(secret.Data["endpoint"])
-	if endpoint == "" {
-		return "", fmt.Errorf("%s/%s names no endpoint", s3Namespace, storageAdminSecret)
-	}
-	return endpoint, nil
-}
-
-// openBaoSnapshotStoreKey is OpenBaoSnapshotStorePath as the Seeder's
-// category and name.
-func openBaoSnapshotStoreKey() (category, name string) {
-	rest := strings.TrimPrefix(OpenBaoSnapshotStorePath, "gentian-os/kernel/")
-	category, name, _ = strings.Cut(rest, "/")
-	return category, name
-}
-
-func snapshotKeyID(accessKey string) string {
-	sum := sha256.Sum256([]byte(accessKey))
+// snapshotKeyID is the digest a bucket Job is annotated with: of the key it
+// makes, and the bucket and prefix it scopes it to.
+func snapshotKeyID(accessKey, bucket, prefix string) string {
+	sum := sha256.Sum256([]byte(accessKey + "\x00" + bucket + "\x00" + prefix))
 	return hex.EncodeToString(sum[:8])
 }
 
 // makeOpenBaoSnapshotBucketJob is the Job that makes the snapshot bucket and
-// its identity, an app's bucket Job (makeS3BucketJob) for a bucket of the
-// kernel's. No time-to-live: the succeeded Job is the record the store
-// exists, and its Secret is removed once it has run.
-func makeOpenBaoSnapshotBucketJob(bucket, keyID string) *batchv1.Job {
+// one instance's identity, scoped to its prefix: an app's bucket Job
+// (makeS3BucketJob) for a bucket of the kernel's. No time-to-live: the
+// succeeded Job is the record the store exists, and its Secret is removed
+// once it has run.
+func makeOpenBaoSnapshotBucketJob(inst SnapshotInstance, bucket, keyID string) *batchv1.Job {
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	backoff := int32(3)
-	container := backup.ObjectStorageProvisionContainerWith("create-bucket", bucket, openBaoSnapshotBucketJob, backup.ObjectStorageOptions{})
+	container := backup.ObjectStorageProvisionContainerWith("create-bucket", bucket, inst.bucketJob(),
+		backup.ObjectStorageOptions{Prefix: inst.Name, Identity: inst.identity()})
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      openBaoSnapshotBucketJob,
+			Name:      inst.bucketJob(),
 			Namespace: s3Namespace,
 			Labels: map[string]string{
 				managedByLabel:                managedByValue,
@@ -514,17 +605,17 @@ func makeOpenBaoSnapshotBucketJob(bucket, keyID string) *batchv1.Job {
 	return job
 }
 
-// writeClusterStatus writes one field of status on every Cluster claim's
-// composite, as PlatformStatusWriter writes status.platform. A claim whose
-// composite does not exist yet is skipped.
-func writeClusterStatus(ctx context.Context, reader client.Reader, writer client.Client, field string, value any) error {
+// writeClusterStatus writes fields of status on every Cluster claim's
+// composite in one merge patch, as PlatformStatusWriter writes
+// status.platform. A claim whose composite does not exist yet is skipped.
+func writeClusterStatus(ctx context.Context, reader client.Reader, writer client.Client, fields map[string]any) error {
+	patch, err := json.Marshal(map[string]any{"status": fields})
+	if err != nil {
+		return err
+	}
 	return forEachClusterComposite(ctx, reader, func(xr *unstructured.Unstructured) error {
-		patch, err := json.Marshal(map[string]any{"status": map[string]any{field: value}})
-		if err != nil {
-			return err
-		}
 		if err := writer.Status().Patch(ctx, xr, client.RawPatch(types.MergePatchType, patch)); err != nil {
-			return fmt.Errorf("write status.%s on %s: %w", field, xr.GetName(), err)
+			return fmt.Errorf("write the snapshot reports on %s: %w", xr.GetName(), err)
 		}
 		return nil
 	})
@@ -535,7 +626,7 @@ func writeClusterStatus(ctx context.Context, reader client.Reader, writer client
 var (
 	openBaoSnapshotState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gentianos_openbao_snapshot_state",
-		Help: "The state of an OpenBao instance's snapshots (openbao, openbao-transit), 1 for the one that holds: Current, Stale, Missing, NotRaft or Unknown.",
+		Help: "The state of an OpenBao instance's snapshots (openbao, openbao-transit), 1 for the one that holds: Current, Stale, Missing, NotRaft, Unknown or Disabled.",
 	}, []string{"instance", "state"})
 	openBaoSnapshotAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gentianos_openbao_snapshot_age_seconds",

@@ -900,6 +900,10 @@ YAML
 # Application names none, the seal before its configuration moved into the
 # bootstrap chart, runs file storage: the only backend before Raft.
 #
+# A volume or Application is absent only when the API server says NotFound;
+# any other failure to read them returns 1 with nothing on stdout, and the
+# caller stops rather than render a backend it could not check.
+#
 # Read only. The claim is read here rather than only by
 # load_deployments_cluster_settings, because on a new cluster step 0 writes
 # the claim after the settings were loaded.
@@ -925,18 +929,30 @@ openbao_storage_for_render() {
             want="file" ;;
     esac
     gitops="$(ns_kernel gitops)"
+    # Absent means the API server said NotFound. Any other failure -- an API
+    # server that timed out, a token that expired -- says nothing about the
+    # volume, and reading it as "absent" would render the claim's backend
+    # onto a volume of the other's data: a vault that restarts empty. So the
+    # step stops, and says why.
+    local rc=0
     # No volume yet: a new cluster, which starts on what the claim says.
-    if ! kubectl get pvc "${pvc}" -n "${ns}" >/dev/null 2>&1; then
-        printf '%s' "${want}"
-        return 0
-    fi
+    _openbao_kube_get pvc "${pvc}" -n "${ns}" -o name >/dev/null || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) printf '%s' "${want}"; return 0 ;;
+        *) error "The volume ${pvc} in ${ns} could not be read; not choosing ${instance}'s storage blind." >&2
+           return 1 ;;
+    esac
     # No Application to read: nothing says what the volume holds, and the
     # claim answers, as it did when the volume was made.
-    if ! live="$(kubectl get application "${instance}" -n "${gitops}" \
-        -o jsonpath='{.spec.sources[0].helm.valuesObject.server.standalone.config}' 2>/dev/null)"; then
-        printf '%s' "${want}"
-        return 0
-    fi
+    live="$(_openbao_kube_get application "${instance}" -n "${gitops}" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.server.standalone.config}')" || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) printf '%s' "${want}"; return 0 ;;
+        *) error "The Application ${instance} in ${gitops} could not be read; not choosing ${instance}'s storage blind." >&2
+           return 1 ;;
+    esac
     if [[ "${live}" == *'storage "raft"'* ]]; then
         live="raft"
     else
@@ -946,8 +962,11 @@ openbao_storage_for_render() {
         printf '%s' "${want}"
         return 0
     fi
-    annotated="$(kubectl get pvc "${pvc}" -n "${ns}" \
-        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-storage}' 2>/dev/null || true)"
+    if ! annotated="$(_openbao_kube_get pvc "${pvc}" -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-storage}')"; then
+        error "The volume ${pvc} in ${ns} could not be read; not choosing ${instance}'s storage blind." >&2
+        return 1
+    fi
     if [[ "${annotated}" == "${want}" ]]; then
         printf '%s' "${want}"
         return 0
@@ -957,4 +976,26 @@ openbao_storage_for_render() {
     warn "  Keeping ${live}: ${want} on this volume would start it empty." >&2
     warn "  The move is docs/guides/recovery.md §5." >&2
     printf '%s' "${live}"
+}
+
+# _openbao_kube_get <kubectl get arguments...> — what kubectl get prints, on
+# stdout. Returns 0 when it answered, 3 when the API server said NotFound, and
+# 1 for any other failure, whose message it passes on to stderr: only a
+# definite NotFound may be read as "absent".
+_openbao_kube_get() {
+    local err out rc=0
+    err="$(mktemp)"
+    out="$(kubectl get "$@" 2>"${err}")" || rc=$?
+    if (( rc == 0 )); then
+        rm -f "${err}"
+        printf '%s' "${out}"
+        return 0
+    fi
+    if grep -q '(NotFound)' "${err}"; then
+        rm -f "${err}"
+        return 3
+    fi
+    cat "${err}" >&2
+    rm -f "${err}"
+    return 1
 }

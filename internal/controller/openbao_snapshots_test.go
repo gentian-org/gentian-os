@@ -27,6 +27,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -139,25 +140,34 @@ func openBaoSnapshotsFixture(t *testing.T, objs ...client.Object) (client.Client
 	return c, memVault{}
 }
 
+const testS3Endpoint = "http://s3.system-s3.svc.cluster.local:9000"
+
 func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 	ctx := context.Background()
 	c, vault := openBaoSnapshotsFixture(t)
 	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots"}
-
-	// First pass: the key is in the vault, the Job is made and handed it.
-	if err := o.EnsureStore(ctx); err == nil {
-		t.Fatal("the store reads as made before its Job ran")
+	inst := o.instances()[0]
+	path := inst.StorePath()
+	if path != "gentian-os/kernel/openbao-snapshots/openbao" {
+		t.Fatalf("the vault's store record is at %s", path)
 	}
-	rec := vault[OpenBaoSnapshotStorePath]
+
+	// First pass: the key is in the vault, the Job is made and handed it on
+	// the same pass. Being made is no error.
+	ready, err := o.EnsureStore(ctx, inst, testS3Endpoint)
+	if ready || err != nil {
+		t.Fatalf("first pass: ready %v, error %v; want not ready and no error", ready, err)
+	}
+	rec := vault[path]
 	if rec["bucket"] != "gentian-openbao-snapshots" || rec["access-key"] == "" || rec["secret-key"] == "" ||
-		rec["endpoint"] != "http://s3.system-s3.svc.cluster.local:9000" {
-		t.Fatalf("the vault holds %v at %s", rec, OpenBaoSnapshotStorePath)
+		rec["endpoint"] != testS3Endpoint {
+		t.Fatalf("the vault holds %v at %s", rec, path)
 	}
 	job := &batchv1.Job{}
-	if err := c.Get(ctx, types.NamespacedName{Name: openBaoSnapshotBucketJob, Namespace: s3Namespace}, job); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: "s3-bucket-kernel-openbao-snapshots", Namespace: s3Namespace}, job); err != nil {
 		t.Fatal(err)
 	}
-	if job.Annotations[openBaoSnapshotKeyAnnotation] != snapshotKeyID(rec["access-key"]) {
+	if job.Annotations[openBaoSnapshotKeyAnnotation] != snapshotKeyID(rec["access-key"], rec["bucket"], "openbao/") {
 		t.Fatalf("the Job does not name the key it makes: %v", job.Annotations)
 	}
 	if job.Spec.Template.Labels[backup.ObjectStorageShellLabel] != "true" {
@@ -170,8 +180,8 @@ func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 		}
 	}
 	key := &corev1.Secret{}
-	if err := c.Get(ctx, types.NamespacedName{Name: openBaoSnapshotBucketJob, Namespace: s3Namespace}, key); err != nil {
-		t.Fatalf("the Job was not handed its key: %v", err)
+	if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: s3Namespace}, key); err != nil {
+		t.Fatalf("the Job was not handed its key on the pass that made it: %v", err)
 	}
 	if string(key.Data[backup.ObjectStorageKeySecretKey]) != rec["secret-key"] || len(key.OwnerReferences) != 1 {
 		t.Fatalf("the key Secret = %v", key)
@@ -182,24 +192,99 @@ func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 	if err := c.Status().Update(ctx, job); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.EnsureStore(ctx); err != nil {
-		t.Fatalf("the store does not read as made after its Job succeeded: %v", err)
+	if ready, err := o.EnsureStore(ctx, inst, testS3Endpoint); !ready || err != nil {
+		t.Fatalf("the store does not read as made after its Job succeeded: %v %v", ready, err)
 	}
-	if err := c.Get(ctx, types.NamespacedName{Name: openBaoSnapshotBucketJob, Namespace: s3Namespace}, key); !apierrors.IsNotFound(err) {
+	if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: s3Namespace}, key); !apierrors.IsNotFound(err) {
 		t.Fatalf("the key Secret outlived the Job's run: %v", err)
 	}
 	// And stays made: the next pass makes nothing.
-	if err := o.EnsureStore(ctx); err != nil {
-		t.Fatalf("a second pass: %v", err)
+	if ready, err := o.EnsureStore(ctx, inst, testS3Endpoint); !ready || err != nil {
+		t.Fatalf("a second pass: %v %v", ready, err)
 	}
 
-	// A key the vault holds anew is made again.
-	vault[OpenBaoSnapshotStorePath]["access-key"] = "another"
-	if err := o.EnsureStore(ctx); err == nil {
-		t.Fatal("a new key reads as made")
+	// A key the vault holds anew is made again, as a store being made.
+	vault[path]["access-key"] = "another"
+	if ready, err := o.EnsureStore(ctx, inst, testS3Endpoint); ready || err != nil {
+		t.Fatalf("a new key: ready %v, error %v", ready, err)
 	}
-	if err := c.Get(ctx, types.NamespacedName{Name: openBaoSnapshotBucketJob, Namespace: s3Namespace}, job); !apierrors.IsNotFound(err) {
+	if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: s3Namespace}, job); !apierrors.IsNotFound(err) {
 		t.Fatalf("the Job for the old key was kept: %v", err)
+	}
+}
+
+// Each instance has its own key, scoped to its own prefix of the bucket: the
+// vault's job cannot touch the seal's snapshots, nor the seal's the vault's.
+func TestEachInstanceHasAKeyForItsOwnPrefix(t *testing.T) {
+	ctx := context.Background()
+	c, vault := openBaoSnapshotsFixture(t)
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots"}
+	scripts := map[string]string{}
+	for _, inst := range o.instances() {
+		if _, err := o.EnsureStore(ctx, inst, testS3Endpoint); err != nil {
+			t.Fatal(err)
+		}
+		job := &batchv1.Job{}
+		if err := c.Get(ctx, types.NamespacedName{Name: inst.bucketJob(), Namespace: s3Namespace}, job); err != nil {
+			t.Fatal(err)
+		}
+		scripts[inst.Name] = strings.Join(job.Spec.Template.Spec.Containers[0].Command, " ")
+	}
+	vaultRec, sealRec := vault["gentian-os/kernel/openbao-snapshots/openbao"], vault["gentian-os/kernel/openbao-snapshots/openbao-transit"]
+	if vaultRec == nil || sealRec == nil || vaultRec["access-key"] == sealRec["access-key"] || vaultRec["secret-key"] == sealRec["secret-key"] {
+		t.Fatalf("the two instances do not have keys of their own: %v %v", vaultRec, sealRec)
+	}
+	for name, want := range map[string]string{
+		"openbao":         "-user=kernel_openbao-snapshot -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=gentian-openbao-snapshots/openbao/* -actions=Read,Write,List -apply",
+		"openbao-transit": "-user=kernel_openbao-transit-snapshot -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=gentian-openbao-snapshots/openbao-transit/* -actions=Read,Write,List -apply",
+	} {
+		if !strings.Contains(scripts[name], want) {
+			t.Fatalf("the bucket Job of %s does not scope its identity to its prefix:\n%s", name, scripts[name])
+		}
+	}
+}
+
+// The bucket is the operator's to name: a bucket changed in the chart reaches
+// the record the jobs read, and the identity is made again for it. The key
+// pair stays.
+func TestTheStoreFollowsTheBucket(t *testing.T) {
+	ctx := context.Background()
+	c, vault := openBaoSnapshotsFixture(t)
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots"}
+	inst := o.instances()[0]
+	if _, err := o.EnsureStore(ctx, inst, testS3Endpoint); err != nil {
+		t.Fatal(err)
+	}
+	before := vault[inst.StorePath()]["access-key"]
+	job := &batchv1.Job{}
+	name := types.NamespacedName{Name: inst.bucketJob(), Namespace: s3Namespace}
+	if err := c.Get(ctx, name, job); err != nil {
+		t.Fatal(err)
+	}
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	if err := c.Status().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+
+	o.Bucket = "elsewhere"
+	if ready, err := o.EnsureStore(ctx, inst, "http://s3.moved:9000"); ready || err != nil {
+		t.Fatalf("a new bucket: ready %v, error %v", ready, err)
+	}
+	rec := vault[inst.StorePath()]
+	if rec["bucket"] != "elsewhere" || rec["endpoint"] != "http://s3.moved:9000" || rec["access-key"] != before {
+		t.Fatalf("the record did not follow the bucket, or lost its key: %v", rec)
+	}
+	if err := c.Get(ctx, name, job); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Job for the old bucket was kept: %v", err)
+	}
+	if _, err := o.EnsureStore(ctx, inst, "http://s3.moved:9000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, name, job); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(job.Spec.Template.Spec.Containers[0].Command, " "), "-buckets=elsewhere/openbao/*") {
+		t.Fatalf("the new Job does not make the identity for the new bucket")
 	}
 }
 
@@ -217,8 +302,13 @@ func TestTheSnapshotReportIsWrittenOnTheClaimsComposite(t *testing.T) {
 		"metadata": map[string]any{"name": "cluster-abc12"},
 		"status":   map[string]any{"platform": map[string]any{"build": "abc1234"}},
 	}}
+	patches := 0
 	c := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).
-		WithRuntimeObjects(claim, xr).WithStatusSubresource(xr).Build()
+		WithRuntimeObjects(claim, xr).WithStatusSubresource(xr).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			patches++
+			return c.SubResource(sub).Patch(ctx, obj, patch, opts...)
+		}}).Build()
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	o := &OpenBaoSnapshots{
 		Client: c, Reader: c, Bucket: "gentian-openbao-snapshots",
@@ -229,6 +319,9 @@ func TestTheSnapshotReportIsWrittenOnTheClaimsComposite(t *testing.T) {
 	reps := o.Once(ctx)
 	if len(reps) != 2 || reps[0].State != SnapshotNotRaft || reps[1].Instance != "openbao-transit" || reps[1].State != SnapshotMissing {
 		t.Fatalf("reports = %+v", reps)
+	}
+	if patches != 1 {
+		t.Fatalf("the two reports took %d status patches, want one", patches)
 	}
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(xr.GroupVersionKind())
@@ -247,6 +340,35 @@ func TestTheSnapshotReportIsWrittenOnTheClaimsComposite(t *testing.T) {
 	// Beside what else is there: a merge.
 	if build, _, _ := unstructured.NestedString(got.Object, "status", "platform", "build"); build != "abc1234" {
 		t.Fatalf("status.platform was replaced: %v", got.Object["status"])
+	}
+}
+
+// A cluster whose values switch the seal's snapshots off: the seal is
+// reported Disabled, not Missing, and no store is made for it.
+func TestADisabledSealIsReportedSoAndGetsNoStore(t *testing.T) {
+	ctx := context.Background()
+	c, vault := openBaoSnapshotsFixture(t)
+	o := &OpenBaoSnapshots{
+		Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots",
+		TransitDisabled: true,
+		Storage:         func(context.Context) (string, error) { return "raft", nil },
+		Snapshots:       listed(nil),
+	}
+	reps := o.Once(ctx)
+	if len(reps) != 2 || reps[1].Instance != "openbao-transit" || reps[1].State != SnapshotDisabled ||
+		!strings.Contains(reps[1].Message, "openbaoSnapshots.transit.enabled") {
+		t.Fatalf("reports = %+v", reps)
+	}
+	if _, ok := vault["gentian-os/kernel/openbao-snapshots/openbao-transit"]; ok {
+		t.Fatal("a key was made for the seal's switched-off snapshots")
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: "s3-bucket-kernel-openbao-transit-snapshots", Namespace: s3Namespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("a bucket Job was made for the seal: %v", err)
+	}
+	// The vault's store is being made: said neutrally, and the next pass
+	// comes soon.
+	if reps[0].State != SnapshotMissing || !strings.HasSuffix(reps[0].Message, "The operator is making the snapshot store.") || !o.pending {
+		t.Fatalf("the vault's report while its store is made: %+v (pending %v)", reps[0], o.pending)
 	}
 }
 

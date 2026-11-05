@@ -32,16 +32,27 @@ mkdir -p "${SANDBOX}/home" "${SANDBOX}/bin" "${SANDBOX}/co/clusters/c1/kernel/cl
 # volume exist (FAKE_PVC names the one that does), what does its annotation
 # say, and which storage stanza does its Application (FAKE_APP, openbao by
 # default) render: FAKE_LIVE, "none" for an Application that names no
-# configuration, empty for no Application.
+# configuration, empty for no Application. What does not exist is answered
+# NotFound, as the API server does. FAKE_FAIL makes one read fail otherwise,
+# as an API server that cannot be reached does: pvc (the volume),
+# annotation (its annotation) or application.
 cat > "${SANDBOX}/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
+unreachable() { echo 'Unable to connect to the server: dial tcp 10.0.0.1:6443: i/o timeout' >&2; exit 1; }
+notfound() { echo "Error from server (NotFound): $1 \"$2\" not found" >&2; exit 1; }
 case "${args}" in
     "get pvc ${FAKE_PVC:-none} -n "*" -o jsonpath="*)
+        [[ "${FAKE_FAIL:-}" == annotation ]] && unreachable
         printf '%s' "${FAKE_ANNOTATION:-}" ;;
-    "get pvc ${FAKE_PVC:-none} -n "*) ;;
-    "get application ${FAKE_APP:-openbao} -n "*)
-        [[ -n "${FAKE_LIVE:-}" ]] || exit 1
+    "get pvc "*)
+        [[ "${FAKE_FAIL:-}" == pvc ]] && unreachable
+        [[ "${args}" == "get pvc ${FAKE_PVC:-none} -n "* ]] || notfound persistentvolumeclaims "$3"
+        echo "persistentvolumeclaim/$3" ;;
+    "get application "*)
+        [[ "${FAKE_FAIL:-}" == application ]] && unreachable
+        [[ "${args}" == "get application ${FAKE_APP:-openbao} -n "* && -n "${FAKE_LIVE:-}" ]] ||
+            notfound applications.argoproj.io "$3"
         [[ "${FAKE_LIVE}" == none ]] && exit 0
         printf 'ui = true\nstorage "%s" {\n  path = "/openbao/data"\n}\n' "${FAKE_LIVE}" ;;
     *) exit 1 ;;
@@ -60,7 +71,8 @@ render() {
     env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" SCRIPT_DIR="${REPO}" \
         GENTIAN_DEPLOYMENTS_PATH="${SANDBOX}/co" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 "$@" \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
-                 out="$(openbao_storage_for_render "${INSTANCE:-openbao}" 2>"${HOME}/err")"; echo "${out}"; tr "\n" " " < "${HOME}/err"' 2>&1
+                 rc=0; out="$(openbao_storage_for_render "${INSTANCE:-openbao}" 2>"${HOME}/err")" || rc=$?
+                 echo "${out}"; tr "\n" " " < "${HOME}/err"; if (( rc != 0 )); then echo "exit ${rc}"; fi' 2>&1
 }
 
 check() { # <what> <output> <first line> [stderr must contain]
@@ -114,6 +126,22 @@ check "the seal on Raft whose claim says raft: raft" \
     "$(render INSTANCE=openbao-transit FAKE_APP=openbao-transit FAKE_PVC=data-openbao-transit-0 FAKE_LIVE=raft)" raft
 check "the vault's volume says nothing about the seal's" \
     "$(render INSTANCE=openbao-transit FAKE_APP=openbao FAKE_PVC=data-openbao-0 FAKE_LIVE=file FAKE_ANNOTATION=raft)" raft
+
+# Absent is what the API server says is NotFound, nothing else. A read that
+# fails otherwise stops the render: taking it for "no volume" would start the
+# claim's backend on a volume of the other's data, an empty vault.
+claim "  openbao:" "    storage: raft"
+check "the volume cannot be read (API server unreachable): nothing rendered, the step fails, and why" \
+    "$(render FAKE_FAIL=pvc FAKE_PVC=data-openbao-0 FAKE_LIVE=file)" "" "could not be read"
+check "  and the failure is the exit status" \
+    "$(render FAKE_FAIL=pvc FAKE_PVC=data-openbao-0 FAKE_LIVE=file)" "" "exit 1"
+check "the volume exists, its Application cannot be read: nothing rendered, and why" \
+    "$(render FAKE_FAIL=application FAKE_PVC=data-openbao-0 FAKE_LIVE=file)" "" "Application openbao"
+check "the volume's annotation cannot be read: nothing rendered, and why" \
+    "$(render FAKE_FAIL=annotation FAKE_PVC=data-openbao-0 FAKE_LIVE=file)" "" "i/o timeout"
+check "the seal's volume cannot be read: the same for the seal" \
+    "$(render INSTANCE=openbao-transit FAKE_FAIL=pvc FAKE_APP=openbao-transit FAKE_PVC=data-openbao-transit-0 FAKE_LIVE=file)" \
+    "" "data-openbao-transit-0"
 
 claim "  openbao:" "    storage: rafts"
 check "a value that is neither: file, and said" "$(render)" file "it is raft or file"

@@ -132,7 +132,7 @@ is enabled. The platform installs no Prometheus.
 | `gentianos_integration_bindings_status` | Binding state by contract |
 | `gentianos_externalsecrets_sync_status` | ExternalSecret sync state per tenant |
 | `gentianos_tenant_export_total`, `gentianos_tenant_export_quiesce_duration_seconds` | Exports that ended, and how long an app was paused for one |
-| `gentianos_openbao_snapshot_state` | The state of the snapshots of `instance` (`openbao`, `openbao-transit`), 1 on the one that holds: `Current`, `Stale`, `Missing`, `NotRaft`, `Unknown` |
+| `gentianos_openbao_snapshot_state` | The state of the snapshots of `instance` (`openbao`, `openbao-transit`), 1 on the one that holds: `Current`, `Stale`, `Missing`, `NotRaft`, `Unknown`, `Disabled` |
 | `gentianos_openbao_snapshot_age_seconds` | Age of the newest snapshot of `instance`; -1 while there is none |
 
 Crossplane, External Secrets and Argo CD expose their own upstream metrics.

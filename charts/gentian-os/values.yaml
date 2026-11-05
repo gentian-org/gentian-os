@@ -86,7 +86,8 @@ openbaoSnapshots:
   # the Cluster claim (status.openbaoSnapshots): a day and a margin for a run
   # that waited or retried. A Go duration.
   staleAfter: 30h
-  # The bucket the operator makes, with a key that may write to it alone.
+  # The bucket the operator makes, with a key for each instance that may
+  # write under that instance's prefix of it alone.
   bucket: gentian-openbao-snapshots
   # The vault role the job logs in to and the audience of its token: the
   # Cluster composition's openbao-snapshot role, which reads

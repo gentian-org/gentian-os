@@ -40,9 +40,9 @@
 #   SNAPSHOT_PREFIX            the key prefix in the bucket (the name)
 #   WORK_DIR                   where the ciphertext is staged
 set -eu
-# No pipe whose first command can fail unseen: each step's exit status is
-# its own (a FIFO joins the snapshot to age, and both are waited for), so
-# this runs alike under any POSIX sh, with or without pipefail.
+# No pipe whose first command can fail unseen: the one pipe, the snapshot
+# into age, writes its first command's exit status to a file that is read
+# after it, so this runs alike under any POSIX sh, with or without pipefail.
 
 name="${SNAPSHOT_NAME:-openbao}"
 log() { printf '%s %s-snapshot: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${name}" "$*"; }
@@ -63,10 +63,10 @@ umask 077
 mkdir -p "${work}"
 header="${work}/token-header"
 login="${work}/login.json"
-fifo="${work}/snapshot.fifo"
+read_status="${work}/snapshot.status"
 marker="${work}/storage-marker"
-# Whatever happens, the token and the pipe do not outlive the run.
-trap 'rm -f "${header}" "${login}" "${fifo}" "${marker}"' EXIT
+# Whatever happens, the token does not outlive the run.
+trap 'rm -f "${header}" "${login}" "${read_status}" "${marker}"' EXIT
 
 bao() {
     if [ -n "${BAO_CACERT:-}" ]; then
@@ -140,7 +140,7 @@ done
 
 # ── Where to ─────────────────────────────────────────────────────────────────
 have_store ||
-    fail "the operator has not made the snapshot store yet: the Secret openbao-snapshot-storage (from gentian-os/kernel/openbao-snapshots/storage) is missing or incomplete"
+    fail "the operator has not made the snapshot store yet: the Secret this job reads from gentian-os/kernel/openbao-snapshots/${name} is missing or incomplete"
 remote_from_env
 
 # ── Log in ───────────────────────────────────────────────────────────────────
@@ -157,22 +157,24 @@ printf 'X-Vault-Token: %s\n' "${token}" > "${header}"
 unset token
 
 # ── Snapshot, encrypted on the way ───────────────────────────────────────────
-# curl writes the snapshot into a FIFO and age reads it from there: the
-# plaintext is never in a file. Each is waited for, so a snapshot cut short
-# fails the run however much age had encrypted.
+# curl writes the snapshot into a pipe and age reads it from there: the
+# plaintext is never in a file. curl's exit status goes to a file beside, so
+# a snapshot cut short -- or never begun, when curl fails before it writes a
+# byte, which closes the pipe and ends age at once -- fails the run however
+# much age had encrypted.
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 object="${name}-${stamp}.snap.age"
 staged="${work}/${object}"
-rm -f "${fifo}"
-mkfifo "${fifo}"
-bao -H "@${header}" -o "${fifo}" "${BAO_ADDR}/v1/sys/storage/raft/snapshot" &
-reader=$!
+rm -f "${read_status}"
 age_rc=0
-age -R "${recipients_file}" -o "${staged}" < "${fifo}" || age_rc=$?
-read_rc=0
-wait "${reader}" || read_rc=$?
-rm -f "${header}" "${fifo}"
-if [ "${read_rc}" -ne 0 ] || [ "${age_rc}" -ne 0 ]; then
+{
+    rc=0
+    bao -H "@${header}" "${BAO_ADDR}/v1/sys/storage/raft/snapshot" || rc=$?
+    echo "${rc}" > "${read_status}"
+} | age -R "${recipients_file}" -o "${staged}" || age_rc=$?
+read_rc="$(cat "${read_status}" 2>/dev/null || echo unknown)"
+rm -f "${header}" "${read_status}"
+if [ "${read_rc}" != 0 ] || [ "${age_rc}" -ne 0 ]; then
     rm -f "${staged}"
     fail "the snapshot could not be read (curl ${read_rc}) or encrypted (age ${age_rc})"
 fi

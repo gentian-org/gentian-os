@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -547,6 +548,14 @@ type ObjectStorageOptions struct {
 	// a bucket made without it, and lets the app read and set the bucket's
 	// default retention. Never off again: Object Lock cannot be removed.
 	ObjectLock bool
+	// Prefix scopes the identity to the keys under bucket/Prefix/ alone:
+	// Read, Write and List there and nowhere else in the bucket, so two
+	// writers that share a bucket cannot read or delete each other's
+	// objects. The identity is then named Identity, which must differ from
+	// the bucket's name and from every other prefix's identity, rather than
+	// after the bucket. Empty: the whole bucket, as an app's.
+	Prefix   string
+	Identity string
 }
 
 // ObjectStorageProvisionContainerWith is ObjectStorageProvisionContainer
@@ -558,7 +567,7 @@ func ObjectStorageProvisionContainerWith(name, bucket, keySecret string, opts Ob
 	c := corev1.Container{
 		Name:    name,
 		Image:   kernel.SeaweedFSImage(),
-		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket, opts.ObjectLock)},
+		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket, opts)},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: &no,
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
@@ -708,9 +717,23 @@ shell_error() {
 // The identity is made again from nothing on every run: s3.configure adds a
 // key pair to an identity that has one, and a re-seeded key must replace the
 // old one, not join it.
-func objectStorageProvisionScript(bucket string, objectLock bool) string {
+//
+// With opts.Prefix the identity is opts.Identity, allowed Read, Write and List
+// on the keys under that prefix alone (bucket/prefix/*): SeaweedFS matches a
+// grant that ends in * against bucket/key, and a listing against the prefix
+// it asks for. No Tagging: nothing that writes under a prefix needs it.
+func objectStorageProvisionScript(bucket string, opts ObjectStorageOptions) string {
 	create, actions, lock := "", "Read,Write,List,Tagging", ""
-	if objectLock {
+	user, scope := bucket, bucket
+	if opts.Prefix != "" {
+		user, scope = opts.Identity, bucket+"/"+strings.Trim(opts.Prefix, "/")+"/*"
+		actions = "Read,Write,List"
+	}
+	what := "bucket " + bucket
+	if opts.Prefix != "" {
+		what = scope
+	}
+	if opts.ObjectLock {
 		// Made with the lock, or given it if it was made without: a
 		// profile that starts asking for it gets it on its existing bucket.
 		// The two actions let the app read and set the bucket's default
@@ -734,15 +757,15 @@ else
   echo "ERROR: bucket %[1]s could not be made:" >&2; shell_error; exit 1
 fi
 %[5]sif [ -n "${APP_ACCESS_KEY:-}" ] && [ -n "${APP_SECRET_KEY:-}" ]; then
-  if ! shell "s3.configure -user=%[1]s -delete -apply" && ! grep -q 'not found' /tmp/shell.out; then
-    echo "ERROR: the identity %[1]s could not be replaced:" >&2; shell_error; exit 1
+  if ! shell "s3.configure -user=%[6]s -delete -apply" && ! grep -q 'not found' /tmp/shell.out; then
+    echo "ERROR: the identity %[6]s could not be replaced:" >&2; shell_error; exit 1
   fi
-  if ! shell "s3.configure -user=%[1]s -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=%[1]s -actions=%[4]s -apply"; then
-    echo "ERROR: the identity %[1]s could not be made:" >&2; shell_error; exit 1
+  if ! shell "s3.configure -user=%[6]s -access_key=${APP_ACCESS_KEY} -secret_key=${APP_SECRET_KEY} -buckets=%[7]s -actions=%[4]s -apply"; then
+    echo "ERROR: the identity %[6]s could not be made:" >&2; shell_error; exit 1
   fi
-  echo "identity for bucket %[1]s ready"
+  echo "identity for %[8]s ready"
 fi
-echo "bucket %[1]s ready"`, bucket, objectStoreShell, create, actions, lock)
+echo "bucket %[1]s ready"`, bucket, objectStoreShell, create, actions, lock, user, scope, what)
 }
 
 // --- destroying a store -----------------------------------------------------

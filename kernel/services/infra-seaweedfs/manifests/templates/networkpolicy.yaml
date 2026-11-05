@@ -45,7 +45,8 @@
     the vault snapshots the CronJobs openbao-snapshot in the vault's
                         namespace and openbao-transit-snapshot in the seal's
                         write each its encrypted snapshot and delete the
-                        oldest, with a key scoped to their bucket
+                        oldest, each with a key scoped to its own prefix
+                        of their bucket
                         (charts/gentian-os/templates/openbao-snapshots.yaml).
                         Admitted by their label,
                         app.kubernetes.io/component=openbao-snapshot, from

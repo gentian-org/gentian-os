@@ -546,10 +546,14 @@ Each job logs in with a token issued for its own ServiceAccount and its
 instance's audience alone. Each role may read `sys/storage/raft/snapshot` and
 nothing else: no default policy, five minutes to live. The snapshot passes
 from the instance through `age` in a pipe, so the plaintext never touches a
-disk and never leaves the pod. The bucket and a key that may write to it
-alone are made by the operator, which keeps them in the vault at
-`gentian-os/kernel/openbao-snapshots/storage`. Beside its snapshots each job
-leaves an empty object, `storage.raft` or `storage.file`, saying what it
+disk and never leaves the pod. The operator makes the bucket and, for each
+job, a key that may read, write and list that job's own prefix (`openbao/`
+or `openbao-transit/`) and nothing else, so neither job can read or delete
+the other's snapshots. It keeps them in the vault at
+`gentian-os/kernel/openbao-snapshots/openbao` and
+`gentian-os/kernel/openbao-snapshots/openbao-transit`, and points both at
+`openbaoSnapshots.bucket` whenever that changes. Beside its snapshots each
+job leaves an empty object, `storage.raft` or `storage.file`, saying what it
 found.
 
 An instance on file storage is not snapshotted: its job logs `NOT ON RAFT`
@@ -587,6 +591,7 @@ kubectl get clusters.gentianos.io -n kernel-provisioning \
 | `Missing` | There is none in the bucket |
 | `NotRaft` | The instance is on file storage and none is taken (§5) |
 | `Unknown` | The bucket could not be read; `message` says why |
+| `Disabled` | The seal only: `openbaoSnapshots.transit.enabled` is false and none is taken |
 
 Beside it: `instance` (`openbao` or `openbao-transit`), `storage`, `newest`
 and `newestAt`, `ageSeconds`, `count`, `bucket`, `staleAfter`, `message` and

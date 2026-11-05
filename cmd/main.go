@@ -780,6 +780,8 @@ func main() {
 			Seeder:     tenantReconciler.Seeder,
 			Bucket:     envOrDefault("OPENBAO_SNAPSHOT_BUCKET", "gentian-openbao-snapshots"),
 			StaleAfter: staleAfter,
+			// The chart says false when it takes no snapshot of the seal.
+			TransitDisabled: envOrDefault("OPENBAO_TRANSIT_SNAPSHOTS", "true") == "false",
 		}); err != nil {
 			setupLog.Error(err, "unable to add the vault snapshot report to manager")
 			os.Exit(1)

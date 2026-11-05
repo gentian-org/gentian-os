@@ -1439,9 +1439,10 @@ spec:
                       type: string
                       description: >-
                         Current (the newest is younger than staleAfter), Stale,
-                        Missing (none in the bucket), NotRaft (the vault is on
-                        file storage and none is taken) or Unknown (the bucket
-                        could not be read).
+                        Missing (none in the bucket), NotRaft (the instance is
+                        on file storage and none is taken), Unknown (the bucket
+                        could not be read) or Disabled (the seal's snapshots
+                        are switched off, openbaoSnapshots.transit.enabled).
                     storage:
                       type: string
                       description: The instance's storage, raft or file; empty when nothing says.
@@ -1487,9 +1488,10 @@ spec:
                       type: string
                       description: >-
                         Current (the newest is younger than staleAfter), Stale,
-                        Missing (none in the bucket), NotRaft (the vault is on
-                        file storage and none is taken) or Unknown (the bucket
-                        could not be read).
+                        Missing (none in the bucket), NotRaft (the instance is
+                        on file storage and none is taken), Unknown (the bucket
+                        could not be read) or Disabled (the seal's snapshots
+                        are switched off, openbaoSnapshots.transit.enabled).
                     storage:
                       type: string
                       description: The instance's storage, raft or file; empty when nothing says.

@@ -167,6 +167,8 @@ spec:
               value: {{ .Values.openbaoSnapshots.bucket | quote }}
             - name: OPENBAO_SNAPSHOT_STALE_AFTER
               value: {{ .Values.openbaoSnapshots.staleAfter | quote }}
+            - name: OPENBAO_TRANSIT_SNAPSHOTS
+              value: {{ .Values.openbaoSnapshots.transit.enabled | quote }}
             {{- if .Values.authzBridge.openfgaURL }}
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
