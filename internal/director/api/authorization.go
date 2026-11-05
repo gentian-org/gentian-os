@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/guard"
 )
 
 // The read-only view of the authorization state (S7A.8).
@@ -43,7 +44,7 @@ func (s *Server) authorizationOf(w http.ResponseWriter, r *http.Request, _ call,
 	view, err := s.cfg.Viewer.ViewOf(r.Context(), object)
 	if err != nil {
 		s.cfg.Log.ErrorContext(r.Context(), "authorization view failed",
-			"request_id", reqID(r.Context()), "object", object, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "object", object, "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the authorization graph could not be read")
 		return
 	}

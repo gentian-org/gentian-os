@@ -19,6 +19,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -53,7 +54,7 @@ func (s *Server) appAction(w http.ResponseWriter, r *http.Request, c call, actio
 		// Not "the operator did not answer": it was asked, and what it has
 		// done by now is not known here.
 		s.cfg.Log.ErrorContext(r.Context(), "an action outlasted its relay", "action", action,
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusGatewayTimeout, "the operator had not answered "+action+
 			" when the director stopped waiting; what it did before then is not known here. Ask again: the action is safe to repeat")
 		return

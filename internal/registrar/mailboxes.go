@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
@@ -264,7 +265,7 @@ func (s *Server) listRemovedMailboxes(w http.ResponseWriter, r *http.Request, _ 
 		list, err := s.cfg.Mailboxes.List(r.Context(), tenant.Name)
 		if err != nil {
 			s.cfg.Log.ErrorContext(r.Context(), "the removed mailboxes could not be read",
-				"request_id", reqID(r.Context()), "error", err.Error())
+				"request_id", guard.ID(r.Context()), "error", err.Error())
 			s.fail(w, r, http.StatusServiceUnavailable, "the removed mailboxes could not be read")
 			return
 		}
@@ -295,7 +296,7 @@ func (s *Server) deleteArchivedMailbox(w http.ResponseWriter, r *http.Request, c
 	}
 	tenant := r.PathValue("t")
 	address, err := s.cfg.Mailboxes.DeleteArchive(r.Context(), tenant, body.Mailbox,
-		MailboxDecision{Subject: c.subject, Name: c.name, RequestID: reqID(r.Context())})
+		MailboxDecision{Subject: c.subject, Name: c.name, RequestID: guard.ID(r.Context())})
 	switch {
 	case errors.Is(err, ErrMailboxNotFound):
 		s.fail(w, r, http.StatusNotFound, "this tenant has no such removed mailbox")
@@ -305,7 +306,7 @@ func (s *Server) deleteArchivedMailbox(w http.ResponseWriter, r *http.Request, c
 		return
 	case err != nil:
 		s.cfg.Log.ErrorContext(r.Context(), "the deletion of an archived mailbox could not be asked for",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable, "the request could not be written down; nothing was changed")
 		return
 	}

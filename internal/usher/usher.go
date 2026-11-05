@@ -33,8 +33,6 @@ package usher
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -47,6 +45,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
@@ -110,31 +109,7 @@ func New(cfg Config) *Server {
 // ServeHTTP implements http.Handler. Every request carries an id, answered
 // in X-Request-Id and logged with each decision taken for it.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := requestID(r)
-	w.Header().Set("X-Request-Id", id)
-	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID{}, id)))
-}
-
-type ctxRequestID struct{}
-
-// inboundID is what a request id from the gateway must look like to be kept.
-// It ends up in the decision log, so it is matched, not escaped.
-var inboundID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,64}$`)
-
-// requestID keeps the gateway's id so the audit logs join on one value
-// (security principle 7), and mints one for callers that arrive without.
-func requestID(r *http.Request) string {
-	if id := r.Header.Get("X-Request-Id"); inboundID.MatchString(id) {
-		return id
-	}
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-func reqID(ctx context.Context) string {
-	id, _ := ctx.Value(ctxRequestID{}).(string)
-	return id
+	s.mux.ServeHTTP(w, guard.Identify(w, r))
 }
 
 // tenantName is a DNS label, which is what a tenant's name is. Checked here
@@ -189,51 +164,18 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 		panic("usher: a route needs a relation: " + pattern)
 	}
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		ident, err := s.cfg.Authn.FromRequest(r)
-		if err != nil {
-			s.cfg.Log.WarnContext(ctx, "authentication failed", "reason", err.Error(), "route", pattern)
-			w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-usher"`)
-			fail(w, http.StatusUnauthorized, "unauthenticated")
+		object := func(r *http.Request) (string, error) { return obj(s, r) }
+		g, ok := s.gate().Authorize(w, r, pattern, func(*authn.Identity) []string { return relations }, object)
+		if !ok {
 			return
 		}
-		user, err := authz.User(ident.Subject)
-		if err != nil {
-			fail(w, http.StatusUnauthorized, "unauthenticated")
-			return
-		}
-		// A token a component obtained for the person reaches only the
-		// routes its scopes name (authn/delegated.go), here as at the
-		// director.
-		if !ident.MayCall(pattern) {
-			s.cfg.Log.WarnContext(ctx, "delegated token refused outside its scopes", "client", ident.Client, "route", pattern)
-			fail(w, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
-			return
-		}
-		target, err := obj(s, r)
-		if err != nil {
-			fail(w, http.StatusBadRequest, "invalid name")
-			return
-		}
-		holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
-		allowed := false
-		for _, relation := range relations {
-			ok, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), user, holder, relation, target)
-			if err != nil {
-				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
-				return
-			}
-			if ok {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			fail(w, http.StatusForbidden, "forbidden")
-			return
-		}
-		h(w, r, call{user: user, holder: holder, tenant: r.PathValue("t")})
+		h(w, r, call{user: g.User, holder: g.Holder, tenant: r.PathValue("t")})
 	})
+}
+
+// gate is the guard of this usher's routes.
+func (s *Server) gate() *guard.Guard {
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-usher", Scoped: true, Log: s.cfg.Log, Fail: fail}
 }
 
 type tileOut struct {
@@ -286,7 +228,7 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 	catalogue, err := s.catalogue()
 	if err != nil {
 		s.cfg.Log.ErrorContext(ctx, "the tile catalog cannot be read", "path", s.cfg.TilesPath, "error", err.Error())
-		fail(w, http.StatusServiceUnavailable, "the tile catalog cannot be read")
+		fail(w, r, http.StatusServiceUnavailable, "the tile catalog cannot be read")
 		return
 	}
 	out := []tileOut{}
@@ -295,9 +237,9 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 			continue
 		}
 		for _, rel := range t.AnyOf {
-			ok, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), c.user, c.holder, rel, t.Object)
+			ok, err := authz.CheckAs(ctx, s.cfg.Authz, guard.ID(ctx), c.user, c.holder, rel, t.Object)
 			if err != nil {
-				fail(w, http.StatusServiceUnavailable, "authorization unavailable")
+				fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 				return
 			}
 			if ok {
@@ -365,6 +307,6 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func fail(w http.ResponseWriter, code int, message string) {
-	writeJSON(w, code, map[string]string{"error": message})
+func fail(w http.ResponseWriter, r *http.Request, code int, message string) {
+	writeJSON(w, code, map[string]string{"error": message, "request_id": guard.ID(r.Context())})
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 )
 
 // Where bundles are read from, other than an upload (data-lifecycle.md §4).
@@ -331,7 +332,7 @@ func (s *Server) importedBundleDownload(w http.ResponseWriter, r *http.Request, 
 	}
 	resp, err := s.cfg.Lifecycle.Stream(r.Context(), path)
 	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
+		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 		return
 	}

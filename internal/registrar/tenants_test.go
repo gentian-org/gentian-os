@@ -165,8 +165,8 @@ func TestThePlatformRoleGroupsAreReadFromTheClusterClaim(t *testing.T) {
 	}{
 		"the claim names them": {[]client.Object{claim("main", ns, named)},
 			[]string{"acme:audit", "acme:operators"}},
-		"the claim names none": {[]client.Object{claim("main", ns, map[string]any{})}, schemaDefaults},
-		"no claim yet":         {nil, schemaDefaults},
+		"the claim names none":   {[]client.Object{claim("main", ns, map[string]any{})}, schemaDefaults},
+		"no claim yet":           {nil, schemaDefaults},
 		"a claim somewhere else": {[]client.Object{claim("stray", "default", named)}, schemaDefaults},
 		"written as a path": {[]client.Object{claim("main", ns,
 			map[string]any{"platformRoles": map[string]any{"admin": "/acme:operators"}})},
