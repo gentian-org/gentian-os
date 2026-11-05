@@ -170,6 +170,16 @@ func TestAGrantedAPIExtensionIsInstalledAndRead(t *testing.T) {
 		}
 	}
 
+	// The operator's own read: the types and nothing of their status.
+	reader := &rbacv1.ClusterRole{}
+	if err := r.Get(context.Background(), client.ObjectKey{Name: security.APIExtensionsReaderClusterRole}, reader); err != nil {
+		t.Fatal(err)
+	}
+	if len(reader.Rules) != 1 || strings.Join(reader.Rules[0].APIGroups, ",") != extensionGroup ||
+		strings.Join(reader.Rules[0].Resources, ",") != "schedules" || strings.Join(reader.Rules[0].Verbs, ",") != "get,list,watch" {
+		t.Fatalf("the operator's reading role = %+v", reader.Rules)
+	}
+
 	bindings := &rbacv1.ClusterRoleBindingList{}
 	if err := r.List(context.Background(), bindings); err != nil {
 		t.Fatal(err)

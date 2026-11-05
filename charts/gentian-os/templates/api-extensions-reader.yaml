@@ -1,0 +1,22 @@
+{{- /*
+The operator's read of the add-ons' types: gentian-api-extensions-reader,
+whose rules the operator keeps to the installed types (get, list, watch),
+bound here to the operator. With it the operator answers what objects of an
+add-on's type a tenant holds (internal/applifecycle/extension_objects.go).
+The role is the operator's to create; a binding to a role not yet there
+grants nothing until it is.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gentian-api-extensions-reader
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gentian-api-extensions-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gentian-os.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

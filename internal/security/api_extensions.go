@@ -49,6 +49,13 @@ const APIExtensionLabel = "gentianos.io/api-extension"
 // name and no other (escalate is held to it).
 const APIExtensionsClusterRole = "gentian-api-extensions"
 
+// APIExtensionsReaderClusterRole is the operator's own read of the installed
+// types: get, list and watch, no status. The chart binds it to the operator,
+// which keeps its rules beside APIExtensionsClusterRole's, so that it can
+// answer what objects of an add-on's type a tenant holds
+// (internal/applifecycle/extension_objects.go).
+const APIExtensionsReaderClusterRole = "gentian-api-extensions-reader"
+
 // reservedAPIGroups are the groups, and the domains of groups, no extension
 // may be in: Kubernetes' own and the platform's. The profile's schema refuses
 // them as well; this is the check the operator acts on.
