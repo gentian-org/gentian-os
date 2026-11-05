@@ -50,7 +50,7 @@ mkdir -p "${SANDBOX}/bin" "${SANDBOX}/home/.gentian" "${SANDBOX}/replies"
 CALLS="${SANDBOX}/calls"
 
 # Signed in already: a token that outlives the test.
-printf '{"access_token":"t","refresh_token":"r","expires_at":%s,"refresh_expires_at":%s}\n' \
+printf '{"access_token":"stub-access-token","refresh_token":"stub-refresh-token","expires_at":%s,"refresh_expires_at":%s}\n' \
     "$(( $(date +%s) + 3600 ))" "$(( $(date +%s) + 3600 ))" > "${SANDBOX}/home/.gentian/cli-token-c1.json"
 
 # kubectl: one director, in kernel-control, serving cluster c1; a port-forward
@@ -81,16 +81,20 @@ STUB
 # curl: the director. Every request but the health probe is written to
 # ${CALLS} as "<METHOD> <path> <body>", and answered from the file the test
 # laid down for that method and path -- its first line the status, the rest
-# the body -- or with 404.
+# the body -- or with 404. Its arguments go to ${CALLS}.argv and the headers
+# it read from files to ${CALLS}.headers.
 cat > "${SANDBOX}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 out="" method="GET" body="" url=""
+printf '%s\n' "$*" >> "${STUB_CALLS}.argv"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) out="$2"; shift 2 ;;
         -X) method="$2"; shift 2 ;;
         -d) body="$2"; shift 2 ;;
-        -w|-H|--max-time) shift 2 ;;
+        --data-binary) body="$(cat "${2#@}")"; shift 2 ;;
+        -H) [[ "$2" == @* ]] && cat "${2#@}" >> "${STUB_CALLS}.headers"; shift 2 ;;
+        -w|--max-time) shift 2 ;;
         -*) shift ;;
         *) url="$1"; shift ;;
     esac
@@ -114,6 +118,7 @@ reply() {
     printf '%s\n%s\n' "$3" "$4" > "${SANDBOX}/replies/$1$(printf '%s' "$2" | tr '/' '_')"
 }
 fresh() { rm -f "${SANDBOX}/replies/"*; : > "${CALLS}"; }
+: > "${CALLS}.argv"; : > "${CALLS}.headers"
 
 # gentian <args...> : the plugin, with no terminal. Output in OUT, exit in RC.
 OUT=""; RC=0
@@ -1244,6 +1249,9 @@ fresh
 gentian tenants platform-access acme maybe
 refused "a state that is neither on nor off is a usage error"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
+has "the token reaches curl as a header it reads from a file" "$(cat "${CALLS}.headers")" "Authorization: Bearer stub-access-token"
+lacks "... and is none of curl's arguments" "$(cat "${CALLS}.argv")" "stub-access-token"
 
 if [[ "${fail}" -gt 0 ]]; then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
