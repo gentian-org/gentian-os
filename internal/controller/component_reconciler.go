@@ -682,6 +682,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		} else if waiting != "" {
 			return r.status(ctx, comp, metav1.ConditionFalse, "Installing", waiting, componentRequeue)
 		}
+		if err := r.recordHelmRelease(ctx, comp); err != nil {
+			return ctrl.Result{}, fmt.Errorf("helm release: %w", err)
+		}
 		in, err := r.renderInput(ctx, comp, profile, tenant, zone, pull, r.mailboxTokenSignIn(ctx, tenant, profile), signIn, operatorValues)
 		if err != nil {
 			return ctrl.Result{}, err
