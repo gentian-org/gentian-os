@@ -14,7 +14,6 @@ import (
 	"context"
 
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -73,13 +72,8 @@ func (r *ProfileBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if equality.Semantic.DeepEqual(before.Status, build.Status) {
 		return ctrl.Result{}, nil
 	}
-	if err := r.Status().Patch(ctx, build, client.MergeFrom(before)); err != nil {
-		if errors.IsConflict(err) {
-			return ctrl.Result{Requeue: true}, nil
-		}
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
+	// A merge patch carries no resourceVersion, so it cannot conflict.
+	return ctrl.Result{}, r.Status().Patch(ctx, build, client.MergeFrom(before))
 }
 
 // SetupWithManager registers the reconciler.

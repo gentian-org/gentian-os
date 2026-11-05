@@ -99,8 +99,8 @@ func TestQuiesceRemembersReplicaCountAndResumeRestoresIt(t *testing.T) {
 		t.Errorf("memo = %q, want 3", paused.Annotations[replicaMemoAnnotation])
 	}
 
-	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-		t.Fatalf("resumeApp: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
 	}
 	resumed := getDeployment(t, r.Client, "nextcloud")
 	if *resumed.Spec.Replicas != 3 {
@@ -127,8 +127,8 @@ func TestPausingTwiceDoesNotDestroyTheMemo(t *testing.T) {
 		t.Fatalf("memo after repeated pauses = %q, want 2", got)
 	}
 
-	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-		t.Fatalf("resumeApp: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
 	}
 	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 2 {
 		t.Errorf("replicas after resume = %d, want 2", got)
@@ -142,8 +142,8 @@ func TestResumeIsSafeWhenNothingWasPaused(t *testing.T) {
 	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 4))
 	ctx := context.Background()
 
-	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-		t.Fatalf("resumeApp on unpaused app: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp on unpaused app: %v", err)
 	}
 	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 4 {
 		t.Errorf("resume rescaled an unpaused workload to %d", got)
@@ -153,8 +153,8 @@ func TestResumeIsSafeWhenNothingWasPaused(t *testing.T) {
 		t.Fatalf("quiesceApp: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-			t.Fatalf("resumeApp pass %d: %v", i, err)
+		if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+			t.Fatalf("unquiesceApp pass %d: %v", i, err)
 		}
 	}
 	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 4 {
@@ -199,8 +199,8 @@ func TestQuiesceFindsAWorkloadByItsPodsAppLabel(t *testing.T) {
 	if got := *getDeployment(t, r.Client, "odoo").Spec.Replicas; got != 0 {
 		t.Fatalf("odoo still runs %d replica(s) after the pause", got)
 	}
-	if err := r.resumeApp(ctx, "demo", "odoo-base-ce"); err != nil {
-		t.Fatalf("resumeApp: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "odoo-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
 	}
 	if got := *getDeployment(t, r.Client, "odoo").Spec.Replicas; got != 1 {
 		t.Errorf("replicas after resume = %d, want 1", got)
@@ -215,7 +215,7 @@ func TestQuiesceThatFindsNoWorkloadFails(t *testing.T) {
 	if _, err := r.quiesceApp(context.Background(), "demo", "odoo-base-ce", nil); err == nil {
 		t.Fatal("quiesceApp reported a pause for an app it found no workload of")
 	}
-	if err := r.resumeApp(context.Background(), "demo", "odoo-base-ce"); err != nil {
+	if err := r.unquiesceApp(context.Background(), "demo", "odoo-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
 		t.Errorf("resuming an app with nothing paused: %v", err)
 	}
 }

@@ -904,20 +904,6 @@ func identClean(s string) string {
 	return s
 }
 
-// HasCommit reports whether id names a commit in the checkout.
-func (g *GitOps) HasCommit(ctx context.Context, id string) bool {
-	if !commitID.MatchString(id) {
-		return false
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	cmd, cancel := g.gitCmd(ctx, "-C", g.path, "cat-file", "-e", id+"^{commit}")
-	defer cancel()
-	return cmd.Run() == nil
-}
-
-var commitID = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
-
 // pushRejected reports whether a failed push lost a race rather than hit a
 // real error. Only a race is worth retrying; a hook that refuses the push
 // ("[remote rejected]") will refuse it again.

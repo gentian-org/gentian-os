@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -57,7 +58,12 @@ func TestPatchHairpinCorefile_Idempotent(t *testing.T) {
 
 	var b strings.Builder
 	b.WriteString(hairpinBeginMarker + "\n")
-	for _, host := range sortedHairpinHosts("platform.example.test") {
+	hosts := make([]string, 0)
+	for host := range kernelHTTPSHairpinHosts("platform.example.test") {
+		hosts = append(hosts, host)
+	}
+	sort.Strings(hosts)
+	for _, host := range hosts {
 		b.WriteString("          192.0.2.36 ")
 		b.WriteString(host)
 		b.WriteByte('\n')

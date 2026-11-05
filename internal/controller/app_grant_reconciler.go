@@ -24,6 +24,8 @@ import (
 )
 
 const (
+	// appGrantFinalizer is taken off any grant that carries it. The operator
+	// does nothing when a grant goes, so nothing may hold its delete.
 	appGrantFinalizer      = "gentianos.io/app-grant-cleanup"
 	conditionAppGrantReady = "AppGrantReady"
 )
@@ -37,8 +39,7 @@ const (
 // It writes nothing to the authorization store. The director is the store's
 // only writer and projects grants from git when it starts, so a second writer
 // here would delete on its own schedule what the director wrote on its own.
-// What remains is the object's lifecycle: a finalizer so a grant is
-// observed leaving, and a status that says it was taken in.
+// What remains is a status that says the grant was taken in.
 type AppGrantReconciler struct {
 	// Definitions holds this reconciler while the cluster's resource
 	// definitions would drop fields it writes (internal/schemacheck). Nil
@@ -52,18 +53,10 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, grant); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if !grant.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(grant, appGrantFinalizer) {
-			controllerutil.RemoveFinalizer(grant, appGrantFinalizer)
-			return ctrl.Result{}, r.Update(ctx, grant)
-		}
-		return ctrl.Result{}, nil
+	if controllerutil.RemoveFinalizer(grant, appGrantFinalizer) {
+		return ctrl.Result{}, r.Update(ctx, grant)
 	}
-	if !controllerutil.ContainsFinalizer(grant, appGrantFinalizer) {
-		controllerutil.AddFinalizer(grant, appGrantFinalizer)
-		if err := r.Update(ctx, grant); err != nil {
-			return ctrl.Result{}, err
-		}
+	if !grant.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 	if grant.Status.Phase == gentianov1alpha1.AppGrantPhaseReady && grant.Status.ObservedGeneration == grant.Generation {

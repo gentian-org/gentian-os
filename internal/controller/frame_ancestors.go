@@ -53,11 +53,7 @@ func keycloakOIDCAncestorOrigins(
 			tenantName = tenantNames[i]
 		}
 		for _, sub := range tenantOIDCSubdomains[tenantName] {
-			if sub == "@" {
-				add(fmt.Sprintf("https://%s", effective))
-			} else {
-				add(fmt.Sprintf("https://%s.%s", sub, effective))
-			}
+			add(fmt.Sprintf("https://%s.%s", sub, effective))
 		}
 	}
 	return strings.Join(origins, " ")

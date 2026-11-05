@@ -208,16 +208,6 @@ func insertHostsBlock(corefile, block string) (string, bool) {
 	return corefile[:kubeIdx] + hostsBlock + corefile[kubeIdx:], true
 }
 
-func sortedHairpinHosts(kernelDomain string) []string {
-	return []string{
-		kernelDomain,
-		"argocd." + kernelDomain,
-		desktopHost(kernelDomain),
-		"id." + kernelDomain,
-		platformDesktopHost(kernelDomain),
-	}
-}
-
 func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	for i, line := range lines {
 		if strings.TrimSpace(line) == marker {

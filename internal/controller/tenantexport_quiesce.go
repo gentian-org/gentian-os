@@ -122,13 +122,6 @@ func resumeQuiescedApp(
 	return tr.unquiesceApp(ctx, tenantName, appName, spec, mode)
 }
 
-// resumeApp puts an app back. It is safe to call when the app was never paused,
-// and safe to call twice: both are normal, because it runs on the failure path
-// and on every reconcile that finds a stale entry in status.quiesced.
-func (r *TenantReconciler) resumeApp(ctx context.Context, tenantName, appName string) error {
-	return r.scaleAppWorkloads(ctx, tenantName, appName, -1)
-}
-
 // restartWorkloadAnnotation is the one kubectl itself writes, so a roll this
 // causes is indistinguishable from `kubectl rollout restart` in the history.
 const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
