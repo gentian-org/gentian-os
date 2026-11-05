@@ -12,7 +12,8 @@
 # never holds an operator rollout, and so that pruning here means what it
 # says: a directory removed from git is a tenant undeployed. The Tenant is
 # cluster-scoped; the destination namespace is only what Argo CD requires of
-# an Application, and nothing namespaced is written there.
+# an Application, and nothing is written there. An add-on's objects of the
+# tenant name the tenant's own namespace (internal/director/gitops/extensions.go).
 #
 # Sync wave 12: after the claims (11), which compose the AppProject and the
 # secret store a tenant's resources resolve through.

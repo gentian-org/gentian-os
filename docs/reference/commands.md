@@ -608,12 +608,14 @@ openssl rand -hex 32 | kubectl gentian credentials set app-customers-aluvian-web
 
 An app whose profile asks for more than a tenant's apps get by default -- a
 way out to an address (`egress`), a relaxed pod security (`podSecurity`),
-cluster roles (`clusterRoles`) -- waits until a person answers each request;
+cluster roles (`clusterRoles`), types of its own (`apiExtensions`) -- waits
+until a person answers each request;
 its component reads `waiting for approval of <kind>/<name>`. The answer is a
 commit through the director, with you as the approver and your reason in it.
 An `egress` request is the tenant's perimeter approver's to answer (and the
-cluster's administrator's, in a tenant the cluster operates); the other two
-are the cluster's security officer's. The Admin Console's Apps page offers
+cluster's administrator's, in a tenant the cluster operates); a `podSecurity`
+request and a cluster role that reads are the cluster's security officer's;
+an `apiExtensions` request and a cluster role that writes are break-glass's. The Admin Console's Apps page offers
 the same as a button, to whoever holds the right the request needs.
 
 ```bash
@@ -625,13 +627,13 @@ kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 
-A `podSecurity` or `clusterRoles` request is the security officer's to
-answer, so the App Store's install step asks them for it (the director's
+A request the tenant cannot answer itself is the security officer's or
+break-glass's, so the App Store's install step asks for it (the director's
 `POST /v1/tenants/{t}/apps/{p}/actions/request-privilege`, recorded on the
 app's Component) and the platform console's Approvals page lists what was
 asked. The same list, from the command line, carries every tenant's
 pending privileges, each with who answers it (APPROVER: `security-officer`,
-or `perimeter-approver` for egress):
+`break-glass`, or `perimeter-approver` for egress):
 
 ```bash
 kubectl gentian approvals list     # every tenant's waiting privileges: who answers, who asked, when, why, and what was declined
