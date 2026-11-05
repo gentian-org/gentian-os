@@ -15,7 +15,7 @@ source "${SCRIPT_DIR}/scripts/steps/B-01-bootstrap-apps.sh"
 # engine that arrives after the tenant leaves that window reporting
 # DatabaseUnavailable. Waiting for it here is what makes "install.sh finished"
 # mean the data plane is serving.
-_v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "tenant-postgres-${s} keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
+_v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "gentian-definitions-${s} tenant-postgres-${s} keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
 
 # The system-tier engines, as Crossplane names their Releases.
 #
