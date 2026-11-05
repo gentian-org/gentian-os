@@ -11,10 +11,8 @@ SPDX-License-Identifier: MPL-2.0
 // Package tilecatalogue is the tile catalog's format: what the operator
 // writes and what the usher reads.
 //
-// It is its own package, and not part of internal/tiles, because that one is
-// the portal's icon set. The two share a word and nothing else, and the
-// director should not carry an embedded glyph catalog to read a list of
-// links.
+// internal/tiles, despite the name, is unrelated: it holds the platform's
+// glyphs as data for scripts/tools/render-tiles.py.
 //
 // The catalog used to be a list compiled into the director, which meant the
 // director held a second, hand-maintained copy of facts the operator already

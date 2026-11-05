@@ -89,27 +89,6 @@ func SupportsRung(surface *gentianov1alpha1.CustomizationSurface, rung gentianov
 	return false
 }
 
-// LowestSupportedRung returns the cheapest rung at or above min that the app
-// supports. It encodes principle P1 ("lowest viable rung") for callers that have
-// already determined which rungs could express the change.
-func LowestSupportedRung(
-	surface *gentianov1alpha1.CustomizationSurface,
-	candidates []gentianov1alpha1.CustomizationRung,
-) (gentianov1alpha1.CustomizationRung, bool) {
-	best := gentianov1alpha1.CustomizationRung("")
-	bestIdx := -1
-	for _, candidate := range candidates {
-		idx, ok := rungOrder[candidate]
-		if !ok || !SupportsRung(surface, candidate) {
-			continue
-		}
-		if bestIdx == -1 || idx < bestIdx {
-			best, bestIdx = candidate, idx
-		}
-	}
-	return best, bestIdx != -1
-}
-
 // FindDropIn returns the declared drop-in with the given name, or nil.
 func FindDropIn(
 	surface *gentianov1alpha1.CustomizationSurface,
@@ -124,20 +103,4 @@ func FindDropIn(
 		}
 	}
 	return nil
-}
-
-// GradeForScore bands a rubric score into a readiness grade (§4.1). Assignment is
-// manual for v0.4 — this exists so CI can check that a declared grade and its
-// recorded score agree, not to compute the grade unattended.
-func GradeForScore(score int32) gentianov1alpha1.CustomizationGrade {
-	switch {
-	case score >= 7:
-		return gentianov1alpha1.GradeA
-	case score >= 5:
-		return gentianov1alpha1.GradeB
-	case score >= 3:
-		return gentianov1alpha1.GradeC
-	default:
-		return gentianov1alpha1.GradeD
-	}
 }
