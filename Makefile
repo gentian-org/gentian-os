@@ -178,7 +178,7 @@ lint-spelling:
 	codespell docs README.md GETTING-STARTED.md AGENTS.md CONTRIBUTING.md SECURITY.md LICENSING.md
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
-lint-go:
+lint-go: lint-result-with-error
 	golangci-lint run ./...
 	@# The API module carries its own license header and its own config for it.
 	cd api && golangci-lint run ./...
@@ -191,7 +191,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-composed-provider-fields lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-platform-role-groups test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies test-wildcard-cache test-internal-ca test-bundle-signing test-dns-credential-single-writer test-openbao-cli-download test-openbao-storage-switch test-openbao-snapshot lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-one-cluster test-install-settings test-mail-egress test-secrets-at-rest test-log-forwarding test-activation-token test-realm-smtp-settings test-provider-activation test-default-profile-digest test-initial-install-approvals test-store-catalogues test-build-pin test-bootstrap-app-drift test-namespace-teardown test-teardown-lock test-operator-objects test-argo-stale-operation test-claims-kinds
+lint-shell: validate-steps lint-result-with-error lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-provider-activation lint-composed-provider-fields lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args test-step0-sync test-user-tenant-scaffold test-stage-values-scaffold test-catalogue-default test-platform-role-groups test-kubectl-gentian test-bootstrap-switches test-operator-network-policy test-store-network-policies test-llm-models test-kernel-network-policies test-wildcard-cache test-internal-ca test-bundle-signing test-dns-credential-single-writer test-openbao-cli-download test-openbao-storage-switch test-openbao-snapshot lint-image-pins test-argocd-repo-credentials test-signing-key-lookup test-secret-mode test-dry-run-changes-nothing test-one-cluster test-install-settings test-mail-egress test-secrets-at-rest test-log-forwarding test-activation-token test-realm-smtp-settings test-provider-activation test-default-profile-digest test-initial-install-approvals test-store-catalogues test-build-pin test-bootstrap-app-drift test-namespace-teardown test-teardown-lock test-operator-objects test-argo-stale-operation test-claims-kinds
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -522,6 +522,12 @@ lint-step-contracts:
 ## that script only fails in a cluster, half way through its own changes.
 lint-job-scripts:
 	@bash scripts/lint/lint-job-scripts.sh
+
+## Refuse a reconcile that returns a Result together with an error.
+## controller-runtime ignores the Result when the error is set, so a
+## RequeueAfter beside an error is a delay that never happens.
+lint-result-with-error:
+	@go run ./scripts/lint/result-with-error internal cmd
 
 ## Assert every function call in every shell file resolves. Catches deleting a
 ## function whose last caller was not checked — the most repeated mistake here.

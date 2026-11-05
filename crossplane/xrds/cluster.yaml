@@ -827,6 +827,30 @@ spec:
                         type: string
                         enum: ["mariadb", "cache", "authorization", "turn"]
                       x-kubernetes-list-type: set
+                    objectStore:
+                      type: object
+                      description: >
+                        The platform's object store (SeaweedFS in system-s3),
+                        where every backup, bundle, import and app bucket is
+                        written.
+                      properties:
+                        size:
+                          type: string
+                          description: >
+                            The size of the object store's volume. Raised on a
+                            running cluster, the volume grows in place where
+                            the storage class allows expansion; it never
+                            shrinks, so a smaller value than the one set is
+                            refused. Full, the store refuses every write, and
+                            reclaiming deleted data needs about 1Gi free.
+                          default: "40Gi"
+                          pattern: '^[0-9]+(Gi|Ti)$'
+                          x-kubernetes-validations:
+                            - rule: quantity(self).compareTo(quantity(oldSelf)) >= 0
+                              message: >-
+                                systemServices.objectStore.size cannot shrink:
+                                a volume is grown in place and never made
+                                smaller.
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.

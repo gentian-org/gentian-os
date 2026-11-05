@@ -49,12 +49,12 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 
 	if err := reconcileKeycloakIDPGatewayRoute(ctx, r.Client, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "Keycloak IdP HTTPRoute frame-ancestors reconcile failed")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	if err := r.ensureAllBrowserSecurityHeaders(ctx); err != nil {
 		logger.Error(err, "Keycloak browser security headers failed")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	// The registrar's per-realm credentials. Here rather than in the tenant
@@ -63,11 +63,11 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 	// exists -- this loop is the only thing that walks every realm.
 	if err := r.ensureRegistrarRealmCredentials(ctx); err != nil {
 		logger.Error(err, "registrar realm credentials failed")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil

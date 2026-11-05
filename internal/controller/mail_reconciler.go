@@ -409,7 +409,7 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 			return ctrl.Result{}, err
 		}
 		if held, err := r.holdUntilPostfixAcceptsDomain(ctx, tenant); held || err != nil {
-			return ctrl.Result{RequeueAfter: mailRequeueAfter}, err
+			return resultUnlessError(ctrl.Result{RequeueAfter: mailRequeueAfter}, err)
 		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"Selfhosted", "Tenant registered in shared Postfix and Dovecot infrastructure")
@@ -451,7 +451,7 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 			return ctrl.Result{}, err
 		}
 		if held, err := r.holdUntilPostfixAcceptsDomain(ctx, tenant); held || err != nil {
-			return ctrl.Result{RequeueAfter: mailRequeueAfter}, err
+			return resultUnlessError(ctrl.Result{RequeueAfter: mailRequeueAfter}, err)
 		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"TransportOnly", "Tenant registered in shared Postfix relay")

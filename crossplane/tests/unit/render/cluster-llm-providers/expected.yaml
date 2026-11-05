@@ -612,6 +612,9 @@ spec:
       repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
       version: 4.48.0-gentian.1
     namespace: system-s3
+    set:
+    - name: allInOne.data.size
+      value: 40Gi
     valuesFrom:
     - configMapKeyRef:
         key: values.yaml

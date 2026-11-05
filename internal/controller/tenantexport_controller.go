@@ -231,7 +231,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		setExportCondition(export, conditionExportAccepted, metav1.ConditionFalse, "Busy",
 			fmt.Sprintf("waiting for export %q to finish", holder))
 		export.Status.Phase = gentianov1alpha1.TenantExportPhasePending
-		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, export)
+		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, export))
 	}
 	setExportCondition(export, conditionExportAccepted, metav1.ConditionTrue, "Accepted",
 		"this export holds the tenant")
@@ -1658,7 +1658,7 @@ func (r *TenantExportReconciler) requeueExport(
 	export *gentianov1alpha1.TenantExport,
 	_ *gentianov1alpha1.Tenant,
 ) (ctrl.Result, error) {
-	return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, export)
+	return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, export))
 }
 
 // blockedByAnotherExport reports whether an older, unfinished export holds the

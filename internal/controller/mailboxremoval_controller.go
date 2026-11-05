@@ -154,7 +154,7 @@ func (r *MailboxRemovalReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, updateErr
 		}
 	}
-	return result, err
+	return resultUnlessError(result, err)
 }
 
 // mailboxRemovalSettled reports whether nothing is left to do for a record.

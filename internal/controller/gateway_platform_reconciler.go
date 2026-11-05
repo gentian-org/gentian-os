@@ -64,6 +64,13 @@ import (
 // reads through its cache, so a Get starts an informer that must be able to list.
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;patch
 
+// platformRetryAfter is how soon the cluster-wide Gateway and Keycloak
+// reconcilers try again after a step fails. They log the failure and return
+// this delay with a nil error: controller-runtime drops a Result returned
+// beside an error, and its backoff would stretch to minutes while Keycloak or
+// the Gateway API is still coming up.
+const platformRetryAfter = 30 * time.Second
+
 // GatewayPlatformReconciler ensures cluster-scoped Gateway API foundation
 // resources: the shared GatewayClass and the two edge Gateways.
 type GatewayPlatformReconciler struct {
@@ -91,27 +98,27 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 
 	if err := r.ensureGatewayClass(ctx); err != nil {
 		logger.Error(err, "ensure GatewayClass")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 	if err := r.ensureEdgeGateways(ctx); err != nil {
 		logger.Error(err, "ensure edge Gateways")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, authenticatedGatewayBackendTrafficPolicySpec()); err != nil {
 		logger.Error(err, "ensure the authenticated Gateway's backend policy")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 	if err := r.reconcileKernelHTTPRoutes(ctx); err != nil {
 		logger.Error(err, "reconcile kernel HTTPRoutes")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode, r.kernelRealm()); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm); err != nil {
 		logger.Error(err, "reconcile CoreDNS kernel hairpin")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	return reconcile.Result{}, nil

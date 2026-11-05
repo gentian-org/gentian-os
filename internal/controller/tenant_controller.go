@@ -739,7 +739,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	for _, kind := range backup.TeardownOrder() {
 		for _, step := range teardown[kind] {
 			if requeue, res, err := awaitJob(step(ctx, tenant)); requeue {
-				return res, err
+				return resultUnlessError(res, err)
 			}
 		}
 	}
@@ -767,7 +767,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// Each by a Job that has to succeed, like a store's.
 	for _, step := range []func(context.Context, *gentianov1alpha1.Tenant) error{r.deleteMailboxes, r.deleteKernelDesktop} {
 		if requeue, res, err := awaitJob(step(ctx, tenant)); requeue {
-			return res, err
+			return resultUnlessError(res, err)
 		}
 	}
 

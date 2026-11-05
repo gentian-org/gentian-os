@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -65,8 +66,10 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 
 	if err := security.SyncPlatformSecurityConfigMap(ctx, r.Client, psp.Spec.AllowedMacWaivers); err != nil {
 		setPSPCondition(psp, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
-		_ = r.Status().Update(ctx, psp)
-		return ctrl.Result{RequeueAfter: platformSecurityRequeue}, err
+		if updateErr := r.Status().Update(ctx, psp); updateErr != nil {
+			return ctrl.Result{}, errors.Join(err, fmt.Errorf("record the sync failure on the policy: %w", updateErr))
+		}
+		return ctrl.Result{}, err
 	}
 
 	psp.Status.AllowedMacWaiverCount = len(psp.Spec.AllowedMacWaivers)

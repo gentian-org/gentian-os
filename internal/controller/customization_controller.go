@@ -121,12 +121,12 @@ func (r *CustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	status := r.evaluate(&record, profile, profileFound, surfaceOf(profile))
+	status.ObservedGeneration = record.Generation
 	if statusUnchanged(record.Status, status) {
 		return ctrl.Result{RequeueAfter: customizationResyncInterval}, nil
 	}
 
 	record.Status = status
-	record.Status.ObservedGeneration = record.Generation
 	if err := r.Status().Update(ctx, &record); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update Customization status: %w", err)
 	}
@@ -384,7 +384,8 @@ func setRecordCondition(
 // statusUnchanged compares the fields that matter, ignoring condition timestamps so
 // an unchanged record does not generate a write on every resync.
 func statusUnchanged(oldStatus, newStatus gentianov1alpha1.CustomizationStatus) bool {
-	if oldStatus.Phase != newStatus.Phase ||
+	if oldStatus.ObservedGeneration != newStatus.ObservedGeneration ||
+		oldStatus.Phase != newStatus.Phase ||
 		oldStatus.ReviewOverdue != newStatus.ReviewOverdue ||
 		oldStatus.UpstreamStale != newStatus.UpstreamStale ||
 		oldStatus.TargetVersionDrift != newStatus.TargetVersionDrift ||
