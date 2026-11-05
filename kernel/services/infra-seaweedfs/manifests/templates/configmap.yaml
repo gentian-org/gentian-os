@@ -78,7 +78,7 @@ data:
       metricsPort: null
       # How many volumes the disk may hold (weed server -volume.max). Zero
       # lets SeaweedFS count them from the free space and volumeSizeLimitMB,
-      # about ten on a 10Gi claim: ten buckets. A volume is a file that
+      # about forty on the default 40Gi claim. A volume is a file that
       # grows as it is written, so many cost little; the server stops
       # writing when the disk is full (minFreeSpacePercent), not before.
       dataDirs:
@@ -214,8 +214,8 @@ metadata:
 data:
   values.yaml: |
     allInOne:
-      data:
-        size: 10Gi
+      # data.size is the Cluster claim's systemServices.objectStore.size,
+      # set on the Release by the composition.
       resources:
         limits:
           cpu: "4"

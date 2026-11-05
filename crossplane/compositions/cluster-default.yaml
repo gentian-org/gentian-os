@@ -274,6 +274,13 @@ spec:
                       key: sensitive-values.yaml
                       optional: false
                   {{- end }}
+                {{- if eq $e.fn "s3" }}
+                {{- /* The store's volume, from the claim: grown in place on a
+                     running cluster (systemServices.objectStore.size). */}}
+                set:
+                  - name: allInOne.data.size
+                    value: {{ dig "systemServices" "objectStore" "size" "40Gi" $spec | quote }}
+                {{- end }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
