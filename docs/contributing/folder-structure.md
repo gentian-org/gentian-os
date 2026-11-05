@@ -74,7 +74,7 @@ Implementation, split by concern rather than by kind:
 | `credentialprobe/`, `perimetertraffic/` | Which credentials a person still has to supply for an app; what each tenant's public entries carry. |
 | `platformversion/` | The platform's version line, and the floor a profile build declares against it. |
 | `applifecycle/` | The operator's listener: the live state and the actions the director and the usher ask it for. |
-| `authz/`, `membership/` | OpenFGA and Keycloak clients; keeping OpenFGA's group memberships equal to Keycloak's. |
+| `authz/`, `membership/` | The Keycloak admin client; keeping OpenFGA's group memberships equal to Keycloak's. |
 | `catalogue/`, `profilebundle/`, `bundlestore/` | Resolving a tenant's app to a profile; checking that a profile is the build an install was pinned to; reaching a bundle in object storage. |
 | `addresses/`, `hostnames/` | Where a component's entries answer; the address names an app may not take. |
 | `tiles/`, `tilecatalogue/` | The tiles a desktop shows, and the format the operator writes them in. |
@@ -192,7 +192,7 @@ Configuration surfaces at the repo root:
 
 | Path | Purpose |
 |---|---|
-| `authz/model/v0/`, `v1/` | The OpenFGA authorization model (`model.fga`, `model.json`) and its tests, one directory per version. `v1` is what the director asks against (`make gen-authz-model` copies it to `internal/director/authz/model.json`); `v0` is embedded by `internal/authz/model_embed.go`. |
+| `authz/model/v1/` | The OpenFGA authorization model (`model.fga`, `model.json`) and its tests, one directory per version. `v1` is what the director asks against (`make gen-authz-model` copies it to `internal/director/authz/model.json`). |
 | `config/crd/` | Two different things: controller-gen output for `gentianos.io_*`, **and** hand-maintained fixtures that only exist so envtest can start — third-party CRDs (Argo CD, cert-manager, Gateway API, CNPG, provider-helm, provider-keycloak) and stubs for the Crossplane-owned `apps`/`xtenants` kinds. |
 | `config/rbac/` | Gitignored controller-gen intermediate; the committed artifact is the chart's `clusterrole.yaml`. |
 | `docs/` | `architecture.md` and its `design/` deep-dives, each describing one part of the system as it is; `compliance/` for the control catalog an auditor reads; `reference/store-api/` for the store API, the usage statistics report and the store's schema, written for whoever builds against them; `security-principles.md`; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `custom-catalogues.md`, `faq.md`; the operator runbooks `recovery-playbook.md`, `tenant-backup-guide.md` and `node-pool-migration.md`; `releases/` for one file per release; `research/` for exploratory notes. |

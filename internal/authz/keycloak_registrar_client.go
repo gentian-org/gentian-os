@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/keycloak"
@@ -68,14 +67,6 @@ var registrarRealmRoles = []string{
 	"query-users",
 	"query-groups",
 	"manage-users",
-}
-
-// RegistrarRealmRoles is the list, for a caller that wants to report or assert
-// it rather than re-spell it.
-func RegistrarRealmRoles() []string {
-	out := append([]string(nil), registrarRealmRoles...)
-	sort.Strings(out)
-	return out
 }
 
 type keycloakClientRecord struct {
