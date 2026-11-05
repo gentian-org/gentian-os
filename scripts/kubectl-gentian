@@ -117,13 +117,19 @@
 #
 #   kubectl gentian resources plans --tenant <tenant>
 #   kubectl gentian resources show --tenant <tenant>
-#   kubectl gentian resources set --tenant <tenant> --plan <plan>
+#   kubectl gentian resources set --tenant <tenant> --plan <plan> [--force]
+#                                                               move a tenant; the cluster's administrator's
 #   kubectl gentian resources report --tenant <tenant> --from <time> --to <time>
+#   kubectl gentian resources report --all --from <time> --to <time>
+#                                                               every tenant's billed intervals
 #   kubectl gentian resources catalog                           the cluster's plans, with the tenants on each
 #   kubectl gentian resources catalog set <plan> --file <plan.json>
 #                                                               add or change a plan; the file is the plan as the
 #                                                               director takes it (displayName, tier, units, quotas, ...)
 #   kubectl gentian resources catalog remove <plan>             remove a plan no tenant is on
+#   kubectl gentian resources ordering                          where a tenant orders another plan
+#   kubectl gentian resources ordering set --file <notice.json> {"text": {"en": ...}, "url" | "email" | "phone": ...}
+#   kubectl gentian resources ordering clear                    tenants are told to ask the cluster's administrator
 #
 #   kubectl gentian version
 #
@@ -2934,12 +2940,14 @@ cmd_resources() {
                 esac
             done
             [[ -n "${plan}" ]] || die "--plan is required"
-            _call PUT "/v1/tenants/${t}/resources" "$(jq -n --arg p "${plan}" --argjson f "${force}" '{plan:$p, force:$f}')" >/dev/null
+            _discover
+            _call PUT "/v1/clusters/${_CLUSTER}/tenants/${t}/resources" "$(jq -n --arg p "${plan}" --argjson f "${force}" '{plan:$p, force:$f}')" >/dev/null
             echo "Plan ${plan} chosen for ${t}: committed."
             ;;
         report)
-            t="$(_tenant_flag "$@")"
-            local from="" to=""
+            local from="" to="" all="false" window
+            for arg in "$@"; do [[ "${arg}" == "--all" ]] && all="true"; done
+            [[ "${all}" == "true" ]] || t="$(_tenant_flag "$@")"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --from) from="${2:?}"; shift 2 ;;
@@ -2948,7 +2956,17 @@ cmd_resources() {
                 esac
             done
             [[ -n "${from}" && -n "${to}" ]] || die "--from and --to are required (RFC 3339)"
-            _call_usher GET "/v1/tenants/${t}/resources/report?from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')" |
+            window="from=$(jq -rn --arg v "${from}" '$v|@uri')&to=$(jq -rn --arg v "${to}" '$v|@uri')"
+            if [[ "${all}" == "true" ]]; then
+                _discover
+                _call_usher GET "/v1/clusters/${_CLUSTER}/resources/report?${window}" |
+                    jq -r '(["TENANT","PLAN","DAYS","FROM","TO","SKU"] | @tsv),
+                           (.tenants[] | .tenant as $t | (.intervals // [])[] | [$t, .plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv),
+                           (.unavailable[] | [.tenant, "unavailable: " + .reason] | @tsv)' |
+                    column -t -s $'\t'
+                return 0
+            fi
+            _call_usher GET "/v1/tenants/${t}/resources/report?${window}" |
                 jq -r 'if .incomplete then "Nothing is known about the plan in force when this window opened; the first interval starts later.\n" else "" end,
                        (["PLAN","DAYS","FROM","TO","SKU"] | @tsv),
                        ((.intervals // [])[] | [.plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv)' |
@@ -2990,7 +3008,32 @@ cmd_resources() {
                 *) die "usage: kubectl gentian resources catalog [list|set <plan> --file <plan.json>|remove <plan>]" ;;
             esac
             ;;
-        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>, or resources catalog" ;;
+        ordering)
+            local action="${1:-show}" file=""
+            shift || true
+            _discover
+            case "${action}" in
+                show) _call GET "/v1/clusters/${_CLUSTER}/plan-ordering" | jq . ;;
+                set)
+                    while [[ $# -gt 0 ]]; do
+                        case "$1" in
+                            --file|-f) file="${2:?}"; shift 2 ;;
+                            *) shift ;;
+                        esac
+                    done
+                    [[ -f "${file}" ]] || die "usage: kubectl gentian resources ordering set --file <notice.json>"
+                    jq -e 'type == "object"' "${file}" >/dev/null 2>&1 || die "${file} is not a JSON object"
+                    _call PUT "/v1/clusters/${_CLUSTER}/plan-ordering" "$(jq -c . "${file}")" >/dev/null
+                    echo "Notice on ordering another plan set: committed."
+                    ;;
+                clear)
+                    _call DELETE "/v1/clusters/${_CLUSTER}/plan-ordering" >/dev/null
+                    echo "Notice on ordering another plan removed: committed."
+                    ;;
+                *) die "usage: kubectl gentian resources ordering [show|set --file <notice.json>|clear]" ;;
+            esac
+            ;;
+        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>, or resources catalog|ordering" ;;
     esac
 }
 

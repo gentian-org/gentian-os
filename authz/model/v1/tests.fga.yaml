@@ -116,7 +116,7 @@ tests:
 
   - name: tenant admin holds the tenant verbs, members hold none
     check:
-      - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_plan: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_view: true, can_enter: true, can_administer: true}}
+      - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_view: true, can_enter: true, can_administer: true}}
       - {user: user:mia, object: tenant:demo, assertions: {can_install_app: false, can_manage_users: false, can_grant: false, can_administer: false, can_view: true, can_enter: true}}
       - {user: user:olaf, object: tenant:demo, assertions: {can_view: false, can_enter: false, can_install_app: false}}
       - {user: user:uma, object: tenant:user, assertions: {can_install_app: true, can_view: true, can_administer: true}}

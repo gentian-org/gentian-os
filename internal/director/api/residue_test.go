@@ -96,7 +96,7 @@ func (o *residueOperator) removals() []string {
 	return append([]string(nil), o.asked...)
 }
 
-func (o *residueOperator) Plans(context.Context, string, bool) ([]lifecycle.Plan, error) {
+func (o *residueOperator) Plans(context.Context, string) ([]lifecycle.Plan, error) {
 	return nil, nil
 }
 

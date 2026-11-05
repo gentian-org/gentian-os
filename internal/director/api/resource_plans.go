@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
@@ -244,4 +245,34 @@ func namesOf(tenants []string) string {
 		return "tenants " + strings.Join(tenants, ", ")
 	}
 	return fmt.Sprintf("tenants %s and %d more", strings.Join(tenants[:3], ", "), len(tenants)-3)
+}
+
+// clusterPlanOrdering reads the notice: {"set": false} when the cluster
+// states none, and tenants are told to ask its administrator.
+func (s *Server) clusterPlanOrdering(w http.ResponseWriter, r *http.Request, _ call) {
+	spec, found, err := s.cfg.Repo.PlanOrdering(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if !found {
+		s.json(w, http.StatusOK, map[string]any{"set": false})
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"set": true, "ordering": spec})
+}
+
+func (s *Server) setClusterPlanOrdering(w http.ResponseWriter, r *http.Request, c call) {
+	var body gentianov1alpha1.PlanOrderingSpec
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"text": {"en": "..."}, "url" | "email" | "phone": "..."}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetPlanOrdering(r.Context(), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+func (s *Server) clearClusterPlanOrdering(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.ClearPlanOrdering(r.Context(), c.meta)
+	s.written(w, r, res, err)
 }

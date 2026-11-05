@@ -17,8 +17,10 @@
 #
 # It does NOT restore OpenBao. A fresh OpenBao initializes itself and issues new
 # unseal material; the keys carried here belong to the OLD instance and are
-# useful for exactly one thing — unsealing a restored Raft snapshot. Restoring
-# that snapshot is a separate operation this does not perform.
+# useful for exactly one thing — getting back into a vault restored from one of
+# the old instance's snapshots (a vault on Raft storage takes one every day;
+# docs/guides/recovery.md §4). Restoring that snapshot is a separate operation
+# this does not perform.
 # =============================================================================
 
 [[ -n "${GENTIAN_RECOVERY_LOADED:-}" ]] && return 0
@@ -410,10 +412,15 @@ _kit_gather() {
     # recovery_keys_base64; the _b64 spellings below are what older builds and
     # Vault's own docs use. Reading only one meant the value was silently
     # absent — see the recovery-key case just below, which is the reason this
-    # matters.
+    # matters. The seal's own init file is the API's answer to sys/init, which
+    # spells it keys_base64 (scripts/bootstrap/init-openbao-transit.sh).
+    #
+    # The seal is one share of one, and its seal configuration is in its own
+    # storage, so this one key is all a seal restored from its snapshot needs
+    # to unseal (docs/guides/recovery.md §4.3).
     TRANSIT_UNSEAL_KEY="${TRANSIT_UNSEAL_KEY:-$(
         _kit_from_json "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
-            '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
+            '(.unseal_keys_base64 // .unseal_keys_b64 // .keys_base64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
         TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" \
             -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
@@ -527,6 +534,12 @@ export_recovery_kit() {
     local body key value present=() missing=()
     body=""
     body+="# gentian-os recovery kit"$'\n'
+    # Where the vault's own copies are, for whoever opens this in the worst
+    # hour: a comment, which load_recovery_kit skips.
+    body+="# The daily snapshots: bucket gentian-openbao-snapshots in the cluster's object"$'\n'
+    body+="# store, the vault under openbao/ and its transit seal under openbao-transit/;"$'\n'
+    body+="# opened with BACKUP_AGE_IDENTITY below, the seal unsealed with"$'\n'
+    body+="# TRANSIT_UNSEAL_KEY, restored as docs/guides/recovery.md section 4 says."$'\n'
     body+="GENTIAN_KIT_VERSION=${GENTIAN_KIT_VERSION}"$'\n'
     for key in "${_KIT_KEYS[@]}"; do
         value="${!key:-}"
@@ -641,8 +654,11 @@ export_recovery_kit() {
     echo ""
     info "  The kit reproduces derived credentials on a rebuild. It does NOT"
     info "  restore OpenBao: a fresh instance issues its own unseal material, and"
-    info "  the keys here belong to the old one — they unseal a restored Raft"
-    info "  snapshot, nothing else."
+    info "  the keys here belong to the old one — they open a vault restored from"
+    info "  one of its snapshots (docs/guides/recovery.md §4), nothing else."
+    info "  Those snapshots are in the bucket gentian-openbao-snapshots of the"
+    info "  cluster's object store, encrypted to this kit's backup key, with those"
+    info "  of the transit seal that unseals the vault, which TRANSIT_UNSEAL_KEY opens."
 
     _record_kit_export_proof "${out}"
 }
@@ -762,6 +778,6 @@ load_recovery_kit() {
     if [[ -n "${OPENBAO_ROOT_TOKEN:-}" ]]; then
         info "The kit carries OpenBao unseal material for the PREVIOUS instance. A fresh"
         info "install initializes its own; those keys matter only if you are also"
-        info "restoring a Raft snapshot, which this does not do."
+        info "restoring one of its snapshots, which this does not do (docs/guides/recovery.md §4)."
     fi
 }

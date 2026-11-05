@@ -324,13 +324,11 @@ type ReadOptions struct {
 	// none, which reads the whole store.
 	Filter   *Tuple
 	PageSize int
-	// StopAtEmptyPage ends the read at a page without tuples even when
-	// OpenFGA hands out a continuation token with it.
-	StopAtEmptyPage bool
 }
 
 // Read returns every tuple of store that matches the filter, following the
-// pages to the end.
+// continuation token until OpenFGA hands out an empty one: a page without
+// tuples is not the end while it carries a token.
 func (c *Client) Read(ctx context.Context, store string, o ReadOptions) ([]Tuple, error) {
 	var out []Tuple
 	token := ""
@@ -354,7 +352,7 @@ func (c *Client) Read(ctx context.Context, store string, o ReadOptions) ([]Tuple
 		for _, t := range page.Tuples {
 			out = append(out, t.Key)
 		}
-		if token = page.ContinuationToken; token == "" || (o.StopAtEmptyPage && len(page.Tuples) == 0) {
+		if token = page.ContinuationToken; token == "" {
 			return out, nil
 		}
 	}

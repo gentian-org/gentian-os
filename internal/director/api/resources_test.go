@@ -32,8 +32,6 @@ import (
 // plans, a tenant on the second, and the queries it was asked.
 type operator struct {
 	*httptest.Server
-	// selfService records the flag the plans request carried, per tenant.
-	selfService map[string]string
 	// tenants the operator knows; any other is its 400.
 	tenants map[string]bool
 	// actor and lastAction record what an action arrived as.
@@ -44,7 +42,7 @@ type operator struct {
 
 func startOperator(t *testing.T) *operator {
 	t.Helper()
-	op := &operator{selfService: map[string]string{}, tenants: map[string]bool{"demo": true, "solo": true, "other": true}}
+	op := &operator{tenants: map[string]bool{"demo": true, "solo": true, "other": true}}
 	mux := http.NewServeMux()
 	known := func(w http.ResponseWriter, r *http.Request) bool {
 		if !op.tenants[r.PathValue("t")] {
@@ -58,7 +56,6 @@ func startOperator(t *testing.T) *operator {
 		if !known(w, r) {
 			return
 		}
-		op.selfService[r.PathValue("t")] = r.URL.Query().Get("selfService")
 		plans := []lifecycle.Plan{
 			{Name: "nodes-1", DisplayName: "One node", Tier: 0, Quotas: map[string]string{"requestsCpu": "4", "requestsMemory": "16Gi", "cpu": "8", "memory": "32Gi", "storage": "50Gi"},
 				Selectable: false, Blocked: "3 cpu committed does not fit under 2", BlockedBy: "fit"},
@@ -66,11 +63,9 @@ func startOperator(t *testing.T) *operator {
 			{Name: "nodes-3", DisplayName: "Three nodes", Tier: 2, ProductSku: "GTN-N3", Quotas: map[string]string{"requestsCpu": "12", "requestsMemory": "48Gi", "cpu": "24", "memory": "96Gi", "storage": "150Gi", "maxPods": "90"}, Selectable: true},
 			{Name: "nodes-4", DisplayName: "Four nodes", Tier: 3, ProductSku: "GTN-N4", Quotas: map[string]string{"requestsCpu": "16", "requestsMemory": "64Gi", "cpu": "32", "memory": "128Gi", "storage": "200Gi", "maxPods": "120"}, Selectable: true},
 		}
-		if r.URL.Query().Get("selfService") == "true" {
-			plans[3].Selectable = false
-			plans[3].Blocked = "this plan is arranged with the platform operator, not self-service"
-			plans[3].BlockedBy = "self-service"
-		}
+		plans[3].Selectable = false
+		plans[3].Blocked = "this plan is retired: kept for the tenants on it, offered to no other"
+		plans[3].BlockedBy = "retired"
 		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "plans": plans})
 	})
 	mux.HandleFunc("POST /v1/tenants/{t}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
@@ -114,13 +109,16 @@ func startWithOperator(t *testing.T) (*harness, *operator) {
 	return startWith(t, lifecycle.New(op.URL, func() string { return operatorToken })), op
 }
 
+// tenantPlanPath is where the cluster's administrator moves a tenant.
+const tenantPlanPath = "/v1/clusters/" + dt.Cluster + "/tenants/demo/resources"
+
 // A director with no token reaches nothing, which is what a misconfigured
 // deployment must look like rather than an open API.
 func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
 	op := startOperator(t)
 	h := startWith(t, lifecycle.New(op.URL, func() string { return "" }))
-	tom := h.token(t, "tenant-demo", "tom")
-	code, _ := h.do(t, http.MethodPut, "/v1/tenants/demo/resources", tom, `{"plan":"nodes-3"}`)
+	alice := h.token(t, "gentian", "alice")
+	code, _ := h.do(t, http.MethodPut, tenantPlanPath, alice, `{"plan":"nodes-3"}`)
 	if code != http.StatusBadGateway {
 		t.Fatalf("a director presenting no token chose a plan, or the refusal was not named as the gateway fault it is: %d", code)
 	}
@@ -128,10 +126,10 @@ func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
 
 func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {
 	h, _ := startWithOperator(t)
-	tom := h.token(t, "tenant-demo", "tom")
+	alice := h.token(t, "gentian", "alice")
 
 	before := h.tip(t)
-	code, body := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-3"}`)
+	code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`)
 	if code != http.StatusAccepted || body["status"] != "updated" || body["previousPlan"] != "nodes-2" {
 		t.Fatalf("choose: %d %v", code, body)
 	}
@@ -139,15 +137,13 @@ func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {
 		t.Fatalf("answer names %v, remote moved from %s to %s", body["commit"], before, h.tip(t))
 	}
 
-	// Choosing the plan git already records is not a commit, whoever asks:
-	// the state asked for already holds, and a commit that only renamed the
-	// chooser would be a change to the record and not to the tenant.
+	// Choosing the plan git already records is not a commit: the state
+	// asked for already holds, and a commit that only renamed the chooser
+	// would be a change to the record and not to the tenant.
 	after := h.tip(t)
-	for _, who := range []string{tom, h.token(t, "gentian", "alice")} {
-		code, body = h.do(t, "PUT", "/v1/tenants/demo/resources", who, `{"plan":"nodes-3"}`)
-		if code != http.StatusOK || body["status"] != "unchanged" || h.tip(t) != after {
-			t.Fatalf("re-choosing the recorded plan: %d %v", code, body)
-		}
+	code, body = h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`)
+	if code != http.StatusOK || body["status"] != "unchanged" || h.tip(t) != after {
+		t.Fatalf("re-choosing the recorded plan: %d %v", code, body)
 	}
 
 	// What landed: the patch with the plan's own quantities and the chooser,
@@ -155,7 +151,7 @@ func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {
 	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/resource-plan.yaml")
 	for _, want := range []string{
 		"gentianos.io/resource-plan: nodes-3",
-		`gentianos.io/resource-plan-set-by: "tom@example.com"`,
+		`gentianos.io/resource-plan-set-by: "alice@example.com"`,
 		`requestsCpu: "12"`, `memory: "96Gi"`, "maxPods: 90",
 	} {
 		if !strings.Contains(patch, want) {
@@ -171,64 +167,40 @@ func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {
 	}
 	// The commit is the person's, with the decision that allowed it.
 	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%(trailers:key=Gentian-Authz,valueonly)", "main")
-	if !strings.Contains(trailer, "Tom|") || !strings.Contains(trailer, "user:tom can_set_plan tenant:demo allowed") {
+	if !strings.Contains(trailer, "Alice|") || !strings.Contains(trailer, "user:alice can_configure cluster:"+dt.Cluster+" allowed") {
 		t.Fatalf("commit = %q", trailer)
 	}
 }
 
-func TestWhoMayChooseAPlanIsTheGraphsAnswer(t *testing.T) {
+// A tenant orders another plan where the cluster's notice says; nobody of
+// the tenant moves it, its administrator included.
+func TestOnlyTheClustersAdministratorMovesATenant(t *testing.T) {
 	h, _ := startWithOperator(t)
 	before := h.tip(t)
-
-	// A member may not choose.
-	mia := h.token(t, "tenant-demo", "mia")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", mia, `{"plan":"nodes-4"}`); code != http.StatusForbidden {
-		t.Fatalf("member chose a plan: %d", code)
+	for _, who := range []string{h.token(t, "tenant-demo", "tom"), h.token(t, "tenant-demo", "mia"), h.token(t, "tenant-solo", "tina")} {
+		if code, _ := h.do(t, "PUT", tenantPlanPath, who, `{"plan":"nodes-4"}`); code != http.StatusForbidden {
+			t.Fatalf("someone who does not configure the cluster moved a tenant: %d", code)
+		}
 	}
-	// Another tenant's administrator holds nothing here.
-	tina := h.token(t, "tenant-solo", "tina")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tina, `{"plan":"nodes-4"}`); code != http.StatusForbidden {
-		t.Fatalf("a stranger chose a plan: %d", code)
+	// The tenant route is gone: nothing answers it with a commit.
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-4"}`); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+		t.Fatalf("the tenant's route still answers: %d", code)
 	}
 	if h.tip(t) != before {
 		t.Fatal("a refused request moved the repository")
 	}
 }
 
-// Whether the caller chooses for themselves is decided from the cluster
-// relation, not asserted by a screen: the tenant's administrator is asked
-// the self-service catalog, the platform's is not.
-func TestSelfServiceIsDecidedHereNotByTheScreen(t *testing.T) {
-	h, op := startWithOperator(t)
-
-	// The arranged plan is refused to a tenant's administrator as the
-	// entitlement it lacks, not written.
-	tom := h.token(t, "tenant-demo", "tom")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-4"}`); code != http.StatusPaymentRequired || op.selfService["demo"] != "true" {
-		t.Fatalf("a tenant admin took the arranged plan: %d, selfService=%q", code, op.selfService["demo"])
-	}
-
-	alice := h.token(t, "gentian", "alice")
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/resources", alice, `{"plan":"nodes-4"}`); code != http.StatusAccepted || op.selfService["demo"] != "" {
-		t.Fatalf("platform admin choosing the arranged plan: %d %v, selfService=%q", code, body, op.selfService["demo"])
-	}
-}
-
-func TestAPlanTheTenantDoesNotFitUnderIsAConflictUnlessForcedByTheCluster(t *testing.T) {
+func TestAPlanTheTenantDoesNotFitUnderIsAConflictUnlessForced(t *testing.T) {
 	h, _ := startWithOperator(t)
-	tom := h.token(t, "tenant-demo", "tom")
 	alice := h.token(t, "gentian", "alice")
 
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-1"}`); code != http.StatusConflict {
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-1"}`); code != http.StatusConflict {
 		t.Fatalf("downgrade that does not fit: %d %v", code, body)
 	}
-	// A tenant admin cannot force their way past the guard: it protects
-	// their own workloads, and forcing is the cluster's decision.
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-1","force":true}`); code != http.StatusForbidden {
-		t.Fatalf("a tenant admin forced a downgrade: %d", code)
-	}
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/resources", alice, `{"plan":"nodes-1","force":true}`); code != http.StatusAccepted {
-		t.Fatalf("forced by the platform: %d %v", code, body)
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-1","force":true}`); code != http.StatusAccepted {
+		t.Fatalf("forced: %d %v", code, body)
 	}
 	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/resource-plan.yaml")
 	// A key the plan leaves unset is written as null, so the ceiling is the
@@ -238,21 +210,31 @@ func TestAPlanTheTenantDoesNotFitUnderIsAConflictUnlessForcedByTheCluster(t *tes
 	}
 }
 
+// A retired plan is kept for the tenants on it and offered to no other,
+// forced or not.
+func TestARetiredPlanIsNotChosen(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-4","force":true}`); code != http.StatusConflict {
+		t.Fatalf("a retired plan was chosen: %d %v", code, body)
+	}
+}
+
 func TestAPlanTheClusterDoesNotHaveIsNotFound(t *testing.T) {
 	h, _ := startWithOperator(t)
-	tom := h.token(t, "tenant-demo", "tom")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-99"}`); code != http.StatusNotFound {
+	alice := h.token(t, "gentian", "alice")
+	if code, _ := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-99"}`); code != http.StatusNotFound {
 		t.Fatalf("unknown plan: %d", code)
 	}
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{}`); code != http.StatusBadRequest {
+	if code, _ := h.do(t, "PUT", tenantPlanPath, alice, `{}`); code != http.StatusBadRequest {
 		t.Fatalf("no plan: %d", code)
 	}
 }
 
 func TestWithoutAnOperatorThereAreNoResourcesRoutes(t *testing.T) {
 	h := start(t)
-	tom := h.token(t, "tenant-demo", "tom")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-3"}`); code != http.StatusNotFound {
+	alice := h.token(t, "gentian", "alice")
+	if code, _ := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`); code != http.StatusNotFound {
 		t.Fatalf("resources without an operator: %d", code)
 	}
 }
@@ -731,5 +713,53 @@ func TestLiveStateIsNotServedHere(t *testing.T) {
 		if code, body := h.do(t, "GET", path, audrey, ""); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
 			t.Errorf("GET %s is still served here: %d %v", path, code, body)
 		}
+	}
+}
+
+// A component that keeps plans in step with a commerce backend moves a
+// tenant as a cluster administrator who linked themselves to it: with a
+// token of theirs it obtained by vouching, which reaches the routes its
+// scopes name and nothing else, never forces, and is named in the commit.
+func TestADelegatedTokenMovesATenantWithinItsScopes(t *testing.T) {
+	h, _ := startWithOperator(t)
+	delegated := func(realm, sub string, scopes string) string {
+		return h.issuer.Token(t, dt.Claims{Realm: realm, Subject: sub, Audience: audience, Name: "Alice", Email: sub + "@example.com",
+			Extra: map[string]any{"azp": "vouch-ops-sync", "scope": scopes}})
+	}
+	apply := delegated("gentian", "alice", "director-plans-apply")
+	read := delegated("gentian", "alice", "director-plans-read")
+
+	req, _ := http.NewRequest(http.MethodPut, h.URL+tenantPlanPath, strings.NewReader(`{"plan":"nodes-3"}`))
+	req.Header.Set("Authorization", "Bearer "+apply)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gentian-Reason", "order 4711")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delegated move: %d", resp.StatusCode)
+	}
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%(trailers)", "main")
+	if !strings.Contains(trailer, "can_configure cluster:"+dt.Cluster+" allowed via vouch-ops-sync") || !strings.Contains(trailer, "Gentian-Reason: order 4711") {
+		t.Fatalf("trailers = %q", trailer)
+	}
+
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, apply, `{"plan":"nodes-1","force":true}`); code != http.StatusForbidden {
+		t.Fatalf("a delegated token forced a plan: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, read, `{"plan":"nodes-2"}`); code != http.StatusForbidden {
+		t.Fatalf("a read scope moved a tenant: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPut, "/v1/clusters/"+dt.Cluster+"/resource-plans/x", apply, basePlan); code != http.StatusForbidden {
+		t.Fatalf("a delegated token wrote the catalog: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodDelete, "/v1/clusters/"+dt.Cluster+"/plan-ordering", apply, ""); code != http.StatusForbidden {
+		t.Fatalf("a delegated token reached another route: %d", code)
+	}
+	// The person's own relations are asked as well.
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, delegated("tenant-demo", "tom", "director-plans-apply"), `{"plan":"nodes-2"}`); code != http.StatusForbidden {
+		t.Fatalf("a delegated token did more than its person may: %d", code)
 	}
 }

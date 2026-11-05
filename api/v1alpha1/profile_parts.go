@@ -428,7 +428,32 @@ type VouchingRequirement struct {
 	// Keys says where the component publishes the keys its statements are
 	// signed with, as a JWKS. The realm fetches them from there.
 	Keys VouchingKeys `json:"keys"`
+
+	// Director names what a token the component obtains for a person may do
+	// at the platform's own API, beside the apps: plans-read reads the
+	// cluster's plans, its tenants and their billed intervals, plans-apply
+	// also moves a tenant to another plan, never forced. The person's own
+	// relations are asked on every call as well, so a component never does
+	// more than the person may. Given only to a component placed in the
+	// platform tenant, whose realm the cluster's administrators sign in at;
+	// anywhere else it is ignored.
+	// +optional
+	// +kubebuilder:validation:MaxItems=2
+	// +listType=set
+	Director []DirectorScope `json:"director,omitempty"`
 }
+
+// DirectorScope is one thing a vouched token may do at the director.
+// +kubebuilder:validation:Enum=plans-read;plans-apply
+type DirectorScope string
+
+const (
+	// DirectorScopePlansRead reads the cluster's plans, its tenants and
+	// their billed intervals.
+	DirectorScopePlansRead DirectorScope = "plans-read"
+	// DirectorScopePlansApply moves a tenant to another plan.
+	DirectorScopePlansApply DirectorScope = "plans-apply"
+)
 
 // VouchingKeys is the address of a component's signing keys: a Service of the
 // component, in the tenant's namespace.

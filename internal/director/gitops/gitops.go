@@ -159,6 +159,11 @@ type Meta struct {
 	// Principal replaces "user:<Subject>" in the trailer when what authorized
 	// the change was not a person — a fact signed by the store, say.
 	Principal string
+	// Via names the component that asked on the person's behalf with a
+	// token it obtained by vouching, and Reason what it gave as its reason
+	// (an order reference): both in the commit beside the person.
+	Via    string
+	Reason string
 }
 
 // movedAt is when a pin is moved, as the entry records it: now, to the
@@ -206,7 +211,30 @@ func (m Meta) trailers() []string {
 	if m.Decision != "" {
 		parts = append(parts, m.Decision, "allowed")
 	}
-	return []string{"Gentian-Authz: " + strings.Join(parts, " ")}
+	if m.Via != "" {
+		parts = append(parts, "via", m.Via)
+	}
+	out := []string{"Gentian-Authz: " + strings.Join(parts, " ")}
+	if reason := reasonLine(m.Reason); reason != "" {
+		out = append(out, "Gentian-Reason: "+reason)
+	}
+	return out
+}
+
+// reasonLine is a caller's reason as one trailer line: printable, on one
+// line, at most 200 characters.
+func reasonLine(reason string) string {
+	out := make([]rune, 0, len(reason))
+	for _, r := range reason {
+		if len(out) == 200 {
+			break
+		}
+		if r < 0x20 || r == 0x7f {
+			r = ' '
+		}
+		out = append(out, r)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // ErrPushContended is returned when a write lost the race to other writers

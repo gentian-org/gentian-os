@@ -780,7 +780,7 @@ choose) are enforced once. Choosing a plan is not a command here: it is a commit
 as the person who asked, from the console or from its API with that person's
 token.
 
-List the catalog, or what one tenant may pick:
+List the catalog as it applies to one tenant:
 
 ```bash
 kubectl gentian resources plans --tenant corp
@@ -794,7 +794,8 @@ Show a tenant's ceiling and what is committed under it:
 kubectl gentian resources show --tenant corp
 ```
 
-Move a tenant to a plan — through the director, as yourself:
+Move a tenant to a plan — the cluster's administrator's, through the
+director, as yourself:
 
 ```bash
 kubectl gentian resources set --tenant corp --plan nodes-2      # [--force]: see below
@@ -813,9 +814,9 @@ using:
 
 Kubernetes does not evict pods to fit a shrunken quota — it refuses the *next*
 create — so shrinking a tenant too far would otherwise appear to work and fail
-hours later at the next restart. `--force` overrides the guard; it is
-accepted only from someone who may configure the cluster, who has accepted
-that cost.
+hours later at the next restart. `--force` overrides the guard, for an
+administrator who has accepted that cost. A retired plan is refused either
+way.
 
 What a window resolves to for invoicing:
 
@@ -830,14 +831,33 @@ base                 17.05  2026-01-01T00:00:00  2026-01-18T01:12:00  sku-1node
 nodes-2              13.95  2026-01-18T01:12:00  2026-02-01T00:00:00  sku-2node
 ```
 
-Cap what a tenant may choose for itself (absent means uncapped):
+Every tenant's intervals over the same window, for invoicing a cluster's
+tenants together:
 
 ```bash
-kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
+kubectl gentian resources report --all --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
 ```
 
-`plans`, `show` and `report` are read from the usher and `set` is sent to
-the director, each through a port-forward the plugin establishes and tears
+The cluster's plans, and changing them (resource-plans.md §2.4):
+
+```bash
+kubectl gentian resources catalog
+kubectl gentian resources catalog set nodes-3 --file nodes-3.json
+kubectl gentian resources catalog remove nodes-3
+```
+
+Where a tenant orders another plan — the notice its Admin Console shows in
+place of a choice (resource-plans.md §5):
+
+```bash
+echo '{"text":{"en":"Ask us for more capacity"},"email":"sales@example.com"}' > notice.json
+kubectl gentian resources ordering set --file notice.json
+kubectl gentian resources ordering                # what is set
+kubectl gentian resources ordering clear
+```
+
+`plans`, `show` and `report` are read from the usher; `set`, `catalog` and
+`ordering` go to the director, each through a port-forward the plugin establishes and tears
 down per invocation.
 
 Live consumption (as opposed to what is committed) needs metrics-server,

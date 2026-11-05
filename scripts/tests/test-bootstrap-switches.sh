@@ -104,6 +104,17 @@ filter_empty="$(zones_of "$(render true true true --set-string dnsProvider=cloud
 check "external-dns: an empty dnsZones list is the walk alone" \
     "$([[ "${filter_empty}" == "k.example " ]] && echo 1 || echo 0)"
 
+# The Applications follow the commit the installer passes, the one the
+# operator image is built from, not the branch tip; without one, the branch.
+pinned="$(render true true true --set-string dnsProvider=cloudflare --set-string gentianOsBranch=develop \
+    --set-string gentianOsRevision=0123456789abcdef0123456789abcdef01234567 --set-string operator.tag=develop-0123456)"
+check "revision: every Application follows the commit passed" \
+    "$(has "${pinned}" 'targetRevision: "?0123456789abcdef' && ! has "${pinned}" 'targetRevision: "?develop' && echo 1 || echo 0)"
+check "revision: the kernel ApplicationSets get the operator's image tag beside it" \
+    "$(has "${pinned}" 'imageTag: "develop-0123456"' && echo 1 || echo 0)"
+check "revision: none passed follows the branch" \
+    "$(has "$(render true true true --set-string gentianOsBranch=develop)" 'targetRevision: "?develop' && echo 1 || echo 0)"
+
 # Declared records (certificates.dnsRecords) reach the dns-records Application
 # as data; a name outside every zone stops the render, since external-dns would
 # skip it without a word. The Application is there with none, so that emptying
@@ -184,6 +195,28 @@ check "dnsZones: the claim's list reads as one comma-joined value" \
     "$(has "$(zones_claim gentian.org example.ch)" '^DNS_ZONES=gentian.org,example.ch$' && echo 1 || echo 0)"
 check "dnsZones: a claim that lists none leaves DNS_ZONES unset" \
     "$(has "$(zones_claim)" '^DNS_ZONES=unset$' && echo 1 || echo 0)"
+
+# The vault's storage (openbao.storage). Unset is file: a cluster rendered by
+# an installer that passes nothing keeps the backend its data is in. Raft
+# names the pod as its node; anything else is refused at render.
+storage_default="$(render false false false)"
+check "openbao.storage unset: the vault is rendered on file storage" \
+    "$(has "${storage_default}" '^              storage "file" \{$' && ! has "${storage_default}" 'storage "raft"' && echo 1 || echo 0)"
+storage_raft="$(render false false false --set-string openbao.storage=raft)"
+check "openbao.storage=raft: Raft at /openbao/data, the pod's name as its node id" \
+    "$(has "${storage_raft}" '^              storage "raft" \{$' && has "${storage_raft}" 'node_id = "openbao-0"' &&
+        [[ "$(grep -c 'storage "file"' <<<"${storage_raft}")" -eq 1 ]] && echo 1 || echo 0)"
+check "openbao.storage=raft keeps the transit seal" \
+    "$(has "${storage_raft}" 'seal "transit"' && echo 1 || echo 0)"
+check "openbao.transitStorage unset: the seal is rendered on file storage, with its plain listener" \
+    "$(! has "${storage_default}" 'node_id = "openbao-transit-0"' && has "${storage_default}" 'tls_disable     = 1' && echo 1 || echo 0)"
+storage_seal="$(render false false false --set-string openbao.transitStorage=raft)"
+check "openbao.transitStorage=raft: the seal on Raft, its pod's name as its node id; the vault left alone" \
+    "$(has "${storage_seal}" 'node_id = "openbao-transit-0"' && ! has "${storage_seal}" 'node_id = "openbao-0"' && echo 1 || echo 0)"
+check "openbao.transitStorage that is neither is refused" \
+    "$(has "$(render false false false --set-string openbao.transitStorage=consul)" 'it is raft or file' && echo 1 || echo 0)"
+check "openbao.storage that is neither is refused" \
+    "$(has "$(render false false false --set-string openbao.storage=consul)" 'it is raft or file' && echo 1 || echo 0)"
 
 # The operator's image is the tag the installer resolved, never a branch name
 # the chart falls back to: a branch tag moves.

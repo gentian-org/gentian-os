@@ -27,7 +27,7 @@ such a component generic hooks and no more:
 |---|---|---|
 | The rights check | One question: may this person use that app of my tenant. No credential of the authorization store. | `requires.services.rights`, [custom-catalogs.md](../guides/custom-catalogs.md) |
 | The model gateway | A key of its own at the gateway. | `requires.services.llm` |
-| Vouching | A token of a person who is away, for one app, from the tenant's realm, and only for a person who linked themselves to the component with their own token. | `requires.services.vouching`, [custom-catalogs.md](../guides/custom-catalogs.md) |
+| Vouching | A token of a person who is away, for one app, from the tenant's realm, and only for a person who linked themselves to the component with their own token. In the platform tenant, also a cluster administrator's token for named routes of the director. | `requires.services.vouching`, [custom-catalogs.md](../guides/custom-catalogs.md) |
 | A token made out to one app | For a signed-in person, at the front door: the session's token exchanged for one whose audience is the app. | exposure `exchangeToken` |
 | Contracts between apps | A declared, grantable relation to another app of the tenant. | `provides`, `integrations`, `AppGrant` (§2) |
 | Adapters | A class of component that turns one app's abilities into tools, reached only by the tenant's components that vouch for people, and reaching only the app it adapts. | `classes: [adapter]`, `spec.adapter`, [custom-catalogs.md](../guides/custom-catalogs.md) |
