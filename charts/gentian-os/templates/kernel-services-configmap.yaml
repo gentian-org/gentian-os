@@ -32,20 +32,16 @@
 {{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage (.Values.mailNamespace | default "system-mail")) -}}
 {{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $keycloakInternal }}
 {{- /*
-  Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
-  restriction, not something a namespace field on the ref can work around.
-  Kernel SERVICES (keycloak-idp, etc.) that need KERNEL_DOMAIN/TENANCY_MODE
-  live in other kernel namespaces, not this release's own (kernel-control),
-  so this ConfigMap is mirrored into each — same name, same data, so any
-  configMapKeyRef there to "gentian-kernel-services"
-  just works without a separate reference convention to maintain.
+  A pod's configMapKeyRef reads its own namespace only. keycloak-idp reads
+  this ConfigMap in the authentication namespace, so it is rendered there.
+  kernel-control's ConfigMap of the same name is the bootstrap chart's
+  (kernel/bootstrap/chart/templates/kernel-services.yaml).
 */ -}}
-{{- range $ns := list .Release.Namespace (.Values.servicesNamespace | default "kernel-edge") (.Values.layout.authentication | default "") | compact | uniq }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gentian-kernel-services
-  namespace: {{ $ns }}
+  namespace: {{ .Values.layout.authentication | default "kernel-authentication" }}
   labels:
     {{- include "gentian-os.labels" $ | nindent 4 }}
     gentianos.io/config-type: kernel-services
@@ -75,5 +71,4 @@ data:
   {{- range $key, $value := $ks.extra }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
-{{- end }}
 {{- end }}
