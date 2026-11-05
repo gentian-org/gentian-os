@@ -505,6 +505,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// A failed ExternalSecret read again, when the secrets operator has not.
+	if err := (&controller.ExternalSecretRetryReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ExternalSecretRetry")
+		os.Exit(1)
+	}
+
 	// The TURN edge, while a component declares requires.services.turn.
 	if err := (&controller.TURNEdgeReconciler{
 		Client: mgr.GetClient(),
