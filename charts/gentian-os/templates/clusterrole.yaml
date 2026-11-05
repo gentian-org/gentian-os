@@ -342,18 +342,6 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appgrants/finalizers
-    - components/finalizers
-    - integrationbindings/finalizers
-    - platformsecuritypolicies/finalizers
-    - tenantexports/finalizers
-    - tenantrestores/finalizers
-    - tenants/finalizers
-    verbs:
-    - update
-  - apiGroups:
-    - gentianos.io
-    resources:
     - appgrants/status
     - backuppolicies/status
     - brandings/status
@@ -364,7 +352,6 @@ rules:
     - mailboxremovals/status
     - platformsecuritypolicies/status
     - profilebuilds/status
-    - resourceplans/status
     - tenantexports/status
     - tenantexportschedules/status
     - tenantrestores/status
@@ -399,6 +386,17 @@ rules:
     - list
     - watch
     - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - components/finalizers
+    - integrationbindings/finalizers
+    - platformsecuritypolicies/finalizers
+    - tenantexports/finalizers
+    - tenantrestores/finalizers
+    - tenants/finalizers
+    verbs:
+    - update
   - apiGroups:
     - gentianos.io
     resources:
