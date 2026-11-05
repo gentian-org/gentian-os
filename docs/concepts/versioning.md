@@ -17,13 +17,23 @@ An installed app carries three versions, and each answers one question.
 
 | Version | Names | Answers |
 |---|---|---|
-| the upstream version | the application itself: Nextcloud 33, Odoo 18 | whether data written by one build can be read by another (`minRestoreVersion`) |
+| the upstream version | the application itself: Nextcloud 33, Odoo 18 | whether data written by one build can be read by another |
 | the profile build | the bundle: its digest, and `spec.version`, bumped on every change to the bundle | what a tenant runs, what the store and every listing show |
 | the platform version line | the OS: `0.5`, `0.6`, … | whether a build can run on this cluster |
 
 Compatibility with the OS is a property of the profile build, because the
 profile is what the operator reads. The upstream version has nothing to say
 about it.
+
+The operator does not know the upstream version: it sits inside the chart.
+A restore therefore judges the data by the chart version the bundle's
+manifest records for each app against the chart version installed
+(`buildRule`, `internal/controller/tenantrestore_plan.go`). The same version
+is restored; a newer one installed is restored too, because an app upgrades
+older data when it starts; an older one, or a version that cannot be
+compared, is refused for that app unless the restore sets
+`spec.skipVersionCheck` ([operations.md §9.4](operations.md)). An import is
+a restore into a new tenant and is judged the same way.
 
 ### 1.1 Numbering
 

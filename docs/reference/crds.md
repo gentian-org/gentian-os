@@ -319,7 +319,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
 | `spec.backup.boundSecrets[].openBaoPath` | string | yes | `OpenBaoPath` is relative to this tenant's own prefix (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets belonging to the tenant being… |
-| `spec.backup.minRestoreVersion` | string |  | `MinRestoreVersion` refuses to restore a bundle into an app older than this version, expressed as the app version the profile's chart deploys. |
 | `spec.backup.quiesce` | object |  | `Quiesce` controls how writes are paused while the app is captured. |
 | `spec.backup.quiesce.container` | string |  | `Container` names the container to run Pre and Post in. |
 | `spec.backup.quiesce.mode` | string |  | `Mode` selects how writes are paused. |
@@ -773,7 +772,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.secrets.supplied[].fields[].public` | boolean |  | `Public` marks a value that is not secret -- a publishable key, an account id -- which the form then shows as typed. |
 | `spec.secrets.supplied[].fields[].valuePath` | string | yes | `ValuePath` is the Helm value key that receives the value, as for a generated secret. |
 | `spec.secrets.supplied[].name` | string | yes | `Name` identifies the credential within the app: the last part of its vault path and of the requirement's name, app-{tenant}-{app}-{name}. |
-| `spec.sessionMaxAge` | string |  | `SessionMaxAge` caps the app's own session, for apps that run their own login. |
+| `spec.sessionMaxAge` | string |  | `SessionMaxAge` caps, at the realm, how long a sign-in through the app's own OIDC clients lasts: the operator sets it as the clients' session lifespan, and past… |
 | `spec.trustTier` | string | yes | `TrustTier` is the review level of this entry. |
 | `spec.version` | string | yes | `Version` is the catalog entry's version, not the upstream project's. |
 | `status` | object |  | ComponentProfileStatus is the observed state of a ComponentProfile. |
@@ -1083,7 +1082,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
 | `status.profileSpec.backup.boundSecrets[].openBaoPath` | string | yes | `OpenBaoPath` is relative to this tenant's own prefix (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets belonging to the tenant being… |
-| `status.profileSpec.backup.minRestoreVersion` | string |  | `MinRestoreVersion` refuses to restore a bundle into an app older than this version, expressed as the app version the profile's chart deploys. |
 | `status.profileSpec.backup.quiesce` | object |  | `Quiesce` controls how writes are paused while the app is captured. |
 | `status.profileSpec.backup.quiesce.container` | string |  | `Container` names the container to run Pre and Post in. |
 | `status.profileSpec.backup.quiesce.mode` | string |  | `Mode` selects how writes are paused. |
@@ -1537,7 +1535,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.secrets.supplied[].fields[].public` | boolean |  | `Public` marks a value that is not secret -- a publishable key, an account id -- which the form then shows as typed. |
 | `status.profileSpec.secrets.supplied[].fields[].valuePath` | string | yes | `ValuePath` is the Helm value key that receives the value, as for a generated secret. |
 | `status.profileSpec.secrets.supplied[].name` | string | yes | `Name` identifies the credential within the app: the last part of its vault path and of the requirement's name, app-{tenant}-{app}-{name}. |
-| `status.profileSpec.sessionMaxAge` | string |  | `SessionMaxAge` caps the app's own session, for apps that run their own login. |
+| `status.profileSpec.sessionMaxAge` | string |  | `SessionMaxAge` caps, at the realm, how long a sign-in through the app's own OIDC clients lasts: the operator sets it as the clients' session lifespan, and past… |
 | `status.profileSpec.trustTier` | string | yes | `TrustTier` is the review level of this entry. |
 | `status.profileSpec.version` | string | yes | `Version` is the catalog entry's version, not the upstream project's. |
 

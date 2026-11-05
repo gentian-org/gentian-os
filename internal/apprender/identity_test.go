@@ -12,8 +12,10 @@ package apprender
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -97,5 +99,49 @@ func TestPackScopeMappersRenderOnceTheScopeIsObserved(t *testing.T) {
 	cfg, _, _ := unstructured.NestedStringMap(got["demo-demo-app-scope-mapper-groups"].Object, "spec", "forProvider", "config")
 	if diff := cmp.Diff(map[string]string{"introspection.token.claim": "false"}, cfg); diff != "" {
 		t.Errorf("groups mapper keeps its own introspection value, no multivalued (-want +got):\n%s", diff)
+	}
+}
+
+// spec.sessionMaxAge is the realm's cap on every OIDC client the profile's
+// app signs in with: its own and an extension's, which runs in its pod. A
+// profile that does not set it leaves the clients on the realm's limits.
+func TestSessionMaxAgeCapsEveryClientOfTheApp(t *testing.T) {
+	clients := func(in *Input) map[string]string {
+		t.Helper()
+		got, err := Render(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		out := map[string]string{}
+		for _, o := range got.Objects {
+			if o.GetKind() != "Client" || o.GroupVersionKind().Group != "openidclient.keycloak.crossplane.io" {
+				continue
+			}
+			v, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "clientSessionMaxLifespan")
+			out[o.GetName()] = v
+		}
+		return out
+	}
+
+	unset := clients(fixtureInput(t, "testdata/render/app-sidecar-oidc"))
+	if len(unset) != 2 {
+		t.Fatalf("want the app's client and its extension's, got %v", unset)
+	}
+	for name, v := range unset {
+		if v != "" {
+			t.Errorf("%s: capped at %q with no sessionMaxAge", name, v)
+		}
+	}
+
+	in := fixtureInput(t, "testdata/render/app-sidecar-oidc")
+	in.Profile.SessionMaxAge = &metav1.Duration{Duration: 90 * time.Minute}
+	capped := clients(in)
+	if len(capped) != 2 {
+		t.Fatalf("want the app's client and its extension's, got %v", capped)
+	}
+	for name, v := range capped {
+		if v != "1h30m0s" {
+			t.Errorf("%s: clientSessionMaxLifespan = %q, want 1h30m0s", name, v)
+		}
 	}
 }

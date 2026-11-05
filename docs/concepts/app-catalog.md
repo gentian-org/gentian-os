@@ -831,11 +831,20 @@ exposures and no tile (`none`: it is the launcher); the administration console
 has a tile on its `web` entry and none on `api`, which is what an API entry
 should be; Collabora is `from`, opened by Nextcloud and never from a launcher.
 
-`spec.sessionMaxAge` caps a component's **own** session, for one that
-establishes a login through its own client. The edge bounds reachability but
-does not refresh the group model a component captured at its own login, so
-this value bounds what a person may still do inside it after their rights
-change (AD-13, [decisions/index.md](../decisions/index.md)).
+`spec.sessionMaxAge` caps, at the realm, how long a sign-in through the
+component's own OIDC clients lasts. The operator sets it as the session
+lifespan of every such client it renders, the component's own and its
+extensions' (`clientSessionMaxLifespan`,
+`internal/apprender/identity.go`). Past that age from sign-in the realm
+refuses the client's refresh, so the component cannot renew its tokens for
+that person without a new sign-in, and a new sign-in reads the person's
+groups again. It does **not** end a session the component keeps in its own
+cookie: a component that does not go back to the realm once a person is
+signed in keeps that session for as long as the component itself allows, and
+only its own configuration shortens it. Unset, the clients keep the realm's
+limits. The edge bounds reachability and does not refresh the groups a
+component captured at its own sign-in (AD-13,
+[decisions/index.md](../decisions/index.md)).
 
 ### 17.5 Enablement: the tenant's half
 

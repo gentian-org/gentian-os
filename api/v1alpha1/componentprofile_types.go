@@ -289,10 +289,14 @@ type ComponentProfileSpec struct {
 	// +kubebuilder:validation:MaxItems=32
 	Expose []ExposureSpec `json:"expose,omitempty"`
 
-	// SessionMaxAge caps the app's own session, for apps that run their own
-	// login. The edge bounds reachability; it does not refresh the groups an
-	// app captured at its own login, so this — not the access-token lifetime —
-	// bounds what a user may still do inside the app after their rights change.
+	// SessionMaxAge caps, at the realm, how long a sign-in through the app's
+	// own OIDC clients lasts: the operator sets it as the clients' session
+	// lifespan, and past that age from sign-in the realm refuses their
+	// refresh, so the app cannot renew its tokens for that person without a
+	// new sign-in, which reads the person's groups again. It does not end a
+	// session the app keeps in its own cookie: an app that does not go back
+	// to the realm once a person is signed in keeps that session for as long
+	// as the app itself allows. Unset, the clients keep the realm's limits.
 	// +optional
 	SessionMaxAge *metav1.Duration `json:"sessionMaxAge,omitempty"`
 

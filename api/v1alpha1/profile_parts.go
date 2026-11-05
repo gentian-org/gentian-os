@@ -1633,13 +1633,6 @@ type BackupSpec struct {
 	// it is resumed.
 	// +optional
 	Restore *BackupRestore `json:"restore,omitempty"`
-
-	// MinRestoreVersion refuses to restore a bundle into an app older than this
-	// version, expressed as the app version the profile's chart deploys.
-	// Restoring older data into a newer app is allowed — that just runs the
-	// app's own migrations — but the reverse silently corrupts.
-	// +optional
-	MinRestoreVersion string `json:"minRestoreVersion,omitempty"`
 }
 
 // BackupQuiesce declares how to pause an app's writes for the duration of a

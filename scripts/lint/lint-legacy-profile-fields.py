@@ -69,6 +69,7 @@ RENAMED = {
 # of a list.
 REMOVED = {
     ("spec", "backup", "consistency"): "nothing: every store of an app is captured in one quiesce window",
+    ("spec", "backup", "minRestoreVersion"): "nothing: a restore refuses data written by a newer chart version than the one installed, unless the TenantRestore sets spec.skipVersionCheck",
     ("spec", "expose", "[]", "stripPrefix"): "nothing: the backend receives the path as requested",
     ("spec", "expose", "[]", "source"): "nothing: a gateway entry is authMode oidc; what needs no session is a perimeter entry",
     ("spec", "requires", "services", "database", "databasePerTenant"): "nothing: every tenant's app has a database of its own",
