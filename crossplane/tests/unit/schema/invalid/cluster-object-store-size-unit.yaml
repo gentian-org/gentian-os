@@ -1,0 +1,13 @@
+# Invalid Cluster claim -- systemServices.objectStore.size is a whole number of
+# Gi or Ti; "40GB" is not a Kubernetes quantity the volume can be sized by.
+# Used by test-unit-schema to verify the XRD rejects this input.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-object-store-size-unit
+  namespace: default
+spec:
+  kernelDomain: example.org
+  systemServices:
+    objectStore:
+      size: 40GB

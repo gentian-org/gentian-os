@@ -1,0 +1,12 @@
+# Valid Cluster claim -- the object store's volume sized by the claim
+# (systemServices.objectStore.size).
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-object-store-size
+  namespace: default
+spec:
+  kernelDomain: example.org
+  systemServices:
+    objectStore:
+      size: 100Gi
