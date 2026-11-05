@@ -1,6 +1,6 @@
 {{- /* What a release changes in the vault (internal/vaultmigrate). A hook, so
        it runs on every sync. Sync and not PostSync: PostSync waits for a healthy
-       app, and the services can be unhealthy for want of the keys this adds.
+       app, and the services can be unhealthy for want of what this changes.
        The Cluster composition, which gives it its role, arrives by the
        installer and may come later, so the Job retries its login. */}}
 {{- if .Values.openbao.address }}

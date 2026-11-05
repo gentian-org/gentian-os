@@ -1,8 +1,7 @@
 # The kernel credential derivation, worked out with
 #   printf '%s' "<context>:<purpose>" | openssl dgst -sha256 -hmac "<master><salt>"
-# apart from both implementations that are checked against it: _derived in
-# scripts/lib/derive.sh (scripts/tests/test-secret-mode.sh) and derive in
-# internal/vaultmigrate (migrate_test.go).
+# apart from _derived in scripts/lib/derive.sh, which
+# scripts/tests/test-secret-mode.sh checks against it.
 #
 # master|salt|context|purpose|expected — one per line; an empty salt is a
 # cluster seeded before salts existed.

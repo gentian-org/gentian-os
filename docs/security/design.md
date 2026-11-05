@@ -1454,9 +1454,8 @@ hex(HMAC-SHA256(key = MASTER_PASSWORD + DERIVATION_SALT,
                 message = "<context>:<purpose>"))    # 64 hex characters
 ```
 
-The key reaches the HMAC through the environment, never as an argument. The
-release migrator's `derive` (`internal/vaultmigrate`) computes the same value
-in Go, and both are checked against `scripts/tests/derivation-vectors.txt`.
+The key reaches the HMAC through the environment, never as an argument, and
+`scripts/tests/derivation-vectors.txt` holds the values it must give.
 
 The salt is 16 random bytes generated at the first install and stored beside
 the master password.

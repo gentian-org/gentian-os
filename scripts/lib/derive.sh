@@ -7,9 +7,8 @@
 #   hex(HMAC-SHA256(key = MASTER_PASSWORD + DERIVATION_SALT,
 #                   message = "<context>:<purpose>"))
 #
-# 64 lowercase hex characters. This file is the one shell implementation;
-# internal/vaultmigrate's derive is the Go one, and both are checked against
-# scripts/tests/derivation-vectors.txt.
+# 64 lowercase hex characters. This file is the one implementation, checked
+# against scripts/tests/derivation-vectors.txt.
 #
 # No dependencies on the rest of the library: scripts/bootstrap/seed-openbao.sh
 # sources it on its own.

@@ -107,7 +107,7 @@ bootstrap_openbao_for_crossplane() {
         if [[ -n "${existing_token}" ]]; then
             local http_code
             http_code=$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-                -H "X-Vault-Token: ${existing_token}" \
+                -H @<(printf 'X-Vault-Token: %s\n' "${existing_token}") \
                 "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
             if [[ "${http_code}" == "200" ]]; then
                 success "openbao-crossplane-token Secret already valid — skipping."
@@ -136,7 +136,7 @@ bootstrap_openbao_for_crossplane() {
         fi
         kubectl create secret generic openbao-crossplane-token \
             -n "${CROSSPLANE_NAMESPACE}" \
-            --from-literal=credentials="{\"token\":\"${cp_token}\"}"
+            --from-file=credentials=<(printf '{"token":"%s"}' "${cp_token}")
         success "openbao-crossplane-token Secret created in ${CROSSPLANE_NAMESPACE}."
     fi
 
@@ -214,7 +214,7 @@ create_crossplane_secrets() {
         local name="$1" json="$2" path="${3:-}"
         kubectl create secret generic "${name}" \
             -n "${CROSSPLANE_NAMESPACE}" \
-            "--from-literal=data.json=${json}" \
+            --from-file=data.json=<(printf '%s' "${json}") \
             --dry-run=client -o yaml | kubectl apply -f -
         [[ -n "${path}" ]] && _kv_add_missing "${path}" "${json}"
         success "  ${name}"
@@ -247,16 +247,12 @@ create_crossplane_secrets() {
             warn "  ${path}: could not be read, so missing keys were not added"
             return 0
         fi
-        missing=$(jq -nc --argjson have "${have}" --argjson want "${json}" \
-            '$want | with_entries(select(.key as $k | $have | has($k) | not))')
+        missing=$(jq -nc --rawfile have <(printf '%s' "${have}") --rawfile want <(printf '%s' "${json}") \
+            '($have | fromjson) as $have | $want | fromjson | with_entries(select(.key as $k | $have | has($k) | not))')
         [[ "${missing}" == "{}" ]] && return 0
         info "  ${path}: adding $(jq -r 'keys | join(", ")' <<<"${missing}")"
-        # One argument per key, built as an array: a value may carry anything
-        # openssl produced, and word splitting would cut it in half.
-        local -a pairs=()
-        while IFS= read -r pair; do pairs+=("${pair}"); done \
-            < <(jq -r 'to_entries[] | "\(.key)=\(.value)"' <<<"${missing}")
-        bao kv patch -mount="${KV_MOUNT:-secret}" "${path}" "${pairs[@]}" >/dev/null 2>&1 \
+        # The keys reach the vault as a JSON object on stdin.
+        printf '%s' "${missing}" | bao kv patch -mount="${KV_MOUNT:-secret}" "${path}" - >/dev/null 2>&1 \
             || warn "  ${path}: could not add the missing keys"
     }
 
@@ -274,19 +270,19 @@ create_crossplane_secrets() {
     # master-password Secret (referenced by spec.masterPasswordSecretRef in the Cluster claim)
     kubectl create secret generic gentian-os-master-password \
         -n "${CROSSPLANE_NAMESPACE}" \
-        --from-literal=password="${MASTER_PASSWORD}" \
-        --from-literal=salt="${DERIVATION_SALT}" \
+        --from-file=password=<(printf '%s' "${MASTER_PASSWORD}") \
+        --from-file=salt=<(printf '%s' "${DERIVATION_SALT}") \
         --dry-run=client -o yaml | kubectl apply -f -
     success "  gentian-os-master-password"
 
     # ── database/postgresql ───────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-postgresql" \
         "$(jq -nc \
-            --arg a "$(_derive postgres postgres_user)" \
-            --arg b "$(_derive postgres keycloak_user)" \
-            --arg c "$(_derive postgres keycloak_extensions_user)" \
-            --arg h "$(_derive postgres openfga_user)" \
-            --arg d "$(_derive postgres registrar_user)" \
+            --rawfile a <(printf '%s' "$(_derive postgres postgres_user)") \
+            --rawfile b <(printf '%s' "$(_derive postgres keycloak_user)") \
+            --rawfile c <(printf '%s' "$(_derive postgres keycloak_extensions_user)") \
+            --rawfile h <(printf '%s' "$(_derive postgres openfga_user)") \
+            --rawfile d <(printf '%s' "$(_derive postgres registrar_user)") \
             '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,registrar_user_password:$d}')" \
         "gentian-os/kernel/database/postgresql"
 
@@ -307,20 +303,20 @@ create_crossplane_secrets() {
     _kv_secret "gentian-os-tenants-platform-apps-shell-database" \
         "$(jq -nc \
             --arg h "kernel-postgres-rw.$(ns_kernel data).svc.cluster.local" \
-            --arg p "${desktop_db_password}" \
+            --rawfile p <(printf '%s' "${desktop_db_password}") \
             '{host:$h,port:"5432",name:"portal_shell",user:"portal_shell_user",password:$p}')" \
         "gentian-os/tenants/platform/apps/shell/database"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \
         "$(jq -nc \
-            --arg a "$(_derive mariadb root_password)" \
+            --rawfile a <(printf '%s' "$(_derive mariadb root_password)") \
             '{root_password:$a}')"
 
     # ── cache/redis ───────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-cache-redis" \
         "$(jq -nc \
-            --arg a "$(_derive redis password)" \
+            --rawfile a <(printf '%s' "$(_derive redis password)") \
             '{auth_password:$a}')"
 
     # ── storage/s3 (the object store's administrator) ─────────────────────────
@@ -329,26 +325,26 @@ create_crossplane_secrets() {
     _kv_secret "gentian-os-kernel-storage-s3" \
         "$(jq -nc \
             --arg a "s3-admin" \
-            --arg b "$(_derive s3 root_password)" \
+            --rawfile b <(printf '%s' "$(_derive s3 root_password)") \
             '{root_user:$a,root_password:$b}')"
 
     # ── identity/keycloak-bootstrap (Keycloak admin password) ──────────────────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
-            --arg a "$(_derive keycloak adminPassword)" \
-            --arg b "$(_derive keycloak operatorClientSecret)" \
+            --rawfile a <(printf '%s' "$(_derive keycloak adminPassword)") \
+            --rawfile b <(printf '%s' "$(_derive keycloak operatorClientSecret)") \
             '{admin_password:$a,operator_client_secret:$b}')" \
         "gentian-os/kernel/identity/keycloak-bootstrap"
 
     # ── authz/openfga ─────────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-authz-openfga" \
         "$(jq -nc \
-            --arg a "$(_derive openfga preshared_key)" \
-            --arg director "$(_derive openfga director_key)" \
-            --arg bouncer "$(_derive openfga bouncer_key)" \
-            --arg usher "$(_derive openfga usher_key)" \
-            --arg registrar "$(_derive openfga registrar_key)" \
-            --arg custodian "$(_derive openfga custodian_key)" \
+            --rawfile a <(printf '%s' "$(_derive openfga preshared_key)") \
+            --rawfile director <(printf '%s' "$(_derive openfga director_key)") \
+            --rawfile bouncer <(printf '%s' "$(_derive openfga bouncer_key)") \
+            --rawfile usher <(printf '%s' "$(_derive openfga usher_key)") \
+            --rawfile registrar <(printf '%s' "$(_derive openfga registrar_key)") \
+            --rawfile custodian <(printf '%s' "$(_derive openfga custodian_key)") \
             '{preshared_key:$a,director_key:$director,bouncer_key:$bouncer,usher_key:$usher,registrar_key:$registrar,custodian_key:$custodian}')" \
         "gentian-os/kernel/authz/openfga"
 
@@ -361,8 +357,8 @@ create_crossplane_secrets() {
         "$(jq -nc \
             --arg host "${EXTERNAL_SMTP_HOST:-}" \
             --arg port "${EXTERNAL_SMTP_PORT:-587}" \
-            --arg user "${SMTP_RELAY_USERNAME:-}" \
-            --arg pass "${SMTP_RELAY_PASSWORD:-}" \
+            --rawfile user <(printf '%s' "${SMTP_RELAY_USERNAME:-}") \
+            --rawfile pass <(printf '%s' "${SMTP_RELAY_PASSWORD:-}") \
             '{relay_host:$host,relay_port:$port}
              + (if $user != "" then {relay_username:$user} else {} end)
              + (if $pass != "" then {relay_password:$pass} else {} end)')"
@@ -373,8 +369,8 @@ create_crossplane_secrets() {
     # the object store's secret for cross-service derivation consistency.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
-            --arg doveadm "$(_derive dovecot doveadm_password)" \
-            --arg oidc "$(_derive dovecot oidcClientSecret)" \
+            --rawfile doveadm <(printf '%s' "$(_derive dovecot doveadm_password)") \
+            --rawfile oidc <(printf '%s' "$(_derive dovecot oidcClientSecret)") \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
     # ── oidc/openbao (the Keycloak client secret OpenBao authenticates with) ──
@@ -383,7 +379,7 @@ create_crossplane_secrets() {
     # read it from the same path, so they cannot drift.
     _kv_secret "gentian-os-kernel-oidc-openbao" \
         "$(jq -nc \
-            --arg a "$(_derive openbao oidcClientSecret)" \
+            --rawfile a <(printf '%s' "$(_derive openbao oidcClientSecret)") \
             '{client_secret:$a}')"
 
     success "All 10 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
@@ -877,8 +873,7 @@ seed_usage_statistics_key() {
     # Absent, or unreadable. `kv put` with check-and-set 0 writes only when
     # the path has never been written, so a path this run merely failed to
     # read is not replaced.
-    if ! bao kv put -mount=secret -cas=0 "${path}" \
-        "signing_seed=$(openssl rand -hex 32)" >/dev/null 2>&1; then
+    if ! jq -n --rawfile s <(openssl rand -hex 32 | tr -d '\n') '{signing_seed: $s}' | _seed_once "${path}"; then
         warn "The usage statistics report signing key could not be written to OpenBao."
         warn "  No report is sent without it; the operator records that it has no key."
         return 0
@@ -976,9 +971,9 @@ seed_repository_credentials() {
         info "Seeding gentian-os/kernel/repositories/${name}..."
         # Written every time, not once: a rotated token has to replace the
         # one that is there.
-        if ! bao kv put -mount=secret "gentian-os/kernel/repositories/${name}" \
-            "username=${!user_var:-x-access-token}" \
-            "password=${!token_var}" >/dev/null 2>&1; then
+        if ! jq -n --rawfile u <(printf '%s' "${!user_var:-x-access-token}") \
+            --rawfile p <(printf '%s' "${!token_var}") '{username: $u, password: $p}' \
+            | bao kv put -mount=secret "gentian-os/kernel/repositories/${name}" - >/dev/null 2>&1; then
             error "Could not write the ${name} repository credential to OpenBao."
             error "  Its Repository claim will not become satisfied without it."
             return 1

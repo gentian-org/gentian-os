@@ -1388,8 +1388,7 @@ spec:
                  of the vault than Crossplane may do has this identity to do it:
                  the Job of the same name in the kernel chart. It may write
                  crossplane-write, which Crossplane may not, so that Crossplane
-                 never edits its own rights; the names gentian-ca signs; and
-                 keys a release adds to a kernel path.
+                 never edits its own rights; and the names gentian-ca signs.
 
                  Composed, so a release can change these rights too. */}}
             ---
@@ -1407,15 +1406,6 @@ spec:
                     capabilities = ["read", "update"]
                   }
                   path "pki-internal/roles/gentian-ca" {
-                    capabilities = ["read", "patch"]
-                  }
-                  path "{{ $kvMount }}/data/gentian-os/kernel/internal/master-password" {
-                    capabilities = ["read"]
-                  }
-                  path "{{ $kvMount }}/data/gentian-os/kernel/authz/openfga" {
-                    capabilities = ["read", "patch"]
-                  }
-                  path "{{ $kvMount }}/data/gentian-os/kernel/identity/keycloak-bootstrap" {
                     capabilities = ["read", "patch"]
                   }
               providerConfigRef:

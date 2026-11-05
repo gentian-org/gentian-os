@@ -1460,14 +1460,5 @@ spec:
       path "pki-internal/roles/gentian-ca" {
         capabilities = ["read", "patch"]
       }
-      path "secret/data/gentian-os/kernel/internal/master-password" {
-        capabilities = ["read"]
-      }
-      path "secret/data/gentian-os/kernel/authz/openfga" {
-        capabilities = ["read", "patch"]
-      }
-      path "secret/data/gentian-os/kernel/identity/keycloak-bootstrap" {
-        capabilities = ["read", "patch"]
-      }
   providerConfigRef:
     name: openbao

@@ -15,28 +15,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
-
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 type fakeVault struct {
 	policy  string
 	domains []string
 	hasRole bool
-	kv      map[string]map[string]string
 	writes  []string
-}
-
-func (f *fakeVault) Get(_ context.Context, path string) (map[string]string, error) {
-	data, ok := f.kv[path]
-	if !ok {
-		return nil, secrets.ErrNotFound
-	}
-	return data, nil
 }
 
 func (f *fakeVault) Request(_ context.Context, method, path string, body any) (int, []byte, error) {
@@ -54,10 +41,7 @@ func (f *fakeVault) Request(_ context.Context, method, path string, body any) (i
 	case path == rolePath:
 		f.domains = body.(map[string]any)["allowed_domains"].([]string)
 	default:
-		logical := strings.TrimPrefix(path, "secret/data/")
-		for k, v := range body.(map[string]any)["data"].(map[string]string) {
-			f.kv[logical][k] = v
-		}
+		return http.StatusForbidden, nil, nil
 	}
 	f.writes = append(f.writes, path)
 	return http.StatusOK, nil, nil
@@ -70,17 +54,12 @@ func cluster() *fakeVault {
 		policy:  `path "sys/policies/acl/*" { capabilities = ["update"] }`,
 		domains: []string{"seaweedfs-server"},
 		hasRole: true,
-		kv: map[string]map[string]string{
-			secrets.MasterPasswordPath: {"value": "master", "salt": "salt"},
-			"p":                        {"have": "rotated"},
-		},
 	}
 }
 
 func TestAReleaseIsBroughtIn(t *testing.T) {
 	v := cluster()
-	seeds := []Seed{{"p", "have", "c", "x"}, {"p", "new", "openfga", "director_key"}}
-	if err := Run(context.Background(), v, "secret", []string{"mariadb.x.svc"}, seeds, quiet); err != nil {
+	if err := Run(context.Background(), v, "secret", []string{"mariadb.x.svc"}, quiet); err != nil {
 		t.Fatal(err)
 	}
 	if v.policy != CrossplaneWrite("secret") {
@@ -89,29 +68,16 @@ func TestAReleaseIsBroughtIn(t *testing.T) {
 	if strings.Join(v.domains, ",") != "seaweedfs-server,mariadb.x.svc" {
 		t.Errorf("domains: %v", v.domains)
 	}
-	if v.kv["p"]["have"] != "rotated" {
-		t.Error("a key that was there was replaced")
-	}
-	// The installer's _derived, as openssl computes it.
-	out, err := exec.Command("sh", "-c",
-		"printf 'openfga:director_key' | openssl dgst -sha256 -hmac mastersalt | awk '{print $NF}'").Output()
-	if err != nil {
-		t.Skip("no openssl here")
-	}
-	if want := strings.TrimSpace(string(out)); v.kv["p"]["new"] != want {
-		t.Errorf("derived %s, the installer derives %s", v.kv["p"]["new"], want)
-	}
 }
 
 func TestASecondRunWritesNothing(t *testing.T) {
 	v := cluster()
-	seeds := []Seed{{"p", "new", "openfga", "director_key"}}
 	names := []string{"mariadb.x.svc"}
 	for i := range 2 {
 		if i == 1 {
 			v.writes = nil
 		}
-		if err := Run(context.Background(), v, "secret", names, seeds, quiet); err != nil {
+		if err := Run(context.Background(), v, "secret", names, quiet); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -123,7 +89,7 @@ func TestASecondRunWritesNothing(t *testing.T) {
 func TestAPolicyThisReleaseDoesNotKnowIsLeftAlone(t *testing.T) {
 	v := cluster()
 	v.policy = `path "secret/*" { capabilities = ["read"] }`
-	if err := Run(context.Background(), v, "secret", nil, nil, quiet); err == nil {
+	if err := Run(context.Background(), v, "secret", nil, quiet); err == nil {
 		t.Fatal("replaced a policy it does not know")
 	}
 	if len(v.writes) != 0 {
@@ -134,7 +100,7 @@ func TestAPolicyThisReleaseDoesNotKnowIsLeftAlone(t *testing.T) {
 func TestACAThatIsThePersonsOwnIsLeftAlone(t *testing.T) {
 	v := cluster()
 	v.hasRole = false
-	if err := Run(context.Background(), v, "secret", []string{"a"}, nil, quiet); err != nil {
+	if err := Run(context.Background(), v, "secret", []string{"a"}, quiet); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -153,36 +119,5 @@ func TestCrossplaneMayNotChangeItsOwnRights(t *testing.T) {
 	}
 	if strings.Contains(text, "__KV_MOUNT__") {
 		t.Error("the mount was not filled in")
-	}
-}
-
-// TestDeriveMatchesTheSharedVectors holds derive to the values the installer's
-// _derived (scripts/lib/derive.sh) is held to as well, by
-// scripts/tests/test-secret-mode.sh.
-func TestDeriveMatchesTheSharedVectors(t *testing.T) {
-	raw, err := os.ReadFile("../../scripts/tests/derivation-vectors.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 0
-	for _, line := range strings.Split(string(raw), "\n") {
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		f := strings.Split(line, "|")
-		if len(f) != 5 {
-			t.Fatalf("malformed vector: %q", line)
-		}
-		n++
-		got, err := derive(f[0], f[1], Seed{Context: f[2], Purpose: f[3]})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != f[4] {
-			t.Errorf("%s:%s derived %s, want %s", f[2], f[3], got, f[4])
-		}
-	}
-	if n == 0 {
-		t.Fatal("no vectors")
 	}
 }
