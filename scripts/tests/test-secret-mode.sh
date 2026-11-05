@@ -29,6 +29,10 @@
 #     holds, and draws a new one only where neither has any.
 #   - the kernel realm's mail login is the same value however often it is
 #     asked for, in both modes.
+#   - _derived (scripts/lib/derive.sh) gives every value in
+#     scripts/tests/derivation-vectors.txt, the file the Go derivation in
+#     internal/vaultmigrate is checked against too, and stops when the salt is
+#     not set.
 #
 # No cluster, no network beyond the loopback interface.
 # =============================================================================
@@ -165,8 +169,8 @@ BAO_ADDR="http://127.0.0.1:$(cat "${SB}/kv/port")"
 # seed <store> <mode> — run the seeding script against one store.
 seed() {
     env -i PATH="${PATH}" HOME="${SB}" BAO_ADDR="${BAO_ADDR}" BAO_TOKEN="$1" SECRET_MODE="$2" \
-        DERIVATION_SALT="${SALT}" KERNEL_DOMAIN=example.test MAIL_SERVICE_MODE=system \
-        bash "${REPO}/scripts/bootstrap/seed-openbao.sh" "${MASTER}" > "${SB}/seed.log" 2>&1
+        MASTER_PASSWORD="${MASTER}" DERIVATION_SALT="${SALT}" KERNEL_DOMAIN=example.test MAIL_SERVICE_MODE=system \
+        bash "${REPO}/scripts/bootstrap/seed-openbao.sh" > "${SB}/seed.log" 2>&1
 }
 # held <store> <path> <field> — what a store holds.
 held() { jq -r --arg p "gentian-os/kernel/$2" --arg f "$3" '.[$p][$f] // empty' "${SB}/kv/$1.json" 2>/dev/null; }
@@ -274,6 +278,20 @@ lib() {
             '"${script}" 2>&1
 }
 fresh() { rm -rf "${SB}/vault" "${SB}/k8s"; mkdir -p "${SB}/vault" "${SB}/k8s" "${SB}/home"; }
+
+echo ""
+echo "  the derivation, against the shared vectors"
+vectors=0; vector_fail=""
+while IFS='|' read -r v_master v_salt v_context v_purpose v_want; do
+    [[ -z "${v_master}" || "${v_master}" == \#* ]] && continue
+    vectors=$((vectors + 1))
+    v_got="$(env -i PATH="${PATH}" MASTER_PASSWORD="${v_master}" DERIVATION_SALT="${v_salt}" \
+        bash -c 'source scripts/lib/derive.sh; _derived "$1" "$2"' _ "${v_context}" "${v_purpose}" 2>&1)"
+    [[ "${v_got}" == "${v_want}" ]] || vector_fail+="${v_context}:${v_purpose} gave ${v_got}"$'\n'
+done < scripts/tests/derivation-vectors.txt
+check "_derived gives every value in derivation-vectors.txt" '[[ ${vectors} -gt 0 && -z "${vector_fail}" ]]' "${vector_fail}"
+check "_derived stops when the salt is not set" \
+    '! env -i PATH="${PATH}" MASTER_PASSWORD="${MASTER}" bash -c "set -e; source scripts/lib/derive.sh; v=\$(_derived a b); echo \"\${v}\"" >/dev/null 2>&1'
 
 echo ""
 echo "  the installer's client secrets and the kernel realm's mail login"

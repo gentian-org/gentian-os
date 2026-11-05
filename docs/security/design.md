@@ -1440,17 +1440,18 @@ the operator uses (§3.0).
 
 ### 6.1 Deterministic mode (`derived`)
 
-The installer derives each kernel credential in shell (`_derive` in
-`scripts/lib/bootstrap.sh`, the same function in
-`scripts/bootstrap/seed-openbao.sh`):
+The installer derives each kernel credential with one function, `_derived` in
+`scripts/lib/derive.sh`, which the bootstrap library, the portal login and
+`scripts/bootstrap/seed-openbao.sh` all call:
 
-```bash
-_derive() {   # <context> <purpose>
-  echo -n "${1}:${2}" \
-    | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" \
-    | awk '{print $2}'    # 64 hex characters
-}
+```text
+hex(HMAC-SHA256(key = MASTER_PASSWORD + DERIVATION_SALT,
+                message = "<context>:<purpose>"))    # 64 hex characters
 ```
+
+The key reaches the HMAC through the environment, never as an argument. The
+release migrator's `derive` (`internal/vaultmigrate`) computes the same value
+in Go, and both are checked against `scripts/tests/derivation-vectors.txt`.
 
 The salt is 16 random bytes generated at the first install and stored beside
 the master password.

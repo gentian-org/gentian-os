@@ -5,20 +5,23 @@ set -euo pipefail
 # Seed Initial Secrets into OpenBao
 # =============================================================================
 #
-# Derives all application passwords using the same HMAC-SHA256 logic as the
-# legacy generate-passwords.sh, then writes them directly to OpenBao via the
-# HTTP API.  No plaintext passwords are stored in Git or Terraform state.
+# Derives all application passwords with _derived (scripts/lib/derive.sh), then
+# writes them directly to OpenBao via the HTTP API.  No plaintext passwords are
+# stored in Git or Terraform state.
 #
-# Usage:
-#   export BAO_ADDR=http://localhost:8200     # port-forwarded OpenBao
-#   export BAO_TOKEN="<root-or-admin-token>"
-#   ./scripts/bootstrap/seed-openbao.sh <master-password> [smtp-relay-user] [smtp-relay-password]
+# Inputs come from the environment, none as arguments:
+#   BAO_ADDR, BAO_TOKEN          the vault and a root or admin token
+#   MASTER_PASSWORD              unless the vault already holds one
+#   DERIVATION_SALT              likewise; a new one is drawn when neither has it
+#   SMTP_RELAY_USERNAME, SMTP_RELAY_PASSWORD
+#                                the relay credentials (mail/postfix), optional
 #
 # Typical local run (port-forward first):
 #   kubectl port-forward svc/openbao 8200:8200 -n openbao &
 #   export BAO_ADDR=http://localhost:8200
 #   export BAO_TOKEN="$(cat /path/to/root-token)"
-#   ./scripts/bootstrap/seed-openbao.sh "your-master-password" "oci-user" "oci-pass"
+#   export MASTER_PASSWORD SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
+#   ./scripts/bootstrap/seed-openbao.sh
 #
 # Secret paths written (under secret/gentian-os/kernel/):
 #   database/postgresql
@@ -27,13 +30,13 @@ set -euo pipefail
 #   storage/s3
 #   identity/keycloak-bootstrap
 #   authz/openfga
-#   mail/postfix                  (requires args 4+5: smtp relay user/pass)
+#   mail/postfix                  (with SMTP_RELAY_USERNAME/SMTP_RELAY_PASSWORD)
 #   mail/dovecot
 # =============================================================================
 
-MASTER_PASSWORD="${1:-}"
-SMTP_RELAY_USER="${2:-}"
-SMTP_RELAY_PASS="${3:-}"
+MASTER_PASSWORD="${MASTER_PASSWORD:-}"
+SMTP_RELAY_USER="${SMTP_RELAY_USERNAME:-}"
+SMTP_RELAY_PASS="${SMTP_RELAY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -47,6 +50,8 @@ SECRET_MODE="${SECRET_MODE:-derived}"
 # BAO_TLS_SERVER_NAME (openbao_cli_trust), and bao_curl verifies with them.
 # shellcheck source=scripts/lib/openbao-curl.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/openbao-curl.sh"
+# shellcheck source=scripts/lib/derive.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/derive.sh"
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -55,7 +60,7 @@ if [ -z "$BAO_TOKEN" ]; then
 fi
 
 # Check prerequisites
-for cmd in openssl sha1sum curl jq; do
+for cmd in openssl python3 sha1sum curl jq; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "Error: $cmd is not installed."
         exit 1
@@ -72,7 +77,7 @@ if [ -n "${existing_master}" ]; then
 fi
 
 if [ -z "${MASTER_PASSWORD}" ]; then
-    echo "Error: MASTER_PASSWORD is empty. A master password must be provided as the first argument or pre-seeded in OpenBao." >&2
+    echo "Error: MASTER_PASSWORD is empty. A master password must be provided as MASTER_PASSWORD or pre-seeded in OpenBao." >&2
     exit 1
 fi
 
@@ -102,17 +107,13 @@ echo "  Mode:        ${SECRET_MODE}"
 echo "=========================================="
 
 # =============================================================================
-# Password derivation
-# Uses HMAC-SHA256 hex output directly.
-# Updated to support per-cluster random salting and SECRET_MODE=random.
+# Password derivation: _derived, or a random value under SECRET_MODE=random.
 # =============================================================================
 derive_password() {
-    local context="$1"
-    local purpose="$2"
     if [ "${SECRET_MODE:-derived}" = "random" ]; then
         openssl rand -hex 32
     else
-        echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
+        _derived "$1" "$2"
     fi
 }
 

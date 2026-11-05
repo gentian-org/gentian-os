@@ -44,13 +44,12 @@ _pl_observability_ns() { _pl_ns OBSERVABILITY_NAMESPACE observability; }
 # Derived like every other kernel credential, so a cluster rebuilt from the
 # same master password arrives at the same pair and the two halves cannot drift
 # apart. An Ed25519 private key in PKCS#8 is a fixed 16-byte prefix followed by
-# a 32-byte seed, and an HMAC-SHA256 is exactly 32 bytes, so the seed is the
-# derivation and openssl does the rest.
+# a 32-byte seed, and the derivation (_derived, scripts/lib/derive.sh) is
+# exactly 32 bytes, so the seed is the derivation and openssl does the rest.
 ensure_keycloak_listener_keypair() {
     local key_id="${KEYCLOAK_LISTENER_KEY_ID:-gentian-listener}"
     local seed der pem pub tmp
-    seed=$(printf '%s' "portal-bootstrap:listener_signing_seed" \
-        | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}')
+    seed=$(_derived portal-bootstrap listener_signing_seed)
     tmp="$(mktemp -d)"
     printf '%s' "302e020100300506032b657004220420${seed}" | xxd -r -p > "${tmp}/key.der"
     if ! openssl pkey -inform DER -in "${tmp}/key.der" -out "${tmp}/listener.pem" 2>/dev/null; then
@@ -105,7 +104,7 @@ _headlamp_derive_secret() {
         _portal_random_secret headlamp_client_secret "$(_pl_observability_ns)" headlamp-oidc OIDC_CLIENT_SECRET
         return 0
     fi
-    echo -n "portal-bootstrap:headlamp_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    _derived portal-bootstrap headlamp_client_secret
 }
 
 _grafana_derive_secret() {
@@ -113,7 +112,7 @@ _grafana_derive_secret() {
         _portal_random_secret grafana_client_secret "$(_pl_observability_ns)" grafana-oidc client_secret
         return 0
     fi
-    echo -n "portal-bootstrap:grafana_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+    _derived portal-bootstrap grafana_client_secret
 }
 
 # The Secret the platform's Grafana signs in with (the monitoring
@@ -235,7 +234,7 @@ _argocd_oidc_derive_secret() {
         _portal_random_secret argocd_client_secret "$(_pl_edge_ns)" gentian-argocd client_secret
         echo
     else
-        echo -n "portal-bootstrap:argocd_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+        _derived portal-bootstrap argocd_client_secret
     fi
 }
 
@@ -244,7 +243,7 @@ _litellm_sso_derive_secret() {
         _portal_random_secret litellm_sso_client_secret "$(ns_system llm)" litellm-dashboard-sso client_secret
         echo
     else
-        echo -n "portal-bootstrap:litellm_sso_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+        _derived portal-bootstrap litellm_sso_client_secret
     fi
 }
 

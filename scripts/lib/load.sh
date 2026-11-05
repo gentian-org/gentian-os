@@ -43,6 +43,10 @@ source "${__GENTIAN_LIB_DIR}/namespaces.sh"
 # shellcheck source=scripts/lib/helm-pinned.sh
 source "${__GENTIAN_LIB_DIR}/helm-pinned.sh"
 
+# The kernel credential derivation, which bootstrap and the portal login use.
+# shellcheck source=scripts/lib/derive.sh
+source "${__GENTIAN_LIB_DIR}/derive.sh"
+
 for _gentian_lib in portforward common signing certs openbao-curl openbao argocd catalogue validators credentials cluster-identity recovery bootstrap teardown; do
     # shellcheck source=/dev/null
     source "${__GENTIAN_LIB_DIR}/${_gentian_lib}.sh"
