@@ -828,3 +828,19 @@ func (s *Seeder) Read(ctx context.Context, logicalPath string) (map[string]strin
 func (s *Seeder) Write(ctx context.Context, logicalPath string, data map[string]string) error {
 	return s.w.Put(ctx, logicalPath, data)
 }
+
+// MetadataReader is a Writer that can also say when a record was made and
+// which version it is at; *KVClient is one.
+type MetadataReader interface {
+	Metadata(ctx context.Context, logicalPath string) (RecordMetadata, error)
+}
+
+// Metadata reads the record's KV v2 metadata, never its values. An error
+// where the Seeder's Writer cannot say.
+func (s *Seeder) Metadata(ctx context.Context, logicalPath string) (RecordMetadata, error) {
+	m, ok := s.w.(MetadataReader)
+	if !ok {
+		return RecordMetadata{}, fmt.Errorf("metadata of %s: the vault client cannot read record metadata", logicalPath)
+	}
+	return m.Metadata(ctx, logicalPath)
+}

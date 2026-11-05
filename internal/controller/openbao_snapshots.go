@@ -12,8 +12,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,9 +98,10 @@ const (
 	// openBaoSnapshotStoreCategory holds each instance's store record in the
 	// vault, gentian-os/kernel/openbao-snapshots/<instance>.
 	openBaoSnapshotStoreCategory = "openbao-snapshots"
-	// openBaoSnapshotKeyAnnotation names the key a bucket Job made, and the
-	// bucket and prefix it scoped it to, by a digest: a key the vault holds
-	// anew, or a bucket the chart names anew, is made again.
+	// openBaoSnapshotKeyAnnotation names the record a bucket Job made its key
+	// from and the bucket and prefix it scoped it to
+	// (snapshotStoreFingerprint): a record written anew, or a bucket the chart
+	// names anew, makes the Job run again.
 	openBaoSnapshotKeyAnnotation = "gentianos.io/key-id"
 	openBaoSnapshotRegion        = "us-east-1"
 	defaultOpenBaoSnapshotStale  = 30 * time.Hour
@@ -472,9 +471,9 @@ func (m minioSnapshots) List(ctx context.Context, bucket, prefix string) ([]Snap
 // Job in the object store's namespace makes the bucket and an identity that
 // may read, write and list the instance's prefix of it alone, from a Secret
 // owned by the Job and removed once it has run. The Job stays once it has
-// succeeded, annotated with a digest of the key, the bucket and the prefix:
-// that is the record the store exists, and a key the vault holds anew or a
-// bucket the chart names anew is made again.
+// succeeded, annotated with the record's metadata, the bucket and the prefix
+// (snapshotStoreFingerprint): that is the record the store exists, and a
+// record written anew or a bucket the chart names anew is made again.
 //
 // The record's address, bucket and region follow the operator's; only the
 // key pair is kept once made. So a bucket changed in the chart reaches the
@@ -513,7 +512,11 @@ func (o *OpenBaoSnapshots) EnsureStore(ctx context.Context, inst SnapshotInstanc
 			return false, fmt.Errorf("point the record at %s to bucket %s: %w", path, o.Bucket, err)
 		}
 	}
-	keyID := snapshotKeyID(creds.AccessKey, creds.Bucket, inst.prefix())
+	record, err := o.Seeder.Metadata(ctx, path)
+	if err != nil {
+		return false, fmt.Errorf("the record at %s: %w", path, err)
+	}
+	keyID := snapshotStoreFingerprint(record, creds.Bucket, inst.prefix())
 
 	// Read past the cache: a Job made a moment ago is there, and the key is
 	// handed to it on this pass, not the next.
@@ -558,11 +561,13 @@ func (o *OpenBaoSnapshots) handKey(ctx context.Context, job *batchv1.Job, creds 
 	return ensureJobSecret(ctx, o.Client, job, backup.ObjectStorageKeySecret(job, creds.AccessKey, creds.SecretKey))
 }
 
-// snapshotKeyID is the digest a bucket Job is annotated with: of the key it
-// makes, and the bucket and prefix it scopes it to.
-func snapshotKeyID(accessKey, bucket, prefix string) string {
-	sum := sha256.Sum256([]byte(accessKey + "\x00" + bucket + "\x00" + prefix))
-	return hex.EncodeToString(sum[:8])
+// snapshotStoreFingerprint is what a bucket Job is annotated with: which
+// record it made the key from, by when the vault made the record and the
+// version it is at, and the bucket and prefix it scoped the key to. No part
+// of the key: a record deleted and written again has a new created_time, and
+// every write -- a key seeded anew, a bucket rewritten -- a new version.
+func snapshotStoreFingerprint(record secrets.RecordMetadata, bucket, prefix string) string {
+	return fmt.Sprintf("%s/v%d/%s/%s", record.CreatedTime, record.CurrentVersion, bucket, prefix)
 }
 
 // makeOpenBaoSnapshotBucketJob is the Job that makes the snapshot bucket and

@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +127,61 @@ func TestTheSealsSnapshotsAreJudgedUnderItsOwnPrefix(t *testing.T) {
 	}
 }
 
-func openBaoSnapshotsFixture(t *testing.T, objs ...client.Object) (client.Client, memVault) {
+// metaVault is a vault that keeps KV v2 metadata: each record's
+// created_time, new when it is written after a delete, and its version, one
+// more on every write.
+type metaVault struct {
+	data  memVault
+	meta  map[string]secrets.RecordMetadata
+	clock int
+}
+
+func newMetaVault() *metaVault {
+	return &metaVault{data: memVault{}, meta: map[string]secrets.RecordMetadata{}}
+}
+
+func (v *metaVault) wrote(path string) {
+	m, ok := v.meta[path]
+	if !ok {
+		v.clock++
+		m = secrets.RecordMetadata{CreatedTime: fmt.Sprintf("2026-11-05T12:00:%02dZ", v.clock)}
+	}
+	m.CurrentVersion++
+	v.meta[path] = m
+}
+
+func (v *metaVault) PutOnce(ctx context.Context, path string, data map[string]string) error {
+	if _, ok := v.data[path]; ok {
+		return nil
+	}
+	v.wrote(path)
+	return v.data.PutOnce(ctx, path, data)
+}
+
+func (v *metaVault) Put(ctx context.Context, path string, data map[string]string) error {
+	v.wrote(path)
+	return v.data.Put(ctx, path, data)
+}
+
+func (v *metaVault) Get(ctx context.Context, path string) (map[string]string, error) {
+	return v.data.Get(ctx, path)
+}
+
+func (v *metaVault) Metadata(_ context.Context, path string) (secrets.RecordMetadata, error) {
+	m, ok := v.meta[path]
+	if !ok {
+		return secrets.RecordMetadata{}, secrets.ErrNotFound
+	}
+	return m, nil
+}
+
+// remove deletes a record with all its versions, as kv metadata delete does.
+func (v *metaVault) remove(path string) {
+	delete(v.data, path)
+	delete(v.meta, path)
+}
+
+func openBaoSnapshotsFixture(t *testing.T, objs ...client.Object) (client.Client, *metaVault) {
 	t.Helper()
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
@@ -137,7 +192,7 @@ func openBaoSnapshotsFixture(t *testing.T, objs ...client.Object) (client.Client
 		Data:       map[string][]byte{"endpoint": []byte("http://s3.system-s3.svc.cluster.local:9000")},
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(append(objs, admin)...).Build()
-	return c, memVault{}
+	return c, newMetaVault()
 }
 
 const testS3Endpoint = "http://s3.system-s3.svc.cluster.local:9000"
@@ -158,7 +213,7 @@ func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 	if ready || err != nil {
 		t.Fatalf("first pass: ready %v, error %v; want not ready and no error", ready, err)
 	}
-	rec := vault[path]
+	rec := vault.data[path]
 	if rec["bucket"] != "gentian-openbao-snapshots" || rec["access-key"] == "" || rec["secret-key"] == "" ||
 		rec["endpoint"] != testS3Endpoint {
 		t.Fatalf("the vault holds %v at %s", rec, path)
@@ -167,8 +222,12 @@ func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: "s3-bucket-kernel-openbao-snapshots", Namespace: s3Namespace}, job); err != nil {
 		t.Fatal(err)
 	}
-	if job.Annotations[openBaoSnapshotKeyAnnotation] != snapshotKeyID(rec["access-key"], rec["bucket"], "openbao/") {
-		t.Fatalf("the Job does not name the key it makes: %v", job.Annotations)
+	if want := snapshotStoreFingerprint(vault.meta[path], "gentian-openbao-snapshots", "openbao/"); job.Annotations[openBaoSnapshotKeyAnnotation] != want {
+		t.Fatalf("the Job is annotated %v, want %s", job.Annotations, want)
+	}
+	// The annotation names the record, never the key.
+	if a := job.Annotations[openBaoSnapshotKeyAnnotation]; strings.Contains(a, rec["access-key"]) || strings.Contains(a, rec["secret-key"]) {
+		t.Fatalf("the annotation carries the key: %s", a)
 	}
 	if job.Spec.Template.Labels[backup.ObjectStorageShellLabel] != "true" {
 		t.Fatalf("the Job's pod is not one the object store admits: %v", job.Spec.Template.Labels)
@@ -203,13 +262,42 @@ func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 		t.Fatalf("a second pass: %v %v", ready, err)
 	}
 
-	// A key the vault holds anew is made again, as a store being made.
-	vault[path]["access-key"] = "another"
+	// The record deleted and seeded anew -- version 1 again, but a new
+	// created_time -- is a new key, and the Job runs again.
+	oldKey := vault.data[path]["access-key"]
+	vault.remove(path)
 	if ready, err := o.EnsureStore(ctx, inst, testS3Endpoint); ready || err != nil {
-		t.Fatalf("a new key: ready %v, error %v", ready, err)
+		t.Fatalf("a re-seeded record: ready %v, error %v", ready, err)
+	}
+	if vault.meta[path].CurrentVersion != 1 || vault.data[path]["access-key"] == oldKey {
+		t.Fatalf("the record was not seeded anew: %v %v", vault.meta[path], vault.data[path])
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: s3Namespace}, job); !apierrors.IsNotFound(err) {
 		t.Fatalf("the Job for the old key was kept: %v", err)
+	}
+	if _, err := o.EnsureStore(ctx, inst, testS3Endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: s3Namespace}, job); err != nil {
+		t.Fatalf("no Job for the new key: %v", err)
+	}
+	if want := snapshotStoreFingerprint(vault.meta[path], "gentian-openbao-snapshots", "openbao/"); job.Annotations[openBaoSnapshotKeyAnnotation] != want {
+		t.Fatalf("the new Job is annotated %v, want %s", job.Annotations, want)
+	}
+}
+
+// Without the record's metadata there is no fingerprint, and no Job: the
+// key is never hashed in its place.
+func TestNoRecordMetadataIsAnError(t *testing.T) {
+	ctx := context.Background()
+	c, _ := openBaoSnapshotsFixture(t)
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(memVault{}, nil), Bucket: "gentian-openbao-snapshots"}
+	inst := o.instances()[0]
+	if ready, err := o.EnsureStore(ctx, inst, testS3Endpoint); ready || err == nil || !strings.Contains(err.Error(), "metadata") {
+		t.Fatalf("ready %v, error %v; want the metadata error", ready, err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: inst.bucketJob(), Namespace: s3Namespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("a Job was made without a fingerprint: %v", err)
 	}
 }
 
@@ -230,7 +318,7 @@ func TestEachInstanceHasAKeyForItsOwnPrefix(t *testing.T) {
 		}
 		scripts[inst.Name] = strings.Join(job.Spec.Template.Spec.Containers[0].Command, " ")
 	}
-	vaultRec, sealRec := vault["gentian-os/kernel/openbao-snapshots/openbao"], vault["gentian-os/kernel/openbao-snapshots/openbao-transit"]
+	vaultRec, sealRec := vault.data["gentian-os/kernel/openbao-snapshots/openbao"], vault.data["gentian-os/kernel/openbao-snapshots/openbao-transit"]
 	if vaultRec == nil || sealRec == nil || vaultRec["access-key"] == sealRec["access-key"] || vaultRec["secret-key"] == sealRec["secret-key"] {
 		t.Fatalf("the two instances do not have keys of their own: %v %v", vaultRec, sealRec)
 	}
@@ -255,7 +343,7 @@ func TestTheStoreFollowsTheBucket(t *testing.T) {
 	if _, err := o.EnsureStore(ctx, inst, testS3Endpoint); err != nil {
 		t.Fatal(err)
 	}
-	before := vault[inst.StorePath()]["access-key"]
+	before := vault.data[inst.StorePath()]["access-key"]
 	job := &batchv1.Job{}
 	name := types.NamespacedName{Name: inst.bucketJob(), Namespace: s3Namespace}
 	if err := c.Get(ctx, name, job); err != nil {
@@ -270,7 +358,7 @@ func TestTheStoreFollowsTheBucket(t *testing.T) {
 	if ready, err := o.EnsureStore(ctx, inst, "http://s3.moved:9000"); ready || err != nil {
 		t.Fatalf("a new bucket: ready %v, error %v", ready, err)
 	}
-	rec := vault[inst.StorePath()]
+	rec := vault.data[inst.StorePath()]
 	if rec["bucket"] != "elsewhere" || rec["endpoint"] != "http://s3.moved:9000" || rec["access-key"] != before {
 		t.Fatalf("the record did not follow the bucket, or lost its key: %v", rec)
 	}
@@ -359,7 +447,7 @@ func TestADisabledSealIsReportedSoAndGetsNoStore(t *testing.T) {
 		!strings.Contains(reps[1].Message, "openbaoSnapshots.transit.enabled") {
 		t.Fatalf("reports = %+v", reps)
 	}
-	if _, ok := vault["gentian-os/kernel/openbao-snapshots/openbao-transit"]; ok {
+	if _, ok := vault.data["gentian-os/kernel/openbao-snapshots/openbao-transit"]; ok {
 		t.Fatal("a key was made for the seal's switched-off snapshots")
 	}
 	if err := c.Get(ctx, types.NamespacedName{Name: "s3-bucket-kernel-openbao-transit-snapshots", Namespace: s3Namespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
