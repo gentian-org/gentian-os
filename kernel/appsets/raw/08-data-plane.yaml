@@ -71,10 +71,9 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
-            # The engine charts default this to gentian-infra-<env>, which is
-            # no namespace of the layout. Stated here so the objects land where the
-            # Cluster claim composed them and the Release's valuesFrom can
-            # find them; tenant-postgres ignores it.
+            # The namespace the Cluster claim composed for the engine, so the
+            # objects land where the Release's valuesFrom finds them;
+            # tenant-postgres ignores it.
             - name: namespace
               value: '{{.namespace}}'
             # Each engine's chart carries the NetworkPolicy that says who may

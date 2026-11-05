@@ -48,9 +48,8 @@ spec:
             {{- $spec := $xr.spec }}
             {{- $name := $xr.metadata.name }}
 
-            {{- /* The layout the claim is written for decides where the kernel is.
-                 v4: the namespaces release 4.1 installs. v5: kernel/namespaces.yaml,
-                 created and labelled by the installer before this claim exists. */}}
+            {{- /* Where the kernel is: kernel/namespaces.yaml, created and
+                 labelled by the installer before this claim exists. */}}
             {{- $provisioningNs := "kernel-provisioning" }}
             {{- $controlNs      := "kernel-control" }}
             {{- $secretsNs      := "kernel-secrets" }}
@@ -62,10 +61,8 @@ spec:
             {{- $authNs           := "kernel-authentication" }}
             {{- /* Keycloak's in-cluster base URL. Derived from the layout, for the
                  reason network.edgeNamespace is: a field that asks for it can name
-                 a namespace the layout does not have, and the XRD's default did
-                 exactly that -- platform-kernel, on a v5 cluster where Keycloak
-                 runs in kernel-authentication and platform-kernel does not exist.
-                 A claim may still override it; nothing has ever needed to. */}}
+                 a namespace the layout does not have. A claim may still override
+                 it; nothing has ever needed to. */}}
             {{- $kcInternalUrl    := default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" $authNs) (dig "identity" "internalUrl" "" $spec) }}
             {{- $argoNs           := default ("kernel-gitops") (dig "argocd" "namespace" "" $spec) }}
             {{- $esoNs            := default ("kernel-secrets") (dig "eso" "namespace" "" $spec) }}
@@ -99,14 +96,8 @@ spec:
 
                  The four are unconditional because every cluster serves
                  tenants; the engines in two of them are not (the Releases
-                 below). system-mail and system-llm are conditional on the
-                 claim and are not built yet; until they are, both opt-ins are
-                 refused at admission by the XRD, so no claim can ask for a
-                 namespace that would stay empty.
-
-                 v5 only. On v4 these workloads live in gentian-infra-<stage>
-                 and platform-kernel, and composing empty namespaces beside
-                 them would be two homes for one engine.
+                 below). system-mail and system-llm follow the claim: mail
+                 when mail.serviceMode is system, LLM when llm.enabled.
 
                  lint-namespace-layout.sh asserts this list equals
                  kernel/namespaces.yaml's. */}}
@@ -181,19 +172,18 @@ spec:
             {{- /* ── System-tier engines (provider-helm Releases) ───────────────
                  MariaDB, Redis and SeaweedFS, one per system namespace above.
 
-                 Composed here because v4 composed them from an InfraData
-                 claim and v5 does not have one: the Cluster claim is the
-                 composer of the system tier, so the engines come with the
-                 namespaces rather than from a second claim that has to be
-                 scaffolded and kept in step.
+                 Composed here because the Cluster claim is the composer of
+                 the system tier, so the engines come with the namespaces
+                 rather than from a second claim that has to be scaffolded
+                 and kept in step.
 
                  The values are NOT inlined. Each chart in
                  kernel/services/infra-* carries its own values as ConfigMaps
                  and its credential as an ExternalSecret, synced into the
                  namespace by the 08-data-plane ApplicationSet; the Release
-                 reads them by name. That split is v4's and is kept on
-                 purpose: the values stay reviewable as YAML in the
-                 repository, and the release stays an object Crossplane owns.
+                 reads them by name, so the values stay reviewable as YAML in
+                 the repository, and the release stays an object Crossplane
+                 owns.
 
                  Postgres is not here. The CNPG cluster is a CR, not a Helm
                  release, and Argo delivers it the way it delivers
@@ -258,8 +248,7 @@ spec:
                   version: {{ $e.version | quote }}
                 namespace: system-{{ $e.fn }}
                 wait: true
-                {{- /* Generous, for the reason v4's postgresql release
-                     records: a slow first start on network storage lets the
+                {{- /* Generous: a slow first start on network storage lets the
                      StatefulSet come up while the chart's own bootstrap --
                      which sets the password everything connects with -- is
                      still running, and Crossplane marks the release failed
@@ -370,7 +359,7 @@ spec:
             {{- end }}
 
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
-            {{- /* v5's namespaces exist before the claim does (installer A-01). */}}
+            {{- /* The kernel namespaces exist before the claim does (installer A-01). */}}
 
             {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
             ---
@@ -1037,16 +1026,8 @@ spec:
 
             {{- /* ── The operator's own OpenBao access ─────────────────────────
                  It reads the master password every credential is derived from,
-                 and writes what it seeds. This lived in a kernel service whose
-                 manifests named crossplane-system and gentian-system outright,
-                 so a v5 cluster got neither the policy nor the role: the
-                 operator's Kubernetes login failed with "invalid role name",
-                 it fell back to random credentials, and nothing said so twice.
-                 Here it follows the layout like every other binding.
-
-                 v5 only. A v4 cluster still gets both from that kernel service,
-                 and two owners of one OpenBao policy would take turns writing
-                 it. */}}
+                 and writes what it seeds. It follows the layout like every
+                 other binding. */}}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
@@ -1626,11 +1607,8 @@ spec:
                     # fetches token, JWKS and userinfo over it so the code exchange stays
                     # inside the cluster; the browser still goes to the public URL.
                     #
-                    # Derived from the layout, not restated from the XRD: the XRD's
-                    # default named platform-kernel, which on a v5 cluster is a
-                    # namespace that does not exist, so every tenant realm's broker
-                    # IdP would have been given a token endpoint that resolves to
-                    # nothing. See $kcInternalUrl above.
+                    # Derived from the layout, not restated from the XRD. See
+                    # $kcInternalUrl above.
                     #
                     # The Compositions cannot read the keycloak-admin Secret, which is
                     # where this value lived and where the Jobs still read it from. That
@@ -1672,17 +1650,12 @@ spec:
                          that has to put something beside them does not have to
                          guess the layout. The Repository composition needs it:
                          it writes the git credential the operator and the
-                         director mount, and it wrote it to gentian-system on
-                         every cluster -- correct on v4 and nowhere on v5, which
-                         is why the director could clone and never push. */}}
+                         director mount beside them. */}}
                     kernel.controlNamespace: {{ $controlNs | quote }}
                     {{- /* Where Argo CD runs, for the same reason the control
                          namespace is published: the Repository composition
                          writes Argo CD's repository Secret and the catalogue
-                         ApplicationSet, and it wrote both to "argocd" on
-                         every cluster -- correct on v4 and a namespace that
-                         does not exist on v5, so Argo CD never saw the
-                         credential or the ApplicationSet. */}}
+                         ApplicationSet where Argo CD reads them. */}}
                     kernel.gitopsNamespace: {{ $argoNs | quote }}
                     # Whether this cluster serves one tenant or many.
                     #

@@ -24,17 +24,16 @@
   standalone, with no replica, sentinel or exporter -- and the kubelet's
   probes are exec probes.
 
-  Rendered on the v5 layout only (a namespace is stated), with the admin
-  Secret beside it. Sync wave -1, with the values the release is installed
+  Rendered with the admin Secret beside it. Sync wave -1, with the values the release is installed
   from: the release cannot start a pod before this object exists.
 */ -}}
-{{- if and .Values.namespace (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- if ne (toString .Values.networkPolicy.enabled) "false" }}
 {{- $np := .Values.networkPolicy }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: store-ingress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Values.namespace | default "system-cache" }}
   labels:
     gentianos.io/tier: system
     gentianos.io/function: cache
