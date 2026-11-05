@@ -33,6 +33,11 @@ func (f fakeAuthn) FromRequest(r *http.Request) (*authn.Identity, error) {
 	if !ok {
 		return nil, authn.ErrUnauthenticated
 	}
+	// "vouch:<scope>:<sub>" is a token a component obtained for sub.
+	if rest, found := strings.CutPrefix(sub, "vouch:"); found {
+		scope, who, _ := strings.Cut(rest, ":")
+		return &authn.Identity{Subject: who, Client: "vouch-ops-sync", Scopes: []string{scope}}, nil
+	}
 	// "<realm>/<sub>" is a token the realm issued.
 	if realm, rest, found := strings.Cut(sub, "/"); found {
 		return &authn.Identity{Realm: realm, Subject: rest}, nil

@@ -601,16 +601,29 @@ spec:
                  line each: the profile's name, then the Service, the port and
                  the path its keys are published at, separated by spaces
                  (zoneVouchingProfilesKey in the operator says why a space is
-                 safe). A line that is not four fields is not guessed at: it
-                 is left out, and that component gets nothing rather than an
-                 issuer whose keys are fetched from somewhere half-read. */}}
+                 safe), and, for a component of the platform tenant, what its
+                 tokens may do at the director, comma-separated. A line that
+                 is not four or five fields is not guessed at: it is left
+                 out, and that component gets nothing rather than an issuer
+                 whose keys are fetched from somewhere half-read. A director
+                 scope this file does not know is dropped. */}}
             {{- $vouchingProfiles := list }}
             {{- $vouchingSeen     := list }}
+            {{- $directorScopes   := list }}
             {{- range $line := (splitList "\n" (dig "vouchingProfiles" "" $zhData)) }}
             {{- $f := splitList " " (trim $line) }}
-            {{- if and (eq (len $f) 4) (not (has (index $f 0) $vouchingSeen)) }}
+            {{- if and (or (eq (len $f) 4) (eq (len $f) 5)) (not (has (index $f 0) $vouchingSeen)) }}
             {{- $vouchingSeen = append $vouchingSeen (index $f 0) }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3)) }}
+            {{- $director := list }}
+            {{- if eq (len $f) 5 }}
+            {{- range $d := (splitList "," (index $f 4)) }}
+            {{- if and (has $d (list "plans-read" "plans-apply")) (not (has $d $director)) }}
+            {{- $director = append $director $d }}
+            {{- if not (has $d $directorScopes) }}{{- $directorScopes = append $directorScopes $d }}{{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director) }}
             {{- end }}
             {{- end }}
             {{- /* The components that call partners or accept their
@@ -1510,6 +1523,66 @@ spec:
                     client_secret: not-used
               providerConfigRef:
                 name: kubernetes
+            {{- /* The director scopes: what a token a component of the
+                 platform tenant obtains for a cluster administrator may do
+                 at the director (requires.services.vouching.director). One
+                 client scope per scope any such component names, director-
+                 and the scope, whose one mapper puts gentian-director in
+                 the token's audience -- a custom audience, for the reason
+                 the zone client's director mapper above gives. The director
+                 reads the scope off the token and answers only the routes
+                 it names; the person's own relations are asked as well.
+
+                 Only the platform tenant's projection names any, so in any
+                 other realm none is made. Made like the app scopes, and the
+                 mapper waits on the scope's observed id the same way. */}}
+            {{- $directorReady := list }}
+            {{- range $d := $directorScopes }}
+            {{- $dscope := printf "director-%s" $d }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-vouching-director-scope-{{ $d }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-director-scope-{{ $d }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $dscope }}
+                description: {{ printf "A token of a cluster administrator for the director, %s and nothing else" $d | quote }}
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- $dscopeID := dig "resources" (printf "keycloak-vouching-director-scope-%s" $d) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $dscopeID }}
+            {{- $directorReady = append $directorReady $d }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-vouching-director-scope-{{ $d }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-vouching-director-scope-{{ $d }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $dscopeID }}
+                name: director-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: gentian-director
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- range $v := $vouchingProfiles }}
             {{- $p := $v.profile }}
             {{- /* The three names the operator derives in vouching.go:
@@ -1801,8 +1874,17 @@ spec:
                  them say about the person, a user name for one. With full
                  scope off and none of them naming an audience, such a token
                  still names no app and carries no role, and this grant
-                 answers with no refresh token whatever is asked for. */}}
-            {{- if gt (len $exchangeScopes) 0 }}
+                 answers with no refresh token whatever is asked for.
+
+                 Beside them, the director scopes this component names and
+                 no other's, once each exists with its mapper. */}}
+            {{- $optional := $exchangeScopes }}
+            {{- range $d := $v.director }}
+            {{- if has $d $directorReady }}
+            {{- $optional = append $optional (printf "director-%s" $d) }}
+            {{- end }}
+            {{- end }}
+            {{- if gt (len $optional) 0 }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientOptionalScopes
@@ -1819,7 +1901,7 @@ spec:
                   policy:
                     resolve: Always
                 optionalScopes:
-                  {{- range $scope := $exchangeScopes }}
+                  {{- range $scope := $optional }}
                   - {{ $scope }}
                   {{- end }}
               providerConfigRef:

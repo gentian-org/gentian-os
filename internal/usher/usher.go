@@ -202,6 +202,14 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 			fail(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
+		// A token a component obtained for the person reaches only the
+		// routes its scopes name (authn/delegated.go), here as at the
+		// director.
+		if !ident.MayCall(pattern) {
+			s.cfg.Log.WarnContext(ctx, "delegated token refused outside its scopes", "client", ident.Client, "route", pattern)
+			fail(w, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
+			return
+		}
 		target, err := obj(s, r)
 		if err != nil {
 			fail(w, http.StatusBadRequest, "invalid name")

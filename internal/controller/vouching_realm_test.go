@@ -455,3 +455,24 @@ func TestATenantWithNoVouchingComponentRendersNoneOfIt(t *testing.T) {
 		t.Errorf("rendered with no component vouching: %v", named)
 	}
 }
+
+// A component of the platform tenant that names director scopes has them
+// made in the kernel realm, one client scope each, before anything that
+// needs their ids.
+func TestTheDirectorScopesAreMadeInThePlatformRealm(t *testing.T) {
+	objs := renderedObjects(t, "tenant-platform")
+	names := map[string]bool{}
+	for _, o := range ofKind(objs, "ClientScope") {
+		name, _, _ := unstructured.NestedString(o, "spec", "forProvider", "name")
+		realm, _, _ := unstructured.NestedString(o, "spec", "forProvider", "realmId")
+		if strings.HasPrefix(name, "director-") {
+			if realm != "kernel" {
+				t.Errorf("%s is made in realm %q", name, realm)
+			}
+			names[name] = true
+		}
+	}
+	if !names["director-plans-read"] || !names["director-plans-apply"] || len(names) != 2 {
+		t.Fatalf("director scopes = %v", names)
+	}
+}

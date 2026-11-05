@@ -497,6 +497,18 @@ component's to decide:
 So the people a component can speak for are the people who said so, for as long as nobody took it
 back.
 
+**A component of the platform tenant may also obtain a token for the director** — a cluster
+administrator's, for the platform's own API — by naming what it may do there in
+`spec.requires.services.vouching.director`: `plans-read` (the cluster's plans, every tenant's plan
+and ceiling, their billed intervals) and `plans-apply` (also moving a tenant to another plan). It
+asks with the scope `director-plans-read` or `director-plans-apply` and gets a token whose audience
+is `gentian-director`. The director and the usher answer such a token only on the routes its scope
+names, never `force` a plan for it, and still ask the person's own relations, so the component does
+no more than the person may. The commit names the component beside the person
+(`Gentian-Authz: … allowed via vouch-<profile>`), and a reason the component sends in
+`X-Gentian-Reason`, such as an order reference, as `Gentian-Reason`. In any other tenant the scopes
+are not made and the field does nothing.
+
 **A component that links other clusters' people to a tenant** declares
 `spec.requires.services.partners.commission: true`. It asks the director to add a realm of another
 cluster to a tenant's realm as a receiving partner, or to take one away (`PUT`, `DELETE`, `GET` on
