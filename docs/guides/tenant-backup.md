@@ -78,8 +78,8 @@ not you — forward it.)*
 
 ## 2. Taking a backup
 
-Open the administration console's **Export** screen, give the backup a name,
-choose who can read it, and start it.
+Open the administration console's **Export** screen, choose who can read the
+export, and start it. When it is ready, download it there.
 
 ### Choosing the encryption
 
@@ -123,10 +123,6 @@ What your users see depends on the app:
 - Apps without one are stopped and restarted. To a user that looks like the app
   being briefly unavailable.
 
-The Export screen shows which app is being captured and, once each is finished,
-**how long it was paused**. That number is the honest cost of a backup, and it
-is worth watching on your first run so you know what to expect.
-
 > **Why pause at all?** An app's database refers to its files, and its files
 > refer back. Copying them while the app is still writing produces a set of
 > pieces that were never true at the same moment — a backup that looks fine and
@@ -140,14 +136,6 @@ Only one backup runs at a time per workspace. If you start a second, it waits.
 
 A backup is finished when the Export screen shows **Ready**. Until then it is
 still working, however long that takes on a large workspace.
-
-Worth checking on the entry:
-
-- **Every app is listed and Ready.** An app that failed is named, with the
-  reason.
-- **No app is still shown as paused.** A finished backup leaves nothing paused.
-- **The encryption line matches what you chose.** If you chose your own
-  passphrase, it says so, and says that only you can open it.
 
 If a backup shows **Failed**, the reason is on the entry. The most common one on
 a first attempt is that no backup key is configured — see [§1](#1-before-your-first-backup).
@@ -165,9 +153,8 @@ permanently — there is no undo, so treat it like shredding the only copy.
 
 ## 5. Where the bundle lives
 
-In the platform's object storage. The Export screen shows its location, and
-**Download** on a finished backup saves it to your computer as one
-`.gentian` file.
+In the platform's object storage. **Download** on a finished backup saves it
+to your computer as one `.gentian` file.
 
 Inside the bundle, one file — `bundle-info.json` — is deliberately left
 unencrypted. It says whose backup this is, when it was taken, how it was
@@ -253,12 +240,9 @@ first, so the current state is recoverable too.
 ## 8. Regular backups
 
 The administration console takes one backup, now. Backups on a schedule, where
-they are stored and how long they are kept are a backup policy
-(`BackupPolicy`), which your cluster administrator sets for the cluster or for
-your workspace ([commands.md](../reference/commands.md) §13–§14), or which the Operations
-Console manages where that app is installed. Ask for one: a nightly backup you
-never think about is worth considerably more than a manual one you take when
-you remember.
+they are stored and how long they are kept are the Operations Console's, an
+add-on your provider installs. Ask for one: a nightly backup you never think
+about is worth considerably more than a manual one you take when you remember.
 
 ### Which key a schedule uses
 

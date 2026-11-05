@@ -58,6 +58,9 @@ type BackupSummary struct {
 	Quiesced []string        `json:"quiesced"`
 	Apps     []BackupAppInfo `json:"apps"`
 	Message  string          `json:"message,omitempty"`
+	// Schedule names the schedule that took this export, empty for one a
+	// person started.
+	Schedule string `json:"schedule,omitempty"`
 }
 
 // BackupAppInfo is one app's part of an export.
@@ -281,6 +284,7 @@ func backupSummary(e *gentianov1alpha1.TenantExport, tenantName string) BackupSu
 		Quiesced:  e.Status.Quiesced,
 		Apps:      []BackupAppInfo{},
 		Message:   conditionMessage(e.Status.Conditions),
+		Schedule:  e.Labels[gentianov1alpha1.TenantExportScheduleLabel],
 	}
 	if out.Quiesced == nil {
 		out.Quiesced = []string{}

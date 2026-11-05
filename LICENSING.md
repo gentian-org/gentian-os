@@ -39,12 +39,14 @@ exception process.
 | The app template and the design system, in the project's other repositories | **Apache-2.0** | Made to be copied into other people's apps, open and closed alike |
 | The operator, the director and the other services, the installer, the system services' configuration | **MPL-2.0** | Accepted by large organizations without an exception. Its copyleft follows the file, not the program: a change to a file of the core that is distributed is published, so distributed modifications stay visible and mergeable, while new files and programs that only use the APIs stay their authors' |
 | The desktop and the administration console, in gentian-ui | **MPL-2.0** | The face of the core. They are customized through branding and extension points, which are not modifications; the design system and console kit they are built on are Apache-2.0 |
-| Export, import, restore, retire and purge | **MPL-2.0** | Part of the core, so a tenant's mobility never depends on an add-on. The bundle they produce is the Apache-licensed format, readable with standard tools ([docs/concepts/data-ownership.md](docs/concepts/data-ownership.md)) |
+| Export on demand, import, restore, retire and purge | **MPL-2.0** | Part of the core, so a tenant's mobility never depends on an add-on. The bundle they produce is the Apache-licensed format, readable with standard tools ([docs/concepts/data-ownership.md](docs/concepts/data-ownership.md)) |
 | Catalog apps and add-ons | their own | Not part of the OS, installed by choice, never required by it |
 
 **Leaving is in the core.** Taking all of a tenant's data out, bringing it in
 elsewhere and destroying what is left are core functions under the core's
 license. An add-on may build on them; a tenant can always leave without it.
+Regular backups — a schedule, a standing destination, retention — are an
+add-on's.
 
 ## Licenses the project does not use
 

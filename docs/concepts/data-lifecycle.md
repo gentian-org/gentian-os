@@ -31,7 +31,7 @@ type: concept
 | --- | --- | --- | --- |
 | **Create** a tenant | A new, empty workspace | Cluster administrator. Console, *Tenants*; or `kubectl gentian tenants create` | No |
 | **Install** an app | Add an app to a tenant, with empty stores | Tenant administrator. App Store app; or `kubectl gentian apps install` | No |
-| **Back up** (export) | Copy the tenant's data into a bundle | Tenant administrator. Admin Console, *Backup*; a schedule; or a `TenantExport` object. *Download* hands out the same bundle as one file | No. Each app is paused while it is copied |
+| **Back up** (export) | Copy the tenant's data into a bundle | Tenant administrator. Admin Console, *Export*; a schedule; or a `TenantExport` object. *Download* hands out the same bundle as one file | No. Each app is paused while it is copied |
 | **Restore** | Put a bundle's data back into the tenant it came from | Administrator | Yes: what was written since the backup is replaced |
 | **Import** | Make a tenant again from a bundle, under the name it carries, here or on another cluster | Cluster administrator. `kubectl gentian tenants import` | No. The new tenant has its own names; nothing of another tenant is touched |
 | **Uninstall** an app | Take the app away, keep its data | Tenant administrator. App Store app; or `kubectl gentian apps uninstall` | No |

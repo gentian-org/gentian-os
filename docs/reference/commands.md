@@ -1220,7 +1220,7 @@ admin console's **Credentials** tab.
 
 ## 11. Tenant Backup (Export)
 
-Tenant admins take backups from the **Admin Console → Backup** tab; the guide
+Tenant admins take exports from the **Admin Console → Export** tab; the guide
 written for them is [tenant-backup.md](../guides/tenant-backup.md), and §1 of
 it is the key-setup procedure they will forward to you. An export
 captures the workspace's databases, buckets, volumes and Keycloak realm into one
