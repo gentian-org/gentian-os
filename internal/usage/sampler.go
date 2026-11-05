@@ -32,7 +32,6 @@ import (
 // permission going unused rather than have the sampler fail closed.
 //
 // +kubebuilder:rbac:groups=gentianos.io,resources=resourceplans,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gentianos.io,resources=resourceplans/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=metrics.k8s.io,resources=pods,verbs=get;list
 
 const (

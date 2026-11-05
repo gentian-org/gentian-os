@@ -32,7 +32,6 @@ const (
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;update;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/finalizers,verbs=update
 
 // AppGrantReconciler records an AppGrant as admitted.
 //
