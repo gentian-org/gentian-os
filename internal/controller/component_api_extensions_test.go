@@ -99,6 +99,16 @@ func (c apiExtensionCase) build(t *testing.T) (*ComponentReconciler, *gentianov1
 			Privileges: c.grants,
 		},
 	}
+	// A grant names the request it approved, as the director records it.
+	for i := range comp.Spec.Privileges {
+		if comp.Spec.Privileges[i].Digest == "" {
+			d, err := security.APIExtensionDigest(&profile.Spec.Requires.Privileges.APIExtensions[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			comp.Spec.Privileges[i].Digest = d
+		}
+	}
 	objs := append([]client.Object{profile}, c.existing...)
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	disc := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
@@ -201,6 +211,9 @@ func TestAnAPIExtensionIsNotInstalledWhenItMayNotBe(t *testing.T) {
 		"not granted": {func(c *apiExtensionCase) { c.grants = nil }, reasonAPIExtensionNotGranted, false},
 		"granted, expired": {func(c *apiExtensionCase) { c.grants[0].ExpiresAt = &expired },
 			reasonAPIExtensionNotGranted, false},
+		"granted, and the definitions changed since": {func(c *apiExtensionCase) {
+			c.grants[0].Digest = "sha256:" + strings.Repeat("0", 64)
+		}, reasonAPIExtensionNotGranted, false},
 		"another's type in the group": {func(c *apiExtensionCase) {
 			c.served = []metav1.APIResource{{Name: "others"}, {Name: "others/status"}}
 		}, reasonAPIExtensionGroupTaken, true},

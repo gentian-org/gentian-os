@@ -624,6 +624,10 @@ kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
   --reason "reads the website's and the store's order requests over https"
 ```
 
+An `apiExtensions` approval names the definitions it approves: the command
+sends the digest the cluster reports for the pending request, and a later
+change to them waits for a new approval.
+
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 

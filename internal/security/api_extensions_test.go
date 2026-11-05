@@ -11,10 +11,12 @@ SPDX-License-Identifier: MPL-2.0
 package security_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/security"
@@ -68,5 +70,46 @@ func TestOnlyAnAddOnsOwnNamespacedTypesAreInstalled(t *testing.T) {
 		} else if strings.TrimSpace(err.Error()) == "" {
 			t.Errorf("%s was refused without a word", name)
 		}
+	}
+}
+
+// The digest an approval is pinned to is one the installer reaches as well:
+// it computes it from the profile's YAML with yq and `jq -cjS` at a cluster's
+// initial install (scripts/lib/bootstrap.sh, _initial_install_approvals), and
+// scripts/tests/test-initial-install-approvals.sh holds it to the same file.
+// A change to how either side writes the request changes the digest every
+// initial install's approval names, and the add-on would wait for break-glass.
+func TestTheDigestIsTheOneTheInstallerComputes(t *testing.T) {
+	raw, err := os.ReadFile("testdata/api-extension-profile.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile gentianov1alpha1.ComponentProfile
+	if err := yaml.Unmarshal(raw, &profile); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/api-extension-profile.digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := security.APIExtensionDigest(&profile.Spec.Requires.Privileges.APIExtensions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != strings.TrimSpace(string(want)) {
+		t.Fatalf("digest = %s, the installer's is %s", got, strings.TrimSpace(string(want)))
+	}
+
+	// What a person changes in the definitions changes it; the name and the
+	// reason do not.
+	req := profile.Spec.Requires.Privileges.APIExtensions[0]
+	req.Name, req.Reason = "renamed", "another reason, as long as before"
+	if d, _ := security.APIExtensionDigest(&req); d != got {
+		t.Error("the name or the reason changed the digest")
+	}
+	req.Definitions = append(req.Definitions[:0:0], req.Definitions...)
+	req.Definitions[0] = runtime.RawExtension{Raw: []byte(strings.Replace(string(req.Definitions[0].Raw), `"maximum":365`, `"maximum":366`, 1))}
+	if d, _ := security.APIExtensionDigest(&req); d == got {
+		t.Error("a changed definition kept the digest")
 	}
 }

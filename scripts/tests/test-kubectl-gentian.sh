@@ -478,6 +478,20 @@ fresh
 gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
 refused "a request of no known kind is a usage error"
 
+# An API extension's approval names the definitions it approves: the digest
+# the cluster reports for the pending request.
+D="sha256:$(printf '%064d' 0 | tr 0 a)"
+fresh; reply GET /v1/tenants/platform/apps/status 200 '{"tenant":"platform","apps":[{"profile":"backup-scheduler-ee","name":"backup-scheduler-ee","pendingPrivileges":["apiExtensions/backup-schedules"],"pendingPrivilegeApprovals":[{"privilege":"apiExtensions/backup-schedules","approvedBy":"break-glass","digest":"'"${D}"'"}]}]}'
+reply PUT /v1/tenants/platform/privileges/backup-scheduler-ee/apiExtensions/backup-schedules 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve backup-scheduler-ee apiExtensions/backup-schedules --tenant platform --reason "the add-on's schedules, reviewed"
+is "an API extension's approval names the pending request's digest" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/platform/privileges/backup-scheduler-ee/apiExtensions/backup-schedules { "reason": "the add-on'"'"'s schedules, reviewed", "digest": "'"${D}"'"}'
+has "... and says what it approves" "${OUT}" "${D}"
+fresh; reply GET /v1/tenants/platform/apps/status 200 '{"tenant":"platform","apps":[]}'
+gentian apps approve backup-scheduler-ee apiExtensions/backup-schedules --tenant platform --reason "the add-on's schedules, reviewed"
+refused "an API extension nothing waits for has no definitions to approve"
+is "... and nothing is committed" "$(writes)" ""
+
 # Declining is the approver's no, relayed as an action on the app with the
 # reason; nothing is committed, and the app keeps waiting.
 fresh; reply POST /v1/tenants/team/apps/aluvian-commerce/actions/decline-privilege 202 '{"status":"declined","tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","request":{"declinedBy":"sam@example.com","declinedAt":"2026-10-21T10:00:00Z","declineReason":"no root on shared nodes; use the rootless image"}}'

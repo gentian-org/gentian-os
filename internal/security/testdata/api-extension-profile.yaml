@@ -1,0 +1,147 @@
+# A profile that brings a type of its own, as a catalog publishes one: the
+# digest the installer computes from this file and the one the operator
+# computes from the object must agree.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: backup-scheduler-ee
+  labels:
+    gentianos.io/profile-name: backup-scheduler-ee
+    gentianos.io/profile-edition: ee
+  annotations:
+    # Placed in the platform tenant beside the console; nothing to offer.
+    gentianos.io/store-listed: "false"
+    # Placed where the console is.
+    gentianos.io/requires-usage-statistics: "true"
+spec:
+  classes: [app]
+  # Nobody opens it: the console is where its schedules are seen and set.
+  launch: none
+  trustTier: platform
+  version: "0.1.0"
+  placement:
+    tenants: platform
+  package:
+    chart:
+      repository: "oci://ghcr.io/aluvian-hq/charts"
+      name: "operations-console"
+      version: "0.1.0"
+    extraValues:
+      fullnameOverride: backup-scheduler
+      api:
+        enabled: false
+      web:
+        enabled: false
+      scheduler:
+        enabled: true
+        serviceAccount: backup-scheduler
+      gateway:
+        enabled: false
+      rbac:
+        create: false
+      networkPolicy:
+        create: false
+  requires:
+    privileges:
+      clusterRoles:
+        - name: tenant-exports
+          serviceAccount: backup-scheduler
+          reason: >-
+            Starts each tenant's scheduled export when it is due and removes
+            those beyond what the schedule keeps; reads which tenants there are
+            for a schedule of the cluster's.
+      apiExtensions:
+        - name: backup-schedules
+          group: backup.aluvian.io
+          serviceAccount: backup-scheduler
+          reason: >-
+            BackupSchedule: when a tenant's backups run, how many are kept and
+            where they go, declared by people through the director and read by
+            the scheduler, which writes their status.
+          definitions:
+            - apiVersion: apiextensions.k8s.io/v1
+              kind: CustomResourceDefinition
+              metadata:
+                name: backupschedules.backup.aluvian.io
+              spec:
+                group: backup.aluvian.io
+                scope: Namespaced
+                names:
+                  plural: backupschedules
+                  singular: backupschedule
+                  kind: BackupSchedule
+                  listKind: BackupScheduleList
+                versions:
+                  - name: v1
+                    served: true
+                    storage: true
+                    subresources:
+                      status: {}
+                    additionalPrinterColumns:
+                      - name: Schedule
+                        type: string
+                        jsonPath: .spec.schedule
+                      - name: Keep
+                        type: integer
+                        jsonPath: .spec.keep
+                      - name: Next
+                        type: string
+                        jsonPath: .status.nextRunAt
+                      - name: Tenants
+                        type: integer
+                        jsonPath: .status.tenants
+                    schema:
+                      openAPIV3Schema:
+                        type: object
+                        description: >-
+                          When a tenant's backups run. One in a tenant's namespace is that
+                          tenant's; one in the platform tenant's namespace applies to every
+                          tenant that declares none of its own.
+                        properties:
+                          spec:
+                            type: object
+                            additionalProperties: false
+                            required: [schedule]
+                            properties:
+                              schedule:
+                                type: string
+                                maxLength: 100
+                                description: Five-field cron, UTC.
+                              keep:
+                                type: integer
+                                minimum: 1
+                                maximum: 365
+                                default: 7
+                                description: >-
+                                  How many of the backups that ended well are kept, and,
+                                  counted apart, how many that failed; older ones are removed.
+                              store:
+                                type: string
+                                maxLength: 48
+                                pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                                description: >-
+                                  The name of a store of the tenant's own (the tenant's
+                                  <tenant>.<store>); empty is the cluster's storage.
+                              paused:
+                                type: boolean
+                                description: No new run starts; what is kept is still kept to the count.
+                              apps:
+                                type: array
+                                maxItems: 64
+                                items:
+                                  type: string
+                                  maxLength: 63
+                                description: The apps a run takes; empty is every app of the tenant.
+                          status:
+                            type: object
+                            properties:
+                              nextRunAt:
+                                type: string
+                                nullable: true
+                              lastRunAt:
+                                type: string
+                                nullable: true
+                              tenants:
+                                type: integer
+                              message:
+                                type: string

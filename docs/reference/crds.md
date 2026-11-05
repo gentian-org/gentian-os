@@ -269,6 +269,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges` | []object |  | `Privileges` are the profile's privilege requests that a person granted. |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
+| `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
 | `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
@@ -1723,6 +1724,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.privileges` | []object |  | `Privileges` are the privilege requests a person granted for this tenant's components (AD-5). |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
+| `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
 | `spec.privileges[].install` | string | yes | `Install` names the Component this grant is for, which is the component's object name in the tenant's namespace. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>. |
