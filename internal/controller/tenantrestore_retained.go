@@ -74,7 +74,7 @@ func (r *TenantRestoreReconciler) restoreRetained(
 		return failed(failure)
 	}
 	if !held {
-		return ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore)
+		return resultUnlessError(ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore))
 	}
 	entry = appStatus(&restore.Status.Apps, appName)
 
@@ -122,7 +122,7 @@ func (r *TenantRestoreReconciler) restoreRetained(
 	}
 	if !ready {
 		entry.Message = "making the stores its data is put back into; waiting on " + waiting
-		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 	}
 
 	units, err := r.restoreUnits(ctx, tenant, appName, restore, decryption)
@@ -151,7 +151,7 @@ func (r *TenantRestoreReconciler) restoreRetained(
 			return failed(why)
 		}
 		entry.Message = fmt.Sprintf("restoring retained data; waiting on %s", strings.Join(pending, ", "))
-		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 	}
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""

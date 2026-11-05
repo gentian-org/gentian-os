@@ -207,7 +207,7 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 				res.RequeueAfter = tenantConvergenceRequeue(state.tenant, res.RequeueAfter, time.Now())
 				log.FromContext(ctx).Info("tenant reconcile short-circuit", "stage", step.stage, "tenant", state.tenant.Name, "requeueAfter", res.RequeueAfter)
 			}
-			return res, err
+			return resultUnlessError(res, err)
 		}
 	}
 	// Finalize has a return per data-plane stage; the pacing applies to all of
@@ -219,7 +219,7 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 	if finalRes.RequeueAfter > 0 {
 		finalRes.RequeueAfter = tenantConvergenceRequeue(state.tenant, finalRes.RequeueAfter, time.Now())
 	}
-	return finalRes, finalErr
+	return resultUnlessError(finalRes, finalErr)
 }
 
 // persistTenantStageProgress writes in-memory condition and phase updates when a
@@ -318,7 +318,7 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 	if res, err := r.waitForTenantShell(ctx, tenant, state.nsName); res.RequeueAfter > 0 || err != nil {
 		_ = r.aggregateCrossplaneStatus(ctx, tenant)
 		r.updateBlockedStatus(ctx, tenant)
-		return res, err
+		return resultUnlessError(res, err)
 	}
 	// The grants first: the contract network policies are made from the
 	// AppGrants this writes (tenant_app_grants.go).

@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -19,7 +20,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -112,5 +115,56 @@ func TestPlatformSecurityReconciler_UpdatesExistingConfigMap(t *testing.T) {
 	}
 	if !strings.Contains(cm.Data[gentianov1alpha1.PlatformSecurityConfigMapKey], "new-app") {
 		t.Fatalf("ConfigMap not updated: %q", cm.Data[gentianov1alpha1.PlatformSecurityConfigMapKey])
+	}
+}
+
+// A failed sync is returned alone, so controller-runtime's backoff retries
+// it, and a failure to record it on the policy is returned with it rather
+// than dropped.
+func TestPlatformSecurityReconciler_ReturnsTheSyncAndStatusFailures(t *testing.T) {
+	t.Parallel()
+
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PlatformSecurityPolicyName},
+	}
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	syncErr := errors.New("configmap write refused")
+	statusErr := errors.New("status write refused")
+	refuseConfigMap := func(obj client.Object) error {
+		if _, ok := obj.(*corev1.ConfigMap); ok {
+			return syncErr
+		}
+		return nil
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(psp).WithStatusSubresource(psp).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, w client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if err := refuseConfigMap(obj); err != nil {
+					return err
+				}
+				return w.Create(ctx, obj, opts...)
+			},
+			Update: func(ctx context.Context, w client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if err := refuseConfigMap(obj); err != nil {
+					return err
+				}
+				return w.Update(ctx, obj, opts...)
+			},
+			SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+				return statusErr
+			},
+		}).Build()
+
+	r := &PlatformSecurityPolicyReconciler{Client: c}
+	res, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName},
+	})
+	if !errors.Is(err, syncErr) || !errors.Is(err, statusErr) {
+		t.Fatalf("Reconcile error = %v; want both the sync and the status failure", err)
+	}
+	if res != (reconcile.Result{}) {
+		t.Fatalf("Result = %+v beside an error; controller-runtime would ignore it", res)
 	}
 }

@@ -11,8 +11,15 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -93,5 +100,58 @@ func TestRungAboveRecommendedFlagsUnjustifiedNewCapability(t *testing.T) {
 	}
 	if !rungAboveRecommended(record, surface) {
 		t.Fatal("expected a flag for a supported rung with no recorded justification")
+	}
+}
+
+// TestCustomizationObservedGenerationFollowsAnUnchangedVerdict guards the
+// short-circuit for an unchanged status: a spec edit that leaves the verdict
+// as it was still has to advance observedGeneration, or the record reads as
+// never having been looked at since the edit.
+func TestCustomizationObservedGenerationFollowsAnUnchangedVerdict(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	record := &gentianov1alpha1.Customization{
+		ObjectMeta: metav1.ObjectMeta{Name: "patch-a", Generation: 1},
+		Spec: gentianov1alpha1.CustomizationSpec{
+			Summary: "first",
+			Target:  gentianov1alpha1.CustomizationTarget{Profile: "absent"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(record).
+		WithStatusSubresource(record).Build()
+	r := &CustomizationReconciler{Client: c, Scheme: scheme}
+	ctx := context.Background()
+	req := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(record)}
+
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	got := &gentianov1alpha1.Customization{}
+	if err := c.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.ObservedGeneration != 1 || got.Status.Phase != gentianov1alpha1.CustomizationPhaseInvalid {
+		t.Fatalf("after the first pass: observedGeneration=%d phase=%q", got.Status.ObservedGeneration, got.Status.Phase)
+	}
+
+	// A spec edit that does not change the verdict: the target is still absent.
+	got.Spec.Summary = "second"
+	got.Generation = 2
+	if err := c.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if err := c.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Generation != 2 {
+		t.Fatalf("the test's own edit did not land: generation=%d", got.Generation)
+	}
+	if got.Status.ObservedGeneration != 2 {
+		t.Fatalf("observedGeneration = %d after reconciling generation 2 with the same verdict", got.Status.ObservedGeneration)
 	}
 }
