@@ -53,6 +53,7 @@ spec:
   displayName: 2 nodes
   tier: 10                       # ordering; quantities cannot imply "bigger"
   productSku: gentian-resources-nodes-2
+  units: 2                       # node units, for a backend that sells nodes
   quotas:
     requestsCpu: "4"             # sold — reserved capacity, two node units
     requestsMemory: 8Gi
@@ -61,8 +62,10 @@ spec:
     storage: 100Gi
 ```
 
-The default catalog ships in the operator chart under `usage.plans.catalogue`;
-a cluster selling something else replaces it wholesale in its own values.
+The catalog is the cluster's: one file per plan under
+`clusters/<cluster>/resource-plans/` in the deployments repository, which the
+`gentian-resource-plans` Application syncs (§2.4). The operator chart's
+`usage.plans.catalogue` is where it starts.
 
 ### 2.2 What a plan sells: reserved capacity, not burst
 
@@ -144,6 +147,44 @@ to compare something total. Tiers need not be contiguous; gaps let a plan be
 inserted later without renumbering ones already sold.
 
 ---
+
+### 2.4 Changing the catalog
+
+The director writes the plans for whoever may configure the cluster
+(`can_configure`), each change a commit naming them:
+
+```
+GET    /v1/clusters/{c}/resource-plans          can_audit      the plans, each with the tenants on it
+PUT    /v1/clusters/{c}/resource-plans/{name}   can_configure  add or change one
+DELETE /v1/clusters/{c}/resource-plans/{name}   can_configure  remove one
+```
+
+What a change has to keep:
+
+- **A plan's quotas do not change while a tenant is on it.** Each tenant on
+  it holds a copy of the quantities in its `resource-plan.yaml` (§3.2), so
+  the edit would leave them `drifted` on a ceiling the plan no longer
+  describes. A different ceiling is a new plan, and the tenants move to it.
+  Who is on which plan is the operator's answer; a change it cannot answer
+  for is refused with 503 rather than made blind.
+- **`retired: true`** withholds a plan from every new choice and keeps it
+  for the tenants on it. Name, description, tier, SKU, units and retirement
+  change at any time.
+- **One default, one tier per plan.** Making a plan the default takes the
+  flag from the one that had it, in the same commit; the default is neither
+  retired nor removed.
+- **A plan is removed only when no tenant is on it.**
+
+`units` is how many node units a plan is. Nothing in the platform reads it:
+a commerce backend that sells a number of nodes moves a tenant to the plan
+whose units are the number bought.
+
+The first catalog comes from the deployment's values: the director writes
+`usage.plans.catalogue` into the directory once, while it holds no plan
+(`DIRECTOR_RESOURCE_PLANS_SEED`), and never again. Step 0 scaffolds the
+directory with an empty kustomization so the Application has a path from the
+first install. On a cluster without a director the chart renders the plans
+from the same values instead.
 
 ## 3. The write path
 
@@ -466,8 +507,8 @@ Operator chart (`charts/gentian-os/values.yaml`):
 | `usage.sampler.interval` | `15m` | How often every tenant is sampled |
 | `usage.sampler.retention` | `9600h` (400d) | Sample retention; plan events are never pruned |
 | `usage.metricsServer.enabled` | `false` | Add the live-consumption series |
-| `usage.plans.enabled` | `true` | Ship the plan catalog |
-| `usage.plans.catalogue` | five node tiers | The priced plans themselves |
+| `usage.plans.enabled` | `true` | Start the cluster with a catalog |
+| `usage.plans.catalogue` | five node tiers | The first catalog: written into git once by the director, or rendered by the chart where no director runs |
 
 Director and usher (the same chart):
 
@@ -495,6 +536,11 @@ kubectl gentian resources report --tenant corp --from 2026-01-01T00:00:00Z --to 
 
 # The ceiling on what a tenant may choose for itself
 kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
+
+# The cluster's plans, with the tenants on each; add or change one, remove one
+kubectl gentian resources catalog
+kubectl gentian resources catalog set nodes-3 --file nodes-3.json
+kubectl gentian resources catalog remove nodes-3
 ```
 
 **Sampler not recording:** it writes to each tenant's `{tenant}_shell` database

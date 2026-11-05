@@ -1571,8 +1571,10 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
 | `spec.quotas.requestsMemory` | int-or-string |  | `RequestsMemory` caps the sum of container memory **requests** in the namespace — reserved capacity, priced, as RequestsCPU is. |
 | `spec.quotas.storage` | int-or-string |  | `Storage` is the total storage quota (PVCs + S3 buckets). |
+| `spec.retired` | boolean |  | `Retired` withholds the plan from every new choice and keeps it for the tenants already on it. |
 | `spec.selfServiceDisabled` | boolean |  | `SelfServiceDisabled` withholds the plan from tenant administrators. |
 | `spec.tier` | integer (int32) | yes | `Tier` orders plans from smallest to largest. |
+| `spec.units` | integer (int32) |  | `Units` is how many node units the plan is, for a commerce backend that sells a number of nodes rather than a named plan: it moves a tenant to the plan whose… |
 | `status` | object |  | ResourcePlanStatus reports observed plan state. |
 
 ## 17. Tenant

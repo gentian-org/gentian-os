@@ -96,6 +96,8 @@ type Repository interface {
 	ClusterModels(ctx context.Context) (gitops.ModelSettings, error)
 	SetClusterModels(ctx context.Context, want gitops.ModelSettings, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
+	PlanDefinitions(ctx context.Context) ([]gitops.PlanDefinition, error)
+	WritePlans(ctx context.Context, message string, meta gitops.Meta, writes ...gitops.PlanWrite) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
@@ -553,6 +555,12 @@ func (s *Server) routes() {
 		// never this route.
 		s.guarded("GET /v1/clusters/{c}/branding", "can_audit", s.clusterObject, s.clusterBranding)
 		s.guarded("PUT /v1/clusters/{c}/branding", "can_configure", s.clusterObject, s.setClusterBranding)
+		// The cluster's resource plans (resource_plans.go): read like a
+		// setting; written, and removed, by whoever may configure the
+		// cluster, which model v1 names as plans' relation.
+		s.guarded("GET /v1/clusters/{c}/resource-plans", "can_audit", s.clusterObject, s.clusterResourcePlans)
+		s.guarded("PUT /v1/clusters/{c}/resource-plans/{name}", "can_configure", s.clusterObject, s.setClusterResourcePlan)
+		s.guarded("DELETE /v1/clusters/{c}/resource-plans/{name}", "can_configure", s.clusterObject, s.removeClusterResourcePlan)
 		// The models the gateway offers, which are the claim's and nobody
 		// else's: read like a setting, written like one, and under
 		// /v1/clusters only, so that no relation on a tenant reaches them --
@@ -2282,6 +2290,10 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 	case errors.Is(err, gitops.ErrInvalidBackupPolicy):
 		s.fail(w, r, http.StatusBadRequest, err.Error())
+	case errors.Is(err, gitops.ErrInvalidPlan):
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+	case errors.Is(err, gitops.ErrPlanNotFound):
+		s.fail(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, gitops.ErrNoPushCredential):
 		// 503, not 500: nothing is broken and the request was fine. The
 		// cluster has not been given a credential to write with, which is

@@ -151,6 +151,11 @@ func run(log *slog.Logger) error {
 	if raw := os.Getenv("DIRECTOR_PLATFORM_SECURITY_SEED"); raw != "" {
 		go seedPlatformSecurity(repo, raw, log)
 	}
+	// The cluster's resource plans, started from the deployment's values
+	// while git holds none (gitops.SeedPlans), the same way.
+	if raw := os.Getenv("DIRECTOR_RESOURCE_PLANS_SEED"); raw != "" {
+		go seedResourcePlans(repo, raw, log)
+	}
 
 	// No cluster-role or tenant projection here.
 	//
@@ -365,6 +370,55 @@ func run(log *slog.Logger) error {
 		log.Warn("the director stopped while a watcher was still writing to the repository")
 	}
 	return nil
+}
+
+// resourcePlanSeed is one entry of DIRECTOR_RESOURCE_PLANS_SEED: a plan of
+// the operator chart's usage.plans.catalogue, its name added. Quotas are read
+// as whatever YAML made of them: maxPods arrives as a number.
+type resourcePlanSeed struct {
+	gitops.PlanDefinition
+	Quotas map[string]any `json:"quotas"`
+}
+
+// seedResourcePlans writes the deployment's plans into git once, retrying
+// for a while as seedPlatformSecurity does.
+func seedResourcePlans(repo *gitops.GitOps, raw string, log *slog.Logger) {
+	var seed []resourcePlanSeed
+	if err := json.Unmarshal([]byte(raw), &seed); err != nil {
+		log.Error("the deployment's usage.plans.catalogue values are not readable; the resource plans are not started from them",
+			"error", err.Error())
+		return
+	}
+	plans := make([]gitops.PlanDefinition, 0, len(seed))
+	for _, s := range seed {
+		p := s.PlanDefinition
+		p.Quotas = map[string]string{}
+		for k, v := range s.Quotas {
+			if v != nil {
+				p.Quotas[k] = fmt.Sprint(v)
+			}
+		}
+		plans = append(plans, p)
+	}
+	for attempt := 1; attempt <= 30; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		res, err := repo.SeedPlans(ctx, plans)
+		cancel()
+		if err == nil {
+			if res.Changed {
+				log.Info("the cluster's resource plans were started from the deployment's values", "plans", len(plans))
+			}
+			return
+		}
+		if errors.Is(err, gitops.ErrInvalidPlan) || errors.Is(err, gitops.ErrInvalidName) {
+			log.Error("the deployment's usage.plans.catalogue values are refused; the resource plans are not started from them",
+				"error", err.Error())
+			return
+		}
+		log.Warn("the cluster's resource plans could not be started yet; asked again in a minute",
+			"attempt", attempt, "error", err.Error())
+		time.Sleep(time.Minute)
+	}
 }
 
 // platformSecuritySeed is DIRECTOR_PLATFORM_SECURITY_SEED: the operator
