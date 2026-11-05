@@ -33,9 +33,9 @@ sits at column 0, so the next one is a boundary the text itself gives us.
 
 A name built at runtime -- `"${verb}_thing"`, or a function extracted with sed
 and eval'd. Two of those exist here and both name their functions literally,
-so the scan finds them. `trap` handlers and `export -f` are seeded explicitly,
-because the shell calls those and no caller appears anywhere: the EXIT trap in
-portforward.sh read as dead until that was added.
+so the scan finds them. `trap` handlers, `gentian_on_exit` commands and
+`export -f` are seeded explicitly, because the shell calls those and no caller
+appears anywhere: the EXIT handler in portforward.sh reads as dead without it.
 
 If you add dispatch this cannot follow, seed it in ALWAYS_REACHABLE with a
 comment saying why, rather than deleting the check.
@@ -60,6 +60,7 @@ DEF = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)\(\)\s*\{", re.M)
 HEREDOC = re.compile(r"""<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1""")
 SUBST = re.compile(r"\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)")
 TRAP = re.compile(r"""^\s*trap\s+['"]?([a-zA-Z_][a-zA-Z0-9_]*)""", re.M)
+ON_EXIT = re.compile(r"""^\s*gentian_on_exit\s+['"]?([a-zA-Z_][a-zA-Z0-9_]*)""", re.M)
 EXPORTF = re.compile(r"^\s*export\s+-f\s+([a-zA-Z_][a-zA-Z0-9_]*)", re.M)
 
 RED, GREEN, YELLOW, DIM, NC = "\033[0;31m", "\033[0;32m", "\033[1;33m", "\033[2m", "\033[0m"
@@ -114,7 +115,7 @@ def main() -> int:
     stack = list(ALWAYS_REACHABLE & names)
     for f, s in text.items():
         stack.extend(refs(toplevel[f] if f.startswith(LIB) else s))
-        for pattern in (TRAP, EXPORTF):
+        for pattern in (TRAP, ON_EXIT, EXPORTF):
             stack.extend(m.group(1) for m in pattern.finditer(s) if m.group(1) in names)
 
     reach: set[str] = set()

@@ -700,22 +700,19 @@ main() {
             ;;
         reverse)
             prepare_run
-            if [[ "${GENTIAN_PURGE}" == "1" ]]; then
-                # Confirm before anything is touched, not between the reverse
-                # pass and the volume deletion — a teardown stopped half way is
-                # the state this is least able to reason about.
-                if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
-                    # Nothing is purged, so there is nothing to confirm -- and
-                    # the confirmation takes the purge lock, which is a file.
+            # Lock and confirm before anything is touched, not between the
+            # reverse pass and the volume deletion — a teardown stopped half
+            # way is the state this is least able to reason about.
+            if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+                # Nothing is removed, so there is nothing to confirm -- and the
+                # teardown lock is a file.
+                if [[ "${GENTIAN_PURGE}" == "1" ]]; then
                     info "Dry run: the purge is not confirmed, because it is not carried out."
-                elif [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
-                    [[ "${GENTIAN_PURGE_CONFIRM}" == "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || {
-                        error "GENTIAN_PURGE_CONFIRM does not match GENTIAN_DEPLOYMENTS_CLUSTER_ID."
-                        exit 1
-                    }
-                else
-                    purge_confirm || exit 1
                 fi
+            else
+                teardown_start || exit 1
+            fi
+            if [[ "${GENTIAN_PURGE}" == "1" ]]; then
                 warn "Purging — this removes Gentian OS and its data from the current cluster."
                 if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
                     info "Dry run: volumes and local state would be removed; nothing is."

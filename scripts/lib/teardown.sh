@@ -556,27 +556,49 @@ _purge_strip_crossplane_finalizers() {
 }
 
 
-# _purge_guard_single_instance — refuse a second concurrent purge.
+# teardown_start — take the teardown lock, then confirm a purge.
+#
+# What install.sh runs before an uninstall or a purge touches anything. Every
+# teardown takes the lock, however a purge is confirmed: at the prompt or by
+# GENTIAN_PURGE_CONFIRM. A dry run calls neither, because the lock is a file.
+teardown_start() {
+    teardown_guard_single_instance || return 1
+    if [[ "${GENTIAN_PURGE:-0}" == "1" ]]; then
+        purge_confirm || return 1
+    fi
+    return 0
+}
+
+# teardown_guard_single_instance — refuse a second concurrent teardown.
 #
 # Two purges ran against this cluster at once and nothing objected; both then
 # blocked on the same `kubectl delete application`, each making the other's
-# wait longer. Nothing about the teardown is safe to interleave with itself.
-_purge_guard_single_instance() {
-    local lock="${TMPDIR:-/tmp}/gentian-purge-${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-cluster}.lock"
+# wait longer. Nothing about the teardown is safe to interleave with itself,
+# and an uninstall is the same reverse pass as a purge.
+#
+# The lock file is created with noclobber, so two runs starting together
+# cannot both see it absent and both take it. One left by a process that is
+# gone is taken over. It is removed on exit through gentian_on_exit, next to
+# the port-forward cleanup.
+teardown_guard_single_instance() {
+    local lock="${TMPDIR:-/tmp}/gentian-teardown-${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-cluster}.lock"
     local holder
-    if [[ -e "${lock}" ]]; then
+    if ! (set -C; echo "$$" > "${lock}") 2>/dev/null; then
         holder=$(cat "${lock}" 2>/dev/null || echo "")
         if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
-            error "A purge is already running for this cluster (pid ${holder})."
+            error "A teardown is already running for this cluster (pid ${holder})."
             error "  Two teardowns interleaved is not a state this can reason about."
             error "  Wait for it, or remove ${lock} if that process is gone."
             return 1
         fi
-        info "Stale purge lock from pid ${holder:-unknown}; taking it over."
+        info "Stale teardown lock from pid ${holder:-unknown}; taking it over."
+        rm -f "${lock}"
+        if ! (set -C; echo "$$" > "${lock}") 2>/dev/null; then
+            error "Could not take the teardown lock ${lock}; another run took it first."
+            return 1
+        fi
     fi
-    echo "$$" > "${lock}" 2>/dev/null || true
-    # shellcheck disable=SC2064
-    trap "rm -f '${lock}'" EXIT
+    gentian_on_exit "rm -f '${lock}'"
     return 0
 }
 
@@ -921,8 +943,17 @@ purge_report_remaining() {
 # password then produces different credentials, and a rebuild is a migration
 # rather than a restore. `--export-recovery-kit` is what closes that gap, so
 # whether one exists decides how bad this is.
+#
+# GENTIAN_PURGE_CONFIRM set to the cluster id answers it without a prompt, for
+# an unattended run; set to anything else, it refuses.
 purge_confirm() {
-    _purge_guard_single_instance || return 1
+    if [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
+        if [[ "${GENTIAN_PURGE_CONFIRM}" != "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
+            error "GENTIAN_PURGE_CONFIRM does not match GENTIAN_DEPLOYMENTS_CLUSTER_ID."
+            return 1
+        fi
+        return 0
+    fi
     echo ""
     warn "PURGE removes what an uninstall keeps:"
     warn "  • OpenBao's storage — every credential, and the derivation salt"

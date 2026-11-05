@@ -124,3 +124,33 @@ openbao_cli_checksums_asset() {
         *) return 1 ;;
     esac
 }
+
+# gentian_on_exit <command> — run <command> when the shell exits, alongside
+# every other command registered the same way.
+#
+# A shell has one EXIT trap, and `trap ... EXIT` replaces whatever was there.
+# The port-forward cleanup and the teardown lock both need to run on exit, so
+# each registers here instead of setting the trap itself, and one dispatcher
+# runs them all in the order they were registered.
+#
+# A command that fails does not stop the ones after it. The registry is a
+# newline-separated string, not an array, so it reads the same on bash 3.2.
+# Traps are reset in subshells, so a command substitution exiting runs none of
+# them; register from the shell that owns what the command cleans up.
+_GENTIAN_EXIT_HOOKS="${_GENTIAN_EXIT_HOOKS:-}"
+gentian_on_exit() {
+    _GENTIAN_EXIT_HOOKS="${_GENTIAN_EXIT_HOOKS}${1}"$'\n'
+    trap _gentian_run_exit_hooks EXIT
+}
+
+# No `local`: this runs as the EXIT trap, where a shell unwinding from an ERR
+# trap no longer counts as inside a function and rejects it. The loop variable
+# is namespaced instead.
+_gentian_run_exit_hooks() {
+    while IFS= read -r _gentian_exit_hook; do
+        [[ -n "${_gentian_exit_hook}" ]] || continue
+        eval "${_gentian_exit_hook}" || true
+    done <<< "${_GENTIAN_EXIT_HOOKS}"
+    unset _gentian_exit_hook
+    return 0
+}
