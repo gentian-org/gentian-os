@@ -2,13 +2,19 @@
 # step: B-06-crossplane-definitions
 # phase: secrets
 # requires: B-05-crossplane-providers
-# provides: the XRDs and Compositions of crossplane/, established, from this checkout
+# provides: the XRDs and Compositions of crossplane/, established, from this checkout, until the gentian-definitions Application delivers them
 # mutates: CompositeResourceDefinitions and Compositions (cluster-scoped)
 # pins: logForwarding monitoring
 
 # Applied from the checkout, before Argo CD owns them: C-01 needs the Cluster
 # XRD established to apply the claim at all, and Argo CD is not yet syncing
 # this repository at that point in the run.
+#
+# Once the gentian-definitions Application exists (kernel/appsets/raw/
+# 05-definitions.yaml, created in C-02) it delivers them at the revision the
+# cluster follows, and this step is satisfied: applied again from a checkout
+# that is behind, it would put the old definitions back until Argo CD's next
+# sync.
 
 # The files hold several documents (the XRD and the ClusterRoles it needs);
 # name only the XRDs and Compositions.
@@ -46,8 +52,11 @@ _v5_apply_composition() {
     _kubectl_retry apply -f "${annotated}"
 }
 
+_v5_definitions_app() { echo "gentian-definitions-${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; }
+
 check() {
     local f name
+    kubectl get application "$(_v5_definitions_app)" -n "$(ns_kernel gitops)" >/dev/null 2>&1 && return 0
     for f in "${SCRIPT_DIR}"/crossplane/xrds/*.yaml; do
         for name in $(_v5_xrd_names "${f}"); do
             [[ "$(kubectl get xrd "${name}" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)" == "True" ]] || return 1

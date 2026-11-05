@@ -66,7 +66,8 @@ const (
 	// sync that also rolls the operator and the director.
 	SourceChart = "chart"
 	// SourceXRD is a CRD Crossplane generates from an XRD in crossplane/xrds:
-	// applied only by installer step B-06.
+	// applied by the gentian-definitions Application in Argo CD, and on a
+	// first install by installer step B-06.
 	SourceXRD = "xrd"
 )
 
@@ -75,7 +76,8 @@ const (
 // director's refusal alike.
 const (
 	RemedyChart = "sync the gentian-os Application in Argo CD at the revision this software was built from"
-	RemedyXRD   = "re-run installer step B-06 from a current checkout: ./install.sh --only B-06"
+	RemedyXRD   = "sync the gentian-definitions Application in Argo CD at the revision this software was built from; " +
+		"on a cluster that has none yet, run installer step B-06 from a current checkout: ./install.sh --only B-06"
 )
 
 // Definition is one CustomResourceDefinition the cluster is expected to

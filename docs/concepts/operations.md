@@ -316,12 +316,12 @@ reach it by different roads:
 | Definition | In the repository | Reaches a cluster by |
 |---|---|---|
 | The operator's own CRDs (`Tenant`, `Component`, `ComponentProfile`, …) | `charts/gentian-os/crds/` | The Argo CD sync of the `gentian-os` Application — the same sync that rolls the operator and the director, CRDs first. |
-| The kinds Crossplane generates (`App`/`XApp`, `XTenant`, `Cluster`, `Repository`, …) and the Compositions | `crossplane/xrds/`, `crossplane/compositions/` | Installer step B-06 only, from the checkout on the install host: `./install.sh --only B-06`. |
+| The kinds Crossplane generates (`App`/`XApp`, `XTenant`, `Cluster`, `Repository`, …) and the Compositions | `crossplane/xrds/`, `crossplane/compositions/` | The `gentian-definitions` Application in Argo CD, at the revision the cluster follows. On a first install, installer step B-06 applies them from the checkout before Argo CD syncs this repository: `./install.sh --only B-06`. |
 
 An API server prunes what it does not know. When a definition on the cluster is
 older than the software — Argo CD following a branch that moved back under a
 pinned image, a plain `helm upgrade` (which never touches `crds/`), a new image
-rolled without re-running B-06 — a field the software writes is dropped on
+rolled before the `gentian-definitions` Application synced — a field the software writes is dropped on
 write and nothing fails. So both binaries carry the definitions they were built
 with (`internal/schemacheck`, copied by `make manifests`), and the operator
 compares them with what the cluster serves: at start, then every five minutes,
@@ -351,8 +351,9 @@ no other.
   the usher's identities are admitted to it.
 
 **What to do.** For a chart CRD, sync the `gentian-os` Application at the
-revision the image was built from. For a Crossplane kind, re-run B-06 from a
-current checkout. Nothing has to be restarted: the next check lets the held
+revision the image was built from. For a Crossplane kind, sync the
+`gentian-definitions` Application the same way; on a cluster that has none
+yet, run B-06 from a current checkout. Nothing has to be restarted: the next check lets the held
 reconcilers go, the condition comes off, and the director serves the writes it
 refused.
 

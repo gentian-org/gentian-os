@@ -1,0 +1,69 @@
+---
+# The Crossplane definitions: the XRDs of crossplane/xrds (with the
+# ClusterRoles they bring) and the Compositions of crossplane/compositions,
+# at the revision the cluster follows.
+#
+# Installer step B-06 applies them once, from the checkout, because the
+# Cluster claim (C-01) needs its XRD established before Argo CD syncs this
+# repository. From then on they arrive here, with the operator and the
+# director that read them, so an upgrade never leaves a cluster on the old
+# definitions until someone re-runs B-06 (the operator holds work on a
+# definition that is behind: internal/schemacheck).
+#
+# Wave 5, before the data plane (8) and the claims (11) that compose
+# against them.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-definitions
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  # Deleting this ApplicationSet must not delete the XRDs: an XRD deleted
+  # takes every composite of its kind with it.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - list:
+      elements:
+      - env: dev
+  template:
+    metadata:
+      name: 'gentian-definitions-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "5"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: crossplane
+        directory:
+          recurse: true
+          # The definitions only: crossplane/ also holds the render tests'
+          # fixtures, the functions and the providers.
+          include: '{xrds/*.yaml,compositions/*.yaml}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ns.provisioning.placeholder
+      syncPolicy:
+        automated:
+          # No prune, for the same reason as above: a file removed or a
+          # path mistyped would delete an XRD and cascade through every
+          # composite of its kind. A definition is retired deliberately.
+          prune: false
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 5m
+        # Client-side apply, as B-06 applies them: the two then share one
+        # last-applied record, and a field removed from a file is removed
+        # from the object whichever of the two applied it last.
+        syncOptions:
+        - CreateNamespace=false
