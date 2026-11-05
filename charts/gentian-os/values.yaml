@@ -421,9 +421,6 @@ leaderElectionNamespace: ""
 # Log level: debug, info, warn, error
 logLevel: info
 
-# Watched namespaces (empty = cluster-wide)
-watchNamespaces: []
-
 # Which edge ingress this cluster runs — a key in kernel/platforms.yaml's
 # edgeIngress table ("cf-tunnel", "none"). Empty follows networkMode below,
 # which is what every existing cluster relies on.
