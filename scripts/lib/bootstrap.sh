@@ -3021,8 +3021,8 @@ _scaffold_resource_plans() {
 # GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
 # of a profile in a catalog (<catalogue>/profiles/<name>.yaml), optionally
 # pinned with @sha256:<digest>. The default is the store's extra services from
-# its catalogue: the Operations Console, the App Store app and the
-# Aluvian Center. --no-extra-services leaves those out, and takes them
+# its catalogue: the Operations Console, the operations sync, the App Store
+# app and the Aluvian Center. --no-extra-services leaves those out, and takes them
 # away again if an earlier run placed them; --disable-api-extensions writes
 # none.
 #
