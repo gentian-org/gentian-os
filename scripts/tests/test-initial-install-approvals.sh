@@ -67,6 +67,8 @@ echo ""
 
 CO="${SANDBOX}/co"
 DIR="${CO}/clusters/${CLUSTER}/tenants/platform"
+# Expanded by the shell that runs it, where the checkout is set.
+# shellcheck disable=SC2016
 APPROVE='_initial_install_approvals '"${CLUSTER}"' "${GENTIAN_DEPLOYMENTS_PATH}/clusters/'"${CLUSTER}"'/tenants/platform"'
 
 new_checkout "${CO}" placed
@@ -99,7 +101,9 @@ else
 fi
 
 for case in "not placed" "--disable-api-extensions" "--no-extra-services"; do
-    new_checkout "${CO}" $([[ "${case}" == "not placed" ]] || echo placed)
+    placed=placed
+    [[ "${case}" != "not placed" ]] || placed=""
+    new_checkout "${CO}" "${placed}"
     case "${case}" in
         "not placed") run "${CO}" -- "${APPROVE}" >/dev/null ;;
         "--disable-api-extensions") run "${CO}" GENTIAN_DISABLE_API_EXTENSIONS=1 -- "${APPROVE}" >/dev/null ;;
@@ -125,6 +129,8 @@ fi
 
 # Structure: only the run that wrote the Cluster claim approves.
 body="$(awk '/^scaffold_cluster_deployment\(\)/,/^}/' scripts/lib/bootstrap.sh)"
+# The pattern is the scaffold's source text, not an expansion.
+# shellcheck disable=SC2016
 if grep -q 'initial_install=1' <<< "$(grep -A2 'Scaffolded ${kernel_dir}/claims/cluster.yaml' <<< "${body}")" \
     && grep -q 'if (( initial_install )); then' <<< "${body}" \
     && [[ "$(grep -c '_initial_install_approvals "' <<< "${body}")" == "1" ]] \
