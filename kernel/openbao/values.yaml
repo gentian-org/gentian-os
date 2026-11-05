@@ -1,11 +1,13 @@
 # OpenBao Helm values
 # Chart: https://openbao.github.io/openbao-helm
-# Single-node Raft for dev; scale to ha.replicas=3 for production.
+# One node, in standalone mode. The storage backend is not decided here: the
+# server configuration below is replaced whole by the one
+# kernel/bootstrap/chart/templates/openbao.yaml renders, which holds Raft or
+# file storage as the Cluster claim's openbao.storage says.
 
 server:
-  # Use Raft integrated storage (no external Consul needed)
   ha:
-    enabled: false   # set to true + replicas: 3 for production HA
+    enabled: false
 
   dataStorage:
     enabled: true
@@ -31,6 +33,12 @@ server:
   ui:
     enabled: true
 
+  # The standalone config, for a render of this file alone. What a cluster runs
+  # is the one kernel/bootstrap/chart/templates/openbao.yaml merges over it:
+  # the same listener and seal, the seal's address from the layout, and the
+  # storage backend from the claim (raft, or file for a cluster not yet
+  # migrated).
+  #
   # Override the default standalone config to add the transit auto-unseal stanza.
   # The token is injected at runtime from the openbao-transit-token k8s Secret
   # (created by scripts/bootstrap/init-openbao-transit.sh) using $AUTOUNSEAL_TOKEN env var.

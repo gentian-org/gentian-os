@@ -1065,7 +1065,7 @@ load_deployments_cluster_settings() {
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES DNS_RECORDS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
-             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
+             LETSENCRYPT_EMAIL KV_MOUNT OPENBAO_STORAGE ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
              MAIL_EGRESS_HOST; do
         [[ -n "${!v:-}" ]] || continue
@@ -1095,6 +1095,11 @@ load_deployments_cluster_settings() {
         # setting, free to disagree with no precedence between them to appeal to.
         claim_setting LETSENCRYPT_EMAIL certManager.letsencryptEmail "${claim_file}"
         claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
+        # The vault's storage backend, raft or file (B-01). The XRD's default
+        # is file, so a claim written before the field keeps the backend its
+        # vault's data is in; openbao_storage_for_render refuses a switch the
+        # volume was not migrated for.
+        claim_setting OPENBAO_STORAGE   openbao.storage              "${claim_file}"
         # Which Let's Encrypt endpoint. Read here rather than from the stage
         # profile that deployment.md points at, because the issuers are applied
         # at A-09 and a stage profile is Helm values Argo CD renders later —

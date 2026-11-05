@@ -880,3 +880,67 @@ YAML
     fi
     success "The vault's TLS is signed by openbao-ca, and its clients trust that CA."
 }
+
+# openbao_storage_for_render — the vault's storage backend B-01 renders: raft
+# or file (kernel/bootstrap/chart, openbao.storage).
+#
+# What the claim says (openbao.storage; a new claim says raft, one that says
+# nothing is file), unless that would start the running vault on a backend
+# its volume holds no data for. Raft started on a volume of file data comes up
+# uninitialized: an empty vault, and every service that reads it failing. So a
+# vault that exists, is rendered with the other backend today, and whose
+# volume does not say it was moved (the annotation gentianos.io/openbao-storage
+# the migration sets, docs/guides/recovery.md §5) keeps the backend it has, and
+# this says why on stderr; stdout is the rendered YAML.
+#
+# Read only. The claim is read here rather than only by
+# load_deployments_cluster_settings, because on a new cluster step 0 writes
+# the claim after the settings were loaded.
+openbao_storage_for_render() {
+    local want claim live annotated ns gitops
+    if [[ -z "${OPENBAO_STORAGE:-}" ]]; then
+        claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}/kernel/claims/cluster.yaml"
+        if [[ -r "${claim}" ]]; then
+            claim_setting OPENBAO_STORAGE openbao.storage "${claim}"
+        fi
+    fi
+    want="${OPENBAO_STORAGE:-file}"
+    case "${want}" in
+        raft|file) ;;
+        *)
+            warn "openbao.storage on the claim is \"${want}\"; it is raft or file. Rendering file." >&2
+            want=file ;;
+    esac
+    ns="$(ns_kernel secrets)"
+    gitops="$(ns_kernel gitops)"
+    # No vault volume yet: a new cluster, which starts on what the claim says.
+    if ! kubectl get pvc data-openbao-0 -n "${ns}" >/dev/null 2>&1; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    live="$(kubectl get application openbao -n "${gitops}" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.server.standalone.config}' 2>/dev/null || true)"
+    if [[ "${live}" == *'storage "raft"'* ]]; then
+        live=raft
+    elif [[ "${live}" == *'storage "file"'* ]]; then
+        live=file
+    else
+        printf '%s' "${want}"
+        return 0
+    fi
+    if [[ "${live}" == "${want}" ]]; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    annotated="$(kubectl get pvc data-openbao-0 -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-storage}' 2>/dev/null || true)"
+    if [[ "${annotated}" == "${want}" ]]; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    warn "The claim asks for OpenBao on ${want} storage; the vault runs on ${live}, and its" >&2
+    warn "  volume data-openbao-0 does not say its data was moved (gentianos.io/openbao-storage)." >&2
+    warn "  Keeping ${live}: ${want} on this volume would start an empty vault." >&2
+    warn "  The move is docs/guides/recovery.md §5." >&2
+    printf '%s' "${live}"
+}

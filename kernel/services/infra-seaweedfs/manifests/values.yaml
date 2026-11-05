@@ -46,3 +46,6 @@ networkPolicy:
     # PostgreSQL beside that server.
     mail: system-mail
     data: kernel-data
+    # The vault's daily snapshot writes its ciphertext here from the vault's
+    # namespace (charts/gentian-os/templates/openbao-snapshots.yaml).
+    secrets: kernel-secrets

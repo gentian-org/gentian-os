@@ -509,6 +509,46 @@ else
     echo "    ${YELLOW}SKIP${NC} — ${OPERATOR_POLICY_FILE} not found"
 fi
 
+# ── openbao-snapshot ─────────────────────────────────────────────────────────
+# The daily snapshot's identity (docs/guides/recovery.md §4): it reads a
+# snapshot and nothing else. Restoring one is snapshot-force, a person's act
+# with a root token, and a snapshot job that could do it could replace the
+# whole vault.
+body="$(policy_from_golden openbao-snapshot)"
+if [[ -z "${body}" || "${body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} openbao-snapshot — not present in ${GOLDEN}"
+    fail=$((fail + 1))
+else
+    printf '%s\n' "${body}" > "${WORKDIR}/openbao-snapshot.hcl"
+    bao policy write openbao-snapshot "${WORKDIR}/openbao-snapshot.hcl" >/dev/null 2>&1
+    SNAPSHOT_TOKEN="$(bao token create -policy=openbao-snapshot -no-default-policy -ttl=5m -field=token 2>/dev/null)"
+    # Asked by root (sys/capabilities): a token without the default policy
+    # may not ask about itself, which is what the role issues.
+    expect_of() {
+        local token="$1" label="$2" path="$3" want="$4" got
+        got="$(bao token capabilities "${token}" "${path}" 2>&1 | tr ',' '\n' | tr -d ' ' | sort | tr '\n' ',')"
+        if [[ "${got}" == "$(printf '%s' "${want}" | tr ',' '\n' | sort | tr '\n' ',')" ]]; then
+            printf '    %s✓%s %-58s %s\n' "${GREEN}" "${NC}" "${label}" "${DIM}${want}${NC}"
+            pass=$((pass + 1))
+        else
+            printf '    %s✗%s %-58s want [%s] got [%s]\n' "${RED}" "${NC}" "${label}" "${want}" "${got}"
+            fail=$((fail + 1))
+        fi
+    }
+    echo ""
+    echo "  openbao-snapshot ${DIM}(the daily snapshot's CronJob, no default policy)${NC}"
+    expect_of "${SNAPSHOT_TOKEN}" "allowed reading a Raft snapshot" \
+        "sys/storage/raft/snapshot" "read"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED restoring one" \
+        "sys/storage/raft/snapshot-force" "deny"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED the Raft configuration" \
+        "sys/storage/raft/configuration" "deny"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED kernel data" \
+        "secret/data/gentian-os/kernel/backup/identity" "deny"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED minting tokens" \
+        "auth/token/create" "deny"
+fi
+
 echo ""
 if [[ ${fail} -gt 0 ]]; then
     echo "${RED}${fail} assertion(s) failed, ${pass} passed.${NC}"

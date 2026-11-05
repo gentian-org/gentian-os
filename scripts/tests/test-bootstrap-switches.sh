@@ -184,6 +184,21 @@ check "dnsZones: the claim's list reads as one comma-joined value" \
 check "dnsZones: a claim that lists none leaves DNS_ZONES unset" \
     "$(has "$(zones_claim)" '^DNS_ZONES=unset$' && echo 1 || echo 0)"
 
+# The vault's storage (openbao.storage). Unset is file: a cluster rendered by
+# an installer that passes nothing keeps the backend its data is in. Raft
+# names the pod as its node; anything else is refused at render.
+storage_default="$(render false false false)"
+check "openbao.storage unset: the vault is rendered on file storage" \
+    "$(has "${storage_default}" '^              storage "file" \{$' && ! has "${storage_default}" 'storage "raft"' && echo 1 || echo 0)"
+storage_raft="$(render false false false --set-string openbao.storage=raft)"
+check "openbao.storage=raft: Raft at /openbao/data, the pod's name as its node id" \
+    "$(has "${storage_raft}" '^              storage "raft" \{$' && has "${storage_raft}" 'node_id = "openbao-0"' &&
+        ! has "${storage_raft}" 'storage "file"' && echo 1 || echo 0)"
+check "openbao.storage=raft keeps the transit seal" \
+    "$(has "${storage_raft}" 'seal "transit"' && echo 1 || echo 0)"
+check "openbao.storage that is neither is refused" \
+    "$(has "$(render false false false --set-string openbao.storage=consul)" 'it is raft or file' && echo 1 || echo 0)"
+
 echo ""
 if (( fail > 0 )); then
     printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"

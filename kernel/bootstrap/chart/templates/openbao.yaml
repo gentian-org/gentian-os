@@ -1,3 +1,7 @@
+{{- $storage := toString ((.Values.openbao).storage | default "file") }}
+{{- if not (has $storage (list "raft" "file")) }}
+{{- fail (printf "openbao.storage is %q; it is raft or file" $storage) }}
+{{- end }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -33,9 +37,24 @@ spec:
                 address         = "[::]:8200"
                 cluster_address = "[::]:8201"
               }
+              {{- if eq $storage "raft" }}
+              # Integrated storage, one node. The node's id is the pod's name,
+              # and its cluster address the chart's BAO_CLUSTER_ADDR
+              # (https://openbao-0.openbao-internal:8201). A migrated volume
+              # holds the file backend's directories beside vault.db and raft/;
+              # Raft reads neither (docs/guides/recovery.md §5).
+              storage "raft" {
+                path    = "/openbao/data"
+                node_id = "openbao-0"
+              }
+              {{- else }}
+              # A directory of files: a cluster whose claim does not state
+              # openbao.storage: raft. No consistent online snapshot exists for
+              # it; docs/guides/recovery.md §5 moves it to Raft.
               storage "file" {
                 path = "/openbao/data"
               }
+              {{- end }}
 
               # Transit auto-unseal — primary is unsealed by openbao-transit.
               # Token is read from the AUTOUNSEAL_TOKEN environment variable which is

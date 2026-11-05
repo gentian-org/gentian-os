@@ -200,6 +200,8 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"cache-destroy-job":      job(backup.CacheDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
 		"s3-bucket-job":          job(makeS3BucketJob(tenant, "wiki", false, backup.ObjectStorageOptions{})),
 		"s3-destroy-job":         job(backup.ObjectStorageDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
+		// The vault snapshot's bucket, made as an app's is.
+		"openbao-snapshot-bucket-job": job(makeOpenBaoSnapshotBucketJob("gentian-openbao-snapshots", "k")),
 		"export-s3-archive":      unit(exports, bundle.ArtefactS3),
 		"restore-s3":             unit(restores, bundle.ArtefactS3),
 		"export-manifest":        unit(exports, "manifest"),

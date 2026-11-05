@@ -39,7 +39,16 @@
                         namespaces alone; no other pod of them is.
     the operator        reads a bundle's manifest, streams a bundle to the
                         person downloading it and writes an imported one
-                        (internal/bundlestore, applifecycle/bundle_*.go).
+                        (internal/bundlestore, applifecycle/bundle_*.go); and
+                        lists the vault's snapshots to say how old the newest
+                        is (controller/openbao_snapshots.go).
+    the vault snapshot  the CronJob openbao-snapshot in the vault's namespace
+                        writes the encrypted snapshot and deletes the oldest,
+                        with a key scoped to its bucket
+                        (charts/gentian-os/templates/openbao-snapshots.yaml).
+                        Admitted by its label,
+                        app.kubernetes.io/component=openbao-snapshot, from
+                        that namespace alone.
 
   The master's and the filer's gRPC ports accept a connection only with a
   certificate of the internal CA whose common name is the pod's own or the
@@ -109,6 +118,14 @@ spec:
           podSelector:
             matchLabels:
               gentianos.io/component: tenant-export
+        {{- end }}
+        {{- with $np.namespaces.secrets }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: openbao-snapshot
         {{- end }}
       ports:
         - protocol: TCP

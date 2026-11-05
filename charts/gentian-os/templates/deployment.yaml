@@ -158,6 +158,15 @@ spec:
             - name: BACKUP_AGE_RECIPIENTS
               value: {{ join "," .Values.backupRecipients | quote }}
             {{- end }}
+            # The vault's daily snapshot: the operator makes its bucket and
+            # key, and reports how old the newest one is on the Cluster claim
+            # (templates/openbao-snapshots.yaml).
+            - name: OPENBAO_SNAPSHOTS
+              value: {{ .Values.openbaoSnapshots.enabled | quote }}
+            - name: OPENBAO_SNAPSHOT_BUCKET
+              value: {{ .Values.openbaoSnapshots.bucket | quote }}
+            - name: OPENBAO_SNAPSHOT_STALE_AFTER
+              value: {{ .Values.openbaoSnapshots.staleAfter | quote }}
             {{- if .Values.authzBridge.openfgaURL }}
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}

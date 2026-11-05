@@ -379,6 +379,44 @@ func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (
 	}, nil
 }
 
+// SeedKernelS3 is SeedS3 for a bucket of the kernel's own: the record at
+// gentian-os/kernel/{category}/{name}, with the same fields an app's has, so
+// one ExternalSecret shape reads either. The key pair is made once and the
+// stored one returned ever after; derived from the master where the cluster
+// derives, so a cluster rebuilt with its kit writes with the same key.
+func (s *Seeder) SeedKernelS3(ctx context.Context, category, name string, base S3Creds) (S3Creds, error) {
+	path := KernelPath(category, name)
+	reproducible := true
+	if base.AccessKey == "" {
+		g, err := s.gen(ctx, path, "access-key", 20)
+		if err != nil {
+			return S3Creds{}, fmt.Errorf("seed kernel s3(%s): %w", path, err)
+		}
+		base.AccessKey, reproducible = g.value, g.reproducible
+	}
+	if base.SecretKey == "" {
+		g, err := s.gen(ctx, path, "secret-key", 40)
+		if err != nil {
+			return S3Creds{}, fmt.Errorf("seed kernel s3(%s): %w", path, err)
+		}
+		base.SecretKey, reproducible = g.value, reproducible && g.reproducible
+	}
+	got, err := s.seedAndRead(ctx, path, map[string]string{
+		"endpoint":   base.Endpoint,
+		"bucket":     base.Bucket,
+		"region":     base.Region,
+		"access-key": base.AccessKey,
+		"secret-key": base.SecretKey,
+	}, reproducible)
+	if err != nil {
+		return S3Creds{}, fmt.Errorf("seed kernel s3(%s): %w", path, err)
+	}
+	return S3Creds{
+		Endpoint: got["endpoint"], Bucket: got["bucket"], Region: got["region"],
+		AccessKey: got["access-key"], SecretKey: got["secret-key"],
+	}, nil
+}
+
 // --- Cache (Redis) -----------------------------------------------------------
 
 // CacheCreds is the set of values written to …/cache.

@@ -70,6 +70,38 @@ tenantDNS01ClusterIssuer: ""
 # for. List more than one to allow independent recovery keys.
 backupRecipients: []
 
+# The vault's daily snapshot (templates/openbao-snapshots.yaml,
+# docs/guides/recovery.md §4): a Raft snapshot, encrypted to the backup
+# recipient above (or the one the recovery kit wrote to the vault) before it
+# leaves the pod, written to the bucket below in the platform's object store.
+# A vault still on file storage is reported, not snapshotted.
+openbaoSnapshots:
+  enabled: true
+  # Every day at 02:17 UTC.
+  schedule: "17 2 * * *"
+  # The newest this many are kept; older ones are deleted after a new one is
+  # written.
+  keep: 14
+  # How old the newest snapshot may be before the operator calls it stale on
+  # the Cluster claim (status.openbaoSnapshots): a day and a margin for a run
+  # that waited or retried. A Go duration.
+  staleAfter: 30h
+  # The bucket the operator makes, with a key that may write to it alone.
+  bucket: gentian-openbao-snapshots
+  # The vault role the job logs in to and the audience of its token: the
+  # Cluster composition's openbao-snapshot role, which reads
+  # sys/storage/raft/snapshot and nothing else.
+  vaultRole: openbao-snapshot
+  vaultAudience: vault://openbao-snapshot
+  # Where the ciphertext is staged before the upload.
+  workSizeLimit: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
 # tenantProvisioning controls operator orchestration behavior. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, portal redirect)
 # so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).

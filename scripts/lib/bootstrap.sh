@@ -1715,6 +1715,16 @@ _claim_cluster_fields() {
         printf '  #   escrowIdentity: true\n'
     fi
 
+    # Stated, because the XRD's default is file: a claim written before the
+    # field existed must keep the backend its vault's data is in. A new
+    # cluster starts on Raft, which the platform snapshots every day.
+    printf '\n'
+    printf '  # Where the vault keeps its data. raft is snapshotted every day,\n'
+    printf '  # encrypted to the backup key (docs/guides/recovery.md 4). Do not\n'
+    printf '  # change it on a running cluster: moving the data is section 5 there.\n'
+    printf '  openbao:\n'
+    printf '    storage: %s\n' "${OPENBAO_STORAGE:-raft}"
+
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         printf '  llm:\n'
         printf '    enabled: true\n'

@@ -17,8 +17,10 @@
 #
 # It does NOT restore OpenBao. A fresh OpenBao initializes itself and issues new
 # unseal material; the keys carried here belong to the OLD instance and are
-# useful for exactly one thing — unsealing a restored Raft snapshot. Restoring
-# that snapshot is a separate operation this does not perform.
+# useful for exactly one thing — getting back into a vault restored from one of
+# the old instance's snapshots (a vault on Raft storage takes one every day;
+# docs/guides/recovery.md §4). Restoring that snapshot is a separate operation
+# this does not perform.
 # =============================================================================
 
 [[ -n "${GENTIAN_RECOVERY_LOADED:-}" ]] && return 0
@@ -527,6 +529,11 @@ export_recovery_kit() {
     local body key value present=() missing=()
     body=""
     body+="# gentian-os recovery kit"$'\n'
+    # Where the vault's own copies are, for whoever opens this in the worst
+    # hour: a comment, which load_recovery_kit skips.
+    body+="# The vault's daily snapshots: bucket gentian-openbao-snapshots, prefix openbao/,"$'\n'
+    body+="# in the cluster's object store; opened with BACKUP_AGE_IDENTITY below and"$'\n'
+    body+="# restored as docs/guides/recovery.md section 4 says."$'\n'
     body+="GENTIAN_KIT_VERSION=${GENTIAN_KIT_VERSION}"$'\n'
     for key in "${_KIT_KEYS[@]}"; do
         value="${!key:-}"
@@ -641,8 +648,10 @@ export_recovery_kit() {
     echo ""
     info "  The kit reproduces derived credentials on a rebuild. It does NOT"
     info "  restore OpenBao: a fresh instance issues its own unseal material, and"
-    info "  the keys here belong to the old one — they unseal a restored Raft"
-    info "  snapshot, nothing else."
+    info "  the keys here belong to the old one — they open a vault restored from"
+    info "  one of its snapshots (docs/guides/recovery.md §4), nothing else."
+    info "  Those snapshots are in the bucket gentian-openbao-snapshots of the"
+    info "  cluster's object store, encrypted to this kit's backup key."
 
     _record_kit_export_proof "${out}"
 }
@@ -762,6 +771,6 @@ load_recovery_kit() {
     if [[ -n "${OPENBAO_ROOT_TOKEN:-}" ]]; then
         info "The kit carries OpenBao unseal material for the PREVIOUS instance. A fresh"
         info "install initializes its own; those keys matter only if you are also"
-        info "restoring a Raft snapshot, which this does not do."
+        info "restoring one of its snapshots, which this does not do (docs/guides/recovery.md §4)."
     fi
 }

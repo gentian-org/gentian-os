@@ -765,6 +765,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The vault's daily snapshot: its bucket and key, and how old the newest
+	// one is on the Cluster claim (status.openbaoSnapshots). The snapshot is
+	// taken by the CronJob the chart puts in the vault's namespace.
+	if controller.EnvBool("OPENBAO_SNAPSHOTS") {
+		staleAfter, err := time.ParseDuration(envOrDefault("OPENBAO_SNAPSHOT_STALE_AFTER", "30h"))
+		if err != nil {
+			setupLog.Error(err, "OPENBAO_SNAPSHOT_STALE_AFTER is not a duration")
+			os.Exit(1)
+		}
+		if err := mgr.Add(&controller.OpenBaoSnapshots{
+			Client:     mgr.GetClient(),
+			Reader:     mgr.GetAPIReader(),
+			Seeder:     tenantReconciler.Seeder,
+			Bucket:     envOrDefault("OPENBAO_SNAPSHOT_BUCKET", "gentian-openbao-snapshots"),
+			StaleAfter: staleAfter,
+		}); err != nil {
+			setupLog.Error(err, "unable to add the vault snapshot report to manager")
+			os.Exit(1)
+		}
+	}
+
 	// No custodian here. It was a runnable of this manager, which put the
 	// thing that sets credentials in the same process, under the same
 	// ServiceAccount, as a controller whose own vault role reads every

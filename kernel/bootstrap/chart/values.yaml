@@ -183,6 +183,19 @@ kernelNetworkPolicies: "true"
 signing:
   keys: []
 
+# Where the vault keeps its data, from the Cluster claim's openbao.storage.
+#   raft  integrated storage: what a new claim states, and the only backend
+#         with a consistent online snapshot (docs/guides/recovery.md §4)
+#   file  a directory of files: the claim's default, so a cluster whose claim
+#         says nothing stays on the backend its data is in
+# Changing it on a cluster with data is a migration, never a value change: the
+# vault reads its data with the backend it was written with, and Raft started
+# on a volume of file data comes up as a new, empty vault
+# (docs/guides/recovery.md §5). The installer passes OPENBAO_STORAGE and keeps
+# the backend a running vault has until the volume says it was migrated.
+openbao:
+  storage: file
+
 # On the switches above (appsets.enabled, operator.enabled,
 # headlamp.oidc.enabled): the templates compare them to "true" rather than
 # testing them for truth. The installer passes every value with --set-string,
