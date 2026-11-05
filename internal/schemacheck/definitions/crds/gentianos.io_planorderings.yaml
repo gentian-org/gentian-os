@@ -1,0 +1,83 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: planorderings.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: PlanOrdering
+    listKind: PlanOrderingList
+    plural: planorderings
+    singular: planordering
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PlanOrdering is the cluster's notice on how to order another
+          plan.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              PlanOrderingSpec says where a tenant orders another resource plan. Only
+              the cluster's administrators move a tenant between plans; this is what a
+              tenant's own screen shows instead of a choice.
+            properties:
+              email:
+                description: Email is an address to write to.
+                maxLength: 254
+                pattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+                type: string
+              phone:
+                description: Phone is a number to call, as it is dialed from abroad.
+                pattern: ^\+[0-9][0-9 ]{5,24}$
+                type: string
+              text:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Text is the notice by language: a two-letter code, such as en or de,
+                  and what to show a person reading in it. A reader whose language is
+                  not here is shown English, or else the first.
+                maxProperties: 16
+                minProperties: 1
+                type: object
+              url:
+                description: |-
+                  URL is where to order, opened in a new page. {tenant} in it is
+                  replaced with the tenant's name.
+                maxLength: 512
+                pattern: ^https://\S+$
+                type: string
+            required:
+            - text
+            type: object
+            x-kubernetes-validations:
+            - message: at most one of url, email and phone
+              rule: '(has(self.url) ? 1 : 0) + (has(self.email) ? 1 : 0) + (has(self.phone)
+                ? 1 : 0) <= 1'
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

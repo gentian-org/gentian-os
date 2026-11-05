@@ -79,7 +79,7 @@ type Config struct {
 // ways to read, and no way to ask for anything to be done.
 type Lifecycle interface {
 	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
-	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
+	Plans(ctx context.Context, tenant string) ([]lifecycle.Plan, error)
 }
 
 // Server is the usher's HTTP surface.

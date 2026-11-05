@@ -862,6 +862,25 @@ fresh; reply DELETE /v1/clusters/c1/resource-plans/nodes-2 202 '{"status":"remov
 gentian resources catalog remove nodes-2
 is "remove asks the plan's route" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/clusters/c1/resource-plans/nodes-2'
 
+fresh; reply PUT /v1/clusters/c1/tenants/demo/resources 202 '{"status":"updated","plan":"nodes-2","commit":"0123456789abcdef"}'
+gentian resources set --tenant demo --plan nodes-2
+is "set moves the tenant through the cluster's route" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/tenants/demo/resources{"plan":"nodes-2","force":false}'
+
+fresh; reply GET '/v1/clusters/c1/resources/report?from=2026-10-01T00%3A00%3A00Z&to=2026-11-01T00%3A00%3A00Z' 200 '{"tenants":[{"tenant":"demo","intervals":[{"plan":"base","productSku":"sku-1","from":"2026-10-01T00:00:00Z","to":"2026-11-01T00:00:00Z","seconds":2678400}]}],"unavailable":[{"tenant":"solo","reason":"no store"}]}'
+gentian resources report --all --from 2026-10-01T00:00:00Z --to 2026-11-01T00:00:00Z
+has "report --all lists every tenant's intervals" "${OUT}" "demo"
+has "... and names the tenant it could not report" "${OUT}" "unavailable: no store"
+
+NOTICEFILE="${SANDBOX}/notice.json"
+printf '%s' '{"text":{"en":"Order in the Center"},"url":"https://center.example/{tenant}"}' > "${NOTICEFILE}"
+fresh; reply PUT /v1/clusters/c1/plan-ordering 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian resources ordering set --file "${NOTICEFILE}"
+is "ordering set sends the notice" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/plan-ordering{"text":{"en":"OrderintheCenter"},"url":"https://center.example/{tenant}"}'
+
+fresh; reply DELETE /v1/clusters/c1/plan-ordering 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian resources ordering clear
+is "ordering clear removes it" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/clusters/c1/plan-ordering'
+
 echo ""
 echo "kubectl gentian catalogues: at an address, or as an OCI artifact"
 echo ""

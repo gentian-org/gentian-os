@@ -142,7 +142,7 @@ quantities.
 
 Plans are ordered by `spec.tier`, never by comparing their quantities.
 Quantities can move in different directions between two plans — more CPU, less
-storage — so "bigger" is not derivable from them, and an entitlement ceiling has
+storage — so "bigger" is not derivable from them, and anything that compares
 to compare something total. Tiers need not be contiguous; gaps let a plan be
 inserted later without renumbering ones already sold.
 
@@ -188,11 +188,13 @@ from the same values instead.
 
 ## 3. The write path
 
-Selecting a plan is a **commit to `gentian-deployments`**, exactly as installing
-an app is, and it is made by the same writer: the **director**. It checks that
-the caller holds `can_set_plan` on the tenant, reads the catalog as it applies
-to that tenant from the operator (§7), refuses a plan the tenant may not move
-to, and commits the patch below as the person who asked. Argo CD syncs it, the
+Moving a tenant to a plan is a **commit to `gentian-deployments`**, exactly as
+installing an app is, and it is made by the same writer: the **director**. Only
+the cluster's administrators move a tenant: the director checks that the caller
+holds `can_configure` on the cluster, reads the catalog as it applies to that
+tenant from the operator (§7), refuses a plan the tenant may not move to, and
+commits the patch below as the person who asked. A tenant orders another plan
+where the cluster's notice says (§5). Argo CD syncs it, the
 operator reconciles the ResourceQuota, records the plan change in the tenant's
 usage history (§6.3), and
 [`app_workload_health.go`](../../internal/controller/app_workload_health.go)'s
@@ -290,34 +292,32 @@ Two copies of that mapping would let a plan pass a guard written against
 Only capacity is checked. An app cap is not part of a plan, so no move between
 plans can put a tenant over one.
 
-A platform operator may pass `--force` (CLI) or use **Force** (console) to shrink
-a tenant anyway. Tenant administrators cannot: the guard protects their own
-workspace, and asking for it is asking to break it without being told.
+The cluster's administrator may pass `--force` (CLI) to shrink a tenant anyway,
+having decided the tenant will be shrunk and accepting the pods that will not
+come back. A retired plan is refused, forced or not.
 
 ---
 
-## 5. Entitlements
+## 5. Ordering another plan
 
-The ceiling on what a tenant may select is the `gentianos.io/max-resource-tier`
-annotation on the **Tenant**, resolved by the API on every call.
+A tenant chooses no plan itself. Its administrator sees the plan, what is
+under it and the catalog, and a notice saying where to order another: a
+text per language and at most one action, a link, an e-mail address or a
+phone number. The cluster's administrators write it, and the director
+commits it to the claims as the cluster's one `PlanOrdering`:
 
-It is not a request parameter. A ceiling a request supplies is a ceiling a
-request can omit, and the console is not the only thing that can reach the
-resources API. An unparsable value is treated as absent rather than as zero —
-zero is the base tier and would silently pin a tenant to the smallest plan on
-the cluster, which is a worse answer to a typo than no ceiling, and the operator
-who typed it sees the tenant able to upgrade.
+```
+GET    /v1/clusters/{c}/plan-ordering   can_audit
+PUT    /v1/clusters/{c}/plan-ordering   can_configure   {"text": {"en": "..."}, "url": "https://.../{tenant}"}
+DELETE /v1/clusters/{c}/plan-ordering   can_configure
+```
 
-Absent means uncapped, matching the shape the App Store already uses: an
-unreachable commerce backend leaves the catalog usable rather than blocking it.
-
-Set it from wherever a deployment's commerce integration lives — the platform
-reads the annotation and does not care which service wrote it.
-
-A plan may also carry `selfServiceDisabled: true`, which withholds it from
-tenant administrators while leaving it selectable by a cluster operator and the
-CLI. That serves a negotiated ceiling that should not appear in a tenant's own
-list of upgrades.
+`{tenant}` in the link is replaced with the tenant's name. The operator hands
+the notice out with the tenant's resources (`ordering` on
+`GET /v1/tenants/{t}/resources`); without one, the tenant is told to ask the
+cluster's administrator. Whatever takes the order (a person, or a commerce
+backend that moves tenants once they paid) moves the tenant through the
+director's route in §7.
 
 ---
 
@@ -405,8 +405,8 @@ moved *to* — because a gap is honest and a wrong price is not.
 
 ## 7. Surfaces
 
-One set of rules, one writer. The plan catalog, the downgrade guard and the
-entitlement ceiling live in the operator, which answers them for a tenant; the
+One set of rules, one writer. The plan catalog and the downgrade guard live
+in the operator, which answers them for a tenant; the
 usher relays those answers to whoever may view the tenant, and the director
 validates a choice against them and makes the one write. Nothing reimplements
 the rules.
@@ -421,43 +421,41 @@ The reads are the usher's and the write is the director's, each guarded by the
 relation named:
 
 ```
-GET  /v1/tenants/{t}/resources          can_view      plan, ceiling, committed, live
-GET  /v1/tenants/{t}/resources/plans    can_view      catalogue, with blocked reasons
-PUT  /v1/tenants/{t}/resources          can_set_plan  {"plan": "nodes-2", "force": false}
-GET  /v1/tenants/{t}/resources/usage    can_view      thinned sample series
-GET  /v1/tenants/{t}/resources/report   can_view      billable plan intervals
-GET  /v1/clusters/{c}/resources         can_audit     every tenant's state, for the cluster's view
+GET  /v1/tenants/{t}/resources                 can_view       plan, ceiling, committed, live, ordering notice
+GET  /v1/tenants/{t}/resources/plans           can_view       catalogue, with blocked reasons
+GET  /v1/tenants/{t}/resources/usage           can_view       thinned sample series
+GET  /v1/tenants/{t}/resources/report          can_view       billable plan intervals
+PUT  /v1/clusters/{c}/tenants/{t}/resources    can_configure  {"plan": "nodes-2", "force": false}
+GET  /v1/clusters/{c}/resources                can_audit      every tenant's state, for the cluster's view
+GET  /v1/clusters/{c}/resources/report         can_audit      every tenant's billable intervals over one window
 ```
 
 The operator's app-lifecycle API keeps the reads (`GET .../resources`,
 `/plans`, `/usage`, `/report`), which is what the usher relays and the director
 validates against. It has no
 `PUT`. Each plan it lists that the tenant may not move to carries `blocked`, the
-reason in words, and `blockedBy` — `fit`, `entitlement` or `self-service` — which
-is what the director turns into a status:
+reason in words, and `blockedBy` — `fit` or `retired` — which is what the
+director turns into a status:
 
 | Code | Means |
 |---|---|
 | `202` | Committed; the answer names the commit. `200` means the tenant is on that plan already |
-| `409` | The plan does not fit **today** (`fit`) — retry after freeing something, or `force` it |
-| `402` | Above the tenant's entitlement, or arranged by hand (`entitlement`, `self-service`) — an entitlement problem, not a permission one |
+| `409` | The plan does not fit **today** (`fit`) — retry after freeing something, or `force` it; or it is retired |
 | `404` | No such plan on this cluster |
-| `403` | The caller does not hold `can_set_plan`, or asked to `force` without `can_configure` on the cluster |
+| `403` | The caller does not hold `can_configure` on the cluster |
 
-Whether the caller chooses for themselves — a tenant administrator, held to
-the self-service catalog — or for the cluster is decided by the director from
-`can_configure` on the cluster, and asserted by no screen. The console adds
-nothing: it forwards the caller's own token and hands back what it was
-answered, including a refusal.
+A console adds nothing: it forwards the caller's own token and hands back what
+it was answered, including a refusal.
 
 ### 7.1 Console
 
 Tenant administrators see their plan, the ceiling paired with what is committed
-under it, live consumption where available, the plan catalog with a reason
-beside anything they cannot pick, the usage history, and the billed intervals.
+under it, live consumption where available, the plan catalog, the usage
+history, the billed intervals, and the cluster's notice on where to order
+another plan. They choose none.
 
 Platform administrators additionally get an **All tenants** table — plan,
-headroom per resource, app count — and can manage any tenant from the same tab.
+headroom per resource, app count.
 
 Charts are one panel per resource, never one panel with two y-axes: CPU cores and
 gibibytes share no scale. The ceiling is a dashed reference line, not a third
@@ -534,8 +532,11 @@ kubectl gentian resources set --tenant corp --plan nodes-2
 # What a month resolves to for invoicing
 kubectl gentian resources report --tenant corp --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
 
-# The ceiling on what a tenant may choose for itself
-kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
+# Every tenant's billed intervals over one window
+kubectl gentian resources report --all --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
+
+# Where a tenant orders another plan
+kubectl gentian resources ordering set --file notice.json
 
 # The cluster's plans, with the tenants on each; add or change one, remove one
 kubectl gentian resources catalog

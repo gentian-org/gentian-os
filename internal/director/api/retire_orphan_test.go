@@ -44,7 +44,7 @@ func (o *orphanOperator) Upload(context.Context, string, string, io.Reader) (int
 	return http.StatusNotFound, nil, nil
 }
 
-func (o *orphanOperator) Plans(context.Context, string, bool) ([]lifecycle.Plan, error) {
+func (o *orphanOperator) Plans(context.Context, string) ([]lifecycle.Plan, error) {
 	return nil, nil
 }
 

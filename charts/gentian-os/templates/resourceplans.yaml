@@ -47,9 +47,6 @@ spec:
   {{- if $plan.default }}
   default: true
   {{- end }}
-  {{- if $plan.selfServiceDisabled }}
-  selfServiceDisabled: true
-  {{- end }}
   {{- if $plan.retired }}
   retired: true
   {{- end }}

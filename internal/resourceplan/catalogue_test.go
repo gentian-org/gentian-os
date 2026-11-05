@@ -51,9 +51,7 @@ func testCatalogue() *Catalogue {
 			p.Spec.ProductSku = "sku-base"
 		}),
 		plan("base-plus-8", 20, "40", "48Gi"),
-		plan("bespoke", 30, "64", "96Gi", func(p *gentianov1alpha1.ResourcePlan) {
-			p.Spec.SelfServiceDisabled = true
-		}),
+		plan("bespoke", 30, "64", "96Gi"),
 	}}
 }
 
@@ -116,35 +114,6 @@ func TestResolveReportsHandEditedCeilingAsCustom(t *testing.T) {
 	}
 	if res.Plan != nil {
 		t.Fatalf("expected no plan, got %v", res.Plan)
-	}
-}
-
-func TestSelectableWithholdsBespokePlansFromSelfService(t *testing.T) {
-	c := testCatalogue()
-	names := func(plans []gentianov1alpha1.ResourcePlan) []string {
-		out := make([]string, 0, len(plans))
-		for _, p := range plans {
-			out = append(out, p.Name)
-		}
-		return out
-	}
-
-	self := names(c.Selectable(true, nil))
-	for _, n := range self {
-		if n == "bespoke" {
-			t.Fatal("a self-service caller must not be offered a bespoke plan")
-		}
-	}
-	if len(names(c.Selectable(false, nil))) != 3 {
-		t.Fatal("a cluster operator sees the whole catalog")
-	}
-}
-
-func TestSelectableAppliesTheEntitlementCeiling(t *testing.T) {
-	var maxTier int32 = 20
-	got := testCatalogue().Selectable(true, &maxTier)
-	if len(got) != 2 {
-		t.Fatalf("expected plans up to tier 20, got %d", len(got))
 	}
 }
 
@@ -233,38 +202,6 @@ func TestDescribeOmitsTheRatioWhenThereIsNoCeiling(t *testing.T) {
 	rows := Describe(quota)
 	if len(rows) != 1 || rows[0].UsedRatio != nil {
 		t.Fatalf("expected no ratio without a hard limit, got %v", rows)
-	}
-}
-
-// The ceiling must come from cluster state, not from the request: a caller that
-// supplies its own can raise it by omitting the field.
-func TestMaxTierReadsTheTenantAnnotation(t *testing.T) {
-	tenant := tenantWith(nil, "")
-	tenant.Annotations = map[string]string{
-		gentianov1alpha1.MaxResourceTierAnnotation: "20",
-	}
-	got := MaxTier(tenant)
-	if got == nil || *got != 20 {
-		t.Fatalf("expected a ceiling of 20, got %v", got)
-	}
-}
-
-func TestMaxTierIsAbsentWithoutTheAnnotation(t *testing.T) {
-	if got := MaxTier(tenantWith(nil, "")); got != nil {
-		t.Fatalf("expected no ceiling, got %v", *got)
-	}
-}
-
-// A typo must not silently pin the tenant to the smallest plan on the cluster.
-// Treating it as absent fails visibly — the tenant can still upgrade, and the
-// operator who mistyped it finds out.
-func TestMaxTierTreatsAnUnparseableAnnotationAsAbsent(t *testing.T) {
-	tenant := tenantWith(nil, "")
-	tenant.Annotations = map[string]string{
-		gentianov1alpha1.MaxResourceTierAnnotation: "twenty",
-	}
-	if got := MaxTier(tenant); got != nil {
-		t.Fatalf("expected no ceiling from a bad value, got %v", *got)
 	}
 }
 

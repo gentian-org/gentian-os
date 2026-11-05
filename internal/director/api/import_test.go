@@ -151,7 +151,7 @@ func (o *importingOperator) Stream(context.Context, string) (*http.Response, err
 	return nil, io.EOF
 }
 
-func (o *importingOperator) Plans(context.Context, string, bool) ([]lifecycle.Plan, error) {
+func (o *importingOperator) Plans(context.Context, string) ([]lifecycle.Plan, error) {
 	return nil, nil
 }
 
