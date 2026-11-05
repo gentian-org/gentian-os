@@ -209,7 +209,6 @@ func buildIntegrationBinding(
 			},
 			Capabilities: integration.Capabilities,
 			Auth: &gentianov1alpha1.BindingAuth{
-				Method:    "api-key",
 				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
 			},
 			Endpoint: endpoint,

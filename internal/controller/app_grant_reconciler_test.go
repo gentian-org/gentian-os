@@ -216,7 +216,7 @@ func TestBindingWritesTheProvidersAddress(t *testing.T) {
 			Contract: "orders",
 			Provider: gentianov1alpha1.AppEndpoint{App: "provider", Namespace: "tenant-demo"},
 			Consumer: gentianov1alpha1.AppEndpoint{App: "consumer", Namespace: "tenant-demo"},
-			Auth:     &gentianov1alpha1.BindingAuth{Method: "api-key", VaultPath: path},
+			Auth:     &gentianov1alpha1.BindingAuth{VaultPath: path},
 			Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "provider-api", Port: 8000, Path: "/v1"},
 		},
 	}

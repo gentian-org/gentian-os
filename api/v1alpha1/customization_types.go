@@ -358,11 +358,6 @@ type CustomizationStatus struct {
 	// permanently, defeating the signal.
 	// +optional
 	RungAboveRecommended bool `json:"rungAboveRecommended,omitempty"`
-
-	// ResolvedNamespace is the namespace the target app was found in. Used by the
-	// L3 per-tenant namespace test.
-	// +optional
-	ResolvedNamespace string `json:"resolvedNamespace,omitempty"`
 }
 
 // Customization is a tracked, owned, dated deviation from an app as shipped.

@@ -135,11 +135,7 @@ type OIDCPackSpec struct {
 }
 
 // OIDCPackCatalogStatus is optional observed state.
-type OIDCPackCatalogStatus struct {
-	// PackCount is the number of entries in spec.packs.
-	// +optional
-	PackCount int `json:"packCount,omitempty"`
-}
+type OIDCPackCatalogStatus struct{}
 
 // OIDCPackCatalogList contains a list of OIDCPackCatalog.
 // +kubebuilder:object:root=true

@@ -68,13 +68,8 @@ type AppEndpoint struct {
 	Namespace string `json:"namespace"`
 }
 
-// BindingAuth describes the authentication method used by this binding.
+// BindingAuth says where the binding's shared credentials are kept.
 type BindingAuth struct {
-	// Method is the authentication protocol.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=oidc-token-exchange;service-account;api-key
-	Method string `json:"method"`
-
 	// VaultPath is the OpenBao path where shared credentials are stored.
 	// Typically: gentian-os/tenants/{tenant}/contracts/{contract}
 	// +optional
@@ -92,26 +87,6 @@ type IntegrationBindingStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// SecretRef points to the Kubernetes Secret containing the shared credentials
-	// synced by ESO from the VaultPath.
-	// +optional
-	SecretRef *LocalSecretRef `json:"secretRef,omitempty"`
-
-	// LastRotation is when the binding credentials were last rotated.
-	// +optional
-	LastRotation *metav1.Time `json:"lastRotation,omitempty"`
-
-	// ObservedGeneration is the last processed spec generation.
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-}
-
-// LocalSecretRef is a reference to a Secret in the same namespace.
-type LocalSecretRef struct {
-	// Name is the Secret name.
-	// +kubebuilder:validation:Required
-	Name string `json:"name"`
 }
 
 // IntegrationBinding is the Schema for the integrationbindings API.

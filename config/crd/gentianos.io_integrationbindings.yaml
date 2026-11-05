@@ -69,20 +69,11 @@ spec:
                 description: Auth configures how the consumer authenticates to the
                   provider.
                 properties:
-                  method:
-                    description: Method is the authentication protocol.
-                    enum:
-                    - oidc-token-exchange
-                    - service-account
-                    - api-key
-                    type: string
                   vaultPath:
                     description: |-
                       VaultPath is the OpenBao path where shared credentials are stored.
                       Typically: gentian-os/tenants/{tenant}/contracts/{contract}
                     type: string
-                required:
-                - method
                 type: object
               capabilities:
                 description: Capabilities lists the specific contract capabilities
@@ -233,26 +224,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              lastRotation:
-                description: LastRotation is when the binding credentials were last
-                  rotated.
-                format: date-time
-                type: string
-              observedGeneration:
-                description: ObservedGeneration is the last processed spec generation.
-                format: int64
-                type: integer
-              secretRef:
-                description: |-
-                  SecretRef points to the Kubernetes Secret containing the shared credentials
-                  synced by ESO from the VaultPath.
-                properties:
-                  name:
-                    description: Name is the Secret name.
-                    type: string
-                required:
-                - name
-                type: object
               state:
                 description: State summarizes whether the binding is functional.
                 enum:

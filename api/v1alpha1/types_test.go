@@ -304,7 +304,6 @@ func TestIntegrationBinding_DeepCopy(t *testing.T) {
 			Consumer:     v1alpha1.AppEndpoint{App: "consumer-app", Namespace: "tenant-gtn-demo"},
 			Capabilities: []string{"webdav:read", "webdav:write", "ocs:shares"},
 			Auth: &v1alpha1.BindingAuth{
-				Method:    "oidc-token-exchange",
 				VaultPath: "gentianos/tenants/gtn-demo/contracts/filepicker",
 			},
 		},
@@ -318,8 +317,6 @@ func TestIntegrationBinding_DeepCopy(t *testing.T) {
 					Reason:             "Provisioned",
 				},
 			},
-			SecretRef:    &v1alpha1.LocalSecretRef{Name: "contract-filepicker"},
-			LastRotation: &now,
 		},
 	}
 
@@ -330,9 +327,6 @@ func TestIntegrationBinding_DeepCopy(t *testing.T) {
 	}
 	if copy.Spec.Auth.VaultPath != original.Spec.Auth.VaultPath {
 		t.Errorf("vault path mismatch: got %q", copy.Spec.Auth.VaultPath)
-	}
-	if copy.Status.SecretRef.Name != "contract-filepicker" {
-		t.Errorf("secretRef name mismatch: got %q", copy.Status.SecretRef.Name)
 	}
 
 	// Mutation independence — capabilities

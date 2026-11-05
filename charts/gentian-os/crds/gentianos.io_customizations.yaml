@@ -397,11 +397,6 @@ spec:
                 - Superseded
                 - Invalid
                 type: string
-              resolvedNamespace:
-                description: |-
-                  ResolvedNamespace is the namespace the target app was found in. Used by the
-                  L3 per-tenant namespace test.
-                type: string
               reviewOverdue:
                 description: ReviewOverdue is true once spec.reviewBy has passed.
                 type: boolean

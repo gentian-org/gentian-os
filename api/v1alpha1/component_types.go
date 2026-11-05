@@ -251,10 +251,6 @@ type ComponentStatus struct {
 	// +kubebuilder:validation:Enum=dedicated;shared
 	Fulfilment string `json:"fulfilment,omitempty"`
 
-	// SharedInstance names the backend when `fulfilment` is "shared".
-	// +optional
-	SharedInstance string `json:"sharedInstance,omitempty"`
-
 	// PendingPrivileges are requests of the profile that nobody has granted
 	// yet, as <kind>/<name>. While any is listed the install waits.
 	// +optional

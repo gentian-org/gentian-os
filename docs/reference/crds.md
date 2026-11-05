@@ -83,7 +83,6 @@ AppGrant is a tenant-scoped authorization grant — a subset of what the Compone
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.observedGeneration` | integer (int64) |  | `ObservedGeneration` is the last reconciled spec generation. |
 | `status.phase` | string |  | `Phase` summarizes OpenFGA tuple sync. |
-| `status.tupleCount` | integer |  | `TupleCount` is the number of OpenFGA tuples managed for this grant. |
 
 ## 3. AppPackage
 
@@ -296,7 +295,6 @@ Component is an installed instance of a ComponentProfile.
 | `status.rollout.reason` | string |  | `Reason` and Message say why a move was rolled back or failed. |
 | `status.rollout.startedAt` | string (date-time) |  | `StartedAt` is when the pinned build began rolling out; FinishedAt when the move ended, either way. |
 | `status.rollout.target` | string |  | `Target` is the build the move under way, or the last move, was to. |
-| `status.sharedInstance` | string |  | `SharedInstance` names the backend when `fulfilment` is "shared". |
 
 ## 8. ComponentProfile
 
@@ -914,7 +912,6 @@ Customization is a tracked, owned, dated deviation from an app as shipped.
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.observedGeneration` | integer (int64) |  | `ObservedGeneration` is the last reconciled spec generation. |
 | `status.phase` | string |  | `Phase` summarizes record health. |
-| `status.resolvedNamespace` | string |  | `ResolvedNamespace` is the namespace the target app was found in. |
 | `status.reviewOverdue` | boolean |  | `ReviewOverdue` is true once spec.reviewBy has passed. |
 | `status.rungAboveRecommended` | boolean |  | `RungAboveRecommended` is true when the target's customization surface offers a lower rung this record's rungJustification has no entry for — a rung the app has… |
 | `status.targetVersionDrift` | boolean |  | `TargetVersionDrift` is true when the target profile now pins a chart or app version outside spec.testedAgainst. |
@@ -936,7 +933,6 @@ IntegrationBinding is the Schema for the integrationbindings API. IntegrationBin
 |---|---|---|---|
 | `spec` | object |  | IntegrationBindingSpec defines the desired state of an IntegrationBinding. |
 | `spec.auth` | object |  | `Auth` configures how the consumer authenticates to the provider. |
-| `spec.auth.method` | string | yes | `Method` is the authentication protocol. |
 | `spec.auth.vaultPath` | string |  | `VaultPath` is the OpenBao path where shared credentials are stored. |
 | `spec.capabilities` | []string |  | `Capabilities` lists the specific contract capabilities being granted. |
 | `spec.consumer` | object | yes | `Consumer` identifies the app that consumes the contract. |
@@ -958,10 +954,6 @@ IntegrationBinding is the Schema for the integrationbindings API. IntegrationBin
 | `status.conditions[].reason` | string | yes | `reason` contains a programmatic identifier indicating the reason for the condition's last transition. |
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.lastRotation` | string (date-time) |  | `LastRotation` is when the binding credentials were last rotated. |
-| `status.observedGeneration` | integer (int64) |  | `ObservedGeneration` is the last processed spec generation. |
-| `status.secretRef` | object |  | `SecretRef` points to the Kubernetes Secret containing the shared credentials synced by ESO from the VaultPath. |
-| `status.secretRef.name` | string | yes | `Name` is the Secret name. |
 | `status.state` | string |  | `State` summarizes whether the binding is functional. |
 
 ## 12. MailboxRemoval
@@ -1044,7 +1036,6 @@ OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. Shipp
 | `spec.packs{}.scopeName` | string |  | `ScopeName` is the Keycloak client scope created for this pack. |
 | `spec.packs{}.serviceClient` | boolean |  | `ServiceClient` provisions a confidential client for a backend service rather than an application users log in to. |
 | `status` | object |  | OIDCPackCatalogStatus is optional observed state. |
-| `status.packCount` | integer |  | `PackCount` is the number of entries in spec.packs. |
 
 ## 14. PlatformSecurityPolicy
 
@@ -1624,8 +1615,6 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.selfServiceDisabled` | boolean |  | `SelfServiceDisabled` withholds the plan from tenant administrators. |
 | `spec.tier` | integer (int32) | yes | `Tier` orders plans from smallest to largest. |
 | `status` | object |  | ResourcePlanStatus reports observed plan state. |
-| `status.observedAt` | string (date-time) |  | `ObservedAt` is when TenantCount was last recomputed. |
-| `status.tenantCount` | integer (int32) |  | `TenantCount` is the number of tenants whose quotas currently match this plan. |
 
 ## 17. Tenant
 
