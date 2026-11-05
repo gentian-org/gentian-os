@@ -115,3 +115,38 @@ func TestTenantValidatorHandle_NilClientReturnsInternalError(t *testing.T) {
 		t.Fatalf("unexpected message: %q", resp.Result.Message)
 	}
 }
+
+// A new tenant's name must fit the names built from it; an existing one is
+// not refused for its name.
+func TestATenantNameLongerThan38IsRefusedOnCreateOnly(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	validator := &TenantValidator{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	request := func(name string, op admissionv1.Operation) admission.Response {
+		raw, err := json.Marshal(gentianov1alpha1.Tenant{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "gentianos.io/v1alpha1", Kind: "Tenant"},
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       gentianov1alpha1.TenantSpec{DisplayName: "Long"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return validator.Handle(context.Background(), admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: op, Object: runtime.RawExtension{Raw: raw}, OldObject: runtime.RawExtension{Raw: raw},
+		}})
+	}
+	refusedForName := func(resp admission.Response) bool {
+		return !resp.Allowed && resp.Result != nil && strings.Contains(resp.Result.Message, "at most 38 characters")
+	}
+	if resp := request(strings.Repeat("a", 39), admissionv1.Create); !refusedForName(resp) {
+		t.Fatalf("a 39-character name was not refused on create: %#v", resp.Result)
+	}
+	if resp := request(strings.Repeat("a", 38), admissionv1.Create); refusedForName(resp) {
+		t.Fatalf("a 38-character name was refused on create: %q", resp.Result.Message)
+	}
+	if resp := request(strings.Repeat("a", 39), admissionv1.Update); refusedForName(resp) {
+		t.Fatalf("an existing 39-character name was refused on update: %q", resp.Result.Message)
+	}
+}

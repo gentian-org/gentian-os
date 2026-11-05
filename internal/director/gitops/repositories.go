@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
@@ -300,7 +302,7 @@ func ownRepository(found []declaredRepository, owner string) (*declaredRepositor
 // DeclareRepository writes a repository's declaration and commits it. tenant
 // is its owner; empty is the cluster.
 func (g *GitOps) DeclareRepository(ctx context.Context, tenant, name string, d RepositoryDeclaration, meta Meta) (RepositoryResult, error) {
-	if tenant != "" && !ValidName(tenant) {
+	if tenant != "" && !gentianov1alpha1.ValidTenantName(tenant) {
 		return RepositoryResult{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !ValidName(name) {
@@ -375,7 +377,7 @@ func (g *GitOps) DeclareRepository(ctx context.Context, tenant, name string, d R
 // must repeat its name: removal is always destructive, because the apps the
 // repository carried stop reconciling.
 func (g *GitOps) RemoveRepository(ctx context.Context, tenant, name, confirm string, meta Meta) (Result, error) {
-	if tenant != "" && !ValidName(tenant) {
+	if tenant != "" && !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !ValidName(name) {
@@ -532,7 +534,7 @@ var ErrRepositoryNotRegistry = errors.New("the repository is not an OCI registry
 // for owner (RepositoryVaultPath); a declaration that states another is
 // refused rather than followed, since it is the declaration's word only.
 func (g *GitOps) RegistryRepository(ctx context.Context, owner, name string) (catalogue.DeclaredRegistry, error) {
-	if owner != "" && !ValidName(owner) {
+	if owner != "" && !gentianov1alpha1.ValidTenantName(owner) {
 		return catalogue.DeclaredRegistry{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, owner)
 	}
 	if !ValidName(name) {

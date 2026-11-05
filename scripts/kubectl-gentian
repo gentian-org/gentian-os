@@ -597,7 +597,7 @@ cmd_tenants_list() {
 cmd_tenants_show() {
     local name="${1:-}" entry
     [[ -n "${name}" && $# -eq 1 ]] || die "usage: kubectl gentian tenants show <name>"
-    _label "The tenant" "${name}"
+    _tenant "The tenant" "${name}"
     _discover
     local tenants
     tenants="$(_call GET "/v1/clusters/${_CLUSTER}/tenants")" || exit 1
@@ -638,6 +638,7 @@ cmd_tenants_create() {
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
+    _tenant "The tenant" "${name}"
     country="$(_country "${country}")" || exit 1
     _discover
     # Said before anything is committed, because it is the one switch here
@@ -1620,7 +1621,7 @@ cmd_tenants_platform_access() {
     local name="${1:-}" state="${2:-}" answer
     [[ -n "${name}" && ( -z "${state}" || "${state}" == "on" || "${state}" == "off" ) && $# -le 2 ]] ||
         die "usage: kubectl gentian tenants platform-access <name> [on|off]"
-    _label "The tenant" "${name}"
+    _tenant "The tenant" "${name}"
     need jq
     _discover
     if [[ -z "${state}" ]]; then
@@ -1805,7 +1806,7 @@ cmd_platform_roles_holders() {
             # A tenant's auditor is a person of the platform tenant; the one
             # tenant whose evidence they read is theirs to name.
             [[ "${role}" != "tenantAuditor" || -n "${scope}" ]] || die "tenantAuditor reads one tenant's evidence: name it with --scope tenant:<t>"
-            _label "The tenant" "${tenant}"
+            _tenant "The tenant" "${tenant}"
             _discover
             local people person
             people="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/role-candidates")" || exit 1
@@ -1838,7 +1839,7 @@ cmd_platform_roles_holders() {
         remove)
             local role="${1:-}" tenant="${2:-}" login="${3:-}"
             [[ -n "${role}" && -n "${tenant}" && -n "${login}" && $# -eq 3 ]] || die "${usage}"
-            _label "The tenant" "${tenant}"
+            _tenant "The tenant" "${tenant}"
             _discover
             local holders subject
             holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
@@ -1877,7 +1878,7 @@ cmd_tenants_set() {
     done
     [[ -n "${name}" ]] || die "${usage_text}"
     [[ -n "${catalogues}${country_set}" ]] || die "nothing to set. ${usage_text}"
-    _label "The tenant" "${name}"
+    _tenant "The tenant" "${name}"
     if [[ -n "${country_set}" ]]; then
         country="$(_country "${country}")" || exit 1
     fi
@@ -1923,6 +1924,15 @@ _label() {
         die "$1 is a name of lower-case letters, digits and hyphens, not '$2'"
 }
 
+# _tenant <what> <value> — a tenant's name: a name as _label has it, of at
+# most 38 characters (MaxTenantNameLength in api/v1alpha1/tenancy.go, where
+# the names built from it that set the limit are listed). The director
+# checks it again.
+_tenant() {
+    [[ "$2" =~ ^[a-z0-9]([-a-z0-9]{0,36}[a-z0-9])?$ ]] ||
+        die "$1 is a name of at most 38 lower-case letters, digits and hyphens, starting and ending with a letter or digit, not '$2'"
+}
+
 # _committed <answer> — the first eight characters of the commit an answer
 # names, or a word for none.
 _committed() {
@@ -1939,7 +1949,7 @@ cmd_tenants_groups() {
     local name="${1:-}" clear="" answer body
     [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants groups <tenant> [<group>... | --clear]"
     shift
-    _label "a tenant" "${name}"
+    _tenant "a tenant" "${name}"
     local groups=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1983,7 +1993,7 @@ cmd_tenants_sign_in() {
     local name="${1:-}" from="" given="" remove="" answer body
     [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants sign-in <tenant> [--from <tenant> --groups <g>,... | --remove <tenant>]"
     shift
-    _label "a tenant" "${name}"
+    _tenant "a tenant" "${name}"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from) from="${2:-}"; shift 2 || die "--from needs a tenant" ;;
@@ -2004,7 +2014,7 @@ cmd_tenants_sign_in() {
     fi
     [[ -z "${from}" || -z "${remove}" ]] || die "--from and --remove do not go together"
     if [[ -n "${remove}" ]]; then
-        _label "a tenant" "${remove}"
+        _tenant "a tenant" "${remove}"
         answer="$(_call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${remove}")" || exit 1
         if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
             echo "People of ${remove} did not sign in to ${name}; nothing was committed."
@@ -2013,7 +2023,7 @@ cmd_tenants_sign_in() {
         echo "People of ${remove} no longer sign in to ${name}: committed ($(_committed "${answer}"))."
         return 0
     fi
-    _label "a tenant" "${from}"
+    _tenant "a tenant" "${from}"
     body="$(printf '%s' "${given}" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc '{groups: .}')"
     answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${from}" "${body}")" || exit 1
     if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
@@ -2039,7 +2049,7 @@ cmd_tenants_partners() {
     name="${1:-}"
     [[ -n "${name}" && "${name}" != -* ]] || die "${usage_text}"
     shift
-    _label "a tenant" "${name}"
+    _tenant "a tenant" "${name}"
     action="${1:-}"
     [[ $# -eq 0 ]] || shift
     case "${action}" in
@@ -2135,7 +2145,7 @@ cmd_tenants_domain() {
         esac
     done
     [[ -n "${name}" ]] || die "${usage_text}"
-    _label "a tenant" "${name}"
+    _tenant "a tenant" "${name}"
     [[ -z "${remove}" || -z "${domain}" ]] ||
         die "--remove takes no domain: it puts ${name} back at its default address"
     # The one spelling the director records, so what is shown is what is sent.
@@ -2242,7 +2252,7 @@ cmd_tenants_domain() {
 cmd_exposures_list() {
     local t answer
     t="$(_tenant_flag "$@")"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     need jq
     answer="$(_call GET "/v1/tenants/${t}/exposures")" || exit 1
     if [[ "$(printf '%s' "${answer}" | jq -r '((.live // []) + (.expired // [])) | length')" == "0" ]]; then
@@ -2289,7 +2299,7 @@ cmd_exposures_withdraw() {
     done
     [[ -n "${inst}" && -n "${entry}" ]] || die "${usage_text}"
     [[ -n "${t}" ]] || die "--tenant is required"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     _label "an app instance" "${inst}"
     _label "an entry" "${entry}"
     need jq
@@ -2331,7 +2341,7 @@ cmd_exposures_alias() {
     [[ -n "${t}" ]] || die "--tenant is required"
     [[ -n "${host}" || -n "${remove}" ]] || die "${usage_text}"
     [[ -z "${host}" || -z "${remove}" ]] || die "--host and --remove are two different things; give one"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     _label "an app instance" "${inst}"
     _label "an entry" "${entry}"
     need curl jq
@@ -2370,7 +2380,7 @@ cmd_exposures_alias() {
 cmd_exposures_requests() {
     local t answer
     t="$(_tenant_flag "$@")"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     need jq
     answer="$(_call GET "/v1/tenants/${t}/exposures")" || exit 1
     printf '%s' "${answer}" | jq -e 'has("entries")' >/dev/null ||
@@ -2439,7 +2449,7 @@ cmd_exposures_approve() {
     done
     [[ -n "${inst}" && -n "${entry}" ]] || die "${usage_text}"
     [[ -n "${t}" ]] || die "--tenant is required"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     _label "an app instance" "${inst}"
     _label "an entry" "${entry}"
     # A day is the end of that day, UTC; anything else is the director's to
@@ -2758,7 +2768,7 @@ cmd_apps_approve() {
     done
     [[ -n "${app}" && -n "${t:-}" ]] || die "${usage_text}"
     _label "an app" "${app}"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     need curl jq
 
     if [[ -z "${privilege}" ]]; then
@@ -2846,7 +2856,7 @@ cmd_apps_decline() {
     done
     [[ -n "${app}" && -n "${privilege}" && -n "${t:-}" ]] || die "${usage_text}"
     _label "an app" "${app}"
-    _label "a tenant" "${t}"
+    _tenant "a tenant" "${t}"
     _privilege_ref "${privilege}"
     reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what the person who asked reads."

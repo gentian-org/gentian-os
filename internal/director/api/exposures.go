@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
@@ -310,7 +312,7 @@ const mainAddressWarning = "a website on the cluster's main address needs your a
 // kind is what an approval of the entry records: what the profile's entry
 // declares, or for the exception what the registry already holds.
 func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure string, apex bool) (kind, why string, err error) {
-	if !gitops.ValidName(tenant) || !gitops.ValidName(install) || !gitops.ValidName(exposure) {
+	if !gentianov1alpha1.ValidTenantName(tenant) || !gitops.ValidName(install) || !gitops.ValidName(exposure) {
 		// The write names the value that is not a name; this has nothing to
 		// add to that.
 		return "", "", nil

@@ -370,6 +370,15 @@ gentian tenants create globex
 is "create names no switch unless one is given" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/tenants{"name":"globex","displayName":"","requireMFA":true}'
 
 fresh
+gentian tenants create a2345678901234567890123456789012345678x9
+refused "create refuses a tenant name longer than 38"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
+fresh; reply POST /v1/clusters/c1/tenants 202 '{"status":"created","commit":"0123456789abcdef"}'
+gentian tenants create a2345678901234567890123456789012345678
+is "create takes a tenant name of 38" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/tenants{"name":"a2345678901234567890123456789012345678","displayName":"","requireMFA":true}'
+
+fresh
 gentian tenants create user --admins-approve-public-addresses
 refused "create refuses the retired approving switch"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""

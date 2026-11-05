@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/guard"
@@ -65,7 +67,7 @@ func (s *Server) commissioned(pattern, relation string, obj object, h func(http.
 func (s *Server) admitCommissioner(w http.ResponseWriter, r *http.Request, pattern string, holder *CommissionKey) (call, bool) {
 	ctx := r.Context()
 	tenant := r.PathValue("t")
-	if !gitops.ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return call{}, false
 	}

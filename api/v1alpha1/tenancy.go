@@ -18,7 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 const (
 	// TenancyModeMulti is the default: the platform tenant plus any number of
@@ -96,3 +99,28 @@ func TenantInNamespace(tenants []Tenant, namespace string) *Tenant {
 	}
 	return nil
 }
+
+// MaxTenantNameLength is the longest name a tenant may have. The name is
+// built into names that have limits of their own, and the two tightest set
+// it:
+//
+//   - every tenant's desktop is a Helm release named tenant-<name>-desktop
+//     (the Component's namespace and name), and Helm refuses a release name
+//     longer than 53 characters;
+//   - purging a tenant runs the Job s3-delete-<name>-gentian-backup, and
+//     Kubernetes copies a Job's name into its pods' job-name label, which
+//     holds 63.
+//
+// Both leave 38. The namespace (tenant-<name>, 63), the desktop's database
+// (<name>_shell, 63 bytes) and the tenant's own DNS label are wider.
+const MaxTenantNameLength = 38
+
+// tenantName is a DNS label of at most MaxTenantNameLength characters.
+var tenantName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,36}[a-z0-9])?$`)
+
+// ValidTenantName reports whether name can be a tenant's: a DNS label of
+// lower-case letters, digits and hyphens, starting and ending with a letter
+// or a digit, of at most MaxTenantNameLength characters. Every service that
+// takes a tenant's name from a request checks it here before it builds
+// anything from it.
+func ValidTenantName(name string) bool { return tenantName.MatchString(name) }

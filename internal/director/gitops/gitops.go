@@ -34,6 +34,8 @@ import (
 	"sync"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/audit"
 )
 
@@ -421,7 +423,7 @@ func (g *GitOps) tenantFileRead(ctx context.Context, tenant string) (string, err
 }
 
 func (g *GitOps) tenantFileWithin(ctx context.Context, tenant string, maxAge time.Duration) (string, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if err := g.ensureRepoWithin(ctx, maxAge); err != nil {

@@ -39,8 +39,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -112,10 +113,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, guard.Identify(w, r))
 }
 
-// tenantName is a DNS label, which is what a tenant's name is. Checked here
-// because the name becomes part of an object id put to the store.
-var tenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?$`)
-
 // call is a request that has passed the guard.
 type call struct {
 	user string
@@ -132,7 +129,7 @@ type object func(s *Server, r *http.Request) (string, error)
 // tenantObject is the tenant in the path.
 func tenantObject(_ *Server, r *http.Request) (string, error) {
 	t := r.PathValue("t")
-	if !tenantName.MatchString(t) {
+	if !gentianov1alpha1.ValidTenantName(t) {
 		return "", errInvalidName
 	}
 	return authz.Tenant(t), nil

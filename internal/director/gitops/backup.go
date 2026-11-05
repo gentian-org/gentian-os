@@ -106,7 +106,7 @@ var ErrBackupOverrideRefused = errors.New("this cluster does not allow tenants t
 
 // SetTenantBackupPolicy writes one tenant's policy and commits it.
 func (g *GitOps) SetTenantBackupPolicy(ctx context.Context, tenant string, policy BackupPolicy, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	// AllowTenantOverride is the cluster's to state. A tenant that sent one
@@ -126,7 +126,7 @@ func (g *GitOps) SetTenantBackupPolicy(ctx context.Context, tenant string, polic
 // there is no "inherit" value to write, because inheriting is what a tenant
 // does when it says nothing.
 func (g *GitOps) ClearTenantBackupPolicy(ctx context.Context, tenant string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	return g.writeTenantFile(ctx, tenant, BackupPolicyFile, "", listResource,

@@ -169,8 +169,11 @@ services after the fact is a data migration.
 **Names** are `<tier>-<qualifier>`. Kernel and system namespaces are named for
 the function, not the product (`kernel-provisioning`, not the software behind
 it), so the software can change. For tenants the tenant name is the qualifier
-and `-dmz` a suffix, so a tenant's namespaces list and sort together; a
-namespace name is 63 characters, so a tenant name is at most 52. A cluster has
+and `-dmz` a suffix, so a tenant's namespaces list and sort together. A
+tenant name is at most 38 characters: its desktop's Helm release,
+`tenant-<t>-desktop`, must fit Helm's 53, and its purge Job,
+`s3-delete-<t>-gentian-backup`, the 63 of a pod label
+(`MaxTenantNameLength` in `api/v1alpha1/tenancy.go`). A cluster has
 one stage, so no name carries a stage suffix.
 
 **Labels.** Every namespace carries `gentianos.io/tier: kernel | system |

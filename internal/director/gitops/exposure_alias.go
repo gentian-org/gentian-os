@@ -126,7 +126,7 @@ func aliasesHeld(dir string) (map[string]heldAlias, error) {
 // it is kept through the approver's reviews and goes when the surface is
 // withdrawn.
 func (g *GitOps) SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !ValidName(install) {

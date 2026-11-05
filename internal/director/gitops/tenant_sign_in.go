@@ -84,7 +84,7 @@ func (g *GitOps) readTenantPatch(ctx context.Context, tenant, name string, doc a
 
 // TenantGroups reads a tenant's declared groups back.
 func (g *GitOps) TenantGroups(ctx context.Context, tenant string) ([]string, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -104,7 +104,7 @@ func (g *GitOps) TenantGroups(ctx context.Context, tenant string) ([]string, err
 // A name the platform's own groups take (gentian...) or that is not a label
 // is refused.
 func (g *GitOps) SetTenantGroups(ctx context.Context, tenant string, groups []string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	clean, err := cleanGroupNames(groups)
@@ -149,7 +149,7 @@ func cleanGroupNames(groups []string) ([]string, error) {
 
 // TenantSignIn reads what a tenant declares of sign-ins.
 func (g *GitOps) TenantSignIn(ctx context.Context, tenant string) (from []gentianov1alpha1.TenantSignInFrom, to []string, err error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -170,7 +170,7 @@ func (g *GitOps) TenantSignIn(ctx context.Context, tenant string) (from []gentia
 // A group is one target declares (spec.groups, in its groups.yaml) or
 // members. Refused: a source that is the target, a tenant that is not there.
 func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta Meta) (Result, error) {
-	if !ValidName(target) || !ValidName(source) {
+	if !gentianov1alpha1.ValidTenantName(target) || !gentianov1alpha1.ValidTenantName(source) {
 		return Result{}, fmt.Errorf("%w: tenants %q and %q", ErrInvalidName, target, source)
 	}
 	if target == source {

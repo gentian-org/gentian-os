@@ -141,7 +141,7 @@ func (g *GitOps) DeclareBundleSource(ctx context.Context, name string, d BundleS
 // No tenant's name and no label can hold a dot, so two tenants' stores, and a
 // tenant's and the cluster's, can never share a name.
 func TenantStoreName(tenant, label string) (string, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !bundleSourceName.MatchString(label) {

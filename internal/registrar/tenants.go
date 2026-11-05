@@ -147,7 +147,7 @@ func (c *ClusterTenants) syncFailure(ctx context.Context, name string) string {
 
 // Tenant reads one Tenant object.
 func (c *ClusterTenants) Tenant(ctx context.Context, name string) (Tenant, error) {
-	if !dnsLabel.MatchString(name) {
+	if !gentianov1alpha1.ValidTenantName(name) {
 		return Tenant{}, fmt.Errorf("%w: tenant %q", errInvalidName, name)
 	}
 	var t gentianov1alpha1.Tenant

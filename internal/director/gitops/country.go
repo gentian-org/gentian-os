@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -61,7 +63,7 @@ func parseTenantCountry(text string) (string, error) {
 
 // TenantCountry reads a tenant's country back; "" when it names none.
 func (g *GitOps) TenantCountry(ctx context.Context, tenant string) (string, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -79,7 +81,7 @@ func (g *GitOps) TenantCountry(ctx context.Context, tenant string) (string, erro
 
 // SetTenantCountry commits a tenant's country; "" removes it.
 func (g *GitOps) SetTenantCountry(ctx context.Context, tenant, country string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	want, err := NormaliseCountry(country)

@@ -135,7 +135,7 @@ func adoptsAnotherRealm(manifest, tenant string) bool {
 // manifest adopts another realm. A caller asks before it fetches or commits
 // anything for an install; the writes themselves refuse as well.
 func (g *GitOps) IsPlatformTenant(ctx context.Context, tenant string) (bool, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return false, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	file, err := g.TenantFile(ctx, tenant)
@@ -224,7 +224,7 @@ const PlatformTenant = platformTenant
 // cluster, which lives on the cluster's own domain. Otherwise
 // <tenant>.<kernel>, the operator's default.
 func (g *GitOps) TenantLoginDomain(ctx context.Context, tenant string) (string, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	file, err := g.TenantFile(ctx, tenant)
@@ -481,7 +481,7 @@ func (g *GitOps) createTenant(
 	message, status string,
 	meta Meta,
 ) (Result, error) {
-	if !ValidName(name) {
+	if !gentianov1alpha1.ValidTenantName(name) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, name)
 	}
 	if err := g.refuseInSingleTenancy(ctx, name); err != nil {
@@ -650,7 +650,7 @@ func declaredTenants(dir string) ([]gentianov1alpha1.Tenant, error) {
 // here because "retire" reads like it might mean "delete everything", and the
 // console has to be able to tell a person which it was.
 func (g *GitOps) RetireTenant(ctx context.Context, tenant string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if tenant == platformTenant {
@@ -699,7 +699,7 @@ type PurgeOptions struct {
 }
 
 func (g *GitOps) RequestTenantPurge(ctx context.Context, tenant string, now time.Time, opts PurgeOptions, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if tenant == platformTenant {

@@ -87,7 +87,7 @@ var hostnamePattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-
 // the same hosts. Unbinding is refused to nobody, so a tenant that was bound
 // where it should not have been can be put back.
 func (g *GitOps) SetTenantDomain(ctx context.Context, tenant, domain string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
@@ -204,7 +204,7 @@ type TenantPlacement struct {
 // TenantDomain beside it. It is the repository's word: the operator moves a
 // tenant to a newly bound domain a moment after the commit.
 func (g *GitOps) TenantPlacement(ctx context.Context, tenant string) (TenantPlacement, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return TenantPlacement{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	file, err := g.TenantFile(ctx, tenant)

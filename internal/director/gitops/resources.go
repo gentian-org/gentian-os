@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // A tenant's resource plan, as a commit.
@@ -67,7 +69,7 @@ var quotaKeys = []string{"requestsCpu", "requestsMemory", "cpu", "memory", "stor
 // second. The retry loop is apply's: a push the remote refuses because it
 // moved is a sync and another attempt, not a merge.
 func (g *GitOps) SetResourcePlan(ctx context.Context, tenant string, plan Plan, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if strings.TrimSpace(plan.Name) == "" {

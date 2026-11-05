@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -73,7 +75,7 @@ type BruteForcePolicy struct {
 
 // SetTenantSecurityPolicy writes a tenant's realm policy and commits it.
 func (g *GitOps) SetTenantSecurityPolicy(ctx context.Context, tenant string, policy SecurityPolicy, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	return g.writeTenantFile(ctx, tenant, SecurityPolicyFile, renderSecurityPolicy(tenant, policy), listPatch,
@@ -87,7 +89,7 @@ func (g *GitOps) SetTenantSecurityPolicy(ctx context.Context, tenant string, pol
 // the realm currently says, and that is the point — what is declared is what
 // the realm will be, because the composition writes it on every reconcile.
 func (g *GitOps) TenantSecurityPolicy(ctx context.Context, tenant string) (*SecurityPolicy, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()

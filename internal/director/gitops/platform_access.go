@@ -14,13 +14,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gentian-org/gentian-os/internal/audit"
 	"os"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/audit"
 
 	"sigs.k8s.io/yaml"
 
@@ -132,7 +134,7 @@ func validHolderKey(role, tenant, subject string) error {
 	if _, ok := authz.HolderRoles[role]; !ok {
 		return fmt.Errorf("%w: role %q is not one of %s", ErrInvalidRoleHolder, role, strings.Join(HolderRoleNames(), ", "))
 	}
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return fmt.Errorf("%w: tenant %q is not a name", ErrInvalidRoleHolder, tenant)
 	}
 	if !holderSubject.MatchString(subject) {
@@ -360,7 +362,7 @@ func parseTenantPlatformAccess(text string) (bool, error) {
 // TenantPlatformAccess reads whether the platform's administrators may sign
 // in to a tenant.
 func (g *GitOps) TenantPlatformAccess(ctx context.Context, tenant string) (bool, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return false, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -378,7 +380,7 @@ func (g *GitOps) TenantPlatformAccess(ctx context.Context, tenant string) (bool,
 
 // SetTenantPlatformAccess writes the switch, or removes it when off.
 func (g *GitOps) SetTenantPlatformAccess(ctx context.Context, tenant string, on bool, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	verb := "let the platform's administrators sign in to the tenant"

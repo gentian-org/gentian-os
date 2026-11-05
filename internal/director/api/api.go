@@ -365,7 +365,7 @@ func (s *Server) clusterObject(r *http.Request) (string, error) {
 
 func tenantObject(r *http.Request) (string, error) {
 	t := r.PathValue("t")
-	if !gitops.ValidName(t) {
+	if !gentianov1alpha1.ValidTenantName(t) {
 		return "", gitops.ErrInvalidName
 	}
 	return authz.Tenant(t), nil
@@ -1943,9 +1943,10 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 			`"requireMFA": false, "catalogue": {"delegated": true}, "signUp": true, "country": "CH", "reuseName": true`)
 		return
 	}
-	if !gitops.ValidName(body.Name) {
-		s.fail(w, r, http.StatusBadRequest,
-			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
+	if !gentianov1alpha1.ValidTenantName(body.Name) {
+		s.fail(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"a tenant name is a DNS label of at most %d characters: lower-case letters, digits and hyphens, starting and ending with a letter or digit",
+			gentianov1alpha1.MaxTenantNameLength))
 		return
 	}
 	country, err := gitops.NormaliseCountry(body.Country)

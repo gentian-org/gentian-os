@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
@@ -116,7 +118,7 @@ func extensionFile(group, resource, name string) (string, error) {
 // DeclareExtensionObject writes one object into a tenant's directory and
 // commits it.
 func (g *GitOps) DeclareExtensionObject(ctx context.Context, tenant string, o ExtensionObject, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	file, err := extensionFile(o.Group, o.Resource, o.Name)
@@ -148,7 +150,7 @@ func (g *GitOps) DeclareExtensionObject(ctx context.Context, tenant string, o Ex
 // RemoveExtensionObject stops declaring one. The tenant's directory is
 // synced with pruning, so the cluster deletes it.
 func (g *GitOps) RemoveExtensionObject(ctx context.Context, tenant, group, resource, name string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	file, err := extensionFile(group, resource, name)

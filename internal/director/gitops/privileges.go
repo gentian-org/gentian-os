@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -71,7 +73,7 @@ func (g PrivilegeGrant) Key() string { return g.Install + " " + g.Privilege }
 // TenantPrivileges reads a tenant's grants back, so a console can show what
 // has been approved and by whom rather than only what is still pending.
 func (g *GitOps) TenantPrivileges(ctx context.Context, tenant string) ([]PrivilegeGrant, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -114,7 +116,7 @@ func (g *GitOps) tenantPrivileges(ctx context.Context, tenant string) ([]Privile
 // old one, and the commit shows the replacement. That is deliberate: two
 // grants for one privilege would leave the question of which applies.
 func (g *GitOps) GrantPrivilege(ctx context.Context, tenant string, grant PrivilegeGrant, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !ValidName(grant.Install) {
@@ -154,7 +156,7 @@ func (g *GitOps) GrantPrivilege(ctx context.Context, tenant string, grant Privil
 // was in before anybody approved -- a revocation takes something away rather
 // than breaking something.
 func (g *GitOps) RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()

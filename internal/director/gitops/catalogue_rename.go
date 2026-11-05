@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -65,7 +67,7 @@ func (g *GitOps) RenameCatalogueSource(ctx context.Context, tenant, old, new str
 	if !ValidName(new) {
 		return Result{}, fmt.Errorf("%w: a catalog's name is lower-case letters, digits and hyphens", ErrInvalidName)
 	}
-	if tenant != "" && !ValidName(tenant) {
+	if tenant != "" && !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	scope := "cluster"
