@@ -28,6 +28,10 @@
 [[ -n "${GENTIAN_PORTFORWARD_LOADED:-}" ]] && return 0
 GENTIAN_PORTFORWARD_LOADED=1
 
+# gentian_on_exit, so the cleanup below shares the EXIT trap with the rest.
+# shellcheck source=scripts/lib/compat.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compat.sh"
+
 # PIDs of port-forwards we started, one per line, tracked in a FILE rather than
 # a shell variable on purpose.
 #
@@ -87,7 +91,7 @@ gentian_cleanup_port_forwards() {
     unset _gentian_pf_pid
     return 0
 }
-trap gentian_cleanup_port_forwards EXIT
+gentian_on_exit gentian_cleanup_port_forwards
 
 _gentian_free_port() {
     python3 - <<'PY'
