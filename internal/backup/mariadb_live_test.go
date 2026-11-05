@@ -141,7 +141,7 @@ func (m *liveMariaDB) denied(user, sql string) {
 }
 
 func (m *liveMariaDB) setup(db, user string, dynamic bool) (string, error) {
-	return m.script("bash", MariaDBSetupScript(db, user, dynamic), "DB_PASS=pw-"+user)
+	return m.script("bash", MariaDBSetupScript(db, user, dynamic, 25), "DB_PASS=pw-"+user)
 }
 
 func (m *liveMariaDB) grants(user string) string {
@@ -222,7 +222,7 @@ func TestMariaDBAgainstAServer(t *testing.T) {
 	m.denied("demo_crm", "CREATE DATABASE demo_crm_later")
 	must(m.setup("demo_crm", "demo_crm", true))
 	// A password is never part of a statement.
-	if out, err := m.script("bash", MariaDBSetupScript("demo_odd", "demo_odd", false), `DB_PASS=a'b"c\d$e`); err != nil {
+	if out, err := m.script("bash", MariaDBSetupScript("demo_odd", "demo_odd", false, 25), `DB_PASS=a'b"c\d$e`); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if out, err := m.try("demo_odd", `a'b"c\d$e`, "SELECT 1"); err != nil {

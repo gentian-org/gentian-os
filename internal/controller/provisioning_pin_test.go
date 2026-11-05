@@ -63,10 +63,14 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// (ensureProvisioningJobSecrets), and are written into no Job.
 		// Nothing else in these Jobs changed.
 		"postgres role": {
-			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true),
-			"6d295abc70894a261541959e5db6373b3066803534fa03dc961722d600c122fd", // moved deliberately: psql refuses an unencrypted connection (PGSSLMODE)
+			makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true, 25),
+			// Moved deliberately: psql refuses an unencrypted connection
+			// (PGSSLMODE); and again when the role was given a connection
+			// limit, so that one app cannot take the shared server.
+			"4e41e2d36ccdf1aae1bd2f7bc7cb6b5b4fdba72eb894dbdafc64edd423910cf2",
 		},
-		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", true, true), "14691be0177479f93914a328cb59573120d722f67ee2d773388b791be7b10d5e"},
+		// Moved deliberately when the user was given a connection limit.
+		"mariadb setup": {makeMariaDBSetupJob(tenant, "shop", true, true, 25), "109966ca13a4f9d3450e4e62f25254d84ec97b3979258175a00375f938fa22d4"},
 		// Both bucket digests moved once when the Jobs' image became the
 		// S3 server's own, and again, deliberately, when the server became
 		// SeaweedFS: the bucket and the app's identity are made with weed

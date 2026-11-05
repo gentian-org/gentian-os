@@ -360,7 +360,8 @@ func databaseSecretTemplate(host, port, database, username, password string) map
 // Once that resource has been applied the Job is not run again: the role
 // exists with the seeded password, and the record is write-once.
 func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ready bool, reason, message string, err error) {
-	return ensurePostgresStore(ctx, r.Client, r.Seeder, tenant, portalShellAppName, gentianov1alpha1.SchemaPreferenceAppSchema, false)
+	return ensurePostgresStore(ctx, r.Client, r.Seeder, tenant, portalShellAppName, gentianov1alpha1.SchemaPreferenceAppSchema, false,
+		gentianov1alpha1.DefaultDatabaseConnectionLimit)
 }
 
 // ensurePostgresStore makes one database on the tenant postgres, with its
@@ -370,7 +371,7 @@ func (r *ComponentReconciler) ensureTenantDatabase(ctx context.Context, tenant *
 // pieces. Two callers: the desktop's database, and the database of an app
 // whose data a restore brings back as retained into a tenant that has none.
 func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.Seeder, tenant *gentianov1alpha1.Tenant, appName string,
-	schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) (ready bool, reason, message string, err error) {
+	schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) (ready bool, reason, message string, err error) {
 	cluster := &unstructured.Unstructured{}
 	cluster.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: "Cluster"})
 	if err := c.Get(ctx, types.NamespacedName{Name: cnpgClusterName, Namespace: postgresNamespace}, cluster); err != nil {
@@ -410,7 +411,7 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 	// The role's password reaches the Job in a Secret the Job owns, handed
 	// over once the Job is there.
 	desired := makeRoleJob(tenant, tenantNamespaceName(tenant), dbName, appName, true,
-		schemaPref, allowCreateDB)
+		schemaPref, allowCreateDB, connLimit)
 	password := passwordSecretData(creds.Password)
 	// What was asked for, as a hash on the Job. The live Job cannot be
 	// compared with the desired one field by field: the API server fills in

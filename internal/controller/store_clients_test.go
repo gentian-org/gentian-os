@@ -184,13 +184,13 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 			np := buildComponentNetworkPolicy(comp, defaultTenantName(comp), releasePods(releaseName(comp)), nil, []networkingv1.NetworkPolicyEgressRule{modelGatewayEgress()})
 			return egressClient(t, np, layout.System("llm"), provisioner.ModelGatewayPort)
 		},
-		"postgres-role-job":      job(makeRoleJob(tenant, tenant.NamespaceName(), "acme_wiki", "wiki", false, "", false)),
+		"postgres-role-job":      job(makeRoleJob(tenant, tenant.NamespaceName(), "acme_wiki", "wiki", false, "", false, 25)),
 		"postgres-destroy-job":   job(backup.PostgresDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
 		"export-postgres-dump":   unit(exports, bundle.ArtefactPostgres),
 		"export-postgres-upload": unit(exports, bundle.ArtefactPostgresOwned),
 		"restore-postgres":       unit(restores, bundle.ArtefactPostgres),
 		"restore-postgres-fetch": unit(restores, bundle.ArtefactPostgresOwned),
-		"mariadb-setup-job":      job(makeMariaDBSetupJob(tenant, "shop", false, false)),
+		"mariadb-setup-job":      job(makeMariaDBSetupJob(tenant, "shop", false, false, 25)),
 		"mariadb-destroy-job":    job(backup.MariaDBDestroyJob(tenant, "shop", backup.DestroyInTheBackground)),
 		"export-mariadb-dump":    unit(exports, bundle.ArtefactMariaDB),
 		"export-mariadb-upload":  unit(exports, bundle.ArtefactMariaDBOwned),

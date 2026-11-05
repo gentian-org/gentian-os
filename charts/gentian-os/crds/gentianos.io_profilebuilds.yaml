@@ -1326,6 +1326,16 @@ spec:
                                     permanently diff against GitOps tooling that applies CRD defaults
                                     server-side.
                                   type: boolean
+                                connectionLimit:
+                                  description: |-
+                                    ConnectionLimit is the most connections the app's account may hold at
+                                    once on the shared server, which every tenant's apps use. Unset is
+                                    DefaultDatabaseConnectionLimit; a profile raises it for an app whose
+                                    pools need more, within the maximum.
+                                  format: int32
+                                  maximum: 100
+                                  minimum: 1
+                                  type: integer
                                 engine:
                                   default: postgresql
                                   description: Engine selects the database engine.
@@ -3423,6 +3433,16 @@ spec:
                                   permanently diff against GitOps tooling that applies CRD defaults
                                   server-side.
                                 type: boolean
+                              connectionLimit:
+                                description: |-
+                                  ConnectionLimit is the most connections the app's account may hold at
+                                  once on the shared server, which every tenant's apps use. Unset is
+                                  DefaultDatabaseConnectionLimit; a profile raises it for an app whose
+                                  pools need more, within the maximum.
+                                format: int32
+                                maximum: 100
+                                minimum: 1
+                                type: integer
                               engine:
                                 default: postgresql
                                 description: Engine selects the database engine. Defaults

@@ -436,6 +436,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `spec.extensions[].kernelRequirements.database` | object |  | `Database` specifies a relational database requirement. |
 | `spec.extensions[].kernelRequirements.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
+| `spec.extensions[].kernelRequirements.database.connectionLimit` | integer (int32) |  | `ConnectionLimit` is the most connections the app's account may hold at once on the shared server, which every tenant's apps use. |
 | `spec.extensions[].kernelRequirements.database.engine` | string |  | `Engine` selects the database engine. |
 | `spec.extensions[].kernelRequirements.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `spec.extensions[].kernelRequirements.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -694,6 +695,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `spec.requires.services.database` | object |  | `Database` specifies a relational database requirement. |
 | `spec.requires.services.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
+| `spec.requires.services.database.connectionLimit` | integer (int32) |  | `ConnectionLimit` is the most connections the app's account may hold at once on the shared server, which every tenant's apps use. |
 | `spec.requires.services.database.engine` | string |  | `Engine` selects the database engine. |
 | `spec.requires.services.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `spec.requires.services.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -1199,6 +1201,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `status.profileSpec.extensions[].kernelRequirements.database` | object |  | `Database` specifies a relational database requirement. |
 | `status.profileSpec.extensions[].kernelRequirements.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
+| `status.profileSpec.extensions[].kernelRequirements.database.connectionLimit` | integer (int32) |  | `ConnectionLimit` is the most connections the app's account may hold at once on the shared server, which every tenant's apps use. |
 | `status.profileSpec.extensions[].kernelRequirements.database.engine` | string |  | `Engine` selects the database engine. |
 | `status.profileSpec.extensions[].kernelRequirements.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `status.profileSpec.extensions[].kernelRequirements.identity` | object |  | `Identity` specifies OIDC requirements. |
@@ -1457,6 +1460,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.cache.engine` | string |  | `Engine` selects the caching backend. |
 | `status.profileSpec.requires.services.database` | object |  | `Database` specifies a relational database requirement. |
 | `status.profileSpec.requires.services.database.allowDynamicDatabaseCreation` | boolean |  | `AllowDynamicDatabaseCreation` lets the app create databases of its own at runtime. |
+| `status.profileSpec.requires.services.database.connectionLimit` | integer (int32) |  | `ConnectionLimit` is the most connections the app's account may hold at once on the shared server, which every tenant's apps use. |
 | `status.profileSpec.requires.services.database.engine` | string |  | `Engine` selects the database engine. |
 | `status.profileSpec.requires.services.database.schemaPreference` | string |  | `SchemaPreference` decides which schema the app's role resolves unqualified table names against first. |
 | `status.profileSpec.requires.services.identity` | object |  | `Identity` specifies OIDC requirements. |

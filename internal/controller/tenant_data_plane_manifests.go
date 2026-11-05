@@ -65,7 +65,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			keys[types.NamespacedName{Namespace: postgresNamespace, Name: roleJobName(tenant.Name, appName)}] = passwordSecretData(rolePassword)
 		}
 		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword != "",
-			schemaPreferenceFor(profile), allowsDynamicDatabaseCreation(profile)))
+			schemaPreferenceFor(profile), allowsDynamicDatabaseCreation(profile), connectionLimitFor(profile)))
 	}
 
 	mariaApps, err := r.collectMariaDBApps(ctx, tenant, CollectForProvision)
@@ -97,7 +97,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		if dbPassword != "" {
 			keys[types.NamespacedName{Namespace: mariadbNamespace, Name: mariadbSetupJobName(tenant.Name, appName)}] = passwordSecretData(dbPassword)
 		}
-		jobs = append(jobs, *makeMariaDBSetupJob(tenant, appName, dbPassword != "", allowDynamic))
+		jobs = append(jobs, *makeMariaDBSetupJob(tenant, appName, dbPassword != "", allowDynamic, connectionLimitFor(profile)))
 	}
 
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)

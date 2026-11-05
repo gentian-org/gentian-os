@@ -127,7 +127,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 	}
 
 	// The script is the inventory's, for this tenant's and app's names.
-	if want := backup.MariaDBSetupScript("mariacreate_maria_app1", "mariacreate_maria_app1", false); container.Command[len(container.Command)-1] != want {
+	if want := backup.MariaDBSetupScript("mariacreate_maria_app1", "mariacreate_maria_app1", false, 25); container.Command[len(container.Command)-1] != want {
 		t.Errorf("setup script = %q", container.Command)
 	}
 
