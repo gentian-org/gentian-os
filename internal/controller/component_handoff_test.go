@@ -468,3 +468,34 @@ func TestATakenOverJobIsNotRewritten(t *testing.T) {
 		t.Errorf("the Job is not the component's: %+v", owner)
 	}
 }
+
+// An app its profile's own Composition installed under a Release that named
+// no Helm release is installed as that Release's name. Taken over, it is
+// rendered under the release Helm keeps the history of, never a second
+// install under <app>-release over the first one's objects.
+func TestATakenOverAppKeepsTheHelmReleaseItWasInstalledAs(t *testing.T) {
+	ctx := context.Background()
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	release.SetName(handoffXR + composedReleaseSuffix)
+	release.SetAnnotations(map[string]string{"crossplane.io/external-name": handoffXR + composedReleaseSuffix})
+	release.SetLabels(map[string]string{composed.CompositeLabel: handoffXR})
+	history := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: "sh.helm.release.v1." + handoffXR + composedReleaseSuffix + ".v3", Namespace: "tenant-acme",
+		Labels: map[string]string{"owner": "helm", "name": handoffXR + composedReleaseSuffix}}}
+	h := handoffHarness(t, release, history)
+	comp := getComponent(t, h.c, h.comp)
+	comp.Annotations = map[string]string{compositeAnnotation: handoffXR}
+	if err := h.c.Update(ctx, comp); err != nil {
+		t.Fatal(err)
+	}
+
+	h.reconcileInstalled()
+	if got := getComponent(t, h.c, h.comp).Annotations[helmReleaseAnnotation]; got != handoffXR+composedReleaseSuffix {
+		t.Fatalf("recorded Helm release %q, want %s", got, handoffXR+composedReleaseSuffix)
+	}
+	live := h.live(release, release.GetName(), "")
+	if name := live.GetAnnotations()["crossplane.io/external-name"]; name != handoffXR+composedReleaseSuffix {
+		t.Fatalf("the release installs %q, want the one it was installed as, %s", name, handoffXR+composedReleaseSuffix)
+	}
+}
