@@ -318,7 +318,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod`. A cluster keeps one stage for life, which is why there is no `<stage>` segment inside its own tree. |
 | `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. Argo CD reads the deployments repository and `gentian-os` with the same setting — see *How Argo CD gets a repository's credential* below. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. `GENTIAN_DEPLOYMENTS_REPO` has no default: unset, the install asks for it, and an unattended run stops. |
-| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](../guides/deployment.md). Unset, it is the branch of the checkout the installer is run from, everywhere it is used: the gentian-os Repository claim step 0 writes, the bootstrap Applications, the default catalog and the image tag. A release tag has to be named here; with a detached checkout and no value the install stops. The installer runs the image built from the checkout's commit under that name. |
+| `GENTIAN_OS_BRANCH` | The ref the cluster runs — [deployment.md §4](../guides/deployment.md). A release tag is what every in-cluster Application follows; for a branch they follow the checkout's commit, which the operator image is built from. Unset, it is the branch of the checkout the installer is run from, everywhere it is used: the gentian-os Repository claim step 0 writes, the bootstrap Applications, the default catalog and the image tag. A release tag has to be named here; with a detached checkout and no value the install stops. The installer runs the image built from the checkout's commit under that name. |
 | `GENTIAN_UI_BRANCH` | The branch of `gentian-ui` written to that repository's claim when step 0 scaffolds it. `main` by default. |
 | `GENTIAN_DEPLOYMENTS_PATH` | The local checkout of the deployments repository. `~/.gentian/gentian-deployments` by default. |
 | `CLUSTER_ADMIN_RECOVERY_EMAIL` | Where the platform admin's activation link is mailed at the handover, and the account's recovery address afterwards. Unset, the handover asks; with no address, or while the kernel realm cannot send mail yet, the link is shown once in the terminal. |
@@ -754,7 +754,7 @@ What you have to keep, by mode:
 | `secretMode` | Keep | Why |
 |---|---|---|
 | `derived` | The recovery kit, and its passphrase somewhere else | It holds the master password and the salt, which reproduce every generated credential; the OpenBao recovery key; the backup key; and the break-glass signing key |
-| `random` | The recovery kit, **and** snapshots of OpenBao that you take yourself | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those |
+| `random` | The recovery kit, **and** the OpenBao snapshots | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those, and its daily snapshot is their copy ([recovery.md §4](../guides/recovery.md)) |
 
 > Under `derived`, reproducing a cluster's credentials needs the master password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
@@ -764,9 +764,18 @@ What you have to keep, by mode:
 > recovery kit* in [GETTING-STARTED.md](../../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
-The platform does not snapshot OpenBao, and the recovery kit holds no
-generated credential; a tenant's backup holds its apps' own secrets and no
-other. So that snapshot is yours to take.
+A vault on Raft storage (`openbao.storage: raft` on the claim, what a new
+claim states) is snapshotted every day, encrypted to the backup key, into the
+bucket `gentian-openbao-snapshots` of the platform's object store, and the
+newest 14 are kept; the transit seal that unseals it is snapshotted beside
+it, and opens with the kit's `TRANSIT_UNSEAL_KEY`.
+[recovery.md §4](../guides/recovery.md) restores the seal, then the vault.
+An instance on file storage, on a cluster whose claim predates the setting,
+is not snapshotted until it is moved to Raft
+([recovery.md §5](../guides/recovery.md)).
+The snapshots live on the cluster's own object store: a copy off the cluster
+is yours to make. The recovery kit holds no generated credential, and a
+tenant's backup holds its apps' own secrets and no other.
 A tenant's backup, restore and import are the same in both modes. What
 differs is the loss of OpenBao's storage on a cluster that keeps running:
 `derived` writes the same values again, `random` writes new ones that the

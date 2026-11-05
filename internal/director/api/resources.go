@@ -58,6 +58,12 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 		s.fail(w, r, http.StatusBadRequest, `body must be {"plan": "<name>"}`)
 		return
 	}
+	if body.Force && c.id.Delegated() {
+		// Shrinking a tenant below what it uses is a decision a person
+		// makes at the screen, not one a component makes on their behalf.
+		s.fail(w, r, http.StatusForbidden, "a token obtained on the person's behalf does not force a plan")
+		return
+	}
 	tenant := r.PathValue("t")
 	plans, err := s.cfg.Lifecycle.Plans(r.Context(), tenant)
 	if err != nil {

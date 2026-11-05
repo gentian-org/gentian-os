@@ -46,3 +46,8 @@ networkPolicy:
     # PostgreSQL beside that server.
     mail: system-mail
     data: kernel-data
+    # The daily snapshots of the vault and of its transit seal write their
+    # ciphertext here, each from its instance's namespace
+    # (charts/gentian-os/templates/openbao-snapshots.yaml).
+    secrets: kernel-secrets
+    seal: kernel-seal

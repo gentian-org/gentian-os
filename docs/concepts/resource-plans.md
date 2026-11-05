@@ -319,6 +319,14 @@ cluster's administrator. Whatever takes the order (a person, or a commerce
 backend that moves tenants once they paid) moves the tenant through the
 director's route in §7.
 
+A component that does it unattended speaks for a cluster administrator who
+linked themselves to it: a component of the platform tenant that declares
+`requires.services.vouching.director` obtains a short-lived token of that
+person for the director (custom-catalogs.md, vouching). `plans-read` reaches
+the plans, every tenant's state and the cluster's report; `plans-apply`
+also moves a tenant, never forced. The person's own `can_configure` is asked
+on every call, and the commit names the component and the reason it gave.
+
 ---
 
 ## 6. Usage history

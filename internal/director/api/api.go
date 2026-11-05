@@ -351,7 +351,7 @@ func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Re
 
 // gate is the guard of this director's routes.
 func (s *Server) gate() *guard.Guard {
-	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Log: s.cfg.Log, Fail: s.fail}
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Scoped: true, Log: s.cfg.Log, Fail: s.fail}
 }
 
 // clusterObject accepts only this director's own cluster. Another id is not
@@ -379,17 +379,19 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 	if !ok {
 		return call{}, false
 	}
-	return call{
-		id:     g.Ident,
-		user:   g.User,
-		holder: g.Holder,
-		meta: gitops.Meta{
-			Author:    gitops.Person{Name: g.Ident.Name, Email: g.Ident.Email},
-			Subject:   g.User[len("user:"):],
-			RequestID: guard.ID(r.Context()),
-			Decision:  g.Decision(),
-		},
-	}, true
+	meta := gitops.Meta{
+		Author:    gitops.Person{Name: g.Ident.Name, Email: g.Ident.Email},
+		Subject:   g.User[len("user:"):],
+		RequestID: guard.ID(r.Context()),
+		Decision:  g.Decision(),
+	}
+	if g.Ident.Delegated() {
+		// Who asked on the person's behalf, and why, in the commit beside
+		// the person and the decision.
+		meta.Via = g.Ident.Client
+		meta.Reason = r.Header.Get("X-Gentian-Reason")
+	}
+	return call{id: g.Ident, user: g.User, holder: g.Holder, meta: meta}, true
 }
 
 // guarded registers a route with the relation it requires. Together with

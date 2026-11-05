@@ -10,6 +10,9 @@ starting from what you still have rather than from what broke.
 
 `scripts/recovery.sh` does all three. The long form of each is kept below,
 because a recovery you cannot perform by hand is one you cannot debug.
+The vault has its own two, by hand: restoring it and the transit seal that
+unseals it from their daily snapshots (§4), and moving both from file to
+Raft storage, which is what makes those snapshots possible (§5).
 
 ### What it needs on your machine
 
@@ -465,7 +468,7 @@ Both are rotated after every use (step 6).
 - The **git host** itself being down: nothing can be synced; wait, or
   restore the host from its own backup. Argo CD keeps applying the last
   fetched state.
-- **OpenBao** sealed or lost: that is the existing playbook. The director
+- **OpenBao** sealed or lost: that is §4. The director
   needs OpenBao only to hand a pull credential to the custodian;
   configuration writes do not.
 - A **compromised director**: rotate its push credential and signing key
@@ -507,3 +510,473 @@ environment, for the platform's own store or an external one).
 
 If the manifest decrypts, the bundle is readable and the key is the right one —
 which is most of what a restore needs to be true.
+
+---
+
+## 4. OpenBao: the daily snapshots, and restoring them
+
+**When:** the storage of the vault, of the transit seal that unseals it, or
+of both is lost or damaged on a cluster that otherwise runs (a volume is
+gone, or it holds data that must go back to an earlier day), and they are on
+Raft storage. Under `secretMode: random` this is the only way back to the
+credentials drawn at random
+([security/design.md §6](../security/design.md)).
+
+The vault (`openbao`, in `kernel-secrets`) is sealed by a key held in the
+transit seal (`openbao-transit`, in `kernel-seal`). That key lives nowhere
+else: it is not exportable, and the seal is snapshotted for that reason.
+Without a snapshot of the seal, no snapshot of the vault could be unsealed
+once the seal's volume is lost.
+
+### 4.1 What is taken, and where it is
+
+| | The vault | The transit seal |
+|---|---|---|
+| **Who** | CronJob `openbao-snapshot` in `kernel-secrets` | CronJob `openbao-transit-snapshot` in `kernel-seal` |
+| **Logs in as** | Role `openbao-snapshot` of the vault, composed by the `Cluster` claim | Role `openbao-transit-snapshot` of the seal, written when the seal is set up or moved (`kernel/openbao/transit-snapshot-policy.hcl`) |
+| **Token for** | Audience `vault://openbao-snapshot` | Audience `vault://openbao-transit-snapshot` |
+| **Where** | `gentian-openbao-snapshots/openbao/openbao-<YYYYMMDD>T<HHMMSS>Z.snap.age` | `gentian-openbao-snapshots/openbao-transit/openbao-transit-<YYYYMMDD>T<HHMMSS>Z.snap.age` |
+| **Unsealed after a restore by** | The seal, by itself | `TRANSIT_UNSEAL_KEY` from the recovery kit |
+
+Both jobs are `charts/gentian-os/templates/openbao-snapshots.yaml`, run the
+same script and share the following:
+
+| | |
+|---|---|
+| **When** | Every day at 02:17 UTC; `openbaoSnapshots.schedule` in the cluster's values |
+| **Kept** | The newest 14 of each; `openbaoSnapshots.keep`. Older ones are deleted after a new one is written |
+| **Bucket** | `gentian-openbao-snapshots` of the platform's object store |
+| **Encrypted to** | The backup recipient: `backupRecipients` in the cluster's values when they pin one, else the one the recovery kit wrote to `gentian-os/kernel/backup/recipients`. With neither, the jobs refuse |
+| **Opened by** | The backup identity, `BACKUP_AGE_IDENTITY` in the recovery kit, or its QR code |
+
+Each job logs in with a token issued for its own ServiceAccount and its
+instance's audience alone. Each role may read `sys/storage/raft/snapshot` and
+nothing else: no default policy, five minutes to live. The snapshot passes
+from the instance through `age` in a pipe, so the plaintext never touches a
+disk and never leaves the pod. The operator makes the bucket and, for each
+job, a key that may read, write and list that job's own prefix (`openbao/`
+or `openbao-transit/`) and nothing else, so neither job can read or delete
+the other's snapshots. It keeps them in the vault at
+`gentian-os/kernel/openbao-snapshots/openbao` and
+`gentian-os/kernel/openbao-snapshots/openbao-transit`, and points both at
+`openbaoSnapshots.bucket` whenever that changes. Beside its snapshots each
+job leaves an empty object, `storage.raft` or `storage.file`, saying what it
+found.
+
+An instance on file storage is not snapshotted: its job logs `NOT ON RAFT`
+and exits, and §5 moves it to Raft.
+
+**A snapshot of the vault holds its own key.** Where the cluster escrows the
+backup identity (`backup.escrowIdentity`, on by default), its private half
+is in the vault at `gentian-os/kernel/backup/identity`, and so inside every
+snapshot of the vault. That copy is of no use for opening the snapshot,
+which is why the recovery kit's copy is the one that counts: keep the kit
+where the cluster is not. The kit's `TRANSIT_UNSEAL_KEY` is likewise what
+opens a restored seal; the seal's own copy, the Secret
+`openbao-transit-unseal` in `kernel-seal`, goes with the cluster.
+
+The snapshots are on the cluster's own object store. A copy somewhere else,
+for the loss of the whole cluster, is yours to make: each object is
+encrypted, and can be copied as it is.
+
+### 4.2 Is there a recent one
+
+The operator reads the bucket every ten minutes and writes what it finds on
+the `Cluster` claim's status, beside the platform's version: the vault's in
+`status.openbaoSnapshots`, the seal's in `status.transitSnapshots`, the same
+fields in both:
+
+```bash
+kubectl get clusters.gentianos.io -n kernel-provisioning \
+  -o jsonpath='{.items[0].status.openbaoSnapshots}{"\n"}{.items[0].status.transitSnapshots}{"\n"}'
+```
+
+| `state` | Means |
+|---|---|
+| `Current` | The newest snapshot is younger than `staleAfter` (30 hours) |
+| `Stale` | It is older. The last Job of the instance's CronJob says why |
+| `Missing` | There is none in the bucket |
+| `NotRaft` | The instance is on file storage and none is taken (§5) |
+| `Unknown` | The bucket could not be read; `message` says why |
+| `Disabled` | The seal only: `openbaoSnapshots.transit.enabled` is false and none is taken |
+
+Beside it: `instance` (`openbao` or `openbao-transit`), `storage`, `newest`
+and `newestAt`, `ageSeconds`, `count`, `bucket`, `staleAfter`, `message` and
+`checkedAt`. The vault's storage is asked of the vault; the seal's, which the
+operator does not reach, is what its job last found. The same as metrics,
+per `instance`: `gentianos_openbao_snapshot_state{instance,state}` and
+`gentianos_openbao_snapshot_age_seconds{instance}`
+([operations.md §6](../concepts/operations.md)).
+
+The Operations Console reads `status.openbaoSnapshots` and
+`status.transitSnapshots` of the `Cluster` claim: `state` of each for the
+signal, anything but `Current` in either a warning, with that entry's
+`message`, `newestAt` and `ageSeconds` beside it. Both are needed for a
+restore, so the cluster's snapshot state is the worse of the two.
+`checkedAt` older than half an hour means the operator has stopped writing
+them.
+
+The jobs' own word, and a snapshot taken now:
+
+```bash
+kubectl get jobs -n kernel-secrets -l app.kubernetes.io/component=openbao-snapshot
+kubectl get jobs -n kernel-seal -l app.kubernetes.io/component=openbao-snapshot
+kubectl logs -n kernel-secrets job/<the newest>
+kubectl create job --from=cronjob/openbao-snapshot openbao-snapshot-now -n kernel-secrets
+kubectl create job --from=cronjob/openbao-transit-snapshot openbao-transit-snapshot-now -n kernel-seal
+```
+
+### 4.3 Restore
+
+**The seal first, then the vault.** The vault unseals only through the seal
+that holds its key. Where only the vault's volume is lost, the seal is
+running with that key and steps 1 to 3 are skipped. Where the seal's is lost,
+it comes back from its snapshot first, whether or not the vault's is lost as
+well. Restore the two from snapshots taken on the same day: a vault never
+needs a newer seal than the one it was sealed with, and the seal's key does
+not change after it is set up, so any seal snapshot taken after the seal was
+set up unseals any vault snapshot.
+
+You need: the recovery kit (its `BACKUP_AGE_IDENTITY` and
+`TRANSIT_UNSEAL_KEY`, and `OPENBAO_RECOVERY_KEYS` and `OPENBAO_ROOT_TOKEN`),
+`bao`, `age`, `rclone`, `jq` and `kubectl`.
+
+> A restore **replaces** the whole instance. Every secret written to the
+> vault after its snapshot is gone: under `derived` the operator writes the
+> same values again; under `random`, a credential made since is lost with it.
+
+1. **Fetch and decrypt the snapshots.** With the rclone remote `gentian:`
+   for the platform's object store that
+   [commands.md](../reference/commands.md) §11 sets up, and the kit's backup
+   identity, the `AGE-SECRET-KEY-…` line saved to `id.txt` (or
+   `zbarimg --raw backup-key.png > id.txt`):
+
+   ```bash
+   rclone lsf gentian:gentian-openbao-snapshots/openbao-transit/ | sort | tail -3
+   rclone lsf gentian:gentian-openbao-snapshots/openbao/ | sort | tail -3
+   rclone copyto gentian:gentian-openbao-snapshots/openbao-transit/<name> transit.age
+   rclone copyto gentian:gentian-openbao-snapshots/openbao/<name> vault.age
+   age -d -i id.txt -o transit.snap transit.age
+   age -d -i id.txt -o vault.snap vault.age
+   ```
+
+   Each `.snap` is a whole instance, readable by anyone who can unseal it.
+   Keep them on an encrypted disk and delete them when done.
+
+2. **The seal: bring up an empty one and restore it.** Where its volume is
+   lost, the StatefulSet makes a new one once the pod and the claim are
+   gone; the seal starts uninitialized, on Raft. Initialize it with one share
+   of one, which gives a key and a root token that live only until the
+   restore, unseal it with that key, and restore with `-force`, because the
+   snapshot's keys are the old seal's (`sys/storage/raft/snapshot-force`).
+   The seal answers on plain HTTP inside the cluster:
+
+   ```bash
+   kubectl delete pvc data-openbao-transit-0 -n kernel-seal --wait=false   # a damaged volume; not when it is gone already
+   kubectl delete pod openbao-transit-0 -n kernel-seal
+   kubectl port-forward -n kernel-seal svc/openbao-transit 8210:8200 &
+   export BAO_ADDR=http://localhost:8210
+   bao operator init -key-shares=1 -key-threshold=1 -format=json > transit-temporary.json
+   bao operator unseal "$(jq -r '.unseal_keys_b64[0]' transit-temporary.json)"
+   BAO_TOKEN="$(jq -r .root_token transit-temporary.json)" \
+     bao operator raft snapshot restore -force transit.snap
+   rm -f transit-temporary.json transit.snap
+   ```
+
+3. **The seal: unseal it with the kit's key.** After the restore the seal is
+   sealed under its restored configuration, one share of one, and only the
+   old seal's key opens it: `TRANSIT_UNSEAL_KEY`, typed at the prompt.
+
+   ```bash
+   bao operator unseal          # paste TRANSIT_UNSEAL_KEY
+   bao status                   # Sealed false, Storage Type raft
+   ```
+
+   The seal unseals itself on every restart from the Secret
+   `openbao-transit-unseal` in `kernel-seal`. If that Secret was lost too,
+   make it again from the kit, through a file rather than the command line,
+   and delete the file:
+
+   ```bash
+   kubectl create secret generic openbao-transit-unseal -n kernel-seal \
+     --from-file=unseal-key=transit-unseal-key.txt --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+   The vault authenticates to the seal with the token in the Secret
+   `openbao-transit-token` (in `kernel-seal` and `kernel-secrets`), which the
+   restored seal knows again. Only if that Secret was lost too, or the
+   snapshot predates the token, does the seal need a new one: `bao operator
+   generate-root` with `TRANSIT_UNSEAL_KEY`, then
+   `./install.sh --only B-02`, which asks for that root token, mints a token
+   for the `transit-autounseal` policy and copies it to both namespaces.
+
+4. **The vault: unseal it.** Where the vault's volume is intact, restart it
+   (`kubectl delete pod openbao-0 -n kernel-secrets`) and it unseals itself
+   through the restored seal; continue at step 8.
+
+5. **The vault: bring up an empty one.** Where its volume is lost, the
+   StatefulSet makes a new one once the pod and the claim are gone; the
+   vault starts uninitialized, on Raft. Initialize it; with the transit seal
+   it unseals itself and answers with recovery keys and a root token that
+   live only until step 6:
+
+   ```bash
+   kubectl delete pvc data-openbao-0 -n kernel-secrets --wait=false   # a damaged volume; not when it is gone already
+   kubectl delete pod openbao-0 -n kernel-secrets
+   kubectl port-forward -n kernel-secrets svc/openbao 8200:8200 &
+   kubectl get secret openbao-tls -n kernel-secrets -o jsonpath='{.data.ca\.crt}' | base64 -d > openbao-ca.crt
+   export BAO_ADDR=https://localhost:8200 BAO_CACERT=openbao-ca.crt
+   bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json > init-temporary.json
+   ```
+
+6. **The vault: restore** with that temporary root token, `-force` because
+   the snapshot's keys are the old vault's:
+
+   ```bash
+   BAO_TOKEN="$(jq -r .root_token init-temporary.json)" \
+     bao operator raft snapshot restore -force vault.snap
+   rm -f init-temporary.json vault.snap
+   ```
+
+   The restored vault is sealed with the same transit key and unseals itself
+   through the seal; `bao status` says `Sealed false`. If it says `true`, the
+   seal is sealed or unreachable: step 3.
+
+7. **Get back in.** The tokens are the old vault's again. The kit's
+   `OPENBAO_ROOT_TOKEN` works if it was not revoked
+   (`bao token lookup`); otherwise make a root token from the kit's
+   recovery key with `bao operator generate-root -init`, then
+   `bao operator generate-root -nonce=<nonce>`, which asks for the key, and
+   `bao operator generate-root -decode=<encoded> -otp=<otp>`. A cluster
+   administrator signs in as usual (`bao login -method=oidc`) and needs
+   neither.
+
+8. **Check that every service reads its store again.**
+
+   ```bash
+   bao status                                          # Storage Type raft, Sealed false
+   kubectl get clustersecretstore openbao              # Valid, Ready
+   kubectl get externalsecrets -A | grep -v SecretSynced
+   kubectl annotate externalsecrets -A --all force-sync="$(date +%s)" --overwrite
+   kubectl rollout restart deploy -n kernel-control    # the operator, director and custodian log in again
+   kubectl get managed | grep vault | grep -v 'True.*True'   # provider-vault's resources, Synced and Ready
+   kubectl create job --from=cronjob/openbao-transit-snapshot openbao-transit-snapshot-now -n kernel-seal
+   kubectl create job --from=cronjob/openbao-snapshot openbao-snapshot-now -n kernel-secrets
+   ```
+
+   The restore is done when no `ExternalSecret` is left unsynced, the
+   operator logs no OpenBao error, the vault's resources of the `Cluster`
+   claim are `Synced`, and the next snapshots are written
+   (`state` is `Current` in both `status.openbaoSnapshots` and
+   `status.transitSnapshots`).
+
+---
+
+## 5. OpenBao: moving the vault and its seal from file to Raft storage
+
+**When:** `status.openbaoSnapshots.state` or `status.transitSnapshots.state`
+says `NotRaft`. A new cluster's claim states `openbao.storage: raft`, which
+puts both instances on Raft; a claim written before the setting says
+nothing, which is `file`, and that cluster keeps file storage for both until
+they are moved by hand. This is not done by the installer.
+
+### 5.1 How a cluster on file storage behaves until then
+
+It runs as it did. The installer renders each instance on the storage the
+claim states, and it keeps the backend a running instance has unless that
+instance's volume says its data was moved (`scripts/lib/openbao.sh`,
+`openbao_storage_for_render`): a claim changed to `raft` on an instance that
+was not moved renders `file` and says so, because Raft started on a volume
+of file data is a new, empty instance. Each instance is decided by its own
+volume. The snapshot jobs log `NOT ON RAFT` every day, and the operator
+reports `NotRaft`.
+
+### 5.2 Before you start
+
+- A recovery kit exported from this cluster that carries
+  `BACKUP_AGE_IDENTITY`, `TRANSIT_UNSEAL_KEY` and `OPENBAO_RECOVERY_KEYS`.
+- A few minutes of the vault being down. Running apps keep the Secrets they
+  have; what reads the vault meanwhile (External Secrets, the operator, the
+  custodian) retries.
+- `kubectl` on the cluster, `bao`, a checkout of the release the cluster
+  runs, and the deployments repository.
+
+The seal is moved first, then the vault, each the same way. The vault must
+be stopped while the seal is down, because it reaches the seal only to
+unseal; it is stopped for its own move anyway.
+
+### 5.3 Steps
+
+1. **Keep Argo CD from starting either again**, and stop both, the vault
+   first:
+
+   ```bash
+   for app in openbao openbao-transit; do
+     kubectl patch application "${app}" -n kernel-gitops --type merge \
+       -p '{"spec":{"syncPolicy":{"automated":null}}}'
+   done
+   kubectl scale statefulset openbao -n kernel-secrets --replicas=0
+   kubectl wait --for=delete pod/openbao-0 -n kernel-secrets --timeout=5m
+   kubectl scale statefulset openbao-transit -n kernel-seal --replicas=0
+   kubectl wait --for=delete pod/openbao-transit-0 -n kernel-seal --timeout=5m
+   ```
+
+2. **Move the data** of each, in a pod that mounts its volume, with its own
+   image and user. `bao operator migrate` copies the file backend into Raft
+   in a scratch directory; the result is copied beside the file data, which
+   stays as it is. Run this once with the seal's values and once with the
+   vault's:
+
+   | | `NS` | `STS` | `PVC` | `NODE` | `CLUSTER_ADDR` |
+   |---|---|---|---|---|---|
+   | The seal | `kernel-seal` | `openbao-transit` | `data-openbao-transit-0` | `openbao-transit-0` | `https://openbao-transit-0.openbao-transit-internal:8201` |
+   | The vault | `kernel-secrets` | `openbao` | `data-openbao-0` | `openbao-0` | `https://openbao-0.openbao-internal:8201` |
+
+   ```bash
+   IMAGE="$(kubectl get statefulset "${STS}" -n "${NS}" \
+     -o jsonpath='{.spec.template.spec.containers[?(@.name=="openbao")].image}')"
+   kubectl apply -f - <<YAML
+   apiVersion: v1
+   kind: Pod
+   metadata: {name: openbao-migrate, namespace: ${NS}}
+   spec:
+     restartPolicy: Never
+     securityContext:
+       runAsNonRoot: true
+       runAsUser: 100
+       runAsGroup: 1000
+       fsGroup: 1000
+       seccompProfile: {type: RuntimeDefault}
+     containers:
+       - name: migrate
+         image: ${IMAGE}
+         command: ["/bin/sh", "-ec"]
+         args:
+           - |
+             mkdir -p /scratch/raft
+             printf '%s\n' \
+               'storage_source "file" {' \
+               '  path = "/openbao/data"' \
+               '}' \
+               'storage_destination "raft" {' \
+               '  path    = "/scratch/raft"' \
+               '  node_id = "${NODE}"' \
+               '}' \
+               'cluster_addr = "${CLUSTER_ADDR}"' > /scratch/migrate.hcl
+             bao operator migrate -config=/scratch/migrate.hcl
+             cp -a /scratch/raft/. /openbao/data/
+             ls -la /openbao/data
+         securityContext:
+           allowPrivilegeEscalation: false
+           capabilities: {drop: ["ALL"]}
+         volumeMounts:
+           - {name: data, mountPath: /openbao/data}
+           - {name: scratch, mountPath: /scratch}
+     volumes:
+       - name: data
+         persistentVolumeClaim: {claimName: ${PVC}}
+       - name: scratch
+         emptyDir: {sizeLimit: 2Gi}
+   YAML
+   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/openbao-migrate -n "${NS}" --timeout=10m
+   kubectl logs -n "${NS}" openbao-migrate    # "Success! All of the keys have been migrated.", vault.db and raft/ listed
+   kubectl delete pod openbao-migrate -n "${NS}"
+   ```
+
+   The node id and cluster address are the ones the instance starts with:
+   its pod's name, and the chart's `BAO_CLUSTER_ADDR`.
+
+3. **Say on each volume that it holds Raft data.** The installer renders
+   Raft on an existing instance only when its volume says so:
+
+   ```bash
+   kubectl annotate pvc data-openbao-transit-0 -n kernel-seal gentianos.io/openbao-storage=raft --overwrite
+   kubectl annotate pvc data-openbao-0 -n kernel-secrets gentianos.io/openbao-storage=raft --overwrite
+   ```
+
+4. **Change the claim** in the deployments repository,
+   `clusters/<cluster>/kernel/claims/cluster.yaml`, and commit and push it
+   as every change there is made:
+
+   ```yaml
+   spec:
+     openbao:
+       storage: raft
+   ```
+
+5. **Render both on Raft.** From the checkout of the release the cluster
+   runs, the bootstrap step alone. It writes the `openbao` and
+   `openbao-transit` Applications with Raft storage and their automated sync
+   again; Argo CD syncs the configuration and starts both. The seal unseals
+   itself from `openbao-transit-unseal`, the vault through the seal:
+
+   ```bash
+   ./install.sh --only B-01
+   ```
+
+6. **Give the seal its snapshot role.** A seal set up before this has none,
+   and its snapshot job is refused until it has. It is written with a root
+   token of the seal, made from the kit's `TRANSIT_UNSEAL_KEY` and revoked
+   afterwards:
+
+   ```bash
+   kubectl port-forward -n kernel-seal svc/openbao-transit 8210:8200 &
+   export BAO_ADDR=http://localhost:8210
+   bao operator generate-root -generate-otp > otp.txt
+   bao operator generate-root -init -otp="$(cat otp.txt)"     # prints the nonce
+   bao operator generate-root -nonce=<nonce>                   # paste TRANSIT_UNSEAL_KEY; prints the encoded token
+   export BAO_TOKEN="$(bao operator generate-root -decode=<encoded> -otp="$(cat otp.txt)")"
+   bao auth list | grep -q '^kubernetes/' || bao auth enable kubernetes
+   bao write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc
+   bao policy write openbao-transit-snapshot kernel/openbao/transit-snapshot-policy.hcl
+   bao write auth/kubernetes/role/openbao-transit-snapshot \
+     bound_service_account_names=openbao-transit-snapshot \
+     bound_service_account_namespaces=kernel-seal \
+     audience=vault://openbao-transit-snapshot \
+     token_policies=openbao-transit-snapshot token_no_default_policy=true \
+     token_ttl=300 token_max_ttl=300
+   bao token revoke -self
+   unset BAO_TOKEN; rm -f otp.txt
+   ```
+
+   These are the same writes `scripts/bootstrap/init-openbao-transit.sh`
+   makes when it sets up a new seal.
+
+7. **Check:**
+
+   ```bash
+   kubectl exec -n kernel-seal openbao-transit-0 -- bao status                # Storage Type raft, Sealed false
+   kubectl exec -n kernel-secrets openbao-0 -c openbao -- bao status           # Storage Type raft, Sealed false
+   kubectl get externalsecrets -A | grep -v SecretSynced
+   kubectl create job --from=cronjob/openbao-transit-snapshot openbao-transit-snapshot-now -n kernel-seal
+   kubectl create job --from=cronjob/openbao-snapshot openbao-snapshot-now -n kernel-secrets
+   ```
+
+   The move is done when the first snapshot of each is written and
+   `state` is `Current` in both `status.openbaoSnapshots` and
+   `status.transitSnapshots` (§4.2).
+
+### 5.4 Rollback
+
+The file data of each instance is still on its volume, as it was at step 2.
+Going back loses whatever was written to it on Raft since. For both, or for
+the one that is to go back:
+
+```bash
+kubectl patch application openbao -n kernel-gitops --type merge \
+  -p '{"spec":{"syncPolicy":{"automated":null}}}'
+kubectl scale statefulset openbao -n kernel-secrets --replicas=0
+kubectl annotate pvc data-openbao-0 -n kernel-secrets gentianos.io/openbao-storage=file --overwrite
+# the same for openbao-transit in kernel-seal, the vault stopped first
+# the claim back to openbao.storage: file, committed and pushed
+./install.sh --only B-01
+```
+
+The claim's one setting covers both. Rolled back for one instance alone, it
+says `file` while the other's volume says `raft`, and the installer keeps
+that one on Raft and says so on every run.
+
+Once an instance has run on Raft and its first snapshot is written, the
+file backend's directories on its volume (everything in `/openbao/data` but
+`vault.db` and `raft/`) are the rollback and nothing else; they can be
+removed with a pod like the one in step 2, the instance stopped.

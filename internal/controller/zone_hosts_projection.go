@@ -67,16 +67,22 @@ const (
 	// zoneVouchingProfilesKey is the third: the components that vouch for
 	// people at the realm (requires.services.vouching), and for each of them
 	// where the realm fetches the keys its statements are signed with. One
-	// line per profile, sorted, four fields separated by single spaces:
+	// line per profile, sorted, four or five fields separated by single
+	// spaces:
 	//
-	//	<profile> <service> <port> <path>
+	//	<profile> <service> <port> <path> [<director scopes>]
 	//
 	// for example "scribe scribe-keys 8443 /.well-known/jwks.json". A space is
-	// a safe separator because none of the four can hold one: the first two
-	// are DNS labels, the third is a number and the fourth is held to the
-	// characters of a URL path by the profile's schema. The path is always
-	// written out, the default included, so the Composition does not have to
-	// know what the default is.
+	// a safe separator because none of them can hold one: the first two
+	// are DNS labels, the third is a number, the fourth is held to the
+	// characters of a URL path by the profile's schema, and the fifth is the
+	// profile's requires.services.vouching.director joined by commas. The
+	// path is always written out, the default included, so the Composition
+	// does not have to know what the default is. The fifth is written only
+	// in the platform tenant's projection, and only when the profile names
+	// any: a token for the director is the cluster's administrators', who
+	// sign in at that tenant's realm, and in another tenant's realm the
+	// scopes are never made.
 	//
 	// The Composition makes, per line, the identity provider entry and the
 	// client VouchingAlias names, and the Secret VouchingSecretName names. It
@@ -165,7 +171,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// By the profile's name, as above and for the same reason: the
 			// realm knows the component as VouchingAlias(profile), and two
 			// components of one profile are one issuer with one set of keys.
-			vouching[tenant][profile.Name] = vouchingLine(profile)
+			vouching[tenant][profile.Name] = vouchingLine(profile, tenant)
 		}
 		if wantsPartners(profile) {
 			// By the profile's name, as above: the realm knows the
@@ -226,13 +232,22 @@ func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
 // vouchingLine is a vouching profile's entry in the projection: its name and
 // where its keys are published, in the form zoneVouchingProfilesKey
 // describes. Only called for a profile wantsVouching says yes to.
-func vouchingLine(profile *gentianov1alpha1.ComponentProfile) string {
-	keys := profile.Services().Vouching.Keys
-	path := keys.Path
+func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string) string {
+	vouching := profile.Services().Vouching
+	path := vouching.Keys.Path
 	if path == "" {
 		path = vouchingKeysDefaultPath
 	}
-	return strings.Join([]string{profile.Name, keys.Service, strconv.Itoa(int(keys.Port)), path}, " ")
+	fields := []string{profile.Name, vouching.Keys.Service, strconv.Itoa(int(vouching.Keys.Port)), path}
+	if tenant == gentianov1alpha1.PlatformTenantName && len(vouching.Director) > 0 {
+		scopes := make([]string, 0, len(vouching.Director))
+		for _, d := range vouching.Director {
+			scopes = append(scopes, string(d))
+		}
+		sort.Strings(scopes)
+		fields = append(fields, strings.Join(scopes, ","))
+	}
+	return strings.Join(fields, " ")
 }
 
 // sortedValues are a map's values, sorted. Every partner line starts with its

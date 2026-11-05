@@ -88,7 +88,11 @@ type Guard struct {
 	// Realm is named in the challenge a caller who is not known gets:
 	// WWW-Authenticate: Bearer realm="<Realm>".
 	Realm string
-	Log   *slog.Logger
+	// Scoped holds a delegated token -- a person's token a component
+	// obtained by vouching -- to the routes its scopes name
+	// (authn.Identity.MayCall), before the store is asked. Authorize only.
+	Scoped bool
+	Log    *slog.Logger
 	// Fail answers a refusal in the service's own shape.
 	Fail func(w http.ResponseWriter, r *http.Request, code int, msg string)
 }
@@ -135,6 +139,12 @@ func (g *Guard) Authorize(
 	ctx := r.Context()
 	ident, user, ok := g.authenticate(w, r, route)
 	if !ok {
+		return Caller{}, false
+	}
+	if g.Scoped && !ident.MayCall(route) {
+		g.Log.WarnContext(ctx, "delegated token refused outside its scopes", "request_id", ID(ctx),
+			"client", ident.Client, "route", route)
+		g.Fail(w, r, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
 		return Caller{}, false
 	}
 	target, err := object(r)

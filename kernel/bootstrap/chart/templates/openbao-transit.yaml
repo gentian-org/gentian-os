@@ -1,3 +1,7 @@
+{{- $storage := toString ((.Values.openbao).transitStorage | default "file") }}
+{{- if not (has $storage (list "raft" "file")) }}
+{{- fail (printf "openbao.transitStorage is %q; it is raft or file" $storage) }}
+{{- end }}
 ---
 # The transit seal: a small OpenBao whose only job is the key that auto-unseals
 # the vault. It lives in its own namespace so that its RBAC and its backup are
@@ -21,8 +25,39 @@ spec:
       parameters:
       - name: server.dataStorage.storageClass
         value: {{ .Values.storageClass | quote }}
+      # The server configuration, rendered here because its storage backend
+      # follows the Cluster claim (openbao.storage, B-01 passes it per
+      # instance); everything else stays in kernel/openbao/transit-values.yaml.
+      valuesObject:
+        server:
+          standalone:
+            config: |
+              ui = false
+
+              listener "tcp" {
+                tls_disable     = 1
+                address         = "[::]:8200"
+                cluster_address = "[::]:8201"
+              }
+              {{- if eq $storage "raft" }}
+              # Integrated storage, one node: the pod's name as its node id,
+              # the chart's BAO_CLUSTER_ADDR
+              # (https://openbao-transit-0.openbao-transit-internal:8201) as its
+              # cluster address. Snapshotted every day
+              # (docs/guides/recovery.md §4).
+              storage "raft" {
+                path    = "/openbao/data"
+                node_id = "openbao-transit-0"
+              }
+              {{- else }}
+              # A directory of files, which takes no snapshot; moving the seal
+              # to Raft is docs/guides/recovery.md §5.
+              storage "file" {
+                path = "/openbao/data"
+              }
+              {{- end }}
   - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     ref: values
   destination:
     server: https://kubernetes.default.svc

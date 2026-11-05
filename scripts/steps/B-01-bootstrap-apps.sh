@@ -133,6 +133,13 @@ _v5_render() {
     local acme_staging=false
     [[ "${ACME_ENV:-production}" == "staging" ]] && acme_staging=true
 
+    # Each instance's backend, read before anything is rendered: a failure to
+    # read what the vault's volume holds stops the render, where a command
+    # substitution among helm's arguments would pass an empty value on.
+    local vault_storage transit_storage
+    vault_storage="$(openbao_storage_for_render openbao)" || return 1
+    transit_storage="$(openbao_storage_for_render openbao-transit)" || return 1
+
     local tmp
     tmp="$(mktemp -d)"
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
@@ -190,7 +197,10 @@ _v5_render() {
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=$(gentian_os_ref)" \
+        --set-string "gentianOsRevision=$(gentian_os_revision)" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
+        --set-string "openbao.storage=${vault_storage}" \
+        --set-string "openbao.transitStorage=${transit_storage}" \
         --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
         --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
         --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \
@@ -232,8 +242,9 @@ _v5_render() {
 # Nothing here asked whether the pin was still that build. So a run from a
 # newer checkout found everything else in place and skipped, `--only B-01` --
 # the command the documentation gives for taking a newer build -- skipped
-# with it, and the cluster went on with new manifests, which Argo CD follows
-# by branch, and the old binary.
+# with it, and the cluster went on with the old binary. The Applications
+# follow the checkout's commit (gentian_os_revision), so the manifests move
+# with the build; the bootstrap Applications' comparison below sees that.
 #
 # True where there is nothing to compare: a run that resolved no build
 # (--status collects none), and a cluster whose Application D-01 has not

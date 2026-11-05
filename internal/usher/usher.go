@@ -175,7 +175,7 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 
 // gate is the guard of this usher's routes.
 func (s *Server) gate() *guard.Guard {
-	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-usher", Log: s.cfg.Log, Fail: fail}
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-usher", Scoped: true, Log: s.cfg.Log, Fail: fail}
 }
 
 type tileOut struct {
