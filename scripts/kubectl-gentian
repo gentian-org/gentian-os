@@ -118,6 +118,11 @@
 #   kubectl gentian resources show --tenant <tenant>
 #   kubectl gentian resources set --tenant <tenant> --plan <plan>
 #   kubectl gentian resources report --tenant <tenant> --from <time> --to <time>
+#   kubectl gentian resources catalog                           the cluster's plans, with the tenants on each
+#   kubectl gentian resources catalog set <plan> --file <plan.json>
+#                                                               add or change a plan; the file is the plan as the
+#                                                               director takes it (displayName, tier, units, quotas, ...)
+#   kubectl gentian resources catalog remove <plan>             remove a plan no tenant is on
 #
 #   kubectl gentian version
 #
@@ -2947,7 +2952,43 @@ cmd_resources() {
                        ((.intervals // [])[] | [.plan, ((.seconds / 86400) * 100 | round / 100 | tostring), .from[0:19], .to[0:19], (.productSku // "")] | @tsv)' |
                 column -t -s $'\t'
             ;;
-        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>" ;;
+        catalog)
+            local action="${1:-list}" name="" file="" answer
+            shift || true
+            _discover
+            case "${action}" in
+                list)
+                    answer="$(_call GET "/v1/clusters/${_CLUSTER}/resource-plans")" || exit 1
+                    printf '%s' "${answer}" |
+                        jq -r '(["PLAN","TIER","UNITS","CPU","MEMORY","STORAGE","SKU","","TENANTS"] | @tsv),
+                               (.plans[] | [.name, (.tier|tostring), ((.units // 0)|tostring), (.quotas.requestsCpu // "-"), (.quotas.requestsMemory // "-"), (.quotas.storage // "-"), (.productSku // "-"),
+                                            ((if .default then "default " else "" end) + (if .retired then "retired" else "" end)), ((.tenants // []) | join(","))] | @tsv)' |
+                        column -t -s $'\t'
+                    ;;
+                set)
+                    name="${1:-}"
+                    shift || true
+                    while [[ $# -gt 0 ]]; do
+                        case "$1" in
+                            --file|-f) file="${2:?}"; shift 2 ;;
+                            *) shift ;;
+                        esac
+                    done
+                    [[ -n "${name}" && -f "${file}" ]] || die "usage: kubectl gentian resources catalog set <plan> --file <plan.json>"
+                    jq -e 'type == "object"' "${file}" >/dev/null 2>&1 || die "${file} is not a JSON object"
+                    _call PUT "/v1/clusters/${_CLUSTER}/resource-plans/${name}" "$(jq -c . "${file}")" >/dev/null
+                    echo "Plan ${name} written: committed."
+                    ;;
+                remove)
+                    name="${1:-}"
+                    [[ -n "${name}" ]] || die "usage: kubectl gentian resources catalog remove <plan>"
+                    _call DELETE "/v1/clusters/${_CLUSTER}/resource-plans/${name}" >/dev/null
+                    echo "Plan ${name} removed: committed."
+                    ;;
+                *) die "usage: kubectl gentian resources catalog [list|set <plan> --file <plan.json>|remove <plan>]" ;;
+            esac
+            ;;
+        *) die "usage: kubectl gentian resources plans|show|set|report --tenant <tenant>, or resources catalog" ;;
     esac
 }
 

@@ -319,6 +319,18 @@ spec:
             - name: DIRECTOR_PLATFORM_SECURITY_SEED
               value: {{ dict "allowedMacWaivers" (.Values.platformSecurityPolicy.allowedMacWaivers | default list) "allowedClusterRoles" (.Values.platformSecurityPolicy.allowedClusterRoles | default list) | toJson | quote }}
             {{- end }}
+            {{- /* The deployment's resource plans, which the director writes
+                 into clusters/<cluster>/resource-plans once while git holds
+                 none: the chart creates no plan where the director writes
+                 them (templates/resourceplans.yaml). */}}
+            {{- if .Values.usage.plans.enabled }}
+            {{- $plans := list }}
+            {{- range $name, $plan := .Values.usage.plans.catalogue }}
+            {{- $plans = append $plans (merge (dict "name" $name) $plan) }}
+            {{- end }}
+            - name: DIRECTOR_RESOURCE_PLANS_SEED
+              value: {{ $plans | toJson | quote }}
+            {{- end }}
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL

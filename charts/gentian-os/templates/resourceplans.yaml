@@ -1,6 +1,13 @@
-{{- if .Values.usage.plans.enabled }}
+{{- if and .Values.usage.plans.enabled (not .Values.director.enabled) }}
 {{- /*
-The priced catalogue of tenant ceilings.
+The priced catalogue of tenant ceilings, on a cluster without a director.
+
+Where the director runs, it owns the plans: it writes these values into
+clusters/<cluster>/resource-plans of the deployments repository once
+(DIRECTOR_RESOURCE_PLANS_SEED in templates/director.yaml), the
+gentian-resource-plans Application syncs them, and the cluster's
+administrators change them through the director from then on. Rendering them
+here as well would be two writers of one object.
 
 Shipped with the operator rather than left to each cluster's deployments
 repository, because the plans are what the resources API will accept: an empty
@@ -31,6 +38,9 @@ spec:
   description: {{ . | quote }}
   {{- end }}
   tier: {{ $plan.tier }}
+  {{- with $plan.units }}
+  units: {{ . }}
+  {{- end }}
   {{- with $plan.productSku }}
   productSku: {{ . | quote }}
   {{- end }}
@@ -39,6 +49,9 @@ spec:
   {{- end }}
   {{- if $plan.selfServiceDisabled }}
   selfServiceDisabled: true
+  {{- end }}
+  {{- if $plan.retired }}
+  retired: true
   {{- end }}
   quotas:
     {{- with $plan.quotas.requestsCpu }}

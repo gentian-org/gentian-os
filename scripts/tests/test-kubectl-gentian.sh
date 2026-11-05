@@ -849,6 +849,25 @@ refused "publish is not a command"
 is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 echo ""
+echo "kubectl gentian resources catalog: the cluster's plans"
+echo ""
+
+fresh; reply GET /v1/clusters/c1/resource-plans 200 '{"cluster":"c1","tenantsKnown":true,"plans":[{"name":"base","displayName":"Base","tier":0,"units":1,"default":true,"productSku":"sku-1","quotas":{"requestsCpu":"4","requestsMemory":"16Gi","storage":"50Gi"},"tenants":["demo","solo"]}]}'
+gentian resources catalog
+has "the list names the plan, its units and the tenants on it" "${OUT}" "demo,solo"
+has "... and marks the default" "${OUT}" "default"
+
+PLANFILE="${SANDBOX}/plan.json"
+printf '%s' '{"displayName":"2 nodes","tier":10,"units":2,"quotas":{"requestsCpu":"8"}}' > "${PLANFILE}"
+fresh; reply PUT /v1/clusters/c1/resource-plans/nodes-2 202 '{"status":"updated","plan":"nodes-2","commit":"0123456789abcdef"}'
+gentian resources catalog set nodes-2 --file "${PLANFILE}"
+is "set sends the file as the plan" "$(tr -d ' \n' < "${CALLS}")" 'PUT/v1/clusters/c1/resource-plans/nodes-2{"displayName":"2nodes","tier":10,"units":2,"quotas":{"requestsCpu":"8"}}'
+
+fresh; reply DELETE /v1/clusters/c1/resource-plans/nodes-2 202 '{"status":"removed","plan":"nodes-2","commit":"0123456789abcdef"}'
+gentian resources catalog remove nodes-2
+is "remove asks the plan's route" "$(tr -d ' \n' < "${CALLS}")" 'DELETE/v1/clusters/c1/resource-plans/nodes-2'
+
+echo ""
 echo "kubectl gentian catalogues: at an address, or as an OCI artifact"
 echo ""
 

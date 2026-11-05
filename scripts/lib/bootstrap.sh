@@ -2609,6 +2609,10 @@ EOF
     # run is committed.
     _scaffold_default_profiles "${cluster}" || return 1
 
+    # The cluster's resource plans: the directory the director writes them
+    # into, which the gentian-resource-plans Application syncs.
+    _scaffold_resource_plans "${cluster}"
+
     # Nothing is APPLIED: this still contacts no cluster.
     gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
     gentian_sign_unsigned_head "${kernel_dir}" "${cluster}" || true
@@ -2706,6 +2710,10 @@ _claims_this_checkout_cannot_apply() {
 # never arrive.
 _cluster_scaffold_paths() {
     printf '%s\n' "clusters/$1/kernel" "clusters/$1/tenants/platform" "clusters/$1/catalogue"
+    # And the directory of the resource plans, once step 0 scaffolded it.
+    if [[ -d "${GENTIAN_DEPLOYMENTS_PATH}/clusters/$1/resource-plans" ]]; then
+        printf '%s\n' "clusters/$1/resource-plans"
+    fi
     # And the user tenant of a single-tenancy cluster, when its manifest is
     # there. Only then: a path that does not exist fails `git add` for all of
     # them.
@@ -2982,6 +2990,21 @@ print_roles_summary() {
         echo -e "${GREEN}      kubectl gentian tenants activate-admin <name> [--recovery-email <address>]${NC}"
         echo -e "${GREEN}    A tenant's desktop is https://desktop.<name>.${domain}/, and https://${domain}/${NC}"
         echo -e "${GREEN}    asks for an e-mail address and sends each person to theirs.${NC}"
+    fi
+}
+
+# _scaffold_resource_plans <cluster> -- the directory of the cluster's
+# resource plans, with an empty kustomization when it has none. The
+# gentian-resource-plans Application syncs this path from the first install,
+# and a path that does not exist is a sync error. The plans themselves are the
+# director's: it writes the deployment's usage.plans.catalogue here once,
+# while the directory holds no plan, and the cluster's administrators change
+# them through it from then on.
+_scaffold_resource_plans() {
+    local dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/$1/resource-plans"
+    mkdir -p "${dir}"
+    if [[ ! -f "${dir}/kustomization.yaml" ]]; then
+        printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n' > "${dir}/kustomization.yaml"
     fi
 }
 
