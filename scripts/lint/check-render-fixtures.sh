@@ -2,13 +2,18 @@
 # =============================================================================
 # scripts/lint/check-render-fixtures.sh — render tests must test the real thing
 # =============================================================================
-# Each crossplane/tests/unit/render/*/ directory holds its own copy of the
-# Composition under test. A copy can drift from the original, and when it does
-# the golden test keeps passing against a Composition that is no longer
-# deployed — false confidence, which is worse than no test.
+# Each crossplane/tests/unit/render/*/ directory's composition.yaml is a
+# symlink to the deployed Composition under crossplane/compositions/, so the
+# golden test always renders what the cluster runs and no copy can drift.
 #
-# This was not hypothetical: cluster-bootstrap's copy went stale the moment
-# cluster-default.yaml was edited, and the suite stayed green.
+# A fixture fails when its composition.yaml is missing, is a regular file (a
+# copy), or is a link that does not resolve to a file in crossplane/compositions/
+# (a Composition renamed or removed). make test-unit-render skips a directory
+# without a composition.yaml, so without this check a fixture whose Composition
+# is gone would drop out of the suite silently.
+#
+# _harness is the one exception: it tests the render harness itself with a
+# Composition of its own that is deployed nowhere.
 # =============================================================================
 
 set -euo pipefail
@@ -16,23 +21,38 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; NC=$'\033[0m'
-stale=0
+compositions="$(cd crossplane/compositions && pwd -P)"
+bad=0
+
+fail() {
+    printf '  %s✗%s %-36s %s\n' "${RED}" "${NC}" "$1" "$2"
+    bad=1
+}
 
 for dir in crossplane/tests/unit/render/*/; do
-    copy="${dir}composition.yaml"
-    [[ -f "${copy}" ]] || continue
-    name="$(grep -m1 '^  name:' "${copy}" | awk '{print $2}')"
-    real="crossplane/compositions/${name}.yaml"
-    [[ -f "${real}" ]] || continue
+    case="$(basename "${dir}")"
+    link="${dir}composition.yaml"
+    [[ "${case}" == "_harness" ]] && continue
 
-    if diff -q "${real}" "${copy}" >/dev/null 2>&1; then
-        printf '  %s✓%s %-28s %s\n' "${GREEN}" "${NC}" "$(basename "${dir}")" "${name}"
-    else
-        printf '  %s✗%s %-28s %s — copy differs from the deployed Composition\n' \
-            "${RED}" "${NC}" "$(basename "${dir}")" "${name}"
-        printf '        cp %s %s\n' "${real}" "${copy}"
-        stale=1
+    if [[ ! -L "${link}" ]]; then
+        if [[ -e "${link}" ]]; then
+            fail "${case}" "composition.yaml is a copy — link it to crossplane/compositions/"
+        else
+            fail "${case}" "no composition.yaml — the fixture names no Composition"
+        fi
+        continue
     fi
+    points_to="$(readlink "${link}")"
+    if [[ ! -f "${link}" ]]; then
+        fail "${case}" "composition.yaml -> ${points_to}, which does not exist"
+        continue
+    fi
+    target_dir="$(cd "${dir}" && cd "$(dirname "${points_to}")" && pwd -P)"
+    if [[ "${target_dir}" != "${compositions}" ]]; then
+        fail "${case}" "composition.yaml -> ${points_to}, which is outside crossplane/compositions/"
+        continue
+    fi
+    printf '  %s✓%s %-36s %s\n' "${GREEN}" "${NC}" "${case}" "$(basename "${points_to}" .yaml)"
 done
 
-[[ ${stale} -eq 0 ]] || { echo ""; echo "${RED}Stale render fixture(s).${NC}"; exit 1; }
+[[ ${bad} -eq 0 ]] || { echo ""; echo "${RED}Render fixture(s) without a deployed Composition.${NC}"; exit 1; }

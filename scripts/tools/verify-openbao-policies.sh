@@ -23,8 +23,8 @@
 # The policies are read from the golden file rather than restated here. A test
 # that carries its own copy of the thing under test asserts that the copy is
 # self-consistent, which is the failure mode this repository keeps meeting —
-# see scripts/lint/check-render-fixtures.sh for the same reasoning applied to
-# the Composition copies.
+# the render fixtures link to the deployed Compositions for the same reason
+# (scripts/lint/check-render-fixtures.sh).
 #
 # The tenant path is templated on alias metadata, so the test drives the real
 # mechanism: a signed JWT carrying a `tenant` claim, an auth role whose
