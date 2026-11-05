@@ -310,7 +310,9 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript())
-	c.Env = append(c.Env, corev1.EnvVar{Name: "REALM_NAME", Value: realmName})
+	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
+		corev1.EnvVar{Name: "BROWSER_SECURITY_HEADERS", Value: authz.BrowserSecurityHeadersJSON()})
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmJobName(tenant.Name),
@@ -555,10 +557,11 @@ func keycloakContainer(name, script string) corev1.Container {
 // bridges to the kernel realm in either direction (hub_projection.go), which
 // this script once wrote as the client broker-<realm> in the kernel realm.
 //
-// Nothing of the tenant is written into the script's text: the realm name
-// arrives as REALM_NAME, and the display name, which the tenant's
-// administrators set, is the Composition's to write. Interpolated, a quote in
-// either ran commands in a Job holding the Keycloak admin client.
+// Nothing is written into the script's text: the realm name arrives as
+// REALM_NAME and the headers as BROWSER_SECURITY_HEADERS, and the display
+// name, which the tenant's administrators set, is the Composition's to write.
+// Interpolated, a quote in the name ran commands in a Job holding the
+// Keycloak admin client.
 func buildRealmScript() string {
 	script := `set -eu
 
@@ -571,7 +574,7 @@ if [ "${HTTP}" = "404" ]; then
     -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"realm":"'"${REALM_NAME}"'","enabled":true,"registrationAllowed":false,"browserSecurityHeaders":` + authz.BrowserSecurityHeadersJSON() + `}'
+    -d '{"realm":"'"${REALM_NAME}"'","enabled":true,"registrationAllowed":false,"browserSecurityHeaders":'"${BROWSER_SECURITY_HEADERS}"'}'
   echo "realm ${REALM_NAME} created"
 else
   # The realm is NOT restated here. tenant-default composes a Realm that

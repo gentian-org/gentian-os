@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
 func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
@@ -105,6 +107,7 @@ done
 		"PATH=" + dir + ":/usr/bin:/bin",
 		"KEYCLOAK_URL=http://keycloak", "KEYCLOAK_CLIENT_ID=c", "KEYCLOAK_CLIENT_SECRET=s",
 		"REALM_NAME=" + hostile,
+		"BROWSER_SECURITY_HEADERS=" + authz.BrowserSecurityHeadersJSON(),
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("realm script failed: %v\n%s", err, out)
@@ -118,6 +121,9 @@ done
 	}
 	if !strings.Contains(string(body), `"realm":"`+hostile+`"`) {
 		t.Fatalf("the realm name did not reach Keycloak as written: %s", body)
+	}
+	if !strings.Contains(string(body), `"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()) {
+		t.Fatalf("the headers did not reach Keycloak: %s", body)
 	}
 	if strings.Contains(string(body), "displayName") {
 		t.Fatalf("the script writes the display name, which is the Composition's: %s", body)
