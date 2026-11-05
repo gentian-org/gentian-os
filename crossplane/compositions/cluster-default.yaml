@@ -1184,6 +1184,61 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── The vault's daily snapshot ────────────────────────────────
+                 The CronJob openbao-snapshot in the vault's namespace
+                 (charts/gentian-os/templates/openbao-snapshots.yaml) reads a
+                 Raft snapshot and encrypts it to the backup recipient before
+                 it leaves the pod (docs/guides/recovery.md §4). This is all
+                 it may do: read the snapshot. Not restore one -- that is
+                 snapshot-force, a person's act with a root token -- and no
+                 other path, not even its own token's lookup: no default
+                 policy, and a token that lives five minutes.
+
+                 Bound to the ServiceAccount openbao-snapshot in the vault's
+                 namespace, and to a token issued for the vault's audience:
+                 the job's pod mounts no token the API server accepts.
+
+                 On a vault still on file storage the path answers an error;
+                 the job asks the storage type first and takes no snapshot. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-openbao-snapshot
+              name: {{ $name }}-policy-openbao-snapshot
+            spec:
+              forProvider:
+                name: openbao-snapshot
+                policy: |
+                  path "sys/storage/raft/snapshot" { capabilities = ["read"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-openbao-snapshot
+              name: {{ $name }}-auth-role-openbao-snapshot
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: openbao-snapshot
+                boundServiceAccountNames:
+                  - openbao-snapshot
+                boundServiceAccountNamespaces:
+                  - {{ $obNs }}
+                audience: vault://openbao-snapshot
+                tokenPolicies:
+                  - openbao-snapshot
+                tokenNoDefaultPolicy: true
+                tokenTtl: 300
+                tokenMaxTtl: 300
+              providerConfigRef:
+                name: openbao
+
             {{- /* ── cert-manager's identity at the vault: the internal CA ──────
                  gentian-ca is the vault's PKI engine (pki-internal, made by
                  the installer's B-08), and cert-manager asks it to sign

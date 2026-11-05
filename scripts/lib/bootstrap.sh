@@ -1710,6 +1710,16 @@ _claim_cluster_fields() {
         printf '  #   escrowIdentity: true\n'
     fi
 
+    # Stated, because the XRD's default is file: a claim written before the
+    # field existed must keep the backend its vault's data is in. A new
+    # cluster starts on Raft, which the platform snapshots every day.
+    printf '\n'
+    printf '  # Where the vault keeps its data. raft is snapshotted every day,\n'
+    printf '  # encrypted to the backup key (docs/guides/recovery.md 4). Do not\n'
+    printf '  # change it on a running cluster: moving the data is section 5 there.\n'
+    printf '  openbao:\n'
+    printf '    storage: %s\n' "${OPENBAO_STORAGE:-raft}"
+
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         printf '  llm:\n'
         printf '    enabled: true\n'
@@ -2592,9 +2602,6 @@ kernelDomain: ${domain}
 stage: ${stage}
 llmSupport: ${LLM_SUPPORT:-false}
 
-image:
-  tag: "develop"
-
 appLifecycle:
   deployments:
     cluster: ${cluster}
@@ -3126,8 +3133,8 @@ _scaffold_resource_plans() {
 # GENTIAN_DEFAULT_PROFILES lists them, comma separated: each the https address
 # of a profile in a catalog (<catalogue>/profiles/<name>.yaml), optionally
 # pinned with @sha256:<digest>. The default is the store's extra services from
-# its catalogue: the Operations Console, the App Store app and the
-# Aluvian Center. --no-extra-services leaves those out, and takes them
+# its catalogue: the Operations Console, the operations sync, the App Store
+# app and the Aluvian Center. --no-extra-services leaves those out, and takes them
 # away again if an earlier run placed them; --disable-api-extensions writes
 # none.
 #

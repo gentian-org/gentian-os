@@ -21,16 +21,15 @@ SPDX-License-Identifier: MPL-2.0
 package authz
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/openfga"
 )
 
 // ErrInvalidID is returned for an identifier OpenFGA could not store.
@@ -99,14 +98,12 @@ func Cluster(name string) string { return "cluster:" + name }
 
 // OpenFGA is a Checker backed by an OpenFGA server.
 type OpenFGA struct {
-	baseURL string
-	token   string
+	fga     *openfga.Client
 	storeID string
 	// modelID pins the authorization model. A check against "whatever is
 	// latest" changes meaning when a model is written, which is not something
 	// a decision log can explain afterwards.
 	modelID string
-	http    *http.Client
 	log     *slog.Logger
 	now     func() time.Time
 }
@@ -141,19 +138,10 @@ func NewOpenFGA(o Options) (*OpenFGA, error) {
 		o.Now = time.Now
 	}
 	return &OpenFGA{
-		baseURL: strings.TrimRight(o.BaseURL, "/"), token: o.APIToken,
+		fga:     openfga.New(o.BaseURL, o.APIToken, o.Client),
 		storeID: o.StoreID, modelID: o.ModelID,
-		http: o.Client, log: o.Logger, now: o.Now,
+		log: o.Logger, now: o.Now,
 	}, nil
-}
-
-type checkRequest struct {
-	TupleKey struct {
-		User     string `json:"user"`
-		Relation string `json:"relation"`
-		Object   string `json:"object"`
-	} `json:"tuple_key"`
-	AuthorizationModelID string `json:"authorization_model_id"`
 }
 
 // Check implements Checker.
@@ -173,180 +161,25 @@ func (c *OpenFGA) Check(ctx context.Context, requestID, user, relation, object s
 		}
 		c.log.InfoContext(ctx, "authz decision", attrs...)
 	}()
-
-	var body checkRequest
-	body.TupleKey.User, body.TupleKey.Relation, body.TupleKey.Object = user, relation, object
-	body.AuthorizationModelID = c.modelID
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return false, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/stores/"+c.storeID+"/check", bytes.NewReader(payload))
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("openfga check: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return false, fmt.Errorf("openfga check: status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	var out struct {
-		Allowed bool `json:"allowed"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return false, fmt.Errorf("openfga check: %w", err)
-	}
-	return out.Allowed, nil
+	return c.fga.Check(ctx, c.storeID, c.modelID, user, relation, object)
 }
 
 // Tuple is one stored relationship.
-type Tuple struct {
-	User     string `json:"user"`
-	Relation string `json:"relation"`
-	Object   string `json:"object"`
-}
+type Tuple = openfga.Tuple
 
 // Read returns the stored tuples matching a filter. Any field may be empty,
 // within what OpenFGA accepts: an object may be a bare type ("group:") when a
 // user is given. Pages are followed to the end.
 func (c *OpenFGA) Read(ctx context.Context, filter Tuple) ([]Tuple, error) {
-	var out []Tuple
-	token := ""
-	for {
-		body := map[string]any{"page_size": 100}
-		key := map[string]string{}
-		if filter.User != "" {
-			key["user"] = filter.User
-		}
-		if filter.Relation != "" {
-			key["relation"] = filter.Relation
-		}
-		if filter.Object != "" {
-			key["object"] = filter.Object
-		}
-		body["tuple_key"] = key
-		if token != "" {
-			body["continuation_token"] = token
-		}
-		var page struct {
-			Tuples []struct {
-				Key Tuple `json:"key"`
-			} `json:"tuples"`
-			ContinuationToken string `json:"continuation_token"`
-		}
-		if err := c.post(ctx, c.storeID, "/read", body, &page); err != nil {
-			return nil, err
-		}
-		for _, t := range page.Tuples {
-			out = append(out, t.Key)
-		}
-		if token = page.ContinuationToken; token == "" {
-			return out, nil
-		}
-	}
+	return c.fga.Read(ctx, c.storeID, openfga.ReadOptions{Filter: &filter, PageSize: 100})
 }
-
-// maxWrite is OpenFGA's default limit on tuples per write request.
-const maxWrite = 100
 
 // Write adds and removes tuples. Each request is atomic; a change larger than
 // one request is split, deletes first, so that an interruption leaves less
 // access rather than more.
 func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
-	send := func(field string, tuples []Tuple) error {
-		for len(tuples) > 0 {
-			n := min(len(tuples), maxWrite)
-			body := map[string]any{
-				"authorization_model_id": c.modelID,
-				field:                    map[string]any{"tuple_keys": tuples[:n]},
-			}
-			if err := c.post(ctx, c.storeID, "/write", body, nil); err != nil {
-				return err
-			}
-			tuples = tuples[n:]
-		}
-		return nil
-	}
-	bare := make([]Tuple, len(deletes))
-	for i, t := range deletes {
-		bare[i] = Tuple{User: t.User, Relation: t.Relation, Object: t.Object}
-	}
-	if err := send("deletes", bare); err != nil {
-		return err
-	}
-	return send("writes", writes)
-}
-
-// get reads a path under the server root (not under the store).
-func (c *OpenFGA) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	return c.do(req, out)
-}
-
-func (c *OpenFGA) post(ctx context.Context, storeID, path string, body, out any) error {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	url := c.baseURL + path
-	if storeID != "" {
-		url = c.baseURL + "/stores/" + storeID + path
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	return c.do(req, out)
-}
-
-// do sends a prepared request with the store's credential and decodes a 2xx
-// body into out, which may be nil.
-func (c *OpenFGA) do(req *http.Request, out any) error {
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("openfga %s: %w", req.URL.Path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &statusError{path: req.URL.Path, code: resp.StatusCode, body: strings.TrimSpace(string(b))}
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
-}
-
-// statusError is a refusal from OpenFGA, kept apart from a transport error so
-// that a caller can tell "there is no such store" from "OpenFGA did not
-// answer".
-type statusError struct {
-	path string
-	code int
-	body string
-}
-
-func (e *statusError) Error() string {
-	return fmt.Sprintf("openfga %s: status %d: %s", e.path, e.code, e.body)
+	return c.fga.Write(ctx, c.storeID, writes, deletes, openfga.WriteOptions{Model: c.modelID})
 }
 
 // isNotFound reports OpenFGA saying that what was asked for does not exist.
-func isNotFound(err error) bool {
-	var se *statusError
-	return errors.As(err, &se) && se.code == http.StatusNotFound
-}
+func isNotFound(err error) bool { return openfga.IsStatus(err, http.StatusNotFound) }

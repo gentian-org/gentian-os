@@ -59,6 +59,9 @@ type Identity struct {
 	// never used for a decision.
 	Name  string
 	Email string
+	// Scopes are the token's scope claim, split. Read only for a delegated
+	// token (Delegated), to bound what it may call.
+	Scopes []string
 }
 
 // Config configures a Verifier.
@@ -151,6 +154,7 @@ type keycloakClaims struct {
 	Username  string `json:"preferred_username"`
 	Email     string `json:"email"`
 	Type      string `json:"typ"`
+	Scope     string `json:"scope"`
 }
 
 // Verify checks a raw access token and returns the identity it carries.
@@ -250,6 +254,7 @@ func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Ide
 		Client:    kc.Client,
 		Name:      name,
 		Email:     kc.Email,
+		Scopes:    strings.Fields(kc.Scope),
 	}, nil
 }
 

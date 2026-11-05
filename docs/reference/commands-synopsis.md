@@ -118,13 +118,19 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
 
   kubectl gentian resources plans --tenant <tenant>
   kubectl gentian resources show --tenant <tenant>
-  kubectl gentian resources set --tenant <tenant> --plan <plan>
+  kubectl gentian resources set --tenant <tenant> --plan <plan> [--force]
+                                                              move a tenant; the cluster's administrator's
   kubectl gentian resources report --tenant <tenant> --from <time> --to <time>
+  kubectl gentian resources report --all --from <time> --to <time>
+                                                              every tenant's billed intervals
   kubectl gentian resources catalog                           the cluster's plans, with the tenants on each
   kubectl gentian resources catalog set <plan> --file <plan.json>
                                                               add or change a plan; the file is the plan as the
                                                               director takes it (displayName, tier, units, quotas, ...)
   kubectl gentian resources catalog remove <plan>             remove a plan no tenant is on
+  kubectl gentian resources ordering                          where a tenant orders another plan
+  kubectl gentian resources ordering set --file <notice.json> {"text": {"en": ...}, "url" | "email" | "phone": ...}
+  kubectl gentian resources ordering clear                    tenants are told to ask the cluster's administrator
 
   kubectl gentian version
 ```

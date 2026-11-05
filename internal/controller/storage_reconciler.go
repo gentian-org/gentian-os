@@ -187,7 +187,7 @@ func (r *TenantReconciler) seedObjectStorage(ctx context.Context, tenant *gentia
 	if r.Seeder == nil {
 		return "", "", nil
 	}
-	creds, err := r.Seeder.SeedS3(ctx, tenant.Name, appName, secrets.S3Creds{
+	creds, err := r.Seeder.SeedS3(ctx, secrets.CategoryPath(tenant.Name, appName, "s3"), secrets.S3Creds{
 		Endpoint: r.storageEndpoint(ctx),
 		Bucket:   s3BucketName(tenant, appName),
 		Region:   "us-east-1",

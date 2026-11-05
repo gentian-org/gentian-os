@@ -14,11 +14,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -40,17 +43,16 @@ type PlanSummary struct {
 	Quotas      map[string]string `json:"quotas"`
 	// Current marks the plan the tenant is on.
 	Current bool `json:"current,omitempty"`
-	// Selectable is false when the plan exists but this caller may not move to
-	// it. Returned rather than filtered out so a tenant admin can see the
-	// upgrade that exists above their entitlement instead of wondering whether
-	// the platform offers one at all.
+	// Selectable is false when the plan exists but the tenant cannot be moved
+	// to it now. Returned rather than filtered out, so the tenant sees what
+	// the cluster offers and why one of them would not take.
 	Selectable bool `json:"selectable"`
 	// Blocked, when set, says why Selectable is false in the caller's terms.
 	Blocked string `json:"blocked,omitempty"`
 	// BlockedBy names the rule behind Blocked, for a caller that has to act
-	// on it rather than show it: the director turns a plan that does not fit
-	// into 409 and one the tenant is not entitled to into 402, and it cannot
-	// tell those apart from a sentence.
+	// on it rather than show it: the director forces a plan that does not
+	// fit when asked to, and a retired one never, and it cannot tell those
+	// apart from a sentence.
 	BlockedBy PlanBlock `json:"blockedBy,omitempty"`
 }
 
@@ -58,11 +60,6 @@ type PlanSummary struct {
 type PlanBlock string
 
 const (
-	// PlanBlockedSelfService: the plan is arranged with the platform operator
-	// and a tenant administrator cannot pick it.
-	PlanBlockedSelfService PlanBlock = "self-service"
-	// PlanBlockedEntitlement: the plan is above the tenant's entitlement.
-	PlanBlockedEntitlement PlanBlock = "entitlement"
 	// PlanBlockedFit: the tenant's committed usage does not fit under the plan.
 	PlanBlockedFit PlanBlock = "fit"
 	// PlanBlockedRetired: the plan is kept for the tenants on it and offered
@@ -96,6 +93,39 @@ type ResourceStateResult struct {
 	// checked against the plan: an app cap is the Tenant webhook's policy
 	// limit, not part of the capacity a plan sells.
 	InstalledApps int `json:"installedApps"`
+	// Ordering is where the tenant orders another plan, as the cluster's
+	// administrators state it; absent when they state nothing, and the
+	// tenant asks them.
+	Ordering *OrderingNotice `json:"ordering,omitempty"`
+}
+
+// OrderingNotice is the cluster's PlanOrdering as one tenant reads it: the
+// address with the tenant's name in it.
+type OrderingNotice struct {
+	Text  map[string]string `json:"text"`
+	URL   string            `json:"url,omitempty"`
+	Email string            `json:"email,omitempty"`
+	Phone string            `json:"phone,omitempty"`
+}
+
+// +kubebuilder:rbac:groups=gentianos.io,resources=planorderings,verbs=get;list;watch
+
+// orderingFor reads the cluster's notice for one tenant, nil when there is
+// none.
+func (s *Service) orderingFor(ctx context.Context, tenant string) (*OrderingNotice, error) {
+	var doc gentianov1alpha1.PlanOrdering
+	if err := s.client.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlanOrderingName}, &doc); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &OrderingNotice{
+		Text:  doc.Spec.Text,
+		URL:   strings.ReplaceAll(doc.Spec.URL, "{tenant}", url.PathEscape(tenant)),
+		Email: doc.Spec.Email,
+		Phone: doc.Spec.Phone,
+	}, nil
 }
 
 // ResourceState reports a tenant's current ceiling, consumption and plan.
@@ -125,6 +155,9 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 	}
 	if resolution.Plan != nil {
 		result.Plan = resolution.Plan.Name
+	}
+	if result.Ordering, err = s.orderingFor(ctx, tenant.Name); err != nil {
+		return nil, err
 	}
 
 	quota, err := s.tenantQuota(ctx, tenant)
@@ -184,11 +217,7 @@ func (s *Service) AllResourceStates(ctx context.Context) ([]*ResourceStateResult
 }
 
 // Plans lists the catalog as it applies to one tenant.
-func (s *Service) Plans(
-	ctx context.Context,
-	tenantName string,
-	selfService bool,
-) ([]PlanSummary, error) {
+func (s *Service) Plans(ctx context.Context, tenantName string) ([]PlanSummary, error) {
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
 		return nil, err
@@ -202,8 +231,6 @@ func (s *Service) Plans(
 	if resolution.Plan != nil {
 		currentName = resolution.Plan.Name
 	}
-	maxTier := resourceplan.MaxTier(tenant)
-
 	quota, err := s.tenantQuota(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -233,14 +260,6 @@ func (s *Service) Plans(
 			summary.Selectable = false
 			summary.Blocked = "this plan is retired: kept for the tenants on it, offered to no other"
 			summary.BlockedBy = PlanBlockedRetired
-		case selfService && plan.Spec.SelfServiceDisabled:
-			summary.Selectable = false
-			summary.Blocked = "this plan is arranged with the platform operator, not self-service"
-			summary.BlockedBy = PlanBlockedSelfService
-		case maxTier != nil && plan.Spec.Tier > *maxTier:
-			summary.Selectable = false
-			summary.Blocked = "this plan is above the tenant's current entitlement"
-			summary.BlockedBy = PlanBlockedEntitlement
 		default:
 			if err := resourceplan.CheckFit(plan, used); err != nil {
 				var downgrade *resourceplan.DowngradeError
@@ -281,6 +300,30 @@ func (s *Service) UsageReport(
 		return nil, err
 	}
 	return usage.BuildReport(ctx, store, tenantName, from, to)
+}
+
+// AllUsageReports resolves the window for every tenant the cluster holds.
+func (s *Service) AllUsageReports(ctx context.Context, from, to time.Time) ([]*usage.Report, []TenantUnavailable, error) {
+	var tenants gentianov1alpha1.TenantList
+	if err := s.client.List(ctx, &tenants); err != nil {
+		return nil, nil, fmt.Errorf("list tenants: %w", err)
+	}
+	names := make([]string, 0, len(tenants.Items))
+	for i := range tenants.Items {
+		names = append(names, tenants.Items[i].Name)
+	}
+	sort.Strings(names)
+	reports := make([]*usage.Report, 0, len(names))
+	unavailable := []TenantUnavailable{}
+	for _, name := range names {
+		report, err := s.UsageReport(ctx, name, from, to)
+		if err != nil {
+			unavailable = append(unavailable, TenantUnavailable{Tenant: name, Reason: err.Error()})
+			continue
+		}
+		reports = append(reports, report)
+	}
+	return reports, unavailable, nil
 }
 
 func (s *Service) getTenant(ctx context.Context, name string) (*gentianov1alpha1.Tenant, error) {

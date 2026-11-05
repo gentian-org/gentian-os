@@ -318,7 +318,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod`. A cluster keeps one stage for life, which is why there is no `<stage>` segment inside its own tree. |
 | `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. Argo CD reads the deployments repository and `gentian-os` with the same setting — see *How Argo CD gets a repository's credential* below. |
 | `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. `GENTIAN_DEPLOYMENTS_REPO` has no default: unset, the install asks for it, and an unattended run stops. |
-| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](../guides/deployment.md). Unset, it is the branch of the checkout the installer is run from, everywhere it is used: the gentian-os Repository claim step 0 writes, the bootstrap Applications, the default catalog and the image tag. A release tag has to be named here; with a detached checkout and no value the install stops. The installer runs the image built from the checkout's commit under that name. |
+| `GENTIAN_OS_BRANCH` | The ref the cluster runs — [deployment.md §4](../guides/deployment.md). A release tag is what every in-cluster Application follows; for a branch they follow the checkout's commit, which the operator image is built from. Unset, it is the branch of the checkout the installer is run from, everywhere it is used: the gentian-os Repository claim step 0 writes, the bootstrap Applications, the default catalog and the image tag. A release tag has to be named here; with a detached checkout and no value the install stops. The installer runs the image built from the checkout's commit under that name. |
 | `GENTIAN_UI_BRANCH` | The branch of `gentian-ui` written to that repository's claim when step 0 scaffolds it. `main` by default. |
 | `GENTIAN_DEPLOYMENTS_PATH` | The local checkout of the deployments repository. `~/.gentian/gentian-deployments` by default. |
 | `CLUSTER_ADMIN_RECOVERY_EMAIL` | Where the platform admin's activation link is mailed at the handover, and the account's recovery address afterwards. Unset, the handover asks; with no address, or while the kernel realm cannot send mail yet, the link is shown once in the terminal. |
@@ -340,10 +340,10 @@ The template carries one line per setting; the reasoning is here.
 | `KERNEL_NETWORK_POLICIES` | **On by default.** Step `A-01` first checks that the CNI enforces NetworkPolicy and stops if it does not, then gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([security/design.md §2.13](../security/design.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything but `true` removes them: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([security/design.md §2.7](../security/design.md)). |
 | `GENTIAN_NO_EXTRA_SERVICES` | `1` leaves the extra services out of the default profiles, and the store's vendor out of the tenants' partners, as `--no-extra-services` does, takes away the ones an earlier run placed, and records `spec.catalogue.extraServices: false` on the Cluster claim so a later run keeps them out; `0` brings them back and removes the record. Unset keeps what the claim says. The operator removes the Components it placed of them once their profiles leave the catalog. |
-| `GENTIAN_NO_USAGE_STATISTICS` | `1` turns the usage statistics report off, as `--no-usage-statistics` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and there are no extra services, as with `GENTIAN_NO_EXTRA_SERVICES=1` (recorded on the claim the same way): no App Store, Operations Console or Aluvian Center; the operator does not place a profile annotated `gentianos.io/requires-usage-statistics: "true"` and removes the ones it placed. For people who manage their own cluster at their own risk — [operations.md §6.2](../concepts/operations.md). |
+| `GENTIAN_NO_USAGE_STATISTICS` | `1` turns the usage statistics report off, as `--no-usage-statistics` does; `0` turns it back on. Unset keeps what the cluster has. Off, nothing is sent and there are no extra services, as with `GENTIAN_NO_EXTRA_SERVICES=1` (recorded on the claim the same way): no App Store, Operations Console, operations sync or Aluvian Center; the operator does not place a profile annotated `gentianos.io/requires-usage-statistics: "true"` and removes the ones it placed. For people who manage their own cluster at their own risk — [operations.md §6.2](../concepts/operations.md). |
 | `GENTIAN_USAGE_STATISTICS_URL` | Where the usage statistics report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
 | `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. The archive is fetched from the OpenBao release for Linux or macOS on x86_64 or arm64, compared with that release's checksum list, and installed to `~/.local/bin` only when it matches; on any other host install `bao` yourself. |
-| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalog (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is the store's extra services from `https://catalogue.aluvian.io/profiles/`: `operations-console-ee.yaml`, `backup-scheduler-ee.yaml`, `app-store-pe.yaml` and `aluvian-center-pe.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`); one the catalog's index does not list is skipped with a warning. Each profile says where it runs: the Operations Console and its backup scheduler in the platform tenant, the App Store app and the Aluvian Center in every other tenant, those made later included, while the cluster offers a store (`defaultWhereStoreOffered`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
+| `GENTIAN_DEFAULT_PROFILES` | The profiles step 0 places in `clusters/<cluster>/catalogue/`, on every install run: https addresses of profiles in a catalog (`<catalogue>/profiles/<name>.yaml`), comma separated, each optionally pinned as `<address>@sha256:<digest>`. Unset, it is the store's extra services from `https://catalogue.aluvian.io/profiles/`: `operations-console-ee.yaml`, `backup-scheduler-ee.yaml`, `operations-sync-ee.yaml`, `app-store-pe.yaml` and `aluvian-center-pe.yaml` (`GENTIAN_STORE_CATALOGUE_URL` replaces the address before `/profiles/`); one the catalog's index does not list is skipped with a warning. Each profile says where it runs: the Operations Console, its backup scheduler and the operations sync in the platform tenant, the App Store app and the Aluvian Center in every other tenant, those made later included, while the cluster offers a store (`defaultWhereStoreOffered`). Set, the value is used as it stands, and set empty places none; `--disable-api-extensions` places none. A profile is written only when it hashes to a stated digest — see *The default profile* below. A local file or an `http` address is refused. Remove a line an earlier install left here. |
 | `CROSSPLANE_ACTIVATE_ALL` | `true` installs every resource type of every Crossplane provider, as installs did before; unset, only the types `crossplane/providers/activation.yaml` names exist. The way back if a fresh install waits on a type that list lacks — see *Provider resource types* below. |
 | `GENTIAN_OS_IMAGE_TAG` | Leave it unset — see *Image tags* below. |
 
@@ -625,7 +625,9 @@ the manifests Argo CD syncs and the binary the kubelet pulls come from one
 commit. A release tag resolves to its version. Set it only to run something
 else — and a value that names a moving tag is warned about, because a
 Deployment on one never rolls by itself and a pod that restarts picks up
-whatever the tag meant at that second. A set value is otherwise used as it
+whatever the tag meant at that second. On a `prod` stage pre-flight refuses
+a moving tag outright, whichever way it was reached: install a release from
+its tag. A set value is otherwise used as it
 stands, so a line left in `install.env` by an earlier install pins the
 cluster to that older build without a warning: remove it.
 
@@ -752,7 +754,7 @@ What you have to keep, by mode:
 | `secretMode` | Keep | Why |
 |---|---|---|
 | `derived` | The recovery kit, and its passphrase somewhere else | It holds the master password and the salt, which reproduce every generated credential; the OpenBao recovery key; the backup key; and the break-glass signing key |
-| `random` | The recovery kit, **and** snapshots of OpenBao that you take yourself | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those |
+| `random` | The recovery kit, **and** the OpenBao snapshots | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those, and its daily snapshot is their copy ([recovery.md §4](../guides/recovery.md)) |
 
 > Under `derived`, reproducing a cluster's credentials needs the master password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
@@ -762,9 +764,18 @@ What you have to keep, by mode:
 > recovery kit* in [GETTING-STARTED.md](../../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
-The platform does not snapshot OpenBao, and the recovery kit holds no
-generated credential; a tenant's backup holds its apps' own secrets and no
-other. So that snapshot is yours to take.
+A vault on Raft storage (`openbao.storage: raft` on the claim, what a new
+claim states) is snapshotted every day, encrypted to the backup key, into the
+bucket `gentian-openbao-snapshots` of the platform's object store, and the
+newest 14 are kept; the transit seal that unseals it is snapshotted beside
+it, and opens with the kit's `TRANSIT_UNSEAL_KEY`.
+[recovery.md §4](../guides/recovery.md) restores the seal, then the vault.
+An instance on file storage, on a cluster whose claim predates the setting,
+is not snapshotted until it is moved to Raft
+([recovery.md §5](../guides/recovery.md)).
+The snapshots live on the cluster's own object store: a copy off the cluster
+is yours to make. The recovery kit holds no generated credential, and a
+tenant's backup holds its apps' own secrets and no other.
 A tenant's backup, restore and import are the same in both modes. What
 differs is the loss of OpenBao's storage on a cluster that keeps running:
 `derived` writes the same values again, `random` writes new ones that the

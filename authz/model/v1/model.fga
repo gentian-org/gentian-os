@@ -110,7 +110,6 @@ type tenant
 
     # permissions — the director's tenant-level verbs
     define can_install_app: admin
-    define can_set_plan: admin
     define can_set_policy: admin          # backup, grants, export schedules, tenant network intent
     define can_grant: admin               # AppGrant: integration consent
     define can_manage_users: admin
