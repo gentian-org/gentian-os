@@ -23,13 +23,8 @@ const EnvPrefix = "GENTIAN_NS_"
 // asks for this on the path, and a value cached at init is a value a test
 // cannot change.
 //
-// Falling back to this package's own table is the whole of the change that
-// removed the second layout. There used to be a map here of where release 4.1
-// put each function, because a process started without the environment was
-// running on a cluster built that way. There is one layout now, so a missing
-// variable is a chart that did not set it -- and answering with the layout
-// this binary was built for is right, where answering with another cluster's
-// namespaces would have sent the reconciler somewhere that does not exist.
+// A missing variable is a chart that did not set it, and is answered with
+// the layout this binary was built for.
 func Namespace(fn Function) string {
 	if v := os.Getenv(EnvPrefix + envSuffix(fn)); v != "" {
 		return v

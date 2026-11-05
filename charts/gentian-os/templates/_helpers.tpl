@@ -114,8 +114,9 @@ kernel zone, and a cluster whose tenants live somewhere else needs to say so.
 
 {{/*
 gentian-os.layoutEnv — where each kernel function runs, for the operator to
-read (internal/layout). Empty means the v4 layout, which the operator answers
-on its own; a v5 install passes the whole map from kernel/namespaces.yaml.
+read (internal/layout). The installer passes the whole map from
+kernel/namespaces.yaml; a function left out is answered from the operator's
+own copy of that layout.
 */}}
 {{- define "gentian-os.layoutEnv" -}}
 {{- range $fn, $ns := .Values.layout }}

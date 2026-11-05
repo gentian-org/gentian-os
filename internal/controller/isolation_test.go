@@ -102,8 +102,7 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	// The edge and the authentication function; platform-kernel is the
-	// v4 fallback of both.
+	// The edge and the authentication function.
 	expectedNS := []string{layout.Namespace(layout.Edge), layout.Namespace(layout.Authentication)}
 	for _, ns := range expectedNS {
 		found := false

@@ -28,9 +28,7 @@ import (
 // beside the Secret it mounts and the service it provisions, so the namespace
 // follows the function: Keycloak Jobs in the authentication namespace, role
 // Jobs beside the postgres they talk to, bucket Jobs beside the object
-// store. The previous single "kernel namespace" was the v4 layout's one namespace for
-// all of these, and addressing it by name is what kept every tenant out of a
-// cluster built in any other shape.
+// store.
 //
 // The system functions are the ones kernel.md §6.1 names; a cluster
 // that has not composed one of them yet has no tenant using it either.

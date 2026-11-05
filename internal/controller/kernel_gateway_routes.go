@@ -756,7 +756,7 @@ func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32, 
 // kernelRouteGrantNamespaces are the namespaces that grant the kernel routes
 // their backends. A route lives beside the Gateway; the Services it points at
 // live where their own function does, so each of those namespaces grants the
-// reference. Duplicates in the v4 layout, where they are one namespace.
+// reference. Deduplicated: two functions may be given one namespace.
 //
 // The model gateway's namespace only while its console is routed: it exists
 // only on a cluster that serves models, and without the grant Envoy Gateway
@@ -1184,8 +1184,8 @@ func cloneMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// dedupe returns the distinct namespaces, in order. Several functions share
-// one namespace in the v4 layout and a grant applied twice is a conflict.
+// dedupe returns the distinct namespaces, in order. Two functions may be
+// given one namespace (GENTIAN_NS_*), and a grant applied twice is a conflict.
 func dedupe(ns ...string) []string {
 	seen := make(map[string]bool, len(ns))
 	out := make([]string, 0, len(ns))

@@ -75,8 +75,7 @@ func defaultServicesNamespace() string {
 	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
 		return v
 	}
-	// The edge: the Gateway, its routes and its reference grants. In the v4
-	// layout that is the same namespace as everything else kernel.
+	// The edge: the Gateway, its routes and its reference grants.
 	return layout.Namespace(layout.Edge)
 }
 

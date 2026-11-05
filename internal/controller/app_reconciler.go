@@ -41,14 +41,7 @@ const (
 	litellmMasterKeySecKey = modelgateway.MasterKeyField
 )
 
-// Where LLM serving runs.
-//
-// Both of these were the literal platform-kernel, which is v4's one namespace
-// for everything. LLM serving is a system-tier function of its own
-// (kernel.md §7), and on v5 platform-kernel does not exist -- so
-// the master key was read from a namespace that is not there and the proxy was
-// addressed at a name that does not resolve. Neither failure names LLM: the
-// first is a Secret not found, the second a dial timeout.
+// Where LLM serving runs: a system-tier function of its own (kernel.md §7).
 //
 // litellmProxyBaseURL is a var rather than a const only so tests can point it
 // at an httptest server. Nothing at run time reassigns it.

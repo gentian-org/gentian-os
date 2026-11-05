@@ -34,10 +34,8 @@ const (
 	operatorConfigMapName       = "gentian-os-config"
 )
 
-// Where the kernel's functions run. Resolved from the layout the chart passes
-// in (internal/layout), which answers the v4 names when a process is started
-// without it — so an operator of this release behaves identically on a cluster
-// that has not been rebuilt.
+// Where the kernel's functions run, from the layout the chart passes in
+// (internal/layout).
 var (
 	operatorNamespace = layout.Namespace(layout.Control)
 	argocdNamespace   = layout.Namespace(layout.GitOps)
