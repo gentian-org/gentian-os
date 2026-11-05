@@ -104,6 +104,14 @@ rules:
     - apiextensions.k8s.io
     resources:
     - customresourcedefinitions
+    verbs:
+    - get
+    - create
+    - update
+  - apiGroups:
+    - apiextensions.k8s.io
+    resources:
+    - customresourcedefinitions
     resourceNames:
     - appgrants.gentianos.io
     - apppackages.gentianos.io
@@ -542,6 +550,43 @@ rules:
     - update
     - patch
     - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterrolebindings
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-api-extensions
+    verbs:
+    - update
+    - bind
+    - escalate
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-profile-role-tenant-exports
+    verbs:
+    - bind
   - apiGroups:
     - rbac.authorization.k8s.io
     resources:

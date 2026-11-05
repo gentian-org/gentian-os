@@ -171,7 +171,7 @@ func (s *Service) RequestPrivilege(ctx context.Context, tenantName, profile, pri
 	if kind == "" || name == "" {
 		return RequestOutcome{}, fmt.Errorf("a privilege is <kind>/<name>: not %q", privilege)
 	}
-	if security.PrivilegeApprover(kind) != security.PrivilegeApproverSecurityOfficer {
+	if security.PrivilegeApprover(privilege) == security.PrivilegeApproverPerimeter {
 		return RequestOutcome{}, ErrTenantAnswers
 	}
 	note = strings.TrimSpace(note)

@@ -542,8 +542,7 @@ enforced, and the target is not told which app is calling. What a consumer may d
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
 role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines
 and the ServiceAccount the chart runs under, and the role is bound only where the cluster permits
-it for the profile and the security officer granted it on the install. Rules written on the entry
-are ignored. The platform's set is empty, so no app gets such access
+it for the profile and it was granted on the install. Rules written on the entry are ignored
 ([security/design.md §3.4](../security/design.md)).
 
 **L2 vs L3 tie-breaker** — the one decision this ladder cannot make positionally:

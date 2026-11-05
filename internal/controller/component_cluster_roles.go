@@ -42,11 +42,16 @@ import (
 // permits it for the profile, and a live grant for it is on the install.
 // When one of the three goes, the binding goes at the next reconcile.
 //
-// The operator's own role carries no permission on RBAC objects while the
-// platform's set is empty, and with an empty set nothing here asks the API
-// server for one. The permissions arrive with the first role, and the
+// With an empty set nothing here asks the API server for anything. The
 // permission to bind is held to the names of the set (docs/security/design.md
 // says how a role is added).
+
+// The markers are a free-floating block: controller-gen ignores a block that
+// is part of a declaration's doc comment.
+//
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=gentian-profile-role-tenant-exports
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;delete
 
 const (
 	// conditionClusterRolesBound says, on a Component whose profile asks for
@@ -90,6 +95,11 @@ func (r *ComponentReconciler) ensureClusterRoles(ctx context.Context, comp *gent
 		// No role exists, so no binding can: nothing to make and nothing to
 		// remove, and the API server is not asked.
 		r.setClusterRolesCondition(comp, security.ResolveClusterRoles(profile, set, nil, comp.Spec.Privileges, time.Now()))
+		return nil
+	}
+	if len(requests) == 0 && !hadClusterRoles(comp) {
+		// Nothing asked for, now or before: nothing bound to remove, and
+		// the API server is not asked.
 		return nil
 	}
 
@@ -170,9 +180,15 @@ func (r *ComponentReconciler) ensureClusterRoles(ctx context.Context, comp *gent
 	return nil
 }
 
+// hadClusterRoles reports whether the component asked for a cluster role at
+// its last reconcile: the condition stays until its bindings are gone.
+func hadClusterRoles(comp *gentianov1alpha1.Component) bool {
+	return apimeta.FindStatusCondition(comp.Status.Conditions, conditionClusterRolesBound) != nil
+}
+
 // deleteClusterRoles removes every binding of a component that is going.
 func (r *ComponentReconciler) deleteClusterRoles(ctx context.Context, comp *gentianov1alpha1.Component) error {
-	if len(r.clusterRoleSet()) == 0 {
+	if len(r.clusterRoleSet()) == 0 || !hadClusterRoles(comp) {
 		return nil
 	}
 	existing, err := r.componentClusterRoleBindings(ctx, comp)

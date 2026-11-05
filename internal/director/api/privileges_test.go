@@ -226,28 +226,36 @@ func TestApprovingNeedsToSeeTheTenantAtAll(t *testing.T) {
 }
 
 // What the operator tells a console about each pending request
-// (security.PrivilegeApprover) is what this API then allows, kind by kind:
-// the perimeter approver for one, the security officer for the others,
-// and never both. A console that offers the button by that answer offers it
-// to exactly whom the director would let through.
+// (security.PrivilegeApprover) is what this API then allows, request by
+// request: the perimeter approver for one, the security officer for some,
+// break-glass for what writes through the cluster's API, and never two of
+// them. A console that offers the button by that answer offers it to exactly
+// whom the director would let through.
 func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
-	for _, kind := range []string{security.PrivilegeEgress, security.PrivilegePodSecurity, security.PrivilegeClusterRoles} {
+	for _, ref := range []string{
+		security.PrivilegeEgress + "/something",
+		security.PrivilegePodSecurity + "/something",
+		security.PrivilegeClusterRoles + "/something",
+		security.PrivilegeClusterRoles + "/tenant-exports",
+		security.PrivilegeAPIExtensions + "/something",
+	} {
 		h := start(t)
-		path := "/v1/tenants/demo/privileges/nextcloud/" + kind + "/something"
+		path := "/v1/tenants/demo/privileges/nextcloud/" + ref
 		for _, who := range []struct {
 			name, realm, user, approver string
 		}{
 			{"perimeter approver", "tenant-demo", "tom", security.PrivilegeApproverPerimeter},
 			{"security officer", "gentian", "sam", security.PrivilegeApproverSecurityOfficer},
+			{"break-glass", "gentian", "bea", security.PrivilegeApproverBreakGlass},
 		} {
 			token := h.token(t, who.realm, who.user)
 			code, body := h.do(t, "PUT", path, token, reason("reviewed and agreed for this install"))
 			want := http.StatusForbidden
-			if security.PrivilegeApprover(kind) == who.approver {
+			if security.PrivilegeApprover(ref) == who.approver {
 				want = http.StatusAccepted
 			}
 			if code != want {
-				t.Errorf("%s approving %s = %d %v, want %d", who.name, kind, code, body, want)
+				t.Errorf("%s approving %s = %d %v, want %d", who.name, ref, code, body, want)
 			}
 		}
 	}

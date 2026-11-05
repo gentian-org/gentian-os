@@ -25,18 +25,35 @@ import (
 // and the ClusterRole objects the operator's chart ships
 // (charts/gentian-os/templates/profile-cluster-roles.yaml).
 //
-// A role belongs here only if it is narrow and reads: no Secrets, no write
-// verb, no wildcard, nothing of RBAC or admission, no nodes/proxy, no
-// impersonation.
+// A role belongs here only if it is narrow: no Secrets, no wildcard, nothing
+// of RBAC or admission, no nodes/proxy, no impersonation. A role reads, unless
+// it is marked as one that writes, and then it writes kinds of the platform's
+// own and nothing else -- and is approved by break-glass (PrivilegeApprover).
 
-// ClusterRoleSet is the platform's roles: name, and what the role allows in
-// words an approver reads.
-type ClusterRoleSet map[string]string
+// ClusterRole is one role of the set.
+type ClusterRole struct {
+	// What the role allows, in words an approver reads.
+	What string
+	// Writes marks a role with a write verb.
+	Writes bool
+}
 
-// PlatformClusterRoles is the set this build of the platform ships. Empty: no
-// profile of the catalog asks for a cluster role, so there is none to
-// define yet. docs/security/design.md says how one is added.
-var PlatformClusterRoles = ClusterRoleSet{}
+// ClusterRoleSet is the platform's roles, by the name a profile asks for.
+type ClusterRoleSet map[string]ClusterRole
+
+// PlatformClusterRoles is the set this build of the platform ships.
+// docs/security/design.md says how one is added.
+var PlatformClusterRoles = ClusterRoleSet{
+	// The backup add-on's: it starts and removes a tenant's exports. What
+	// an export may then do is held by admission
+	// (charts/gentian-os/templates/tenant-export-guard.yaml): to the
+	// cluster's storage or a store the tenant declared, and readable by the
+	// cluster's recovery keys.
+	"tenant-exports": {
+		What:   "start, read and remove TenantExports in every tenant's namespace; the exports go to the cluster's storage or a store the tenant declared",
+		Writes: true,
+	},
+}
 
 // ClusterRoleObjectPrefix starts the name of every ClusterRole of the set, so
 // that the operator's permission to bind can be held to these names.

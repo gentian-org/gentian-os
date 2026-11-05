@@ -625,7 +625,7 @@ type TenantPrivilegeGrant struct {
 	Install string `json:"install"`
 
 	// Privilege names one entry of the profile's request, as <kind>/<name>.
-	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=80
 	Privilege string `json:"privilege"`
 

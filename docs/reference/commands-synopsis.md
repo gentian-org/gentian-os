@@ -97,7 +97,8 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
                                                             approve one request: egress (the tenant's perimeter approver),
-                                                            podSecurity or clusterRoles (the cluster's security officer)
+                                                            podSecurity or clusterRoles (the cluster's security officer),
+                                                            apiExtensions or a role that writes (break-glass)
   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
                                                             decline one, with the same right; the app keeps waiting
   kubectl gentian approvals list                             what awaits the security officer and the perimeter

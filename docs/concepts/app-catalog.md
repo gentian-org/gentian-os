@@ -656,18 +656,26 @@ spec:
           reason: "Outbound mail to the tenant's relay."
       clusterRoles:
         - name: read-nodes
-          rules: [...]
+          serviceAccount: dashboard
           reason: "The dashboard lists node capacity."
+      apiExtensions:
+        - name: schedules
+          group: backup.example.org
+          serviceAccount: backup
+          definitions: [...]          # CustomResourceDefinitions
+          reason: "The add-on's schedules."
 ```
 
-**Who approves follows from the kind, never from a field**, or a component
+**Who approves follows from the request, never from a field**, or a component
 could ask for the cheaper approver (`internal/security/privilege.go`, read by
 the director and by the console alike):
 
 | kind | scope | approver | relation |
 |---|---|---|---|
 | pod-security waiver | cluster: weakens an admission rule protecting the node | security officer | `cluster#can_approve` |
-| cluster role | cluster: reaches the Kubernetes API | security officer | `cluster#can_approve` |
+| cluster role that reads | cluster: reaches the Kubernetes API | security officer | `cluster#can_approve` |
+| cluster role that writes | cluster: writes through the Kubernetes API | break-glass | `cluster#can_set_admission` |
+| API extension | cluster: adds types to the cluster's API, for every tenant | break-glass | `cluster#can_set_admission` |
 | egress beyond baseline | tenant: leaves the tenant's own namespace | perimeter approver | `tenant#can_approve_privilege`, which is `can_expose` |
 
 The grant sits on the Component, written only by the director from the

@@ -328,9 +328,9 @@ spec:
                     privilege:
                       description: |-
                         Privilege names one entry of the profile's request, as <kind>/<name>,
-                        where kind is podSecurity, egress or clusterRoles.
+                        where kind is podSecurity, egress, clusterRoles or apiExtensions.
                       maxLength: 80
-                      pattern: ^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      pattern: ^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     reason:
                       description: Reason in the approver's words, not the profile's.
