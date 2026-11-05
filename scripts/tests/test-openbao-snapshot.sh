@@ -311,12 +311,16 @@ EOF
 chmod +x "${W}/failing-curl/curl"
 before="$(names "${W}/s3/b/openbao" | grep -c '\.snap\.age$')"
 started="$(date +%s)"
-# run_job under a timeout, which runs no shell function: the job would
-# otherwise hang the test with it. The variables expand in the child.
-# shellcheck disable=SC2016
-timeout 60 env PATH="${W}/failing-curl:${PATH}" SCRIPT="${SCRIPT}" W="${W}" RECIPIENT="${RECIPIENT}" \
-    bash -c "$(declare -f run_job)"'; run_job BACKUP_AGE_RECIPIENTS="${RECIPIENT}"'
-rc=$?
+# Under a watchdog of the shell's own (macOS has no timeout(1)): a job that
+# hung would otherwise hang the test with it. A killed job's status is 124.
+( PATH="${W}/failing-curl:${PATH}"; run_job BACKUP_AGE_RECIPIENTS="${RECIPIENT}" ) &
+job_pid=$!
+( sleep 60; pkill -P "${job_pid}" 2>/dev/null; kill "${job_pid}" 2>/dev/null; touch "${W}/job-killed" ) &
+watchdog=$!
+rc=0
+wait "${job_pid}" || rc=$?
+kill "${watchdog}" 2>/dev/null; wait "${watchdog}" 2>/dev/null
+if [[ -e "${W}/job-killed" ]]; then rc=124; fi
 took=$(( $(date +%s) - started ))
 check "the snapshot read fails before a byte: the job fails within seconds, logs curl's error, uploads nothing" \
     "$([[ ${rc} -ne 0 && ${rc} -ne 124 && ${took} -lt 30 ]] && grep -q 'Connection refused' "${W}/job.log" &&
