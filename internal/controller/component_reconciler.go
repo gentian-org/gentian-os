@@ -858,7 +858,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// A move ends here: the first build recorded, a rolling build verified
 	// or rolled back, an instance left on its old build said so.
 	if handled, res, err := r.finishMove(ctx, comp, profile, requested, effective, releaseReady); handled || err != nil {
-		return res, err
+		return resultUnlessError(res, err)
 	}
 	if !releaseReady {
 		return r.status(ctx, comp, metav1.ConditionFalse, "Installing", releaseMessage, componentRequeue)

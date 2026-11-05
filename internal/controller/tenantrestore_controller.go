@@ -167,7 +167,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		setRestoreCondition(restore, conditionExportAccepted, metav1.ConditionFalse, "Busy",
 			fmt.Sprintf("waiting for %s to finish", holder))
 		restore.Status.Phase = gentianov1alpha1.TenantExportPhasePending
-		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 	}
 
 	ref, encMode, err := r.resolveBundle(ctx, restore)
@@ -235,7 +235,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			entry.Message = why
 			return r.fail(ctx, restore, "RestoreFailed", why+". "+restoreStateText(restore, backupTenantComponent))
 		}
-		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 	}
 
 	// The staged key material has done its work; keeping it would quietly
@@ -292,7 +292,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return r.failApp(ctx, restore, tenant, appName, failure)
 		}
 		if !held {
-			return ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore)
+			return resultUnlessError(ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore))
 		}
 		entry = appStatus(&restore.Status.Apps, appName)
 	}
@@ -376,7 +376,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return r.failApp(ctx, restore, tenant, appName, why)
 		}
 		entry.Message = fmt.Sprintf("restoring; waiting on %s", strings.Join(pending, ", "))
-		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 	}
 
 	// Started again on the restored data already: what is left is to see it
@@ -416,7 +416,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			entry.QuiesceEnd = ptrNow()
 			unmarkQuiesced(&restore.Status.Quiesced, appName)
 			entry.Message = "resumed; waiting for a pod to run post-restore hooks"
-			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+			return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 		}
 		if _, err := r.Tenant.runningPodForApp(ctx, tenant.Name, appName, spec.QuiesceContainer()); err != nil {
 			// An app that waits for a credential a person supplies has no
@@ -433,7 +433,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 				return r.failApp(ctx, restore, tenant, appName,
 					fmt.Sprintf("post-restore hooks: %s", why))
 			}
-			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+			return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 		}
 	}
 
@@ -513,7 +513,7 @@ func (r *TenantRestoreReconciler) awaitRollout(
 	if len(pending) > 0 {
 		if time.Since(entry.RolloutStart.Time) <= restoreRolloutTimeout {
 			entry.Message = "started again on the restored data; waiting for " + strings.Join(pending, ", ") + " to roll out"
-			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+			return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
 		}
 		restore.Status.Notes = append(restore.Status.Notes, fmt.Sprintf(
 			"%s: %s did not finish rolling out on the restored data within %s; the app was held back until the restore ended",

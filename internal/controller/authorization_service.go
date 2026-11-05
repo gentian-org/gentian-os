@@ -255,7 +255,10 @@ func (r *AuthorizationTableReconciler) Reconcile(ctx context.Context, _ ctrl.Req
 	// this back.
 	ns := &corev1.Namespace{}
 	if err := r.Get(ctx, types.NamespacedName{Name: arbiter.Namespace}, ns); err != nil {
-		return ctrl.Result{RequeueAfter: componentRequeue}, client.IgnoreNotFound(err)
+		if errors.IsNotFound(err) {
+			return ctrl.Result{RequeueAfter: componentRequeue}, nil
+		}
+		return ctrl.Result{}, err
 	}
 	stores, err := authorizationStores(ctx, r.Client)
 	if err != nil {

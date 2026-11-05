@@ -105,7 +105,7 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 			fmt.Sprintf("export %s is still running; this window is skipped", running))
 		next := spec.Next(now.UTC())
 		schedule.Status.NextScheduleTime = &metav1.Time{Time: next}
-		return ctrl.Result{RequeueAfter: requeueUntil(now, next)}, r.persist(ctx, schedule)
+		return resultUnlessError(ctrl.Result{RequeueAfter: requeueUntil(now, next)}, r.persist(ctx, schedule))
 	}
 
 	due, next := r.dueAt(spec, schedule, now)
@@ -123,7 +123,7 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 	schedule.Status.NextScheduleTime = &metav1.Time{Time: next}
 	setScheduleCondition(schedule, metav1.ConditionTrue, "Scheduled",
 		fmt.Sprintf("next export due %s", next.UTC().Format(time.RFC3339)))
-	return ctrl.Result{RequeueAfter: requeueUntil(now, next)}, r.persist(ctx, schedule)
+	return resultUnlessError(ctrl.Result{RequeueAfter: requeueUntil(now, next)}, r.persist(ctx, schedule))
 }
 
 // dueAt reports whether an export is owed now, and when the next one falls.
