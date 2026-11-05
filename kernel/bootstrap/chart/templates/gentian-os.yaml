@@ -51,7 +51,7 @@ spec:
     - .metadata.finalizers
   sources:
   - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     path: charts/gentian-os
     helm:
       valueFiles:

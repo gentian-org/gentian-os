@@ -2870,6 +2870,29 @@ resolve_gentian_os_image_tag() {
 }
 
 # =============================================================================
+# gentian_os_revision — the git revision every Application on the gentian-os
+# repository follows: the commit of this checkout, which is the commit the
+# operator image is built from (resolve_gentian_os_image_tag). A release tag
+# is the tag. Without a checkout to read, the ref.
+#
+# Not the branch: an Application that follows a branch takes every commit
+# merged after this checkout at once, beside a binary from before them. A
+# release that removed a step and the vault rights it used left the old
+# migrator running against the new rights, refused, until the install failed.
+# A run of the installer from a newer checkout moves the revision with the
+# image.
+# =============================================================================
+gentian_os_revision() {
+    local ref sha
+    ref="$(gentian_os_ref)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "${ref}"; return 0 ;;
+    esac
+    sha="$(git -C "${SCRIPT_DIR:-.}" rev-parse HEAD 2>/dev/null || true)"
+    printf '%s\n' "${sha:-${ref}}"
+}
+
+# =============================================================================
 # yq_get — read a YAML field, tolerant of either yq flavor (mikefarah/yq's
 # "eval" subcommand, or kislyuk/yq's jq-style filter) since both are seen in
 # the wild as `yq`. Echoes the value and returns 0, or returns 1 (nothing

@@ -17,7 +17,7 @@ spec:
       valueFiles:
       - $values/kernel/values/reloader.yaml
   - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     ref: values
   destination:
     server: https://kubernetes.default.svc

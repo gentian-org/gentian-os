@@ -103,6 +103,17 @@ filter_empty="$(zones_of "$(render true true true --set-string dnsProvider=cloud
 check "external-dns: an empty dnsZones list is the walk alone" \
     "$([[ "${filter_empty}" == "k.example " ]] && echo 1 || echo 0)"
 
+# The Applications follow the commit the installer passes, the one the
+# operator image is built from, not the branch tip; without one, the branch.
+pinned="$(render true true true --set-string dnsProvider=cloudflare --set-string gentianOsBranch=develop \
+    --set-string gentianOsRevision=0123456789abcdef0123456789abcdef01234567 --set-string operator.tag=develop-0123456)"
+check "revision: every Application follows the commit passed" \
+    "$(has "${pinned}" 'targetRevision: "?0123456789abcdef' && ! has "${pinned}" 'targetRevision: "?develop' && echo 1 || echo 0)"
+check "revision: the kernel ApplicationSets get the operator's image tag beside it" \
+    "$(has "${pinned}" 'imageTag: "develop-0123456"' && echo 1 || echo 0)"
+check "revision: none passed follows the branch" \
+    "$(has "$(render true true true --set-string gentianOsBranch=develop)" 'targetRevision: "?develop' && echo 1 || echo 0)"
+
 # Declared records (certificates.dnsRecords) reach the dns-records Application
 # as data; a name outside every zone stops the render, since external-dns would
 # skip it without a word. The Application is there with none, so that emptying

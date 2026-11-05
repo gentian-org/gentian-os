@@ -12,3 +12,13 @@ address a namespace by a name of its own.
 {{- if not $found }}{{ fail (printf "kernel/namespaces.yaml has no kernel namespace with function %q (was it passed as .Values.namespaces?)" $fn) }}{{ end -}}
 {{- $found -}}
 {{- end -}}
+
+{{- /*
+  gentianOsRevision: the git revision every Application on the gentian-os
+  repository follows. The installer passes this checkout's commit, which the
+  operator image is built from (gentian_os_revision); the branch only where
+  it passes none.
+*/ -}}
+{{- define "gentianOsRevision" -}}
+{{ .Values.gentianOsRevision | default .Values.gentianOsBranch }}
+{{- end -}}
