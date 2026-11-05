@@ -1,0 +1,529 @@
+[
+  {
+    "name": "identified: allowed",
+    "exchange": {
+      "request": "GET /probe/me auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": null,
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:req-0001-abcd Decision: Principal:}"
+    }
+  },
+  {
+    "name": "identified: no bearer",
+    "exchange": {
+      "request": "GET /probe/me auth=\"\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/me\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "identified: unknown token",
+    "exchange": {
+      "request": "GET /probe/me auth=\"Bearer nobody\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/me\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "identified: a subject OpenFGA cannot hold",
+    "exchange": {
+      "request": "GET /probe/me auth=\"Bearer weird\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "identified: no realm",
+    "exchange": {
+      "request": "GET /probe/me auth=\"Bearer norealm\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": null,
+      "logs": null,
+      "handled": "id={Subject:bob Realm: Issuer: SessionID: Client: Name:Bob Email:bob@example.org} user=\"user:bob\" holder=\"\" meta={Author:{Name:Bob Email:bob@example.org} Subject:bob RequestID:req-0001-abcd Decision: Principal:}"
+    }
+  },
+  {
+    "name": "guarded: allowed as the account",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:req-0001-abcd Decision:can_view tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "guarded: allowed as the realm's holder",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_view tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:u1 Realm:demo Issuer: SessionID: Client: Name:Una Email:} user=\"user:u1\" holder=\"user:demo/u1\" meta={Author:{Name:Una Email:} Subject:u1 RequestID:req-0001-abcd Decision:can_view tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "guarded: allowed without a realm",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer norealm\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:bob can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:bob Realm: Issuer: SessionID: Client: Name:Bob Email:bob@example.org} user=\"user:bob\" holder=\"\" meta={Author:{Name:Bob Email:bob@example.org} Subject:bob RequestID:req-0001-abcd Decision:can_view tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "guarded: refused",
+    "exchange": {
+      "request": "GET /probe/tenants/other auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_view tenant:other",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:other"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: no bearer",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: not a bearer",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Basic YWRhOmFkYQ==\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: unknown token",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer nobody\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: a subject OpenFGA cannot hold",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer weird\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: a tenant name of 63",
+    "exchange": {
+      "request": "GET /probe/tenants/a23456789012345678901234567890123456789012345678901234567890123 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:a23456789012345678901234567890123456789012345678901234567890123",
+        "request_id=\"req-0001-abcd\" user:gentian/ada can_view tenant:a23456789012345678901234567890123456789012345678901234567890123"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: an invalid tenant",
+    "exchange": {
+      "request": "GET /probe/tenants/Not_A_Name auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: the store fails",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 503,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "guarded: a minted id",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:\u003cminted\u003e Decision:can_view tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "guarded: an id that is not kept",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer ada\" id=\"short\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:\u003cminted\u003e Decision:can_view tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "guarded: an unknown token with a minted id",
+    "exchange": {
+      "request": "GET /probe/tenants/demo auth=\"Bearer nobody\" id=\"\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "\u003cminted\u003e"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"\u003cminted\u003e\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"\u003cminted\u003e\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "cluster: allowed",
+    "exchange": {
+      "request": "GET /probe/clusters/c1 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_configure cluster:c1"
+      ],
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:req-0001-abcd Decision:can_configure cluster:c1 Principal:}"
+    }
+  },
+  {
+    "name": "cluster: another cluster",
+    "exchange": {
+      "request": "GET /probe/clusters/c2 auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "cluster: refused",
+    "exchange": {
+      "request": "GET /probe/clusters/c1 auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_configure cluster:c1",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_configure cluster:c1"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "action: allowed",
+    "exchange": {
+      "request": "POST /probe/tenants/demo/actions/go auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:req-0001-abcd Decision:can_install_app tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "action: refused",
+    "exchange": {
+      "request": "POST /probe/tenants/demo/actions/go auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo",
+        "request_id=\"req-0001-abcd\" user:demo/u1 can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "action: the store fails",
+    "exchange": {
+      "request": "POST /probe/tenants/demo/actions/go auth=\"Bearer tenant\" id=\"req-0001-abcd\"",
+      "status": 503,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "commissioned: a person",
+    "exchange": {
+      "request": "GET /probe/tenants/demo/partners auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
+      ],
+      "logs": null,
+      "handled": "id={Subject:ada Realm:gentian Issuer:https://id/realms/gentian SessionID: Client: Name:Ada Email:ada@example.org} user=\"user:ada\" holder=\"user:gentian/ada\" meta={Author:{Name:Ada Email:ada@example.org} Subject:ada RequestID:req-0001-abcd Decision:can_view tenant:demo Principal:}"
+    }
+  },
+  {
+    "name": "commissioned: a person refused",
+    "exchange": {
+      "request": "GET /probe/tenants/other/partners auth=\"Bearer ada\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": [
+        "request_id=\"req-0001-abcd\" user:ada can_view tenant:other",
+        "request_id=\"req-0001-abcd\" user:gentian/ada can_view tenant:other"
+      ],
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "commissioned: the key",
+    "exchange": {
+      "request": "GET /probe/tenants/demo/partners auth=\"Bearer the-key\" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": null,
+      "logs": null,
+      "handled": "id=\u003cnil\u003e user=\"\" holder=\"\" meta={Author:{Name:partners (tenant home) Email:} Subject: RequestID:req-0001-abcd Decision:commissions_partners tenant:demo Principal:component:home/partners}"
+    }
+  },
+  {
+    "name": "commissioned: the key, lower-case scheme",
+    "exchange": {
+      "request": "GET /probe/tenants/demo/partners auth=\"bearer  the-key \" id=\"req-0001-abcd\"",
+      "status": 204,
+      "header": {
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "",
+      "checks": null,
+      "logs": null,
+      "handled": "id=\u003cnil\u003e user=\"\" holder=\"\" meta={Author:{Name:partners (tenant home) Email:} Subject: RequestID:req-0001-abcd Decision:commissions_partners tenant:demo Principal:component:home/partners}"
+    }
+  },
+  {
+    "name": "commissioned: the key elsewhere",
+    "exchange": {
+      "request": "GET /probe/tenants/other/partners auth=\"Bearer the-key\" id=\"req-0001-abcd\"",
+      "status": 403,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"forbidden: this component may commission partners only for the tenants that name it in spec.partnerCommissioners\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"refused: a component's key was used for a tenant that does not name it\" request_id=\"req-0001-abcd\" route=\"GET /probe/tenants/{t}/partners\" key_tenant=\"home\" key_component=\"partners\" tenant=\"other\""
+      ],
+      "handled": ""
+    }
+  },
+  {
+    "name": "commissioned: the key, an invalid tenant",
+    "exchange": {
+      "request": "GET /probe/tenants/Bad_/partners auth=\"Bearer the-key\" id=\"req-0001-abcd\"",
+      "status": 400,
+      "header": {
+        "Content-Type": "application/json",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": null,
+      "handled": ""
+    }
+  },
+  {
+    "name": "commissioned: no bearer",
+    "exchange": {
+      "request": "GET /probe/tenants/demo/partners auth=\"\" id=\"req-0001-abcd\"",
+      "status": 401,
+      "header": {
+        "Content-Type": "application/json",
+        "Www-Authenticate": "Bearer realm=\"gentian-director\"",
+        "X-Request-Id": "req-0001-abcd"
+      },
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
+      "checks": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}/partners\""
+      ],
+      "handled": ""
+    }
+  }
+]
