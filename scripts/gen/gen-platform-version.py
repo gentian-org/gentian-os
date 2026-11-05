@@ -11,6 +11,14 @@ cannot disagree.
 
     charts/gentian-os/Chart.yaml  ->  internal/platformversion/line.go
 
+It also writes the git ref the Cluster composition reads the infra charts at
+(charts/infra/packages): `develop` on a -dev version, the release's own tag
+`vX.Y.Z` on a release, so a release never installs charts from a moving
+branch. The render fixtures carry the same URL and are rewritten with it.
+
+    charts/gentian-os/Chart.yaml  ->  crossplane/compositions/cluster-default.yaml
+                                      crossplane/tests/unit/render/*/expected.yaml
+
 Run by `make gen-platform-version` (part of gen-all); verify-gen checks the
 output is committed.
 """
@@ -24,6 +32,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CHART = ROOT / "charts" / "gentian-os" / "Chart.yaml"
 OUT = ROOT / "internal" / "platformversion" / "line.go"
+COMPOSITION = ROOT / "crossplane" / "compositions" / "cluster-default.yaml"
+RENDER_FIXTURES = ROOT / "crossplane" / "tests" / "unit" / "render"
+CHARTS_URL = re.compile(r"https://raw\.githubusercontent\.com/gentian-org/gentian-os/[^/\s\"]+/charts/infra/packages")
 
 HEADER = """/*
 Copyright The Gentian OS Authors.
@@ -64,6 +75,24 @@ def main() -> int:
     line = f"{parts.group(1)}.{parts.group(2)}"
     OUT.write_text(HEADER % (version, line, version), encoding="utf-8")
     print(f"platform version line {line} (chart {version}) -> {OUT.relative_to(ROOT)}")
+    return write_chart_ref(version)
+
+
+def write_chart_ref(version: str) -> int:
+    """Point the infra chart repository at this tree's ref."""
+    ref = "develop" if "-" in version else f"v{version.removeprefix('v')}"
+    url = f"https://raw.githubusercontent.com/gentian-org/gentian-os/{ref}/charts/infra/packages"
+    text = COMPOSITION.read_text(encoding="utf-8")
+    if not CHARTS_URL.search(text):
+        print(f"{COMPOSITION}: no infra chart repository URL", file=sys.stderr)
+        return 1
+    COMPOSITION.write_text(CHARTS_URL.sub(url, text), encoding="utf-8")
+    for fixture in sorted(RENDER_FIXTURES.glob("*/expected.yaml")):
+        text = fixture.read_text(encoding="utf-8")
+        new = CHARTS_URL.sub(url, text)
+        if new != text:
+            fixture.write_text(new, encoding="utf-8")
+    print(f"infra charts at ref {ref} -> {COMPOSITION.relative_to(ROOT)} and render fixtures")
     return 0
 
 

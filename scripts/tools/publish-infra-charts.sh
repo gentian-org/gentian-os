@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Regenerate charts/infra/packages/ (classic Helm repo) from vendored source charts.
 # The Cluster composition's provider-helm Releases pull their charts from this index.
+# The index's chart URLs are relative, so it resolves against whatever ref or
+# mirror serves it; CHART_PACKAGES_REPO_URL writes absolute ones instead.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PACKAGES="${ROOT}/charts/infra/packages"
-BRANCH="${CHART_PACKAGES_BRANCH:-$(git -C "${ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo develop)}"
-REPO_URL="${CHART_PACKAGES_REPO_URL:-https://raw.githubusercontent.com/gentian-org/gentian-os/${BRANCH}/charts/infra/packages}"
+REPO_URL="${CHART_PACKAGES_REPO_URL:-}"
 
 mkdir -p "${PACKAGES}"
 
@@ -18,7 +19,11 @@ done
 # UPSTREAM.md); cluster-default installs the same patched chart from this repo.
 helm package "${ROOT}/kernel/services/openfga/manifests/charts/openfga" -d "${PACKAGES}"
 
-helm repo index "${PACKAGES}" --url "${REPO_URL}"
+if [[ -n "${REPO_URL}" ]]; then
+  helm repo index "${PACKAGES}" --url "${REPO_URL}"
+else
+  helm repo index "${PACKAGES}"
+fi
 
-echo "Packaged charts in ${PACKAGES} (index URL: ${REPO_URL}):"
+echo "Packaged charts in ${PACKAGES} (index URL: ${REPO_URL:-relative}):"
 ls -1 "${PACKAGES}"/*.tgz

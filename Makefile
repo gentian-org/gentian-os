@@ -144,7 +144,7 @@ verify-gen: gen-all
 	@# for the first time is exactly that, and a build without it would not
 	@# check the kind at all.
 	@test -z "$$(git status --porcelain --untracked-files=all internal/schemacheck/definitions/ | grep '^??')" || (echo "A newly embedded definition is not committed: git add internal/schemacheck/definitions/" && exit 1)
-	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go internal/platformversion/line.go config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go internal/platformversion/line.go crossplane/compositions/cluster-default.yaml crossplane/tests/unit/render/ config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 	@# The same for the generated docs pages: a page written for the first
 	@# time, or rewritten, is a change the diff above would not see while it
 	@# is untracked, so any status line at all under these paths fails.
