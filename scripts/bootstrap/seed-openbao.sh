@@ -72,9 +72,7 @@ existing_secret=$(bao_curl -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
-if [ -n "${existing_master}" ]; then
-    MASTER_PASSWORD="${existing_master}"
-fi
+gentian_settle_derivation "${existing_master}" "${existing_salt}"
 
 if [ -z "${MASTER_PASSWORD}" ]; then
     echo "Error: MASTER_PASSWORD is empty. A master password must be provided as MASTER_PASSWORD or pre-seeded in OpenBao." >&2
@@ -89,15 +87,6 @@ validate_master_password_entropy() {
     fi
 }
 validate_master_password_entropy "${MASTER_PASSWORD}"
-
-if [ -n "${existing_salt}" ]; then
-    DERIVATION_SALT="${existing_salt}"
-elif [ -n "${existing_master}" ]; then
-    DERIVATION_SALT=""
-else
-    DERIVATION_SALT="${DERIVATION_SALT:-$(openssl rand -hex 16)}"
-fi
-export DERIVATION_SALT
 
 echo "=========================================="
 echo "Seeding OpenBao Secrets"

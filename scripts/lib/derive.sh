@@ -31,3 +31,30 @@ key = os.environb[b"GENTIAN_DERIVE_KEY"]
 sys.stdout.write(hmac.new(key, sys.stdin.buffer.read(), hashlib.sha256).hexdigest() + "\n")
 '
 }
+
+# gentian_settle_derivation <stored-master> <stored-salt> — the master password
+# and salt this run derives with, given what a store of them holds: the vault's
+# gentian-os/kernel/internal/master-password, or the cluster's Secret
+# gentian-os-master-password in the provisioning namespace (salt only).
+#
+#   - a stored master password replaces MASTER_PASSWORD;
+#   - a stored salt replaces DERIVATION_SALT;
+#   - a stored master password without a salt is a cluster seeded before salts
+#     existed, and its salt is empty;
+#   - a store with neither keeps DERIVATION_SALT, and a run with none draws a
+#     new one: the first install.
+#
+# DERIVATION_SALT is exported; MASTER_PASSWORD is left as the caller had it.
+gentian_settle_derivation() {
+    if [[ -n "${1}" ]]; then
+        MASTER_PASSWORD="${1}"
+    fi
+    if [[ -n "${2}" ]]; then
+        DERIVATION_SALT="${2}"
+    elif [[ -n "${1}" ]]; then
+        DERIVATION_SALT=""
+    elif [[ -z "${DERIVATION_SALT:-}" ]]; then
+        DERIVATION_SALT="$(openssl rand -hex 16)"
+    fi
+    export DERIVATION_SALT
+}

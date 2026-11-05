@@ -33,6 +33,10 @@
 #     scripts/tests/derivation-vectors.txt, the file the Go derivation in
 #     internal/vaultmigrate is checked against too, and stops when the salt is
 #     not set.
+#   - gentian_settle_derivation (scripts/lib/derive.sh) takes the stored
+#     master password and salt over the shell's, gives a cluster seeded
+#     before salts existed its empty salt, and draws a salt only when there
+#     is none anywhere.
 #
 # No cluster, no network beyond the loopback interface.
 # =============================================================================
@@ -292,6 +296,25 @@ done < scripts/tests/derivation-vectors.txt
 check "_derived gives every value in derivation-vectors.txt" '[[ ${vectors} -gt 0 && -z "${vector_fail}" ]]' "${vector_fail}"
 check "_derived stops when the salt is not set" \
     '! env -i PATH="${PATH}" MASTER_PASSWORD="${MASTER}" bash -c "set -e; source scripts/lib/derive.sh; v=\$(_derived a b); echo \"\${v}\"" >/dev/null 2>&1'
+
+# settled <shell-master> <shell-salt|-> <stored-master> <stored-salt> — the
+# master password and salt gentian_settle_derivation leaves; "-" is unset.
+settled() {
+    env -i PATH="${PATH}" M="$1" S="$2" bash -c 'set -u; source scripts/lib/derive.sh
+        MASTER_PASSWORD="${M}"; [[ "${S}" == - ]] || DERIVATION_SALT="${S}"
+        gentian_settle_derivation "$1" "$2"
+        printf "%s|%s|%s\n" "${MASTER_PASSWORD}" "${DERIVATION_SALT}" "$(bash -c "echo \${DERIVATION_SALT+exported}")"' _ "$3" "$4"
+}
+check "settle: what the store holds wins over the shell's" \
+    '[[ "$(settled shell-m shell-s store-m store-s)" == "store-m|store-s|exported" ]]'
+check "settle: a stored master password without a salt derives with an empty salt" \
+    '[[ "$(settled shell-m shell-s store-m "")" == "store-m||exported" ]]'
+check "settle: a store with neither keeps the shell's" \
+    '[[ "$(settled shell-m shell-s "" "")" == "shell-m|shell-s|exported" ]]'
+check "settle: a stored salt alone replaces the salt only" \
+    '[[ "$(settled shell-m - "" store-s)" == "shell-m|store-s|exported" ]]'
+check "settle: nothing anywhere draws a new salt" \
+    '[[ "$(settled shell-m - "" "")" =~ ^shell-m\|[0-9a-f]{32}\|exported$ ]]'
 
 echo ""
 echo "  the installer's client secrets and the kernel realm's mail login"

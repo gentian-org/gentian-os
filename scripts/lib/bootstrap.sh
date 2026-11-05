@@ -189,26 +189,14 @@ create_crossplane_secrets() {
         exit 1
     fi
 
-    # Try to read existing master-password and salt from OpenBao
-    local existing_secret
+    # What OpenBao already holds wins over this shell's.
+    local existing_secret m_val="" s_val=""
     existing_secret=$(bao kv get -mount=secret -format=json gentian-os/kernel/internal/master-password 2>/dev/null || true)
     if [[ -n "${existing_secret}" ]]; then
-        local m_val s_val
         m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
         s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
-        if [[ -n "${m_val}" ]]; then
-            MASTER_PASSWORD="${m_val}"
-        fi
-        if [[ -n "${s_val}" ]]; then
-            DERIVATION_SALT="${s_val}"
-        elif [[ -n "${m_val}" ]]; then
-            DERIVATION_SALT=""
-        fi
     fi
-    if [[ -z "${DERIVATION_SALT:-}" && -z "${existing_secret}" ]]; then
-        DERIVATION_SALT=$(openssl rand -hex 16)
-    fi
-    export DERIVATION_SALT
+    gentian_settle_derivation "${m_val}" "${s_val}"
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key.
     #
