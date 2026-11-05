@@ -27,10 +27,7 @@ func adapterProfile(adapts string, api bool) *gentianov1alpha1.ComponentProfile 
 	p := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
 		Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassAdapter},
 		Launch:  gentianov1alpha1.ComponentLaunchNone,
-		Adapter: &gentianov1alpha1.AdapterSpec{
-			SpeaksAs: gentianov1alpha1.AdapterSpeaksAsToken,
-			Tools:    []gentianov1alpha1.ToolSpec{{Name: "t", Version: "v1", Description: map[string]string{"en": "t"}}},
-		},
+		Adapter: &gentianov1alpha1.AdapterSpec{},
 	}}
 	if adapts != "" {
 		p.Spec.Adapter.Adapts = &gentianov1alpha1.AdaptedApp{Profile: adapts}

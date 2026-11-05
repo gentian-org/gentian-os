@@ -425,8 +425,8 @@ func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
 
 // Only an oidc entry is routed on the authenticated Gateway. Any other mode
 // would be a route there with no policy in front of it -- no session and no
-// authorization question -- and a `source` pin does not change that while
-// nothing enforces one.
+// authorization question. The schema refuses such an entry; this is the
+// second line, for a profile admitted before it did.
 func TestOnlySessionBackedEntriesAreRoutedOnTheGateway(t *testing.T) {
 	comp := &gentianov1alpha1.Component{}
 	comp.Name = "notes"
@@ -434,22 +434,19 @@ func TestOnlySessionBackedEntriesAreRoutedOnTheGateway(t *testing.T) {
 	entry := func(name string, surface gentianov1alpha1.SurfaceKind, mode gentianov1alpha1.AuthMode) gentianov1alpha1.ExposureSpec {
 		return gentianov1alpha1.ExposureSpec{Name: name, Surface: surface, AuthMode: mode, Backend: gentianov1alpha1.BackendRef{Service: "x", Port: 80}}
 	}
-	pinned := entry("wopi", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeNone)
-	pinned.Source = &gentianov1alpha1.SourceRestriction{Component: "collabora"}
 	profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{
 		entry("web", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeOIDC),
 		entry("open", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeNone),
 		entry("api", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeBearer),
 		entry("hook", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeSignature),
-		pinned,
 		entry("share", gentianov1alpha1.SurfacePerimeter, gentianov1alpha1.AuthModeNone),
 	}
 	routable, refused := routableExposures(comp, profile)
 	if len(routable) != 1 || routable[0].Name != "web" {
 		t.Fatalf("routed %d entries, want only the oidc one", len(routable))
 	}
-	if len(refused) != 4 {
-		t.Fatalf("refused %d entries, want the four gateway entries with no session", len(refused))
+	if len(refused) != 3 {
+		t.Fatalf("refused %d entries, want the three gateway entries with no session", len(refused))
 	}
 }
 

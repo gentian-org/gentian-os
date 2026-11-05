@@ -49,7 +49,6 @@ metadata:
 spec:
   classes: [app]
   launch: from
-  launchFrom: file-store
   trustTier: certified
   version: "1.0.0"
   package:

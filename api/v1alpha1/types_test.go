@@ -65,11 +65,10 @@ func TestComponentProfile_DeepCopy(t *testing.T) {
 					OIDC: &v1alpha1.OIDCClientSpec{ClientID: "test-client"},
 				},
 				Database: &v1alpha1.DatabaseRequirement{
-					Engine:            v1alpha1.DatabaseEnginePostgreSQL,
-					DatabasePerTenant: true,
+					Engine: v1alpha1.DatabaseEnginePostgreSQL,
 				},
 				Storage: &v1alpha1.StorageRequirement{
-					S3: &v1alpha1.S3Requirement{BucketPerTenant: true},
+					S3: &v1alpha1.S3Requirement{},
 				},
 				Cache: &v1alpha1.CacheRequirement{Engine: v1alpha1.CacheEngineMemcached},
 				Mail: &v1alpha1.MailRequirement{

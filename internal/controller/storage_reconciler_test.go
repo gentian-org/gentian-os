@@ -38,7 +38,7 @@ func newS3Profile(name string) *gentianov1alpha1.ComponentProfile {
 
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Storage: &gentianov1alpha1.StorageRequirement{
-					S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
+					S3: &gentianov1alpha1.S3Requirement{},
 				},
 			}},
 		},

@@ -103,6 +103,7 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 	if hasPack {
 		fp["fullScopeAllowed"] = pack.FullScopeAllowed
 	}
+	id.capSession(fp)
 	if len(redirects) > 0 {
 		fp["validRedirectUris"] = identityStringList(redirects)
 	}

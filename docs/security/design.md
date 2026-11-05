@@ -733,7 +733,7 @@ sections above; the network side is [networking.md §1](../concepts/networking.m
 | L1 | Edge session | who is this, in which realm? | `SecurityPolicy.oidc`, one confidential client per tenant zone, the kernel realm for the platform tenant's zone and the kernel consoles ([routing.md §4.1](../concepts/routing.md)) |
 | L1′ | Perimeter | which paths, how much, does a credential pass? | the publishing proxy in the tenant's DMZ: declared paths only, one reading of a path, identity headers and cookies removed, `Authorization` removed unless approved as `authMode: app` (§2.14). It verifies no caller |
 | L2 | Reachability | may this person reach this component at all? | the bouncer, asking OpenFGA the route's relation over the stored membership projection; cached per `(sub, sid, route)`, evicted on the change log |
-| L3 | App session and authorization | what may they do inside? | the app, from the identity headers or its own session with its own client and audience, capped by `sessionMaxAge` |
+| L3 | App session and authorization | what may they do inside? | the app, from the identity headers or its own session with its own client and audience; `sessionMaxAge` caps how long the realm renews that client's sign-in, not the app's own cookie |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy from `requires`, `integrations` and granted privileges (§2.6–§2.9, §2.13); Kyverno for what a pod may be |
 
 The edge decides reachability and the app decides everything finer, so the
@@ -784,17 +784,23 @@ refresh at the realm, and the bouncer runs as several replicas that keep no
 state between them. The bound on how long a signed-out person is still let
 through is the access token's lifetime, which the realm sets; that lifetime
 is the control. The realm tells an app of a sign-out inside the cluster where
-the app can be told (§2.15), and the hard bound on what a person may do
-*inside* an app is the app's own session, which a profile caps with
-`sessionMaxAge`.
+the app can be told (§2.15), and the bound on what a person may do
+*inside* an app is the app's own session. A profile's `sessionMaxAge` caps
+that sign-in at the realm: past that age the realm refuses the refresh of the
+app's clients, so the app cannot renew its tokens without a new sign-in. It
+does not end a session the app keeps in its own cookie; for an app that does
+not go back to the realm once a person is signed in, the app's own session
+setting is the bound.
 
 **Platform rights follow the store; app rights follow the token.** Membership
 reaches OpenFGA from the realm's signed events through the operator (§3.0),
 and the bouncer evicts on the next poll, so a withdrawn platform right is gone
 without any token being touched. Apps read groups from their own tokens, so a
-changed membership reaches an app at that person's next sign-in to it; a
-profile whose app keeps its own session declares `sessionMaxAge` so the bound
-is a number somebody chose.
+changed membership reaches an app at that person's next sign-in to it. A
+profile declares `sessionMaxAge` so that the realm forces that sign-in at an
+age somebody chose, for an app that renews its tokens at the realm; an app
+that keeps its own cookie session without doing so is bounded by its own
+session setting alone.
 
 **WebSockets** are authorized at upgrade; the connection carries no duration
 limit (§3.0).
@@ -1062,7 +1068,6 @@ spec:
           accessType: CONFIDENTIAL
       database:
         engine: postgresql
-        databasePerTenant: true
 
   provides:                          # contracts this app serves to other apps
     - name: project-management

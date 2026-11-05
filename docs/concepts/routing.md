@@ -1153,7 +1153,6 @@ answers 404 at the listener.
 | Class | Hostname | Entry | L1 | L2 | Backend |
 | --- | --- | --- | --- | --- | --- |
 | Tenant app, browser | `<app>.<effectiveDomain>` | `surface: gateway`, `authMode: oidc` | tenant-realm session | `can_use` on the app: the same relation the desktop's tiles resolve, so the route cannot be more open than the tile | the app in `tenant-<t>` |
-| Tenant app, caller pinned | the same | `surface: gateway`, `source`: who may call the entry is decided before `authMode` is considered | the session where the entry also says `oidc`; otherwise none | the same | the app |
 | Tenant desktop | `desktop.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | `can_enter` on the tenant: members and administrators both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | the desktop in `tenant-<t>` |
 | Tenant administration console | `admin.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | as the desktop's | the console in `tenant-<t>`; a relay to the director with the person's token |
 | Platform desktop and console | `platform.<kernelDomain>`, `admin.platform.<kernelDomain>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | the platform tenant's desktop and console in `tenant-platform` (AD-10), on the `*.platform.<kernelDomain>` listener with a wildcard of its own |
@@ -1163,9 +1162,8 @@ answers 404 at the listener.
 | Published entry | `<label>.<effectiveDomain>`, the bare domain (`apex`, §5), or an alias under the cluster's domain (§7) | `surface: perimeter`, `authMode: none` or `app`, once approved | -- | -- | the publishing proxy in `tenant-<t>-dmz`, on a listener for exactly that host. `jwt`, `bearer`, `basic` and `signature` are refused on a perimeter entry by the schema |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | none | -- | -- | cert-manager's solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned surfaces without a session |
 
-A gateway entry is behind the zone's session (`authMode: oidc`) or pins its
-caller (`source`); the schema admits nothing else there. What needs neither
-is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
+A gateway entry is behind the zone's session (`authMode: oidc`); the schema
+admits nothing else there. What needs no session is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
 component has one policy for all its hosts (§4.1).
 
 **Keycloak's administration console shares the issuer's hostname**, and this

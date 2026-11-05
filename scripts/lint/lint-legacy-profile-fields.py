@@ -7,7 +7,9 @@
 # requires.contracts became requires.services, package.apiIntegration became
 # package.api, package.compositionRef became package.composition,
 # customization.addon became package.addon, and package.deploymentMethod is
-# gone because the package union already says what it is.
+# gone because the package union already says what it is. Fields that nothing
+# read were removed outright (REMOVED): the schema validated them and the
+# platform did nothing with them.
 #
 # None of that can be caught by the CRD. A structural schema PRUNES an unknown
 # field before CEL runs, so a profile that still says `requires.contracts` is
@@ -17,7 +19,7 @@
 #
 # So the check lives here. It reads every YAML document that is a
 # ComponentProfile and refuses the old spellings by name, with the new one
-# beside each. AppProfile is untouched: kernelRequirements, deploymentMethod,
+# beside each, and the removed fields by name, with what holds instead. AppProfile is untouched: kernelRequirements, deploymentMethod,
 # compositionRef and customization.addon are still that kind's own vocabulary,
 # and stay until the catalog converts.
 # =============================================================================
@@ -63,6 +65,20 @@ RENAMED = {
     ("spec", "customization", "addon"): "spec.package.addon",
 }
 
+# Removed fields: old path -> what holds instead. "[]" steps into every item
+# of a list.
+REMOVED = {
+    ("spec", "backup", "consistency"): "nothing: every store of an app is captured in one quiesce window",
+    ("spec", "backup", "minRestoreVersion"): "nothing: a restore refuses data written by a newer chart version than the one installed, unless the TenantRestore sets spec.skipVersionCheck",
+    ("spec", "expose", "[]", "stripPrefix"): "nothing: the backend receives the path as requested",
+    ("spec", "expose", "[]", "source"): "nothing: a gateway entry is authMode oidc; what needs no session is a perimeter entry",
+    ("spec", "requires", "services", "database", "databasePerTenant"): "nothing: every tenant's app has a database of its own",
+    ("spec", "requires", "services", "storage", "s3", "bucketPerTenant"): "nothing: every tenant's app has a bucket of its own",
+    ("spec", "launchFrom"): "nothing: launch from is the whole statement",
+    ("spec", "adapter", "speaksAs"): "nothing: the field was never read",
+    ("spec", "adapter", "tools"): "nothing: the field was never read",
+}
+
 
 def dig(doc, path):
     """Walk a dotted path, returning True when every step exists."""
@@ -72,6 +88,17 @@ def dig(doc, path):
             return False
         node = node[key]
     return True
+
+
+def present(node, path):
+    """Walk a path in which "[]" steps into every item of a list, returning
+    True when any branch reaches the end."""
+    if not path:
+        return True
+    key, rest = path[0], path[1:]
+    if key == "[]":
+        return isinstance(node, list) and any(present(item, rest) for item in node)
+    return isinstance(node, dict) and key in node and present(node[key], rest)
 
 
 def documents(path):
@@ -107,6 +134,9 @@ def scan(doc, origin, findings):
     for old, new in RENAMED.items():
         if dig(doc, old):
             findings.append((origin, name, ".".join(old), new))
+    for old, instead in REMOVED.items():
+        if present(doc, old):
+            findings.append((origin, name, ".".join(old).replace(".[]", "[]"), instead))
     return 1
 
 
@@ -138,7 +168,7 @@ def main():
 
     for path, name, old, new in findings:
         print(f"{path}: ComponentProfile/{name} still says {old}")
-        print(f"    write {new}")
+        print(f"    {'write ' if not new.startswith('nothing') else ''}{new}")
     for path in unparsed:
         print(f"{path}: holds a ComponentProfile this check could not parse")
 
@@ -147,7 +177,8 @@ def main():
         print(
             f"{len(findings) + len(unparsed)} legacy field(s). A renamed field is "
             "pruned by the API server, not refused, so the component installs "
-            "without what it asked for."
+            "without what it asked for. A removed field is pruned as well; it "
+            "did nothing, and a profile that still says it misleads its reader."
         )
         return 1
 

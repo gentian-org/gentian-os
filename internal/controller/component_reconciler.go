@@ -1169,9 +1169,8 @@ func (z edgeZone) listenerFor(host, kernelDomain string) string {
 // policy that puts a session and the authorization question in front of a
 // route is written for oidc entries only, so an entry with any other mode
 // would be a route on the authenticated Gateway with nothing in front of it
-// at all -- not the session, not even the bouncer. That includes an entry that
-// pins its caller with `source`: the schema admits it, and nothing enforces a
-// source yet, so routing it would publish it to everyone. What needs no
+// at all -- not the session, not even the bouncer. The schema refuses such an
+// entry; this holds for a profile admitted before it did. What needs no
 // session is a perimeter surface, enabled and published from the DMZ.
 func routableExposures(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) (routable, refused []*gentianov1alpha1.ExposureSpec) {
 	for i := range profile.Spec.Expose {

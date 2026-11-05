@@ -731,7 +731,7 @@ rather than per-tenant addon *binaries*. The framework makes this explicit:
 
 The namespace, not the profile, is the test: "one instance per tenant" is an intention, but
 "deployed into `tenant-acme`" is a fact that can be checked. The `odoo-cb-*` family passes (one
-Odoo per tenant, `databasePerTenant: true`); a shared-runtime app would not.
+Odoo per tenant, in the tenant's namespace); a shared-runtime app would not.
 
 Sharing a runtime across tenants and then loading tenant-specific code into it is the single
 fastest way to turn a customization into a cross-tenant data leak. **This is a review-time

@@ -73,7 +73,6 @@ spec:
           appPort: 3000
       database:
         engine: postgresql
-        databasePerTenant: true
   secrets:
     generated:
       - name: app_secret

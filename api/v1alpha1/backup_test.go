@@ -32,9 +32,6 @@ func TestBackupDefaultsForProfileDeclaringNothing(t *testing.T) {
 	if got := spec.QuiesceMode(); got != BackupQuiesceScaleDown {
 		t.Errorf("QuiesceMode() = %q, want %q", got, BackupQuiesceScaleDown)
 	}
-	if got := spec.ConsistencyMode(); got != BackupConsistencyApp {
-		t.Errorf("ConsistencyMode() = %q, want %q", got, BackupConsistencyApp)
-	}
 	if got := spec.IncludedVolumes(); got != nil {
 		t.Errorf("IncludedVolumes() = %v, want nil (every release-owned claim)", got)
 	}
@@ -63,9 +60,6 @@ func TestBackupEmptyBlockMatchesNilDefaults(t *testing.T) {
 	if got := spec.QuiesceMode(); got != BackupQuiesceScaleDown {
 		t.Errorf("QuiesceMode() = %q, want %q", got, BackupQuiesceScaleDown)
 	}
-	if got := spec.ConsistencyMode(); got != BackupConsistencyApp {
-		t.Errorf("ConsistencyMode() = %q, want %q", got, BackupConsistencyApp)
-	}
 
 	withEmptyQuiesce := &BackupSpec{Quiesce: &BackupQuiesce{}}
 	if got := withEmptyQuiesce.QuiesceMode(); got != BackupQuiesceScaleDown {
@@ -89,14 +83,10 @@ func TestBackupDeclaredValuesWin(t *testing.T) {
 			Post:   [][]string{{"occ", "maintenance:data-fingerprint"}},
 			Verify: []string{"occ", "status"},
 		},
-		Consistency: BackupConsistencyPerStore,
 	}
 
 	if got := spec.QuiesceMode(); got != BackupQuiesceCommand {
 		t.Errorf("QuiesceMode() = %q, want %q", got, BackupQuiesceCommand)
-	}
-	if got := spec.ConsistencyMode(); got != BackupConsistencyPerStore {
-		t.Errorf("ConsistencyMode() = %q, want %q", got, BackupConsistencyPerStore)
 	}
 	if got := spec.QuiesceContainer(); got != "nextcloud" {
 		t.Errorf("QuiesceContainer() = %q, want %q", got, "nextcloud")
