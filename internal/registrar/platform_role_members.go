@@ -13,6 +13,7 @@ package registrar
 import (
 	"net/http"
 
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
@@ -41,7 +42,7 @@ func (s *Server) listPlatformRoleMembers(w http.ResponseWriter, r *http.Request,
 	}
 	roles, err := s.cfg.PlatformRoles(r.Context())
 	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "platform roles not read", "request_id", reqID(r.Context()), "error", err.Error())
+		s.cfg.Log.ErrorContext(r.Context(), "platform roles not read", "request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable, "the Cluster claim's platform roles could not be read")
 		return
 	}
@@ -66,7 +67,7 @@ func (s *Server) listPlatformRoleMembers(w http.ResponseWriter, r *http.Request,
 				continue
 			}
 			s.cfg.Log.WarnContext(r.Context(), "platform role members not read",
-				"request_id", reqID(r.Context()), "role", role.Role, "group", role.Group, "error", merr.Error())
+				"request_id", guard.ID(r.Context()), "role", role.Role, "group", role.Group, "error", merr.Error())
 		}
 		entry.Unavailable = true
 		complete = false
@@ -74,7 +75,7 @@ func (s *Server) listPlatformRoleMembers(w http.ResponseWriter, r *http.Request,
 	}
 	if err != nil {
 		s.cfg.Log.WarnContext(r.Context(), "the kernel realm was not reached",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 	}
 	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "complete": complete, "roles": out})
 }

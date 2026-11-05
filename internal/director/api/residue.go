@@ -22,6 +22,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
@@ -150,7 +151,7 @@ func (s *Server) removeCatalogueResidue(w http.ResponseWriter, r *http.Request, 
 			"confirmWith":    body.Name,
 			"dangerous":      true,
 			"requiresRetype": true,
-			"request_id":     reqID(r.Context()),
+			"request_id":     guard.ID(r.Context()),
 		})
 		return
 	}
@@ -194,7 +195,7 @@ func (s *Server) removeAppResidue(w http.ResponseWriter, r *http.Request, c call
 	if !tenancy.SoleUserTenant(settings["tenancyMode"], scope.Tenant) {
 		s.json(w, http.StatusForbidden, map[string]any{
 			"error": tenancy.SharedPieces, "reason": refusedShared, "removableBy": "platform",
-			"request_id": reqID(r.Context()),
+			"request_id": guard.ID(r.Context()),
 		})
 		return
 	}
@@ -223,7 +224,7 @@ func (s *Server) removeAppResidue(w http.ResponseWriter, r *http.Request, c call
 			"confirmWith":    body.Name,
 			"dangerous":      true,
 			"requiresRetype": true,
-			"request_id":     reqID(r.Context()),
+			"request_id":     guard.ID(r.Context()),
 		})
 		return
 	}
@@ -383,7 +384,7 @@ func (s *Server) relayRefusal(w http.ResponseWriter, r *http.Request, status int
 		// The operator runs under a tenancy mode that is not the one git
 		// declares. Its word is the cluster's, and it deleted nothing.
 		s.json(w, http.StatusForbidden, map[string]any{
-			"error": answer.Detail, "reason": refusedShared, "removableBy": "platform", "request_id": reqID(r.Context()),
+			"error": answer.Detail, "reason": refusedShared, "removableBy": "platform", "request_id": guard.ID(r.Context()),
 		})
 		return
 	}
@@ -397,7 +398,7 @@ func (s *Server) relayRefusal(w http.ResponseWriter, r *http.Request, status int
 // refuseResidue answers a removal that deleted nothing: 409, why, and which
 // kind of refusal -- "not-residue", "still-declared" or "changed".
 func (s *Server) refuseResidue(w http.ResponseWriter, r *http.Request, reason, why string) {
-	s.json(w, http.StatusConflict, map[string]any{"error": why, "reason": reason, "request_id": reqID(r.Context())})
+	s.json(w, http.StatusConflict, map[string]any{"error": why, "reason": reason, "request_id": guard.ID(r.Context())})
 }
 
 // finishRetirementLater keeps asking the operator to delete a profile that

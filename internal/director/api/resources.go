@@ -22,6 +22,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/locales"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
@@ -117,7 +118,7 @@ func (s *Server) lifecycleError(w http.ResponseWriter, r *http.Request, err erro
 		s.fail(w, r, upstream.Status, upstream.Message)
 		return
 	}
-	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
+	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", guard.ID(r.Context()), "error", err.Error())
 	s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
 
@@ -131,7 +132,7 @@ func backupsPath(r *http.Request, suffix string) string {
 func (s *Server) tenantBundleDownload(w http.ResponseWriter, r *http.Request, _ call) {
 	resp, err := s.cfg.Lifecycle.Stream(r.Context(), backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))+"/download"))
 	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
+		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 		return
 	}

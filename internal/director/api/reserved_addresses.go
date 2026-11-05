@@ -18,6 +18,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/hostnames"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
@@ -97,7 +98,7 @@ func (s *Server) onClusterTakesReservedAddress(ctx context.Context, name string,
 // answer on a reserved address name. what names it: "app x", "add-on y".
 func (s *Server) refuseReservedAddress(w http.ResponseWriter, r *http.Request, tenant, what, why string) {
 	s.cfg.Log.WarnContext(r.Context(), "an install was refused for an address name the platform keeps",
-		"request_id", reqID(r.Context()), "tenant", tenant, "what", what, "reason", why)
+		"request_id", guard.ID(r.Context()), "tenant", tenant, "what", what, "reason", why)
 	s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
 		"%s cannot be installed: %s. Nothing was committed or installed; "+
 			"whoever publishes the profile has to change it", what, why))

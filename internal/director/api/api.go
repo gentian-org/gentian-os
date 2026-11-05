@@ -21,8 +21,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,7 +29,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -44,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/platformversion"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
@@ -294,8 +292,7 @@ func (s *Server) Close() {
 
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := requestID(r)
-	w.Header().Set("X-Request-Id", id)
+	r = guard.Identify(w, r)
 	// Every body is a small JSON document but a bundle upload's, which is
 	// streamed to the operator as it arrives: the operator bounds what a
 	// tenant's administrator puts into the import storage
@@ -304,7 +301,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !bundleUpload(r) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	}
-	s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxRequestID{}, id)))
+	s.mux.ServeHTTP(w, r)
 }
 
 // bundleUpload says whether r is one of the two upload routes,
@@ -316,28 +313,6 @@ func bundleUpload(r *http.Request) bool {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	return len(parts) == 4 && parts[0] == "v1" && (parts[1] == "clusters" || parts[1] == "tenants") &&
 		parts[2] != "" && parts[3] == "bundles"
-}
-
-type ctxRequestID struct{}
-
-// inboundID is what a request id from the gateway must look like to be kept.
-// It ends up in a commit trailer, so it is matched, not escaped.
-var inboundID = regexp.MustCompile(`^[A-Za-z0-9._-]{8,64}$`)
-
-// requestID keeps the gateway's id so the three audit logs join on one value
-// (security principle 7), and mints one for callers that arrive without.
-func requestID(r *http.Request) string {
-	if id := r.Header.Get("X-Request-Id"); inboundID.MatchString(id) {
-		return id
-	}
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-func reqID(ctx context.Context) string {
-	id, _ := ctx.Value(ctxRequestID{}).(string)
-	return id
 }
 
 // call is what a handler receives once the caller is known and allowed.
@@ -352,7 +327,7 @@ type call struct {
 
 // can asks for the caller what authorize asked: as user, then as holder.
 func (s *Server) can(ctx context.Context, c call, relation, object string) (bool, error) {
-	return authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), c.user, c.holder, relation, object)
+	return authz.CheckAs(ctx, s.cfg.Authz, guard.ID(ctx), c.user, c.holder, relation, object)
 }
 
 // object names what a route's relation is checked against.
@@ -364,24 +339,19 @@ type object func(r *http.Request) (string, error)
 // than done by passing an empty relation to guarded.
 func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		ident, err := s.cfg.Authn.FromRequest(r)
-		if err != nil {
-			s.cfg.Log.WarnContext(ctx, "authentication failed", "request_id", reqID(ctx), "reason", err.Error(), "route", pattern)
-			w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-director"`)
-			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
+		c, ok := s.gate().Identify(w, r, pattern)
+		if !ok {
 			return
 		}
-		user, err := authz.User(ident.Subject)
-		if err != nil {
-			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
-			return
-		}
-		holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
-		h(w, r, call{id: ident, user: user, holder: holder, meta: gitops.Meta{
-			Author: gitops.Person{Name: ident.Name, Email: ident.Email}, Subject: user[len("user:"):], RequestID: reqID(ctx),
+		h(w, r, call{id: c.Ident, user: c.User, holder: c.Holder, meta: gitops.Meta{
+			Author: gitops.Person{Name: c.Ident.Name, Email: c.Ident.Email}, Subject: c.User[len("user:"):], RequestID: guard.ID(r.Context()),
 		}})
 	})
+}
+
+// gate is the guard of this director's routes.
+func (s *Server) gate() *guard.Guard {
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Log: s.cfg.Log, Fail: s.fail}
 }
 
 // clusterObject accepts only this director's own cluster. Another id is not
@@ -405,47 +375,19 @@ func tenantObject(r *http.Request) (string, error) {
 // may they do relation to the route's object. On refusal it has already
 // answered, and ok is false.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, relation string, obj object) (c call, ok bool) {
-	ctx := r.Context()
-	ident, err := s.cfg.Authn.FromRequest(r)
-	if err != nil {
-		s.cfg.Log.WarnContext(ctx, "authentication failed", "request_id", reqID(ctx), "reason", err.Error(), "route", pattern)
-		w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-director"`)
-		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
-		return call{}, false
-	}
-	user, err := authz.User(ident.Subject)
-	if err != nil {
-		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
-		return call{}, false
-	}
-	target, err := obj(r)
-	if err != nil {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
-		return call{}, false
-	}
-	// A cluster role the claim gives an account of a tenant's realm is held
-	// by that realm's account and asked as it (authz.CheckAs); a token's
-	// realm is the one its signature was checked against.
-	holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
-	allowed, err := authz.CheckAs(ctx, s.cfg.Authz, reqID(ctx), user, holder, relation, target)
-	if err != nil {
-		// The decision point is unreachable: refuse, and say it is us.
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return call{}, false
-	}
-	if !allowed {
-		s.fail(w, r, http.StatusForbidden, "forbidden")
+	g, ok := s.gate().Authorize(w, r, pattern, guard.One(relation), obj)
+	if !ok {
 		return call{}, false
 	}
 	return call{
-		id:     ident,
-		user:   user,
-		holder: holder,
+		id:     g.Ident,
+		user:   g.User,
+		holder: g.Holder,
 		meta: gitops.Meta{
-			Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
-			Subject:   user[len("user:"):],
-			RequestID: reqID(ctx),
-			Decision:  relation + " " + target,
+			Author:    gitops.Person{Name: g.Ident.Name, Email: g.Ident.Email},
+			Subject:   g.User[len("user:"):],
+			RequestID: guard.ID(r.Context()),
+			Decision:  g.Decision(),
 		},
 	}, true
 }
@@ -1282,7 +1224,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		if res.Changed {
 			s.cfg.Log.InfoContext(ctx, "materialized a catalog entry",
-				"request_id", reqID(ctx), "coordinate", body.Coordinate, "origin", source.origin(tenant), "commit", res.Commit)
+				"request_id", guard.ID(ctx), "coordinate", body.Coordinate, "origin", source.origin(tenant), "commit", res.Commit)
 		}
 	} else {
 		if !s.onClusterFor(w, r, tenant, profile, "") {
@@ -1491,7 +1433,7 @@ func (s *Server) fetchEntry(
 		// is not a mistake: the source served something other than the build
 		// that was asked for.
 		s.cfg.Log.ErrorContext(ctx, "a catalog source served a bundle that is not the build requested",
-			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key)
+			"request_id", guard.ID(ctx), "coordinate", coordinate, "catalogue", source.Key)
 		s.fail(w, r, http.StatusBadGateway,
 			"the catalog source served a bundle for "+coordinate+" that is not this entry; nothing was installed")
 		return nil, false
@@ -1502,7 +1444,7 @@ func (s *Server) fetchEntry(
 		// The address was a public one when the catalog was added and is
 		// not one now. Logged with what it was, answered without.
 		s.cfg.Log.ErrorContext(ctx, "a catalog's address is no longer one that is fetched from",
-			"request_id", reqID(ctx), "catalogue", source.Key, "error", err.Error())
+			"request_id", guard.ID(ctx), "catalogue", source.Key, "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the address of catalog "+source.Name+
 			" is not a public https address any more, so nothing is fetched from it; nothing was installed")
 		return nil, false
@@ -1513,7 +1455,7 @@ func (s *Server) fetchEntry(
 		// what was found, because whoever publishes the catalog has to
 		// change it; logged, because it is also what an attempt looks like.
 		s.cfg.Log.WarnContext(ctx, "a catalog entry was refused for what its bundle holds",
-			"request_id", reqID(ctx), "coordinate", coordinate, "catalogue", source.Key, "error", err.Error())
+			"request_id", guard.ID(ctx), "coordinate", coordinate, "catalogue", source.Key, "error", err.Error())
 		s.fail(w, r, http.StatusUnprocessableEntity, "the catalog entry "+coordinate+
 			" is not a bundle this cluster installs: "+refusedFor(err)+"; nothing was installed")
 		return nil, false
@@ -1535,7 +1477,7 @@ func (s *Server) fetchOrStored(
 	stored, found, err := s.cfg.Repo.BuildOnCluster(r.Context(), name, digest)
 	if err != nil {
 		s.cfg.Log.WarnContext(r.Context(), "a stored build could not be read; fetching instead",
-			"request_id", reqID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
 	}
 	// Only a build this very catalogue brought: one another tenant's own
 	// catalogue stored is not this tenant's to install by naming its digest.
@@ -1545,7 +1487,7 @@ func (s *Server) fetchOrStored(
 			return profile, true
 		}
 		s.cfg.Log.WarnContext(r.Context(), "a stored build is not one this cluster installs; fetching instead",
-			"request_id", reqID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "profile", name, "digest", digest, "error", err.Error())
 	}
 	return s.fetchEntry(w, r, source, name, digest)
 }
@@ -1599,7 +1541,7 @@ func (s *Server) commitEntry(
 		return gitops.Result{}, false
 	case errors.As(err, &taken):
 		s.cfg.Log.WarnContext(r.Context(), "a profile's name is taken by a profile of another origin",
-			"request_id", reqID(r.Context()), "profile", taken.Name, "origin", taken.Origin, "holder", taken.Holder)
+			"request_id", guard.ID(r.Context()), "profile", taken.Name, "origin", taken.Origin, "holder", taken.Holder)
 		s.fail(w, r, http.StatusConflict, nameTakenMessage(taken, tenant, source))
 		return gitops.Result{}, false
 	case err != nil:
@@ -1898,7 +1840,7 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 			}
 			if res.Changed {
 				s.cfg.Log.InfoContext(ctx, "materialized a catalog entry",
-					"request_id", reqID(ctx), "coordinate", pinned[i].Coordinate, "commit", res.Commit)
+					"request_id", guard.ID(ctx), "coordinate", pinned[i].Coordinate, "commit", res.Commit)
 			}
 		}
 	}
@@ -2296,7 +2238,7 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		// ruled out. The message names the definition, the fields and what
 		// to do; it holds nothing of git's, so it goes to the caller whole.
 		s.cfg.Log.WarnContext(r.Context(), "write refused: the cluster's definitions would drop part of it",
-			"request_id", reqID(r.Context()), "unconfirmed", refusal.Unconfirmed,
+			"request_id", guard.ID(r.Context()), "unconfirmed", refusal.Unconfirmed,
 			"kind", refusal.Kind, "fields", refusal.Fields)
 		if refusal.Unconfirmed {
 			w.Header().Set("Retry-After", "15")
@@ -2323,7 +2265,7 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		// cluster has not been given a credential to write with, which is
 		// something an operator fixes and a caller can do nothing about.
 		s.cfg.Log.ErrorContext(r.Context(), "no credential to push with",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable,
 			"this cluster has no credential to write to its deployments repository: "+
 				"the change was prepared and could not be pushed. Supply the token "+
@@ -2332,7 +2274,7 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		// 503 for the same reason: the request was fine, and the key is
 		// something the vault and External Secrets owe this process.
 		s.cfg.Log.ErrorContext(r.Context(), "no key to sign with",
-			"request_id", reqID(r.Context()), "error", err.Error())
+			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable,
 			"this director has no signing key yet, and Argo CD syncs only signed commits: "+
 				"nothing was pushed. Check the ExternalSecret gentian-director-signing.")
@@ -2341,7 +2283,7 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusConflict, "repository is contended; retry")
 	default:
 		// Git's output can name paths and remotes; it goes to the log only.
-		s.cfg.Log.ErrorContext(r.Context(), "repository operation failed", "request_id", reqID(r.Context()), "error", err.Error())
+		s.cfg.Log.ErrorContext(r.Context(), "repository operation failed", "request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusInternalServerError, "repository operation failed")
 	}
 }
@@ -2353,7 +2295,7 @@ func decode(r *http.Request, v any) error {
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {
-	s.json(w, code, map[string]any{"error": msg, "request_id": reqID(r.Context())})
+	s.json(w, code, map[string]any{"error": msg, "request_id": guard.ID(r.Context())})
 }
 
 func (s *Server) json(w http.ResponseWriter, code int, v any) {

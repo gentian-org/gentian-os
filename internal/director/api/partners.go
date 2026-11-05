@@ -17,6 +17,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 )
 
 // A tenant's partners (Tenant spec.partners, AD-17): realms of other
@@ -47,7 +48,7 @@ const commissionerPrincipal = "component:"
 // component's key or a person allowed relation on obj.
 func (s *Server) commissioned(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		if holder := s.cfg.CommissionKeys.holder(bearerToken(r)); holder != nil {
+		if holder := s.cfg.CommissionKeys.holder(guard.Bearer(r)); holder != nil {
 			if c, ok := s.admitCommissioner(w, r, pattern, holder); ok {
 				h(w, r, c)
 			}
@@ -70,7 +71,7 @@ func (s *Server) admitCommissioner(w http.ResponseWriter, r *http.Request, patte
 	}
 	if !holder.may(tenant) {
 		s.cfg.Log.WarnContext(ctx, "refused: a component's key was used for a tenant that does not name it",
-			"request_id", reqID(ctx), "route", pattern, "key_tenant", holder.Tenant, "key_component", holder.Component,
+			"request_id", guard.ID(ctx), "route", pattern, "key_tenant", holder.Tenant, "key_component", holder.Component,
 			"tenant", tenant)
 		s.fail(w, r, http.StatusForbidden,
 			"forbidden: this component may commission partners only for the tenants that name it in spec.partnerCommissioners")
@@ -79,19 +80,9 @@ func (s *Server) admitCommissioner(w http.ResponseWriter, r *http.Request, patte
 	return call{meta: gitops.Meta{
 		Author:    gitops.Person{Name: holder.Component + " (tenant " + holder.Tenant + ")"},
 		Principal: commissionerPrincipal + holder.Tenant + "/" + holder.Component,
-		RequestID: reqID(ctx),
+		RequestID: guard.ID(ctx),
 		Decision:  "commissions_partners " + authz.Tenant(tenant),
 	}}, true
-}
-
-// bearerToken is the request's bearer credential, or empty.
-func bearerToken(r *http.Request) string {
-	const prefix = "bearer "
-	h := r.Header.Get("Authorization")
-	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
-		return strings.TrimSpace(h[len(prefix):])
-	}
-	return ""
 }
 
 // tenantPartners answers a tenant's partners.

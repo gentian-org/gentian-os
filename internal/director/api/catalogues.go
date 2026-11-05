@@ -20,6 +20,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/platformversion"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
@@ -324,7 +325,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 		// An artifact that is not a catalog, or a repository it can no
 		// longer be read with. The owner has to act, so the reason is said.
 		s.cfg.Log.WarnContext(r.Context(), "a catalog artifact could not be read",
-			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err.Error())
+			"request_id", guard.ID(r.Context()), "catalogue", src.Key, "error", err.Error())
 		s.fail(w, r, http.StatusBadGateway, "the catalog "+src.Name+" could not be read: "+err.Error())
 		return
 	case err != nil:
@@ -332,7 +333,7 @@ func (s *Server) listCatalogueEntries(w http.ResponseWriter, r *http.Request, _ 
 		// down. Said as a gateway error rather than a server error, because
 		// nothing here is broken.
 		s.cfg.Log.WarnContext(r.Context(), "a catalog source's index could not be read",
-			"request_id", reqID(r.Context()), "catalogue", src.Key, "error", err)
+			"request_id", guard.ID(r.Context()), "catalogue", src.Key, "error", err)
 		s.fail(w, r, http.StatusBadGateway, "the catalog source could not be read")
 		return
 	}

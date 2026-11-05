@@ -15,6 +15,7 @@ import (
 	"net/http"
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/guard"
 )
 
 // The repositories a tenant or the cluster installs from.
@@ -112,7 +113,7 @@ func (s *Server) repositoryError(w http.ResponseWriter, r *http.Request, name st
 			"confirmWith":    confirm.Name,
 			"dangerous":      true,
 			"requiresRetype": true,
-			"request_id":     reqID(r.Context()),
+			"request_id":     guard.ID(r.Context()),
 		})
 	case errors.Is(err, gitops.ErrRepositoryNotFound):
 		// 404 rather than 403 or 409: learning that a name is taken by the
