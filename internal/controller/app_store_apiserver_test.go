@@ -65,6 +65,27 @@ func TestTheAPIServerAdmitsTheShippedAppStoreProfile(t *testing.T) {
 		t.Fatalf("refused, but not for the store key: %v", err)
 	}
 
+	// So does being told where the director, usher, custodian or registrar
+	// is: each opens the way into the control namespace.
+	kernel := controller.ShippedAppStoreProfileForTest(t)
+	kernel.Name = "app-store-kernel-probe"
+	kernel.Labels = nil
+	kernel.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	for i := range kernel.Spec.Expose {
+		kernel.Spec.Expose[i].ForwardToken = false
+	}
+	km := kernel.Spec.Package.ValueMapping.Platform
+	km.StoreURLKey, km.DesktopURLKey = "", ""
+	km.DirectorURLKey, km.UsherURLKey, km.CustodianURLKey, km.RegistrarURLKey = "", "", "", "registrar.url"
+	err = testClient.Create(ctx, kernel)
+	if err == nil {
+		_ = testClient.Delete(ctx, kernel)
+		t.Fatal("a certified profile naming registrarUrlKey was admitted")
+	}
+	if !strings.Contains(err.Error(), "registrarUrlKey require trustTier platform") {
+		t.Fatalf("refused, but not for the kernel keys: %v", err)
+	}
+
 	// And only an app is placed on tenants.
 	service := controller.ShippedAppStoreProfileForTest(t)
 	service.Name = "app-store-class-probe"

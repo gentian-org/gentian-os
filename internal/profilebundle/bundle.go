@@ -162,6 +162,11 @@ func Check(body []byte, name, origin string) (*Bundle, error) {
 	if err := checkProfile(b); err != nil {
 		return nil, err
 	}
+	if from, err := ParseOrigin(origin); err == nil && from.Tenant != "" && dig(b.Profile, "spec", "trustTier") == string(gentianov1alpha1.TrustTierPlatform) {
+		return nil, fmt.Errorf("%w: its profile states trustTier platform, and platform trust is given only through a catalog "+
+			"of the whole cluster, which the cluster's administrator adds; a tenant's own catalog publishes certified or "+
+			"experimental profiles", ErrRefused)
+	}
 	if len(docs) == 1 {
 		return b, nil
 	}

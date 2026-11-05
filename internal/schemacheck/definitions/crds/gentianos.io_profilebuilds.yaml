@@ -4423,6 +4423,18 @@ spec:
                     || !has(self.__package__.valueMapping.platform.storeUrlKey) ||
                     self.__package__.valueMapping.platform.storeUrlKey.size() == 0
                     || self.trustTier == ''platform'''
+                - message: 'directorUrlKey, usherUrlKey, custodianUrlKey and registrarUrlKey
+                    require trustTier platform: naming one opens the component a way
+                    into the control namespace'
+                  rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
+                    || self.trustTier == ''platform'' || [has(self.__package__.valueMapping.platform.directorUrlKey)
+                    ? self.__package__.valueMapping.platform.directorUrlKey : '''',
+                    has(self.__package__.valueMapping.platform.usherUrlKey) ? self.__package__.valueMapping.platform.usherUrlKey
+                    : '''', has(self.__package__.valueMapping.platform.custodianUrlKey)
+                    ? self.__package__.valueMapping.platform.custodianUrlKey : '''',
+                    has(self.__package__.valueMapping.platform.registrarUrlKey) ?
+                    self.__package__.valueMapping.platform.registrarUrlKey : ''''].all(k,
+                    k.size() == 0)'
                 - message: 'desktopUrlKey requires trustTier platform: naming it opens
                     the component a way to the desktop''s API'
                   rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)

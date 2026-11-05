@@ -976,6 +976,9 @@ func (r *ComponentReconciler) unusableProfile(
 	if refusal := profilebundle.OwnedByAnother(profile, tenant); refusal != nil {
 		return refusal, nil
 	}
+	if refusal := profilebundle.PlatformTierFromTenant(profile); refusal != nil {
+		return refusal, nil
+	}
 	for _, name := range comp.Spec.Addons {
 		addon := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name}, addon); err != nil {
@@ -988,6 +991,9 @@ func (r *ComponentReconciler) unusableProfile(
 				name, name)}, nil
 		}
 		if refusal := profilebundle.OwnedByAnother(addon, tenant); refusal != nil {
+			return &profilebundle.Refusal{Reason: refusal.Reason, Message: "add-on " + name + ": " + refusal.Message}, nil
+		}
+		if refusal := profilebundle.PlatformTierFromTenant(addon); refusal != nil {
 			return &profilebundle.Refusal{Reason: refusal.Reason, Message: "add-on " + name + ": " + refusal.Message}, nil
 		}
 	}
