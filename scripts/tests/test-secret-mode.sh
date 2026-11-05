@@ -30,9 +30,7 @@
 #   - the kernel realm's mail login is the same value however often it is
 #     asked for, in both modes.
 #   - _derived (scripts/lib/derive.sh) gives every value in
-#     scripts/tests/derivation-vectors.txt, the file the Go derivation in
-#     internal/vaultmigrate is checked against too, and stops when the salt is
-#     not set.
+#     scripts/tests/derivation-vectors.txt, and stops when the salt is not set.
 #   - gentian_settle_derivation (scripts/lib/derive.sh) takes the stored
 #     master password and salt over the shell's, gives a cluster seeded
 #     before salts existed its empty salt, and draws a salt only when there
