@@ -197,6 +197,7 @@ _v5_render() {
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=$(gentian_os_ref)" \
+        --set-string "gentianOsRevision=$(gentian_os_revision)" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
         --set-string "openbao.storage=${vault_storage}" \
         --set-string "openbao.transitStorage=${transit_storage}" \
@@ -241,8 +242,9 @@ _v5_render() {
 # Nothing here asked whether the pin was still that build. So a run from a
 # newer checkout found everything else in place and skipped, `--only B-01` --
 # the command the documentation gives for taking a newer build -- skipped
-# with it, and the cluster went on with new manifests, which Argo CD follows
-# by branch, and the old binary.
+# with it, and the cluster went on with the old binary. The Applications
+# follow the checkout's commit (gentian_os_revision), so the manifests move
+# with the build; the bootstrap Applications' comparison below sees that.
 #
 # True where there is nothing to compare: a run that resolved no build
 # (--status collects none), and a cluster whose Application D-01 has not

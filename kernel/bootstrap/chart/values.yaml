@@ -3,6 +3,9 @@
 # which the installer copies in as `namespaces` (see B-01), so an Application
 # cannot name a namespace the layout does not have.
 gentianOsBranch: develop
+# The commit the Applications follow, set by the installer to this checkout's
+# (gentian_os_revision). Empty follows gentianOsBranch.
+gentianOsRevision: ""
 osRepo: https://github.com/gentian-org/gentian-os
 storageClass: ""
 

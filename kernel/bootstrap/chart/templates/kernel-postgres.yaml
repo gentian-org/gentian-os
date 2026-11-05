@@ -14,7 +14,7 @@ spec:
   project: gentian
   source:
     repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     path: kernel/data/kernel-postgres
     helm:
       parameters:
