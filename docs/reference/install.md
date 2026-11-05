@@ -754,7 +754,7 @@ What you have to keep, by mode:
 | `secretMode` | Keep | Why |
 |---|---|---|
 | `derived` | The recovery kit, and its passphrase somewhere else | It holds the master password and the salt, which reproduce every generated credential; the OpenBao recovery key; the backup key; and the break-glass signing key |
-| `random` | The recovery kit, **and** snapshots of OpenBao that you take yourself | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those |
+| `random` | The recovery kit, **and** the OpenBao snapshots | The kit holds the same things, and none of the credentials drawn at random; only OpenBao has those, and its daily snapshot is their copy ([recovery.md §4](../guides/recovery.md)) |
 
 > Under `derived`, reproducing a cluster's credentials needs the master password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
@@ -764,9 +764,18 @@ What you have to keep, by mode:
 > recovery kit* in [GETTING-STARTED.md](../../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
-The platform does not snapshot OpenBao, and the recovery kit holds no
-generated credential; a tenant's backup holds its apps' own secrets and no
-other. So that snapshot is yours to take.
+A vault on Raft storage (`openbao.storage: raft` on the claim, what a new
+claim states) is snapshotted every day, encrypted to the backup key, into the
+bucket `gentian-openbao-snapshots` of the platform's object store, and the
+newest 14 are kept; the transit seal that unseals it is snapshotted beside
+it, and opens with the kit's `TRANSIT_UNSEAL_KEY`.
+[recovery.md §4](../guides/recovery.md) restores the seal, then the vault.
+An instance on file storage, on a cluster whose claim predates the setting,
+is not snapshotted until it is moved to Raft
+([recovery.md §5](../guides/recovery.md)).
+The snapshots live on the cluster's own object store: a copy off the cluster
+is yours to make. The recovery kit holds no generated credential, and a
+tenant's backup holds its apps' own secrets and no other.
 A tenant's backup, restore and import are the same in both modes. What
 differs is the loss of OpenBao's storage on a cluster that keeps running:
 `derived` writes the same values again, `random` writes new ones that the

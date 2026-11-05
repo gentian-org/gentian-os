@@ -336,6 +336,35 @@ clients:
     proof: >-
       internal/bundlestore/bundlestore.go Minio, internal/applifecycle/bundle_download.go, bundle_import.go;
       the labels are checked against the rendered operator chart
+  # The vault's daily snapshot (docs/guides/recovery.md §4).
+  - store: s3
+    client: the CronJob that writes the vault's encrypted snapshot and deletes the oldest
+    namespace: kernel-secrets
+    podLabels: {app.kubernetes.io/component: openbao-snapshot}
+    port: 9000
+    built: none
+    proof: charts/gentian-os/templates/openbao-snapshots.yaml, files/openbao-snapshot.sh
+  - store: s3
+    client: the CronJob that writes the transit seal's encrypted snapshot and deletes the oldest
+    namespace: kernel-seal
+    podLabels: {app.kubernetes.io/component: openbao-snapshot}
+    port: 9000
+    built: none
+    proof: charts/gentian-os/templates/openbao-snapshots.yaml, files/openbao-snapshot.sh
+  - store: s3
+    client: the bucket Job that makes the vault snapshot's bucket and identity, at the master
+    namespace: system-s3
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 19333
+    built: openbao-snapshot-bucket-job
+    proof: internal/controller/openbao_snapshots.go makeOpenBaoSnapshotBucketJob
+  - store: s3
+    client: the bucket Job that makes the vault snapshot's bucket and identity, at the filer
+    namespace: system-s3
+    podLabels: {gentianos.io/object-store-shell: "true"}
+    port: 18888
+    built: openbao-snapshot-bucket-job
+    proof: internal/controller/openbao_snapshots.go makeOpenBaoSnapshotBucketJob
 
   # ── The model gateway's namespace (system-llm) ─────────────────────────
   # Not a store, and held to the same discipline. Four pod sets serve there,
@@ -490,6 +519,21 @@ denied:
     namespace: system-s3
     podLabels: {app.kubernetes.io/name: seaweedfs, app.kubernetes.io/instance: seaweedfs, app.kubernetes.io/component: seaweedfs-all-in-one}
     port: 5432
+  - store: s3
+    client: the vault itself, beside the snapshot job in its namespace
+    namespace: kernel-secrets
+    podLabels: {app.kubernetes.io/name: openbao, app.kubernetes.io/instance: openbao}
+    port: 9000
+  - store: s3
+    client: the transit seal itself, beside its snapshot job
+    namespace: kernel-seal
+    podLabels: {app.kubernetes.io/name: openbao, app.kubernetes.io/instance: openbao-transit}
+    port: 9000
+  - store: s3
+    client: a pod of another kernel namespace carrying the snapshot job's label
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/component: openbao-snapshot}
+    port: 9000
   - store: postgresql
     client: a pod of a namespace outside the layout
     namespace: {name: default, labels: {}}

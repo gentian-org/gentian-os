@@ -381,6 +381,9 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	// tenant, not a client.
 	"internal/controller/argocd_backend_tls.go": {},
 	"internal/controller/log_destination.go":    {},
+	// The snapshot job of the transit seal, in the seal's own namespace (the
+	// vault's job reads the vault's address from the values).
+	"charts/gentian-os/templates/openbao-snapshots.yaml": {{"kernel-seal", 8200}},
 	// A comment naming the vault's address.
 	"cmd/main.go": {{"kernel-secrets", 8200}},
 	// The desktop's database: kernel-postgres or the tenants' server.

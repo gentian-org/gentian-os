@@ -299,6 +299,43 @@ func (c *KVClient) Request(ctx context.Context, method, path string, body any) (
 	return resp.StatusCode, answer, err
 }
 
+// RecordMetadata is what the vault says of a KV v2 record without its
+// values: when the record was made (new when it is deleted and written
+// again) and its current version (one more on every write).
+type RecordMetadata struct {
+	CreatedTime    string
+	CurrentVersion int
+}
+
+// Metadata reads the KV v2 metadata of the record at logicalPath. A path that
+// holds nothing is ErrNotFound.
+func (c *KVClient) Metadata(ctx context.Context, logicalPath string) (RecordMetadata, error) {
+	status, body, err := c.Request(ctx, http.MethodGet, c.mount+"/metadata/"+logicalPath, nil)
+	if err != nil {
+		return RecordMetadata{}, err
+	}
+	switch status {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return RecordMetadata{}, fmt.Errorf("openbao metadata %s: %w", logicalPath, ErrNotFound)
+	default:
+		return RecordMetadata{}, fmt.Errorf("openbao metadata %s: HTTP %d: %s", logicalPath, status, string(body))
+	}
+	var out struct {
+		Data struct {
+			CreatedTime    string `json:"created_time"`
+			CurrentVersion int    `json:"current_version"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return RecordMetadata{}, fmt.Errorf("openbao metadata %s: decode: %w", logicalPath, err)
+	}
+	if out.Data.CreatedTime == "" || out.Data.CurrentVersion == 0 {
+		return RecordMetadata{}, fmt.Errorf("openbao metadata %s: no created_time or current_version", logicalPath)
+	}
+	return RecordMetadata{CreatedTime: out.Data.CreatedTime, CurrentVersion: out.Data.CurrentVersion}, nil
+}
+
 // ErrNotFound is a path that holds nothing.
 var ErrNotFound = errors.New("not found")
 

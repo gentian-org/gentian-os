@@ -102,5 +102,7 @@ func init() {
 		tenantExportQuiesceDuration,
 		tenantExportTotal,
 		dnsRecordPublished,
+		openBaoSnapshotState,
+		openBaoSnapshotAge,
 	)
 }
