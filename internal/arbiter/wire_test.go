@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/openfga"
 	"github.com/gentian-org/gentian-os/internal/openfga/openfgatest"
 )
 
@@ -37,7 +38,7 @@ func TestTheArbitersRequestsOnTheWire(t *testing.T) {
 		w := httptest.NewRecorder()
 		(&Server{log: quiet}).answerError(w, httptest.NewRequest(http.MethodPost, "/v1/x", nil), Entry{Tenant: "t", Component: "c"}, err)
 		return map[string]any{
-			"error": err.Error(), "is400": isStatus(err, 400), "is404": isStatus(err, 404),
+			"error": err.Error(), "is400": openfga.IsStatus(err, 400), "is404": openfga.IsStatus(err, 404),
 			"answered": fmt.Sprintf("%d %s", w.Code, w.Body.String()),
 		}
 	}
@@ -142,17 +143,17 @@ func TestTheArbitersRequestsOnTheWire(t *testing.T) {
 		}},
 		{"ask directly with a body", []openfgatest.Reply{openfgatest.OK(`{"allowed":true}`)}, func(c *openFGA) any {
 			var out map[string]any
-			err := c.do(ctx, http.MethodPost, storePath("S1", "/check"), map[string]any{"tuple_key": fgaTuple{User: "user:a", Relation: "viewer", Object: "doc:1"}, "authorization_model_id": "M1"}, &out)
+			err := c.Do(ctx, http.MethodPost, storePath("S1", "/check"), map[string]any{"tuple_key": fgaTuple{User: "user:a", Relation: "viewer", Object: "doc:1"}, "authorization_model_id": "M1"}, &out)
 			return []any{out, errOf(err)}
 		}},
 		{"ask directly without a body or an answer", []openfgatest.Reply{openfgatest.OK(`{"ignored":true}`)}, func(c *openFGA) any {
-			return errOf(c.do(ctx, http.MethodGet, storePath("S1", ""), nil, nil))
+			return errOf(c.Do(ctx, http.MethodGet, storePath("S1", ""), nil, nil))
 		}},
 		{"ask directly and be refused", []openfgatest.Reply{{Status: 400, Body: `{"code":"validation_error","message":"type 'undefined' not found"}`}}, func(c *openFGA) any {
-			return errOf(c.do(ctx, http.MethodPost, storePath("S1", "/list-objects"), map[string]any{"type": "undefined"}, nil))
+			return errOf(c.Do(ctx, http.MethodPost, storePath("S1", "/list-objects"), map[string]any{"type": "undefined"}, nil))
 		}},
 		{"ask directly and fail", []openfgatest.Reply{{Status: 502, Body: `{"message":"upstream"}`}}, func(c *openFGA) any {
-			return errOf(c.do(ctx, http.MethodPost, storePath("S1", "/list-users"), map[string]any{}, nil))
+			return errOf(c.Do(ctx, http.MethodPost, storePath("S1", "/list-users"), map[string]any{}, nil))
 		}},
 	}
 	var got []openfgatest.Case
