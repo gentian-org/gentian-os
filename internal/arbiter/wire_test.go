@@ -121,7 +121,7 @@ func TestTheArbitersRequestsOnTheWire(t *testing.T) {
 			got, err := c.readAll(ctx, "S1", fgaTuple{User: "user:a", Object: "group:"})
 			return []any{got, errOf(err)}
 		}},
-		{"read stops at an empty page", []openfgatest.Reply{openfgatest.OK(`{"tuples":[],"continuation_token":"more"}`), openfgatest.OK(last)}, func(c *openFGA) any {
+		{"read past an empty page", []openfgatest.Reply{openfgatest.OK(`{"tuples":[],"continuation_token":"more"}`), openfgatest.OK(last)}, func(c *openFGA) any {
 			got, err := c.readAll(ctx, "S1", fgaTuple{Object: "group:g"})
 			return []any{got, errOf(err)}
 		}},
@@ -170,4 +170,24 @@ func TestTheArbitersRequestsOnTheWire(t *testing.T) {
 	_, err = NewOpenFGA(rec.URL, "").createStore(ctx, "t/c")
 	got = append(got, openfgatest.Case{Name: "no key", Requests: rec.Requests(), Result: errOf(err)})
 	openfgatest.Compare(t, "arbiter-wire", got)
+}
+
+// A page without tuples is not the end of a read while it carries a
+// continuation token: the tuples after it are read too.
+func TestAReadFollowsTheTokenPastAnEmptyPage(t *testing.T) {
+	rec := openfgatest.New(t,
+		openfgatest.OK(`{"tuples":[],"continuation_token":"more"}`),
+		openfgatest.OK(`{"tuples":[{"key":{"user":"user:a","relation":"member","object":"group:g"}}],"continuation_token":""}`),
+	)
+	got, err := NewOpenFGA(rec.URL, "tok").readAll(context.Background(), "S1", fgaTuple{Object: "group:g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Tuple{{User: "user:a", Relation: "member", Object: "group:g"}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("read %+v, want %+v", got, want)
+	}
+	if reqs := rec.Requests(); len(reqs) != 2 {
+		t.Fatalf("%d requests, want 2", len(reqs))
+	}
 }
