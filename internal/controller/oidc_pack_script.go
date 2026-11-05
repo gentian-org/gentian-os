@@ -40,7 +40,7 @@ func buildOIDCPackScript(
 		redirectURIs = []string{}
 	}
 	redirectJSON, _ := json.Marshal(redirectURIs)
-	mapperBlocks := buildMapperPOSTBlocks(pack, templates)
+	mapperBlocks := buildMapperPOSTBlocks(templates)
 
 	publicClient := "false"
 	if pack.PublicClient {
@@ -218,7 +218,7 @@ echo "service client ${CLIENT_ID} can introspect in realm ${REALM} (HTTP ${PROBE
 		realmName, clientID, body, clientUUIDBlock, body)
 }
 
-func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTemplate) string {
+func buildMapperPOSTBlocks(templates map[string]oidc.MapperTemplate) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `
 # Drop corrupt mappers left by earlier failed provision runs.
@@ -241,4 +241,3 @@ done
 	// run, and nothing declarative covers that.
 	return b.String()
 }
-

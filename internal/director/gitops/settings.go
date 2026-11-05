@@ -541,7 +541,7 @@ func setKeyPath(text, root string, keys []string, l leaf) (string, bool, error) 
 		last := depth == len(keys)-1
 		if at < 0 {
 			// Not live. A commented placeholder is still a home for it.
-			if c := findCommentedKeyLine(lines, start, end, indent, key); c >= 0 {
+			if c := findCommentedKeyLine(lines, start, end, key); c >= 0 {
 				if last {
 					return strings.Join(replaceLines(lines, c, 1, l.render(indent, key)), "\n"), true, nil
 				}
@@ -590,7 +590,7 @@ func findKeyLine(lines []string, start, end, indent int, key string) int {
 
 // findCommentedKeyLine finds the claim's own way of writing "not chosen":
 // a commented key at the right depth, with or without a value.
-func findCommentedKeyLine(lines []string, start, end, indent int, key string) int {
+func findCommentedKeyLine(lines []string, start, end int, key string) int {
 	for i := start; i < end && i < len(lines); i++ {
 		t := strings.TrimSpace(lines[i])
 		if !strings.HasPrefix(t, "#") {

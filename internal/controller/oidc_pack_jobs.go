@@ -318,12 +318,12 @@ func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string
 
 func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
 	if cfg.pack != nil {
-		return r.ensureOIDCPackJob(ctx, tenant, realmName, cfg)
+		return r.ensureOIDCPackJob(ctx, tenant, cfg)
 	}
-	return r.ensureClientJob(ctx, tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs)
+	return r.ensureClientJob(ctx, tenant, cfg.profileName, cfg.clientID, cfg.redirectURIs)
 }
 
-func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
+func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, cfg oidcAppConfig) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 

@@ -50,7 +50,7 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 	comp.Name = "desktop"
 	comp.Namespace = "tenant-platform"
 
-	got := r.componentEgressNamespaces(nil, profile, tenant)
+	got := r.componentEgressNamespaces(profile, tenant)
 	// Its database, the edge it verifies forwarded tokens through, the director.
 	want := []string{layout.Namespace(layout.Data), layout.Namespace(layout.Edge), layout.Namespace(layout.Control)}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
@@ -101,7 +101,7 @@ func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 	// Placed, as the shipped desktop is: a placed component's database is
 	// the operator's to open. An installed app's way there is the tenant's.
 	profile.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
-	got := r.componentEgressNamespaces(nil, profile, tenant)
+	got := r.componentEgressNamespaces(profile, tenant)
 	if len(got) != 2 || got[0] != postgresNamespace || got[1] != layout.Namespace(layout.Control) {
 		t.Fatalf("egress namespaces = %v", got)
 	}
@@ -120,7 +120,7 @@ func TestAskingForTheUsherOpensTheControlNamespace(t *testing.T) {
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
 		Platform: &gentianov1alpha1.PlatformValueMapping{UsherURLKey: "usher.url"},
 	}
-	got := r.componentEgressNamespaces(nil, profile, tenant)
+	got := r.componentEgressNamespaces(profile, tenant)
 	if len(got) != 1 || got[0] != "kernel-control" {
 		t.Fatalf("egress namespaces = %v, want only the control namespace", got)
 	}
@@ -144,7 +144,7 @@ func TestAComponentHandedATokenReachesTheEdge(t *testing.T) {
 	} {
 		profile := &gentianov1alpha1.ComponentProfile{}
 		profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{tc.expose}
-		got := r.componentEgressNamespaces(nil, profile, nil)
+		got := r.componentEgressNamespaces(profile, nil)
 		if reaches := slices.Contains(got, layout.Namespace(layout.Edge)); reaches != tc.want {
 			t.Errorf("%s: egress namespaces = %v, reaches the edge = %v, want %v", name, got, reaches, tc.want)
 		}

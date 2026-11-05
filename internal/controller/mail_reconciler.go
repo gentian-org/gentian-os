@@ -923,7 +923,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	if err := r.List(ctx, nodes); err != nil {
 		return err
 	}
-	if nets := podNetworks(ctx, nodes); nets != "" {
+	if nets := podNetworks(nodes); nets != "" {
 		desired[postfixMyNetworksKey] = nets
 	}
 
@@ -1521,7 +1521,7 @@ func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, 
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
-	if argon2idLineMatches(string(sec.Data[file+".users"]), user, password) &&
+	if argon2idLineMatches(string(sec.Data[file+".users"]), password) &&
 		string(sec.Data[file+".conf"]) == string(passdbInclude(file)) {
 		return nil
 	}

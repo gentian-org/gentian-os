@@ -79,7 +79,7 @@ func (r *TenantReconciler) kernelRealmLocales(ctx context.Context, kernelRealm s
 
 // ensureKeycloakBrowserSecurityHeaders disables X-Frame-Options on kernel and
 // tenant realms so OIDC broker /endpoint callbacks work inside portal iframes.
-func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Context) error {
 	kernelRealm := r.KernelRealm
 	if kernelRealm == "" {
 		kernelRealm = "kernel"

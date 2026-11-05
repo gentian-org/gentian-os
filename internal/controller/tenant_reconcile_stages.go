@@ -483,7 +483,7 @@ func (r *TenantReconciler) reconcileTenantStageSharedKernel(ctx context.Context,
 		return mailResult, nil
 	}
 
-	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
+	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx); err != nil {
 		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
 		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}

@@ -463,7 +463,7 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	}
 
-	if err := c.Create(ctx, buildDatabaseCR(tenant, tenantNamespaceName(tenant), dbName, appName)); err != nil && !errors.IsAlreadyExists(err) {
+	if err := c.Create(ctx, buildDatabaseCR(tenant, dbName, appName)); err != nil && !errors.IsAlreadyExists(err) {
 		return false, "", "", err
 	}
 	return false, "DatabaseProvisioning", "the database is being created", nil

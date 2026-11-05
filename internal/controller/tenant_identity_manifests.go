@@ -182,7 +182,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	// and the realm is the identity bootstrap's. See adoptsKernelRealm.
 	adopted := r.adoptsKernelRealm(tenant)
 	if !adopted {
-		jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain))
+		jobs = append(jobs, *makeRealmJob(tenant, realmName))
 	}
 
 	// An app whose client is refused gets no Job; ensureIdentity says why.

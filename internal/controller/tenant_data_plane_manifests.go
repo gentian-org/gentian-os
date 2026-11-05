@@ -156,7 +156,6 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 
 func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {
 	var objects []client.Object
-	nsName := tenantNamespaceName(tenant)
 
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
@@ -164,7 +163,7 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	}
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
-		objects = append(objects, buildDatabaseCR(tenant, nsName, dbName, appName))
+		objects = append(objects, buildDatabaseCR(tenant, dbName, appName))
 	}
 
 	_, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
@@ -323,7 +322,7 @@ func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context
 					providerApp = integration.Provider
 				}
 			} else {
-				providerApp = r.findProviderInTenant(ctx, tenant, integration.Contract, presentApps, app.Profile)
+				providerApp = r.findProviderInTenant(ctx, integration.Contract, presentApps, app.Profile)
 			}
 			if providerApp == "" {
 				continue

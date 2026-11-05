@@ -510,7 +510,7 @@ func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []genti
 			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName),
 		)
 	}
-	return buildGateway(AuthenticatedGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
+	return buildGateway(AuthenticatedGatewayName, servicesNamespace, kernelWildcardTLSSecretName, map[string]string{
 		managedByLabel:       managedByValue,
 		"gentianos.io/scope": "kernel",
 		"gentianos.io/edge":  "authenticated",
@@ -656,7 +656,7 @@ type gatewayBuildOptions struct {
 	extraListeners            []gatewayv1.Listener
 }
 
-func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
+func buildGateway(name, namespace, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
 	// No hostname: this listener serves every name its certificate covers, which
 	// is what keeps connection coalescing working (see tlsListener).
 	listeners := []gatewayv1.Listener{

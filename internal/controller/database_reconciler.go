@@ -59,14 +59,13 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 			"NoDatabaseRequired", "No app databases required")
 		return ctrl.Result{}, nil
 	}
-	nsName := tenantNamespaceName(tenant)
 	allDone := true
 	var pendingJobs []string
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
 
-		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
+		roleJobDone, err := r.ensureRoleJob(ctx, tenant, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure role Job for app %s: %w", appName, err)
 		}
@@ -76,7 +75,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 			continue
 		}
 
-		dbReady, err := r.ensureDatabaseCR(ctx, tenant, nsName, dbName, appName)
+		dbReady, err := r.ensureDatabaseCR(ctx, tenant, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Database CR for app %s: %w", appName, err)
 		}
@@ -134,7 +133,7 @@ func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.ComponentProfile) b
 }
 
 // ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.
-func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
+func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, dbName, appName string) (bool, error) {
 	crName := databaseCRName(tenant.Name, appName)
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(schema.GroupVersionKind{
@@ -153,7 +152,7 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 }
 
 // ensureRoleJob waits for the Crossplane-owned psql role Job.
-func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
+func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, dbName, appName string) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, roleJobName(tenant.Name, appName))
 }
 
@@ -210,7 +209,7 @@ func makePostgresDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 
 // --- CR constructors ---------------------------------------------------------
 
-func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) *unstructured.Unstructured {
+func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, dbName, appName string) *unstructured.Unstructured {
 	roleName := roleUserName(tenant.Name, appName)
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
@@ -249,7 +248,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	roleName := roleUserName(tenant.Name, appName)
 	jobName := roleJobName(tenant.Name, appName)
-	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB), nsName)
+	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB))
 	if withPassword {
 		container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", jobName, jobSecretPasswordKey))
 	}
@@ -278,7 +277,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string
 
 // psqlContainer returns a Container that runs a psql script via the postgres provisioner image.
 // Credentials are injected from the postgres-admin Secret in the kernel namespace.
-func psqlContainer(name, script, tenantNamespace string) corev1.Container {
+func psqlContainer(name, script string) corev1.Container {
 	return corev1.Container{
 		Name:            name,
 		Image:           kernel.PostgresProvisionerImage(),

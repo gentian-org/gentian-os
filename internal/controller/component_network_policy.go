@@ -56,7 +56,7 @@ func componentNetworkPolicyName(comp *gentianov1alpha1.Component) string {
 // which Calico matches against the Envoy pod's own port, never 443); and for
 // the desktop the
 // director's, which the BFF relays to (admin-console.md §1.2).
-func (r *ComponentReconciler) componentEgressNamespaces(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) []string {
+func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(ns string) {
@@ -210,7 +210,7 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 			"component", comp.Name, "error", err.Error())
 		own = nil
 	}
-	desired := buildComponentNetworkPolicy(comp, tenant.Name, componentPods(comp, profile), r.componentEgressNamespaces(comp, profile, tenant),
+	desired := buildComponentNetworkPolicy(comp, tenant.Name, componentPods(comp, profile), r.componentEgressNamespaces(profile, tenant),
 		append(rules, own...))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
