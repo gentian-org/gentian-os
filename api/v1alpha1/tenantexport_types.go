@@ -220,7 +220,7 @@ func (d *ExportDestination) Resolved() ExportDestinationMode {
 }
 
 // ExportEncryptionMode selects who is able to decrypt a bundle.
-// +kubebuilder:validation:Enum=recipient;passphrase
+// +kubebuilder:validation:Enum=recipient;passphrase;policy
 type ExportEncryptionMode string
 
 const (
@@ -236,6 +236,13 @@ const (
 	// including anyone who later compromises the cluster. That is the point,
 	// and it is also the risk: a lost passphrase is a lost bundle.
 	ExportEncryptionPassphrase ExportEncryptionMode = "passphrase"
+	// ExportEncryptionPolicy encrypts to the keys the tenant's backup policy
+	// resolves to, or the cluster's when it names none: what a scheduled
+	// backup has always been encrypted to. It names no key, so an export
+	// started by an add-on (tenant-export-guard.yaml) asks for it rather than
+	// copying the policy's keys, which it may not name. The bundle is a
+	// recipient bundle like any other.
+	ExportEncryptionPolicy ExportEncryptionMode = "policy"
 )
 
 // ExportEncryption configures bundle protection.

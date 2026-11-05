@@ -12,7 +12,8 @@
 #     endpoint the export names (custom);
 #   - it names no recipients of its own and no passphrase, so the component
 #     cannot make a bundle that only it can read: it is encrypted to the
-#     cluster's recovery keys, or to the keys the tenant's store declares.
+#     cluster's recovery keys, to the keys the tenant's store declares, or
+#     (encryption mode policy) to the keys the tenant's backup policy names.
 #
 # A person is not looked at: what a person may export is the director's and
 # the console's to decide, and a person with kubectl here is break-glass.
@@ -45,7 +46,7 @@ spec:
       request.userInfo.username + " may export only to the cluster's storage, the tenant's policy or a store the tenant declared"
   - expression: >-
       !has(object.spec.encryption)
-      || ((!has(object.spec.encryption.mode) || object.spec.encryption.mode == 'recipient')
+      || ((!has(object.spec.encryption.mode) || object.spec.encryption.mode in ['recipient', 'policy'])
           && (!has(object.spec.encryption.recipients) || size(object.spec.encryption.recipients) == 0)
           && !has(object.spec.encryption.passphraseSecretRef))
     reason: Forbidden

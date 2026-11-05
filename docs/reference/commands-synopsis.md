@@ -105,6 +105,8 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                                             approver, across all tenants: who answers, who asked,
                                                             when, why the app wants it, and what was declined
   kubectl gentian approvals granted                          every tenant's approved privilege exceptions
+  kubectl gentian approvals cluster-roles [allow|disallow <profile> <role>]
+                                                            the cluster roles the cluster permits, per profile
 
   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
                                                               of their own Authorization header behind sign-in

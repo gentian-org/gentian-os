@@ -546,6 +546,30 @@ fresh; reply GET /v1/clusters/c1/privileges 200 '{"cluster":"c1","privileges":[]
 gentian approvals granted
 has "an empty grant list says so" "${OUT}" "No tenant of this cluster has an approved privilege exception"
 
+# The cluster roles the cluster permits: read, changed by one entry, written
+# back whole, since the director replaces the list.
+PS=/v1/clusters/c1/platform-security
+fresh; reply GET "${PS}" 200 '{"allowedMacWaivers":[],"allowedClusterRoles":[{"profile":"wiki","role":"node-reader"}]}'
+gentian approvals cluster-roles
+has "cluster-roles shows the permitted roles" "${OUT}" "node-reader"
+fresh; reply GET "${PS}" 200 '{"allowedMacWaivers":[],"allowedClusterRoles":[{"profile":"wiki","role":"node-reader"}]}'
+reply PUT "${PS}" 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian approvals cluster-roles allow backup-scheduler-ee tenant-exports
+is "allow writes the list with the entry added and the others kept" "$(sed -n 2p "${CALLS}")" \
+    "PUT ${PS} {\"allowedClusterRoles\":[{\"profile\":\"wiki\",\"role\":\"node-reader\"},{\"profile\":\"backup-scheduler-ee\",\"role\":\"tenant-exports\"}]}"
+has "... and says the request still needs an approval" "${OUT}" "still needs an approval"
+fresh; reply GET "${PS}" 200 '{"allowedMacWaivers":[],"allowedClusterRoles":[{"profile":"wiki","role":"node-reader"}]}'
+gentian approvals cluster-roles allow wiki node-reader
+is "allowing what is permitted writes nothing" "$(cat "${CALLS}")" "GET ${PS} "
+fresh; reply GET "${PS}" 200 '{"allowedMacWaivers":[],"allowedClusterRoles":[{"profile":"wiki","role":"node-reader"}]}'
+reply PUT "${PS}" 202 '{"status":"updated"}'
+gentian approvals cluster-roles disallow wiki node-reader
+is "disallow writes the list without the entry" "$(sed -n 2p "${CALLS}")" "PUT ${PS} {\"allowedClusterRoles\":[]}"
+fresh
+gentian approvals cluster-roles allow wiki
+refused "allow without a role is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
 fresh; reply DELETE "${CATALOGUE_ROUTE}" 202 '{"status":"updated"}'
 gentian tenants set globex --admins-add-catalogues=false
 is "set takes catalogues back with one DELETE" "$(cat "${CALLS}")" "DELETE ${CATALOGUE_ROUTE} "
