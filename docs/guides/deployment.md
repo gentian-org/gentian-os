@@ -428,6 +428,10 @@ runs both back to back, which is why they are listed together.
 3. Write the release notes as `docs/releases/vX.Y.md` — what the release
    contains, and what an operator must do differently after it. Create an
    annotated tag `vX.Y.Z` on `main` whose message summarizes them.
+   Tag promptly, and run the next-dev commit right after: from the release
+   commit until the tag exists, `develop` names a tag that is not there, so
+   an install or re-run from `develop` in that window cannot fetch the infra
+   charts. It recovers by itself once the tag is pushed.
 4. Wait for CI on the tag. Its `docker` job publishes
    `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y`; nothing downstream can
    adopt the release until that lands.
