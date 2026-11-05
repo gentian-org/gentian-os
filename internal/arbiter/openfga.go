@@ -95,7 +95,7 @@ func fgaTuples(tuples []Tuple) []fgaTuple {
 
 // readAll is every tuple of a store matching a partial tuple, all pages.
 func (c *openFGA) readAll(ctx context.Context, storeID string, filter fgaTuple) ([]Tuple, error) {
-	o := openfga.ReadOptions{PageSize: MaxPageSize, StopAtEmptyPage: true}
+	o := openfga.ReadOptions{PageSize: MaxPageSize}
 	if filter != (fgaTuple{}) {
 		o.Filter = &filter
 	}

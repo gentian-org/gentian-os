@@ -349,7 +349,7 @@
     ]
   },
   {
-    "name": "read stops at an empty page",
+    "name": "read past an empty page",
     "requests": [
       {
         "method": "POST",
@@ -358,10 +358,24 @@
         "contentType": "application/json",
         "contentLength": 50,
         "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 78,
+        "body": "{\"continuation_token\":\"more\",\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
       }
     ],
     "result": [
-      null,
+      [
+        {
+          "user": "user:b",
+          "relation": "r",
+          "object": "o:2"
+        }
+      ],
       null
     ]
   },
