@@ -132,6 +132,23 @@ func TestAProfileAloneIsABundleWithNoCompanions(t *testing.T) {
 	}
 }
 
+// Platform trust opens ways into the kernel, and is the cluster
+// administrator's to give through a catalog of the whole cluster. A tenant's
+// own catalog stating it is refused; the same profile from a cluster catalog
+// is not.
+func TestATenantsCatalogueCannotPublishAProfileOfPlatformTrust(t *testing.T) {
+	platform := strings.Replace(wiki, "trustTier: certified", "trustTier: platform", 1)
+	if platform == wiki {
+		t.Fatal("the fixture states no certified trust tier to replace")
+	}
+	if _, err := Check([]byte(platform), "wiki", "tenant/acme/own"); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "trustTier platform") {
+		t.Fatalf("from a tenant's catalog: err = %v, want a refusal of the trust tier", err)
+	}
+	if _, err := Check([]byte(platform), "wiki", "cluster/main"); err != nil {
+		t.Fatalf("from a cluster catalog: %v", err)
+	}
+}
+
 func TestABundleBringsItsOwnCompanionsFromAClusterCatalogue(t *testing.T) {
 	b, err := Check([]byte(shopBundle), "shop", ClusterOrigin("main"))
 	if err != nil {

@@ -49,8 +49,10 @@ func GatewayEscapedSlashesAction(annotations map[string]string) string {
 }
 
 // ProfileKernelEgressNamespaces parses gentianos.io/kernel-egress-namespaces on a ComponentProfile.
+// Honored only at trustTier platform: on any other profile the annotation
+// would be a catalog opening itself a way into the kernel by asking.
 func ProfileKernelEgressNamespaces(p *ComponentProfile) []string {
-	if p == nil || len(p.Annotations) == 0 {
+	if p == nil || len(p.Annotations) == 0 || p.Spec.TrustTier != TrustTierPlatform {
 		return nil
 	}
 	raw := strings.TrimSpace(p.Annotations[AnnotationProfileKernelEgressNamespaces])

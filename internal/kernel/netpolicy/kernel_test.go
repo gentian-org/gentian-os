@@ -38,6 +38,13 @@ func profileRequiring(services gentianov1alpha1.ServiceRequirements, annotations
 	}
 }
 
+// atPlatformTier is a profile of trustTier platform, the only one whose
+// egress annotation is honored.
+func atPlatformTier(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ComponentProfile {
+	p.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+	return p
+}
+
 // opened reads a policy's egress back as "namespace:port" lines, sorted, with
 // "namespace:*" for a namespace opened whole. A rule that is not exactly one
 // namespace, or a port that is not TCP by number, fails the test: those are
@@ -171,17 +178,32 @@ func TestTheEgressAnnotationOpensWholeNamespacesBesideTheStores(t *testing.T) {
 	t.Parallel()
 	maria := layout.System("mariadb")
 	database := gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEngineMariaDB}}
-	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", profileRequiring(database, map[string]string{
+	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", atPlatformTier(profileRequiring(database, map[string]string{
 		gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "kernel-control",
-	}), netpolicy.DefaultConfig())
+	})), netpolicy.DefaultConfig())
 	if got, want := opened(t, np), []string{"kernel-control:*", maria + ":3306"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("opens %v, want %v", got, want)
 	}
-	np = netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", profileRequiring(database, map[string]string{
+	np = netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", atPlatformTier(profileRequiring(database, map[string]string{
 		gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: maria,
-	}), netpolicy.DefaultConfig())
+	})), netpolicy.DefaultConfig())
 	if got, want := opened(t, np), []string{maria + ":*"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("opens %v, want %v", got, want)
+	}
+}
+
+// Below trustTier platform the annotation opens nothing: a catalog profile
+// does not open itself a way into the kernel by asking. What the stores open
+// is unchanged.
+func TestTheEgressAnnotationIsHonoredOnlyAtPlatformTier(t *testing.T) {
+	t.Parallel()
+	maria := layout.System("mariadb")
+	database := gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEngineMariaDB}}
+	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "notes", profileRequiring(database, map[string]string{
+		gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "kernel-control",
+	}), netpolicy.DefaultConfig())
+	if got, want := opened(t, np), []string{maria + ":3306"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("a certified profile's annotation opened %v, want only %v", got, want)
 	}
 }
 
@@ -239,7 +261,7 @@ func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 			},
 		},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
-			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierPlatform, Version: "1.0.0",
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{},
 			}},
@@ -302,8 +324,8 @@ func TestTheModelGatewayIsOpenedForADeclaringAppOnItsPortAlone(t *testing.T) {
 	// The annotation still opens a namespace whole, the gateway's included:
 	// it is the wider of the two, and a profile that declares the gateway no
 	// longer needs it.
-	annotated := profileRequiring(gentianov1alpha1.ServiceRequirements{LLM: &gentianov1alpha1.LLMRequirement{}},
-		map[string]string{gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: llm})
+	annotated := atPlatformTier(profileRequiring(gentianov1alpha1.ServiceRequirements{LLM: &gentianov1alpha1.LLMRequirement{}},
+		map[string]string{gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: llm}))
 	if got := opened(t, netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "chat", annotated, netpolicy.Config{})); !reflect.DeepEqual(got, []string{llm + ":*"}) {
 		t.Errorf("opened = %v, want the namespace whole", got)
 	}

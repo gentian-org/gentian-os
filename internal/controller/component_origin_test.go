@@ -76,6 +76,25 @@ func TestAProfileOfAnotherTenantsCatalogueRendersNothing(t *testing.T) {
 	}
 }
 
+// A profile of trustTier platform from the tenant's own catalog is not rolled
+// out: the tier would open it ways into the kernel, and only a catalog of
+// the whole cluster may give it. The director refuses it too; the object is
+// visible to the operator whatever the director refused.
+func TestAPlatformTierProfileOfATenantsCatalogueRendersNothing(t *testing.T) {
+	p := from(t, wikiBundle, "tenant/"+acmeTenantFixture().Name+"/ours")
+	p.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+	h := startDigestHarness(t, p, "")
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonPlatformTierFromTenant {
+		t.Fatalf("condition = %+v, want %s", ready, profilebundle.ReasonPlatformTierFromTenant)
+	}
+	if h.releasedVersion() != "" || h.networkPolicyWritten() {
+		t.Fatalf("rendered a platform-tier profile from a tenant's catalog: release %q, network policy %v",
+			h.releasedVersion(), h.networkPolicyWritten())
+	}
+}
+
 // An origin nobody can read is not an origin that admits everybody.
 func TestAProfileWhoseOriginCannotBeReadRendersNothing(t *testing.T) {
 	h := startDigestHarness(t, from(t, wikiBundle, "tenant/acme"), "")

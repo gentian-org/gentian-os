@@ -87,6 +87,28 @@ func UsableBy(value, tenant string) bool {
 	return origin.Tenant == "" || origin.Tenant == tenant
 }
 
+// ReasonPlatformTierFromTenant is the condition reason of a Component whose
+// profile states trustTier platform and comes from a tenant's own catalog.
+const ReasonPlatformTierFromTenant = "PlatformTierFromTenantCatalogue"
+
+// PlatformTierFromTenant answers the refusal for a profile of trustTier
+// platform from a tenant's own catalog, or nil. Platform trust opens ways
+// into the kernel and is the cluster administrator's to give, through a
+// catalog of the whole cluster; a tenant's catalog stating it is refused.
+func PlatformTierFromTenant(profile *gentianov1alpha1.ComponentProfile) *Refusal {
+	if profile.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform {
+		return nil
+	}
+	origin, err := ParseOrigin(profile.Annotations[OriginAnnotation])
+	if err != nil || origin.Tenant == "" {
+		return nil
+	}
+	return &Refusal{Reason: ReasonPlatformTierFromTenant, Message: fmt.Sprintf(
+		"ComponentProfile %q states trustTier platform and comes from tenant %s's own catalog %s; platform trust is "+
+			"given only through a catalog of the whole cluster, which the cluster's administrator adds",
+		profile.Name, origin.Tenant, origin.Source)}
+}
+
 // OwnedByAnother answers the refusal for a profile that tenant may not have
 // rolled out, or nil when it may.
 func OwnedByAnother(profile *gentianov1alpha1.ComponentProfile, tenant string) *Refusal {

@@ -185,7 +185,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 |---|---|---|
 | **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `secrets`, a gateway entry in `expose` with a tile | At install |
 | **Needs an approval on the tenant** | `requires.privileges` (pod-security waivers, egress, cluster roles); an `expose` entry for the internet; `clientAuthorization: app` | Only once approved; until then the Component waits or the entry is an ordinary one ([security/design.md §2.14](../security/design.md)) |
-| **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching` | Refused by the schema otherwise |
+| **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching`; `valueMapping.platform` `directorUrlKey`, `usherUrlKey`, `custodianUrlKey`, `registrarUrlKey`, `storeUrlKey`, `desktopUrlKey` | Refused by the schema otherwise. The annotation `gentianos.io/kernel-egress-namespaces` is ignored below this tier |
 | **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition, which also needs `trustTier: platform`), `identity.sidecar` | Otherwise the operator renders the app, or the Component is held |
 
 ---
@@ -194,9 +194,12 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 
 `spec.trustTier` is required and states the review level of an entry:
 `platform`, `certified` or `experimental`. The schema uses it for the rules in
-§3.1. Stating `platform` in a catalog does not make a profile the
-platform's: the reserved host labels are admitted only for the profiles the
-chart ships.
+§3.1. Only a catalog of the whole cluster, which the cluster's administrator
+adds, may publish a profile at `platform`: the director refuses one from a
+tenant's own catalog, and the operator holds a Component whose profile
+states it with such an origin. Stating `platform` does not make a profile
+the platform's either: the reserved host labels are admitted only for the
+profiles the chart ships.
 
 Nothing refuses an `experimental` entry, and no admission policy
 restricts chart registries by tier.
