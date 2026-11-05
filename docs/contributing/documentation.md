@@ -83,9 +83,7 @@ American English. `make lint-spelling` runs codespell over the pages with the
 settings in `.codespellrc`. `make verify-gen` regenerates the reference pages
 that `scripts/gen/gen-docs.py` writes and fails when a committed copy differs.
 `scripts/tools/verify-authz-vocabulary.sh` checks that the `can_*` relations
-the pages name and the ones the model defines are the same set. The render
-fixtures under `crossplane/tests/unit/render/` are byte-identical copies of the
-compositions, so a citation changed in a composition is changed in every copy.
+the pages name and the ones the model defines are the same set.
 
 ## 8. The site
 

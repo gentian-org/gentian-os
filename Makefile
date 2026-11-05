@@ -695,8 +695,8 @@ clean:
 # Crossplane unit tests (no cluster required)
 # ---------------------------------------------------------------------------
 
-## Assert each render test's Composition copy matches the deployed one. A stale
-## copy keeps the golden test green against a Composition nobody runs.
+## Fail a render test whose composition.yaml is not a link to a Composition in
+## crossplane/compositions/ — missing, dangling or a copy.
 check-render-fixtures:
 	@bash scripts/lint/check-render-fixtures.sh
 

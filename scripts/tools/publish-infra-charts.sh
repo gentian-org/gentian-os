@@ -14,6 +14,10 @@ for chart in postgresql mariadb redis seaweedfs; do
   helm package "${ROOT}/charts/infra/${chart}" -d "${PACKAGES}"
 done
 
+# OpenFGA's chart is vendored beside its Argo CD manifests (see its
+# UPSTREAM.md); cluster-default installs the same patched chart from this repo.
+helm package "${ROOT}/kernel/services/openfga/manifests/charts/openfga" -d "${PACKAGES}"
+
 helm repo index "${PACKAGES}" --url "${REPO_URL}"
 
 echo "Packaged charts in ${PACKAGES} (index URL: ${REPO_URL}):"
