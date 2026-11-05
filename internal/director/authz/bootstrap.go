@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
 	_ "embed"
+
+	"github.com/gentian-org/gentian-os/internal/openfga"
 )
 
 // modelV1 is authz/model/v1/model.json, the model this director checks
@@ -89,21 +89,20 @@ func Bootstrap(ctx context.Context, o Options) (storeID, modelID string, err err
 // keepStore returns id when OpenFGA holds that store and a new store
 // otherwise.
 func (c *OpenFGA) keepStore(ctx context.Context, id string) (string, error) {
-	var row storeRow
-	err := c.get(ctx, "/stores/"+id, &row)
+	row, err := c.fga.GetStore(ctx, id)
 	if err == nil && row.ID == id {
 		return id, nil
 	}
 	if err != nil && !isNotFound(err) {
 		return "", fmt.Errorf("read store %s: %w", id, err)
 	}
-	var created storeRow
-	if err := c.post(ctx, "", "/stores", map[string]string{"name": StoreName}, &created); err != nil {
+	created, err := c.fga.CreateStore(ctx, StoreName)
+	if err != nil {
 		return "", fmt.Errorf("create store %q: %w", StoreName, err)
 	}
 	c.log.WarnContext(ctx, "the recorded authorization store is gone; created a new one",
-		"recorded", id, "store", created.ID)
-	return created.ID, nil
+		"recorded", id, "store", created)
+	return created, nil
 }
 
 // newClient is a client for the server rather than for a store: bootstrap is
@@ -121,16 +120,7 @@ func newClient(o Options) (*OpenFGA, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &OpenFGA{
-		baseURL: strings.TrimRight(o.BaseURL, "/"), token: o.APIToken,
-		http: o.Client, log: o.Logger, now: o.Now,
-	}, nil
-}
-
-type storeRow struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	return &OpenFGA{fga: openfga.New(o.BaseURL, o.APIToken, o.Client), log: o.Logger, now: o.Now}, nil
 }
 
 // ensureStore returns the id of the store called name, creating it if there is
@@ -143,8 +133,8 @@ func (c *OpenFGA) ensureStore(ctx context.Context, name string) (string, error) 
 		return "", err
 	}
 	if len(found) == 0 {
-		var created storeRow
-		if err := c.post(ctx, "", "/stores", map[string]string{"name": name}, &created); err != nil {
+		created, err := c.fga.CreateStore(ctx, name)
+		if err != nil {
 			return "", fmt.Errorf("create store %q: %w", name, err)
 		}
 		// Look again: another replica may have created one in the meantime,
@@ -153,7 +143,7 @@ func (c *OpenFGA) ensureStore(ctx context.Context, name string) (string, error) 
 		if err != nil || len(found) == 0 {
 			// The store this replica created is an answer; another listing
 			// error must not undo a successful create.
-			return created.ID, nil
+			return created, nil
 		}
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].CreatedAt.Before(found[j].CreatedAt) })
@@ -164,30 +154,12 @@ func (c *OpenFGA) ensureStore(ctx context.Context, name string) (string, error) 
 	return found[0].ID, nil
 }
 
-func (c *OpenFGA) storesNamed(ctx context.Context, name string) ([]storeRow, error) {
-	var out []storeRow
-	token := ""
-	for {
-		var page struct {
-			Stores            []storeRow `json:"stores"`
-			ContinuationToken string     `json:"continuation_token"`
-		}
-		q := url.Values{"page_size": {"100"}}
-		if token != "" {
-			q.Set("continuation_token", token)
-		}
-		if err := c.get(ctx, "/stores?"+q.Encode(), &page); err != nil {
-			return nil, fmt.Errorf("list stores: %w", err)
-		}
-		for _, s := range page.Stores {
-			if s.Name == name {
-				out = append(out, s)
-			}
-		}
-		if token = page.ContinuationToken; token == "" {
-			return out, nil
-		}
+func (c *OpenFGA) storesNamed(ctx context.Context, name string) ([]openfga.Store, error) {
+	found, err := c.fga.StoresNamed(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("list stores: %w", err)
 	}
+	return found, nil
 }
 
 // ensureModel returns the id of the store's newest model when that model is
@@ -199,24 +171,20 @@ func (c *OpenFGA) ensureModel(ctx context.Context, storeID string) (string, erro
 	if err := json.Unmarshal(modelV1, &want); err != nil {
 		return "", fmt.Errorf("embedded model: %w", err)
 	}
-	var latest struct {
-		Models []map[string]any `json:"authorization_models"`
-	}
-	if err := c.get(ctx, "/stores/"+storeID+"/authorization-models?page_size=1", &latest); err != nil {
+	latest, _, err := c.fga.ReadModels(ctx, storeID, 1, "")
+	if err != nil {
 		return "", fmt.Errorf("read models: %w", err)
 	}
-	if len(latest.Models) == 1 && sameModel(latest.Models[0], want) {
-		id, _ := latest.Models[0]["id"].(string)
+	if len(latest) == 1 && sameModel(latest[0], want) {
+		id, _ := latest[0]["id"].(string)
 		return id, nil
 	}
-	var written struct {
-		ID string `json:"authorization_model_id"`
-	}
-	if err := c.post(ctx, storeID, "/authorization-models", want, &written); err != nil {
+	written, err := c.fga.WriteModel(ctx, storeID, want)
+	if err != nil {
 		return "", fmt.Errorf("write model: %w", err)
 	}
-	c.log.InfoContext(ctx, "authorization model written", "store", storeID, "model", written.ID)
-	return written.ID, nil
+	c.log.InfoContext(ctx, "authorization model written", "store", storeID, "model", written)
+	return written, nil
 }
 
 // sameModel compares what the model says, not what the server added. OpenFGA
