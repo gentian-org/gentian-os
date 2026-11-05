@@ -453,7 +453,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.decorate(r.Context(), c, items)
+	s.decorate(r.Context(), items)
 	writeJSON(w, http.StatusOK, map[string]any{"credentials": items})
 }
 
@@ -469,16 +469,19 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	one := []Status{*item}
-	s.decorate(r.Context(), c, one)
+	s.decorate(r.Context(), one)
 	writeJSON(w, http.StatusOK, one[0])
 }
 
-// decorate adds "who set it and when" from OpenBao's metadata endpoint.
+// decorate adds "who set it and when" from OpenBao's metadata endpoint, read
+// with the custodian's own token. The items are already the ones the caller
+// may see (canSee), and can_read_credential covers who set a credential.
 //
-// Best-effort on purpose: a caller whose policy cannot read metadata still gets
-// the catalog and ESO's satisfaction verdict, which is the useful part. A
-// failure here must not turn a working list into an error page.
-func (s *Server) decorate(ctx context.Context, c caller, items []Status) {
+// Best-effort: when OpenBao cannot be reached or refuses the custodian, the
+// list is still answered, with the catalog and ESO's satisfaction verdict and
+// without who set what. An OpenBao fault must not turn a working list into an
+// error page.
+func (s *Server) decorate(ctx context.Context, items []Status) {
 	for i := range items {
 		var md PathMetadata
 		err := s.Bao.WithToken(ctx, func(token string) (err error) {
