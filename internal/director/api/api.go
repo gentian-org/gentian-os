@@ -1980,7 +1980,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	if errors.Is(err, gitops.ErrNameUsedBefore) {
-		s.fail(w, r, http.StatusConflict, err.Error()+` ("reuseName": true; kubectl gentian: --reuse-name)`)
+		s.nameUsedBefore(w, r, err)
 		return
 	}
 	if errors.Is(err, gitops.ErrSingleTenancy) || errors.Is(err, gitops.ErrNameIsAlias) {

@@ -359,7 +359,7 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 		s.importDomainRefused(w, r, err)
 		return
 	case errors.Is(err, gitops.ErrNameUsedBefore):
-		s.fail(w, r, http.StatusConflict, err.Error()+` ("reuseName": true; kubectl gentian: --reuse-name)`)
+		s.nameUsedBefore(w, r, err)
 		return
 	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
 		s.fail(w, r, http.StatusConflict, err.Error())
@@ -400,6 +400,22 @@ func (s *Server) importDomainRefused(w http.ResponseWriter, r *http.Request, err
 		s.repoError(w, r, err)
 	}
 	return false
+}
+
+// nameUsedBefore refuses a tenant under a retired tenant's name, saying how
+// to approve the reuse. nameUsedBefore carries the name and when its tenant
+// was retired, so a console can ask for the approval without reading the
+// sentence.
+func (s *Server) nameUsedBefore(w http.ResponseWriter, r *http.Request, err error) {
+	answer := map[string]any{
+		"error":      err.Error() + ` ("reuseName": true; kubectl gentian: --reuse-name)`,
+		"request_id": reqID(r.Context()),
+	}
+	var used *gitops.NameUsedBeforeError
+	if errors.As(err, &used) {
+		answer["nameUsedBefore"] = map[string]any{"name": used.Name, "retired": used.Retired.UTC().Format(time.RFC3339)}
+	}
+	s.json(w, http.StatusConflict, answer)
 }
 
 // resumeImport goes on with an import that was begun and has not finished.

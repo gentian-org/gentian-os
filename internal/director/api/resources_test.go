@@ -495,6 +495,9 @@ func TestARetiredTenantsNameNeedsTheReuseApproved(t *testing.T) {
 	if msg, _ := out["error"].(string); code != http.StatusConflict || !strings.Contains(msg, `"reuseName": true`) || h.tip(t) != before {
 		t.Fatalf("create under a retired name = %d %v", code, out)
 	}
+	if used, _ := out["nameUsedBefore"].(map[string]any); used["name"] != "acme" || used["retired"] == "" {
+		t.Fatalf("the refusal does not name the retired tenant: %v", out)
+	}
 	code, out = h.do(t, "POST", tenants, alice, `{"name":"acme","reuseName":true}`)
 	if warning, _ := out["warning"].(string); code != http.StatusAccepted || !strings.Contains(warning, "pass to this one") {
 		t.Fatalf("approved reuse = %d %v", code, out)
