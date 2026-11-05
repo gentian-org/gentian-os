@@ -889,27 +889,6 @@ func jobIsComplete(job *batchv1.Job) bool {
 	return jobHasCondition(job, batchv1.JobComplete)
 }
 
-func jobCompletionTime(job *batchv1.Job) *metav1.Time {
-	if job.Status.CompletionTime != nil {
-		return job.Status.CompletionTime
-	}
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
-			return &c.LastTransitionTime
-		}
-	}
-	return nil
-}
-
-func jobCompletedAfter(sync, source *batchv1.Job) bool {
-	syncTime := jobCompletionTime(sync)
-	sourceTime := jobCompletionTime(source)
-	if syncTime == nil || sourceTime == nil {
-		return false
-	}
-	return sourceTime.After(syncTime.Time)
-}
-
 func jobIsFailed(job *batchv1.Job) bool {
 	return jobHasCondition(job, batchv1.JobFailed)
 }

@@ -22,10 +22,4 @@ import (
 
 func tenantNamespace(tenant *gentianov1alpha1.Tenant) string { return backup.TenantNamespace(tenant) }
 
-func pgRoleName(tenant, app string) string { return backup.PostgresRole(tenant, app) }
-
-func databaseName(tenant *gentianov1alpha1.Tenant, app string) string {
-	return backup.DatabaseName(tenant, app)
-}
-
 func cnpgDatabaseName(tenant, app string) string { return backup.CNPGDatabaseCR(tenant, app) }

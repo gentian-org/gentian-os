@@ -11,10 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package keycloak
 
 import (
-	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
 )
 
 // ShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
@@ -198,61 +195,4 @@ kc_curl() {
   esac
 }
 `
-}
-
-// ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
-func ExtractJSONIDByAttr(raw, attr, value string) string {
-	var walk func(any)
-	var found string
-	walk = func(v any) {
-		if found != "" {
-			return
-		}
-		m, ok := v.(map[string]any)
-		if !ok {
-			return
-		}
-		if fmt.Sprint(m[attr]) == value {
-			if id, ok := m["id"].(string); ok && id != "" {
-				found = id
-				return
-			}
-		}
-		for _, child := range m {
-			walk(child)
-		}
-	}
-	trimmed := strings.TrimSpace(raw)
-	if trimmed != "" {
-		var parsed any
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
-			if arr, ok := parsed.([]any); ok {
-				for _, item := range arr {
-					walk(item)
-				}
-			} else {
-				walk(parsed)
-			}
-			if found != "" {
-				return found
-			}
-		}
-	}
-	needle := `"` + attr + `":"` + value + `"`
-	idRe := regexp.MustCompile(`"id":"([^"]+)"`)
-	inner := strings.TrimSpace(raw)
-	inner = strings.TrimPrefix(inner, "[")
-	inner = strings.TrimSuffix(inner, "]")
-	if inner == "" {
-		return ""
-	}
-	for _, obj := range strings.Split(inner, "},{") {
-		if !strings.Contains(obj, needle) {
-			continue
-		}
-		if m := idRe.FindStringSubmatch(obj); len(m) > 1 {
-			return m[1]
-		}
-	}
-	return ""
 }

@@ -39,16 +39,6 @@ type oidcAppConfig struct {
 	templates     map[string]oidc.MapperTemplate
 }
 
-// oidcPacksNeedEntitlementGroups reports whether any OIDC pack maps a group to a client role.
-func oidcPacksNeedEntitlementGroups(configs []oidcAppConfig) bool {
-	for _, cfg := range configs {
-		if cfg.pack != nil && cfg.pack.EntitlementGroup != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // oidcClientRefusal is why one app's OIDC client cannot be made as its
 // profile declares it. It is that app's alone: the app is left out of what is
 // provisioned and named on the tenant's IdentityReady condition, and every

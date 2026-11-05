@@ -24,20 +24,6 @@ import (
 
 const testOIDCCatalogFixture = "../oidc/testdata/minimal-oidc-catalog.yaml"
 
-func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
-	c := oidctest.NewClientWithCatalogFile(t, testOIDCCatalogFixture)
-	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")
-	if err != nil || !ok {
-		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
-	}
-	if !oidcPacksNeedEntitlementGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
-		t.Fatal("expected catalogue-test-client pack to require entitlement groups")
-	}
-	if oidcPacksNeedEntitlementGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
-		t.Fatal("expected custom client without pack to skip entitlement group gate")
-	}
-}
-
 func TestBuildOIDCPackScript(t *testing.T) {
 	c := oidctest.NewClientWithCatalogFile(t, testOIDCCatalogFixture)
 	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")

@@ -18,7 +18,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -116,11 +115,4 @@ func setPSPCondition(psp *gentianov1alpha1.PlatformSecurityPolicy, typ string, s
 		Message:            message,
 		LastTransitionTime: now,
 	})
-}
-
-// LoadPlatformSecurityPolicy is a test helper accessor.
-func LoadPlatformSecurityPolicy(ctx context.Context, c client.Client) (*gentianov1alpha1.PlatformSecurityPolicy, error) {
-	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
-	err := c.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName}, psp)
-	return psp, err
 }

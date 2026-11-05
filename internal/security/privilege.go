@@ -199,23 +199,6 @@ func GrantedEgressRules(profile *gentianov1alpha1.ComponentProfile, comp *gentia
 	return EgressRulesFor(profile, GrantedPrivileges(comp, now))
 }
 
-// GrantedPodSecurityWaivers are the waivers a person granted, in the
-// profile's order.
-func GrantedPodSecurityWaivers(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time) []gentianov1alpha1.PodSecurityWaiver {
-	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
-		return nil
-	}
-	granted := GrantedPrivileges(comp, now)
-	var out []gentianov1alpha1.PodSecurityWaiver
-	for i := range profile.Spec.Requires.Privileges.PodSecurity {
-		w := &profile.Spec.Requires.Privileges.PodSecurity[i]
-		if _, ok := granted[PrivilegeRef(PrivilegePodSecurity, w.Name)]; ok {
-			out = append(out, *w)
-		}
-	}
-	return out
-}
-
 // PrivilegeReason is what the profile said it needs the privilege for, which
 // is what an approver reads before deciding. Empty when the ref is not one of
 // the profile's requests.

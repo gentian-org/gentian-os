@@ -13,7 +13,6 @@ package trustanchor
 import (
 	"bytes"
 	"crypto/sha1"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/pem"
 	"fmt"
@@ -128,54 +127,4 @@ func jksIntegrityInput(body []byte, password string) []byte {
 	out = append(out, prefix...)
 	out = append(out, body...)
 	return out
-}
-
-// VerifyTrustStoreJKS checks that the JKS can be loaded and contains at least
-// one trusted certificate. Used by tests only.
-func VerifyTrustStoreJKS(jksData []byte, storePassword string) error {
-	// Parse header only — full verification would require java keytool.
-	if len(jksData) < 12 {
-		return fmt.Errorf("JKS too short")
-	}
-	if binary.BigEndian.Uint32(jksData[0:4]) != 0xFEEDFEED {
-		return fmt.Errorf("invalid JKS magic")
-	}
-	if binary.BigEndian.Uint32(jksData[4:8]) != 2 {
-		return fmt.Errorf("unsupported JKS version")
-	}
-	count := int(binary.BigEndian.Uint32(jksData[8:12]))
-	if count < 1 {
-		return fmt.Errorf("empty keystore")
-	}
-	// Ensure at least one cert parses from the bundle path used to build it.
-	_, err := x509.ParseCertificate(certsFromJKSFirstEntry(jksData))
-	return err
-}
-
-func certsFromJKSFirstEntry(jksData []byte) []byte {
-	// Skip magic(4) + version(4) + count(4) + tag(1) + alias UTF
-	off := 12
-	if off+4 > len(jksData) || binary.BigEndian.Uint32(jksData[off:off+4]) != 2 {
-		return nil
-	}
-	off += 4
-	if off+2 > len(jksData) {
-		return nil
-	}
-	aliasLen := int(binary.BigEndian.Uint16(jksData[off : off+2]))
-	off += 2 + aliasLen + 8 // timestamp uint64
-	if off+2 > len(jksData) {
-		return nil
-	}
-	certTypeLen := int(binary.BigEndian.Uint16(jksData[off : off+2]))
-	off += 2 + certTypeLen
-	if off+4 > len(jksData) {
-		return nil
-	}
-	certLen := int(binary.BigEndian.Uint32(jksData[off : off+4]))
-	off += 4
-	if off+certLen > len(jksData) {
-		return nil
-	}
-	return jksData[off : off+certLen]
 }

@@ -12,7 +12,6 @@ package keycloak
 
 import (
 	"fmt"
-	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -77,48 +76,9 @@ func TenantAppAdminsGroup(tenant string) string {
 	return tenantPrefix(tenant) + "app-admins"
 }
 
-// CollectTenantGroupNames returns Gentian entitlement groups for a tenant realm.
-// additionalProfiles covers OIDC pack profiles not yet listed on tenant.Spec.Apps.
-func CollectTenantGroupNames(tenant *gentianov1alpha1.Tenant, additionalProfiles []string) []string {
-	seen := map[string]struct{}{
-		TenantMembersGroup(tenant.Name):        {},
-		TenantAdminsGroup(tenant.Name):         {},
-		TenantPlatformAdminsGroup(tenant.Name): {},
-		TenantAppAdminsGroup(tenant.Name):      {},
-	}
-	names := []string{
-		TenantMembersGroup(tenant.Name),
-		TenantAdminsGroup(tenant.Name),
-		TenantPlatformAdminsGroup(tenant.Name),
-		TenantAppAdminsGroup(tenant.Name),
-	}
-	add := func(group string) {
-		if group == "" {
-			return
-		}
-		if _, ok := seen[group]; ok {
-			return
-		}
-		seen[group] = struct{}{}
-		names = append(names, group)
-	}
-	for _, app := range tenant.Spec.Apps {
-		add(TenantAppGroup(tenant.Name, app.Profile))
-	}
-	for _, profile := range additionalProfiles {
-		add(TenantAppGroup(tenant.Name, profile))
-	}
-	return names
-}
-
 // GroupsJobName is the Crossplane identity Job that creates Gentian groups.
 func GroupsJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-gentian-groups-%s", tenantName)
-}
-
-// ShellWordList formats values for POSIX sh word-splitting in Job env vars.
-func ShellWordList(values []string) string {
-	return strings.Join(values, " ")
 }
 
 // RealmName is the Keycloak realm a tenant's people, groups and clients are

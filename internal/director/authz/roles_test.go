@@ -182,3 +182,12 @@ func TestCheckAsAsksAsTheHolderOfTheTokensRealmOnlyWhenRefused(t *testing.T) {
 		t.Errorf("an allowed user is asked once, got %v", asked)
 	}
 }
+
+func knownClusterRole(rel string) bool {
+	for _, r := range ClusterRoles {
+		if r == rel {
+			return true
+		}
+	}
+	return false
+}

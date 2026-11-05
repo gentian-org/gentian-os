@@ -96,16 +96,8 @@ func Tenant(name string) string { return "tenant-" + name }
 // TenantDMZ returns a tenant's perimeter namespace.
 func TenantDMZ(name string) string { return "tenant-" + name + "-dmz" }
 
-// Shared returns a shared app's namespace.
-func Shared(app string) string { return "shared-" + app }
-
 // System returns a system function's namespace.
 func System(fn string) string { return "system-" + fn }
-
-// Labels returns the labels a namespace of the given tier and function carries.
-func Labels(tier Tier, fn string) map[string]string {
-	return map[string]string{LabelTier: string(tier), LabelFunction: fn}
-}
 
 // TenantLabels returns the labels of a tenant namespace, or its DMZ.
 func TenantLabels(tenant string, dmz bool) map[string]string {

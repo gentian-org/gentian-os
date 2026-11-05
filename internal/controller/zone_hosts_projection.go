@@ -169,7 +169,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		}
 		if wantsPartners(profile) {
 			// By the profile's name, as above: the realm knows the
-			// component as PartnerClientID(profile).
+			// component as partner-<profile>.
 			partners[tenant][profile.Name] = partnerLine(profile)
 		}
 		for j := range profile.Spec.Expose {
