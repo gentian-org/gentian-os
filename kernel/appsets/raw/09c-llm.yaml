@@ -55,10 +55,8 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
-            # Where LLM serving runs. v4 left this at the chart's default,
-            # platform-kernel, because that was v4's one namespace for
-            # everything; on v5 it is a system-tier function of its own and
-            # the operator addresses it as layout.System("llm").
+            # Where LLM serving runs: a system-tier function of its own, which
+            # the operator addresses as layout.System("llm").
             - name: servicesNamespace
               value: 'sys.llm.placeholder'
             # The NetworkPolicies on the pods of this namespace, delivered

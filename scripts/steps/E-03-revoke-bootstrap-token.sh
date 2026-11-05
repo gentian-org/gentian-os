@@ -16,8 +16,8 @@
 # refused on every run. D-04 is what makes it reachable.
 
 # Every read below names a namespace only through GENTIAN_SYSTEM_NAMESPACE or
-# OPENBAO_NAMESPACE, both defaulting to v4's names, so exporting them is most
-# of the layout work. The four that do not are corrected inline.
+# OPENBAO_NAMESPACE, so exporting them from the layout is most of the layout
+# work. The four that do not ask the layout inline.
 _revoke_export_layout() {
     export GENTIAN_SYSTEM_NAMESPACE OPENBAO_NAMESPACE
     GENTIAN_SYSTEM_NAMESPACE="$(ns_kernel control)"
@@ -270,9 +270,8 @@ _oidc_write_path_ready() {
     local ns
     ns="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
         -o jsonpath='{.items[0].spec.openbao.namespace}' 2>/dev/null || true)"
-    # v4's namespace, and wrong here for the reason D-04 documents: the claim
-    # rarely carries the field, and on v5 the secret is in the secrets
-    # namespace.
+    # The claim rarely carries the field (D-04 says why); the secret is then
+    # in the secrets namespace.
     ns="${ns:-$(ns_kernel secrets)}"
     kubectl get secret openbao-oidc-client -n "${ns}" >/dev/null 2>&1 ||
         missing+=("Secret ${ns}/openbao-oidc-client does not exist")

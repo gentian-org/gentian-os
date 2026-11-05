@@ -42,11 +42,6 @@ import (
 // The names below are what the tenant's Composition and the component have
 // to agree on, and are derived in one place.
 
-// PartnerClientID is a partner app's client in its tenant's realm: the one it
-// exchanges a person's token at (issuing) and presents assertions with
-// (receiving), authenticated by its service account token.
-func PartnerClientID(profile string) string { return "partner-" + profile }
-
 // PartnerSecretName is the Secret of the tenant's namespace a partner app is
 // told its client, token endpoint and token audience in.
 func PartnerSecretName(profile string) string { return "partners-" + profile }

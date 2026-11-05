@@ -502,7 +502,7 @@ for x in items:
     if "keycloak.crossplane.io" in x.get("apiVersion", ""):
         continue
     # The vault OIDC roles need the auth/oidc backend, which is configured
-    # once Keycloak answers (D-07 in v4): as Keycloak-dependent as the above.
+    # once Keycloak answers (D-04): as Keycloak-dependent as the above.
     if "jwt.vault.upbound.io" in x.get("apiVersion", ""):
         continue
     # The system-tier engines. Their Helm values are ConfigMaps and a Secret
@@ -1717,7 +1717,6 @@ _claim_cluster_fields() {
     printf '  #                             single-tenancy cluster; the sign-in form on a\n'
     printf '  #                             multi-tenancy one. Its scripts reach every tenant.\n'
     _claim_default_line secretMode   "${SECRET_MODE:-}"   derived 'every kernel secret reproducible from the master password; random = independent'
-    _claim_default_line routingMode  "${ROUTING_MODE:-}"  gateway 'Envoy Gateway plus the Gateway API; the only supported value'
     _claim_default_line storageClass "${STORAGE_CLASS:-}" ''      'empty means the clusters default StorageClass'
 
     printf '\n'

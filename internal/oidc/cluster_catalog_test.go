@@ -21,11 +21,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/oidc/oidctest"
 )
 
 func testGentianCatalogClient(t *testing.T) client.Client {
 	t.Helper()
-	return NewTestClientWithCatalogFile(t, "testdata/minimal-oidc-catalog.yaml")
+	return oidctest.NewClientWithCatalogFile(t, "testdata/minimal-oidc-catalog.yaml")
 }
 
 func TestResolvePackClusterCatalog(t *testing.T) {

@@ -295,7 +295,7 @@ func makeAppInstanceRoleJob() *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := psqlContainer("provision-role",
-		buildRoleScript(openfgaAppsDatabase, openfgaAppsDatabase, gentianov1alpha1.SchemaPreferencePublic, false), "")
+		buildRoleScript(openfgaAppsDatabase, openfgaAppsDatabase, gentianov1alpha1.SchemaPreferencePublic, false))
 	container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", arbiterRoleJob, jobSecretPasswordKey))
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

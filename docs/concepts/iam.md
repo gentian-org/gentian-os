@@ -82,7 +82,7 @@ domain is the cluster's. Two things follow.
   the other; the two accounts are separate, and they share a mailbox
   ([multi-tenancy.md §3](multi-tenancy.md)).
 - **Some names are the kernel's.** `id`, `platform`, `www`, `argocd`,
-  `headlamp`, `llm`, `mail`, `imap`, `mail-egress` and `corp` directly under
+  `headlamp`, `llm`, `mail`, `imap` and `mail-egress` directly under
   the cluster's domain are the kernel's or the platform tenant's. A component
   or an app of the user tenant whose host label is one of them is refused,
   with a `HostReserved` condition that lists them, and nothing of it is

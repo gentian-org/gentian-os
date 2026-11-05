@@ -523,10 +523,6 @@ spec:
                       move, was to.
                     type: string
                 type: object
-              sharedInstance:
-                description: SharedInstance names the backend when `fulfilment` is
-                  "shared".
-                type: string
             type: object
         type: object
     served: true

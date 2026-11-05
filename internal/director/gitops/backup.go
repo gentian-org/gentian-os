@@ -256,19 +256,6 @@ func (g *GitOps) claimsDir() string {
 	return filepath.Join(g.path, "clusters", cluster, "kernel", "claims")
 }
 
-// ClusterBackupPolicy reads what the cluster declares, so a screen can show
-// the form it is about to change rather than only what the cluster resolved.
-func (g *GitOps) ClusterBackupPolicy(ctx context.Context) (*BackupPolicy, error) {
-	var doc struct {
-		Spec BackupPolicy `json:"spec"`
-	}
-	found, err := g.readClaimsFile(ctx, BackupPolicyFile, &doc)
-	if err != nil || !found {
-		return nil, err
-	}
-	return &doc.Spec, nil
-}
-
 // kustomizationList says which list a file beside the manifest belongs in.
 // An object of its own is a resource; something that modifies the Tenant is a
 // patch, and kustomize applies patches after the components a tenant pulls

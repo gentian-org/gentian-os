@@ -38,7 +38,7 @@ spec:
         deploymentsCluster: {{ .Values.deployments.cluster | quote }}
         {{- /* Which conditional functions this cluster runs. The wrapper in
              kernel/appsets skips a raw file by name when its function is
-             off, the way v4's does: a raw file is copied verbatim because it
+             off: a raw file is copied verbatim because it
              carries ApplicationSet templating Argo evaluates later, so a Helm
              conditional cannot live inside one. */}}
         mailServiceMode: {{ .Values.mailServiceMode | default "external" | quote }}

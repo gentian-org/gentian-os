@@ -22,7 +22,7 @@
 #
 # A regex over the Composition templates directly finds fewer than either,
 # because the interesting kinds sit behind conditionals (issuerMode,
-# routingMode, isOci, ...). So a single source would produce a role that works
+# isOci, ...). So a single source would produce a role that works
 # until some path nobody has run reaches the API server and is refused.
 #
 # WHAT KEEPS IT CURRENT

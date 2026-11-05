@@ -24,7 +24,10 @@ import (
 	"time"
 )
 
-const keycloakAdminPageSize = 200
+const (
+	keycloakAdminPageSize = 200
+	defaultHTTPTimeout    = 15 * time.Second
+)
 
 type keycloakUserRecord struct {
 	ID         string              `json:"id"`
@@ -101,48 +104,6 @@ func NewKeycloakAdminClient(baseURL, clientID, clientSecret string) *KeycloakAdm
 			Timeout: defaultHTTPTimeout,
 		},
 	}
-}
-
-func (c *KeycloakAdminClient) EnsureRealm(ctx context.Context, realm, displayName string) error {
-	token, err := c.adminToken(ctx)
-	if err != nil {
-		return err
-	}
-	status, err := c.doAdmin(ctx, token, http.MethodGet, "/admin/realms/"+url.PathEscape(realm), nil)
-	if err != nil {
-		return err
-	}
-	if status == http.StatusOK {
-		body := map[string]any{
-			"enabled":                      true,
-			"bruteForceProtected":          true,
-			"failureFactor":                30,
-			"maxFailureWaitSeconds":        900,
-			"minimumQuickLoginWaitSeconds": 60,
-			"waitIncrementSeconds":         60,
-			"quickLoginCheckMilliSeconds":  1000,
-			"maxDeltaTimeSeconds":          86400,
-		}
-		_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
-		return err
-	}
-	if status != http.StatusNotFound {
-		return fmt.Errorf("keycloak get realm %s: unexpected status %d", realm, status)
-	}
-	body := map[string]any{
-		"realm":                        realm,
-		"enabled":                      true,
-		"displayName":                  displayName,
-		"bruteForceProtected":          true,
-		"failureFactor":                30,
-		"maxFailureWaitSeconds":        900,
-		"minimumQuickLoginWaitSeconds": 60,
-		"waitIncrementSeconds":         60,
-		"quickLoginCheckMilliSeconds":  1000,
-		"maxDeltaTimeSeconds":          86400,
-	}
-	_, err = c.doAdminExpect(ctx, token, http.MethodPost, "/admin/realms", body, http.StatusCreated)
-	return err
 }
 
 // DefaultBrowserSecurityHeaders disables X-Frame-Options on realms so OIDC broker

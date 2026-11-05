@@ -144,7 +144,7 @@ func TestAProfileThatNamesTheRegistrarIsToldWhereItIsAndMayReachIt(t *testing.T)
 	if _, present := v["director"]; present {
 		t.Fatal("the director's address was set without being asked for")
 	}
-	egress := r.componentEgressNamespaces(nil, profile, tenant)
+	egress := r.componentEgressNamespaces(profile, tenant)
 	if len(egress) != 1 || egress[0] != "kernel-control" {
 		t.Fatalf("egress namespaces = %v, want the control namespace", egress)
 	}

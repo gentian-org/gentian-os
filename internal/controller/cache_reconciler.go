@@ -75,7 +75,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 
 	// One Memcached Deployment per tenant (covers all apps needing Memcached).
 	if len(memcachedApps) > 0 {
-		done, err := r.ensureMemcached(ctx, tenant, memcachedApps)
+		done, err := r.ensureMemcached(ctx, tenant)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Memcached: %w", err)
 		}
@@ -119,7 +119,7 @@ func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentia
 }
 
 // ensureMemcached waits for the Crossplane-provisioned Memcached Deployment.
-func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant, memcachedApps []string) (bool, error) {
+func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	nsName := tenantNamespaceName(tenant)
 	dep := &appsv1.Deployment{}
 	depKey := types.NamespacedName{Name: memcachedDeploymentName, Namespace: nsName}

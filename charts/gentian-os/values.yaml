@@ -27,10 +27,6 @@ tenancyMode: multi
 # domain registration. Plumbed as MAIL_SERVICE_MODE.
 mailServiceMode: external
 
-# routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
-# Plumbed as ROUTING_MODE.
-routingMode: gateway
-
 # handover controls the gate that keeps a cluster's recovery cheap until its
 # administrator has been seen to write a credential through the login path.
 #
@@ -425,9 +421,6 @@ leaderElectionNamespace: ""
 # Log level: debug, info, warn, error
 logLevel: info
 
-# Watched namespaces (empty = cluster-wide)
-watchNamespaces: []
-
 # Which edge ingress this cluster runs — a key in kernel/platforms.yaml's
 # edgeIngress table ("cf-tunnel", "none"). Empty follows networkMode below,
 # which is what every existing cluster relies on.
@@ -609,23 +602,13 @@ custodian:
   # Namespace holding the ESO satisfaction probes it reads. Empty means the
   # namespace this chart is released into, which is where the operator runs
   # and where the catalog step writes them.
-  #
-  # It said "gentian-system", which is v4's control namespace. On v5 the
-  # probes are in kernel-control, so the custodian looked in a
-  # namespace that does not exist and reported every credential missing --
-  # including one that had just been supplied and that ESO was reporting
-  # Ready two commands away. `make check-credentials` said satisfied and the
-  # console said missing, about the same credential, at the same moment.
   probeNamespace: ""
   # Where the CA that signs OpenBao's serving certificate lives. Read through
   # the API, because a Pod cannot mount a Secret from another namespace — the
   # same reason ESO's ClusterSecretStore names it as a caProvider.
   caSecret: openbao-tls
-  # Empty follows openbaoNamespace, which is where the vault actually is.
-  # This used to say "openbao" outright, which is the v4 name: on a v5
-  # cluster the certificate was looked for in a namespace that does not
-  # exist, so the CA was never found and every token exchange failed at TLS.
-  # Set it only for a vault whose certificate lives somewhere else again.
+  # Empty follows openbaoNamespace, which is where the vault is. Set it only
+  # for a vault whose certificate lives somewhere else.
   caSecretNamespace: ""
   # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
   # Secret reference: this turns off verification for every exchange.

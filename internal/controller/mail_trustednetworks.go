@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"context"
 	"net"
 	"sort"
 	"strings"
@@ -59,7 +58,7 @@ const loopbackNetworks = "127.0.0.0/8,[::1]/128"
 // a list that is merely the loopback range would silently stop every in-cluster
 // sender relaying, which reads as "mail is broken" long before anyone connects
 // it to a CNI that does not populate a field.
-func podNetworks(ctx context.Context, nodes *corev1.NodeList) string {
+func podNetworks(nodes *corev1.NodeList) string {
 	seen := map[string]bool{}
 	out := []string{}
 	for i := range nodes.Items {

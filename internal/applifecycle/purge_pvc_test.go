@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -45,7 +46,7 @@ func TestPVCBelongsToApp(t *testing.T) {
 		{"empty family does not match everything", pvc("open-webui", nil), "odoo-base-ce", "", false},
 	}
 	for _, c := range cases {
-		if got := pvcBelongsToApp(c.claim, c.app, c.family); got != c.want {
+		if got := backup.PVCBelongsToApp(c.claim, c.app, c.family); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}

@@ -929,11 +929,6 @@ func (s *Service) purgePVCs(ctx context.Context, tenant *gentianov1alpha1.Tenant
 	return s.waitForPVCsGone(ctx, ns, doomed)
 }
 
-// pvcBelongsToApp reports whether a PVC was provisioned for this app.
-func pvcBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) bool {
-	return backup.PVCBelongsToApp(pvc, appName, family)
-}
-
 // releasePVCHolders deletes pods referencing any of the named claims so the
 // pvc-protection finalizer can clear.
 func (s *Service) releasePVCHolders(ctx context.Context, ns string, claims []string) error {

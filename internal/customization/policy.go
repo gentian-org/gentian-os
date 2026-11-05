@@ -21,9 +21,8 @@ import (
 // to a Customization record. It returns every violation rather than the first, so
 // an author fixes the record in one pass.
 //
-// The checks that need cluster state — does the target profile exist, does the app
-// actually run in the tenant's own namespace — are layered on top by the caller
-// (see ValidateNamespaceScoping).
+// It reads the record alone: whether the target profile exists, or the app runs
+// in the tenant's own namespace, needs cluster state and is not checked here.
 func ValidateRecord(record *gentianov1alpha1.Customization) []error {
 	if record == nil {
 		return nil
@@ -107,87 +106,4 @@ func validateJustification(spec gentianov1alpha1.CustomizationSpec) []error {
 		}
 	}
 	return errs
-}
-
-// ValidateAgainstSurface checks a record against the target app's declared
-// customization surface. Separated from ValidateRecord because it needs the
-// ComponentProfile, which is not always available to the caller.
-func ValidateAgainstSurface(
-	record *gentianov1alpha1.Customization,
-	surface *gentianov1alpha1.CustomizationSurface,
-) []error {
-	if record == nil {
-		return nil
-	}
-	var errs []error
-	rung := record.Spec.Rung
-
-	if !SupportsRung(surface, rung) {
-		errs = append(errs, fmt.Errorf(
-			"target app does not support rung %s (spec.customization.supportedRungs)", rung))
-	}
-
-	// Flag a record sitting above a rung the app actually supports — the signal
-	// that a customization could be descended.
-	if lower, found := lowerSupportedRung(surface, rung); found {
-		errs = append(errs, fmt.Errorf(
-			"target app supports rung %s, which is cheaper than %s: justify or descend", lower, rung))
-	}
-	return errs
-}
-
-// lowerSupportedRung returns the cheapest supported rung strictly below rung.
-func lowerSupportedRung(
-	surface *gentianov1alpha1.CustomizationSurface,
-	rung gentianov1alpha1.CustomizationRung,
-) (gentianov1alpha1.CustomizationRung, bool) {
-	chosen, ok := RungIndex(rung)
-	if !ok {
-		return "", false
-	}
-	best := gentianov1alpha1.CustomizationRung("")
-	bestIdx := -1
-	for candidate, idx := range rungOrder {
-		if idx >= chosen || !SupportsRung(surface, candidate) {
-			continue
-		}
-		if bestIdx == -1 || idx < bestIdx {
-			best, bestIdx = candidate, idx
-		}
-	}
-	return best, bestIdx != -1
-}
-
-// RequiresTenantNamespace reports whether a record must be checked against the
-// §2.4 namespace test: per-tenant modules are only safe when the app instance runs
-// in that tenant's own namespace. Loading tenant-specific code into a runtime
-// shared by several tenants is a cross-tenant data leak waiting to happen.
-func RequiresTenantNamespace(record *gentianov1alpha1.Customization) bool {
-	if record == nil {
-		return false
-	}
-	return record.Spec.Rung == gentianov1alpha1.RungExtension &&
-		record.Spec.Scope == gentianov1alpha1.ScopeTenant
-}
-
-// ValidateNamespaceScoping applies the §2.4 namespace test given the namespace the
-// target app was actually found in.
-func ValidateNamespaceScoping(
-	record *gentianov1alpha1.Customization,
-	resolvedNamespace string,
-	expectedTenantNamespaces []string,
-) error {
-	if !RequiresTenantNamespace(record) {
-		return nil
-	}
-	for _, ns := range expectedTenantNamespaces {
-		if ns == resolvedNamespace {
-			return nil
-		}
-	}
-	return fmt.Errorf(
-		"rung L3 at tenant scope requires the app to run in the tenant's own namespace, "+
-			"but %q resolved to namespace %q: per-tenant modules in a shared runtime are "+
-			"forbidden (docs/guides/app-customization.md §2.4)",
-		record.Spec.Target.Profile, resolvedNamespace)
 }

@@ -116,17 +116,7 @@ type ResourcePlanSpec struct {
 }
 
 // ResourcePlanStatus reports observed plan state.
-type ResourcePlanStatus struct {
-	// TenantCount is the number of tenants whose quotas currently match this
-	// plan. Maintained for the console's catalog view; it is derived, and
-	// nothing reads it to make a decision.
-	// +optional
-	TenantCount int32 `json:"tenantCount,omitempty"`
-
-	// ObservedAt is when TenantCount was last recomputed.
-	// +optional
-	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
-}
+type ResourcePlanStatus struct{}
 
 // ResourcePlanList contains a list of ResourcePlan.
 // +kubebuilder:object:root=true

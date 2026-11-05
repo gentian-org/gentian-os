@@ -26,7 +26,7 @@
 
      By name because the file is copied verbatim: it carries ApplicationSet
      templating that Argo evaluates at its own sync time, so a Helm
-     conditional cannot live inside one. v4's wrapper does the same.
+     conditional cannot live inside one.
 
      Mail and LLM serving are both claim decisions and both compose their own
      namespaces, so a cluster that runs neither gets neither namespace nor

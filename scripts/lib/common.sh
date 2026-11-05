@@ -312,7 +312,7 @@ _helm_retry() {
     local err_file
     err_file="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'" RETURN
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
 
     while (( n <= attempts )); do
         if helm "$@" 2>"${err_file}"; then
@@ -348,7 +348,7 @@ _kubectl_retry() {
     local err_file
     err_file="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'" RETURN
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
 
     while (( n <= attempts )); do
         if kubectl "$@" 2>"${err_file}"; then
@@ -394,7 +394,7 @@ _bao_retry() {
     local err_file
     err_file="$(mktemp)"
     # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'" RETURN
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
 
     while (( n <= attempts )); do
         # Not `if bao ...; then return 0; fi`: when neither branch of an
@@ -1061,7 +1061,7 @@ load_deployments_cluster_settings() {
     # report and no report: the claim field was authored, the Composition read
     # it, and the install.env value won anyway with nothing said.
     local v
-    for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
+    for v in TENANCY_MODE NETWORK_MODE NODE_IP SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES DNS_RECORDS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
@@ -1078,7 +1078,6 @@ load_deployments_cluster_settings() {
     if [[ -r "${claim_file}" ]]; then
         claim_setting TENANCY_MODE      tenancyMode      "${claim_file}"
         claim_setting NETWORK_MODE      networkMode      "${claim_file}"
-        claim_setting ROUTING_MODE      routingMode      "${claim_file}"
         claim_setting SECRET_MODE       secretMode       "${claim_file}"
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
@@ -1722,9 +1721,9 @@ _is_testnet_ip() {
 # registrations remain. A healthy, running Kyverno is left untouched.
 #
 # Presence is read from the workload, not from a namespace name: which
-# namespace Kyverno lives in is the layout's business (kyverno under v4,
-# kernel-admission under v5), and asking for one name would tear the live
-# webhooks off a perfectly healthy Kyverno installed under the other.
+# namespace Kyverno lives in is the layout's business, or a distribution's,
+# and asking for one name would tear the live webhooks off a perfectly
+# healthy Kyverno installed under another.
 # =============================================================================
 cleanup_orphaned_kyverno_webhooks() {
     kubectl get deployments --all-namespaces \
@@ -2182,26 +2181,19 @@ check_prereqs() {
         fi
         # Check that the edge LoadBalancer service has an external IP.
         local lb_ip lb_label
-        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-            # The data plane's Service, which Envoy Gateway labels with the
-            # GatewayClass it serves. Not app.kubernetes.io/name=gateway-helm:
-            # that is the controller's own Service, a ClusterIP that never has
-            # an external address, so looking there always reported none.
-            lb_label="gateway.envoyproxy.io/owning-gatewayclass=${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
-            lb_ip=$(kubectl get svc -A -l "${lb_label}" \
-                -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-        fi
+        # The data plane's Service, which Envoy Gateway labels with the
+        # GatewayClass it serves. Not app.kubernetes.io/name=gateway-helm:
+        # that is the controller's own Service, a ClusterIP that never has
+        # an external address, so looking there always reported none.
+        lb_label="gateway.envoyproxy.io/owning-gatewayclass=${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+        lb_ip=$(kubectl get svc -A -l "${lb_label}" \
+            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
         if [[ -z "$lb_ip" ]]; then
             warn "NETWORK_MODE=static-ip: Envoy Gateway LoadBalancer has no external IP yet."
             warn "  Make sure MetalLB (or a cloud LB) is configured with ${NODE_IP} before traffic can reach the cluster."
         else
             info "Gateway LoadBalancer external IP: ${lb_ip}"
         fi
-    fi
-
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
-        exit 1
     fi
 
     # Before anything is applied: a cluster that names an egress host and

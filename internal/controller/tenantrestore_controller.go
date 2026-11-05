@@ -289,7 +289,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return ctrl.Result{}, err
 		}
 		if failure != "" {
-			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+			return r.failApp(ctx, restore, tenant, appName, failure)
 		}
 		if !held {
 			return ctrl.Result{RequeueAfter: restoreHoldPoll}, r.persist(ctx, restore)
@@ -305,7 +305,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return ctrl.Result{}, err
 		}
 		if failure != "" {
-			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+			return r.failApp(ctx, restore, tenant, appName, failure)
 		}
 		if !ready {
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
@@ -317,7 +317,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return ctrl.Result{}, err
 		}
 		if failure != "" {
-			return r.failApp(ctx, restore, tenant, appName, spec, failure)
+			return r.failApp(ctx, restore, tenant, appName, failure)
 		}
 		if !ready {
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
@@ -327,7 +327,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 	if entry.QuiesceStart == nil {
 		mode, qErr := r.Tenant.quiesceApp(ctx, tenant.Name, appName, spec)
 		if qErr != nil {
-			return r.failApp(ctx, restore, tenant, appName, spec, fmt.Sprintf("pause failed: %v", qErr))
+			return r.failApp(ctx, restore, tenant, appName, fmt.Sprintf("pause failed: %v", qErr))
 		}
 		entry.QuiesceStart = ptrNow()
 		entry.QuiesceMode = string(mode)
@@ -345,13 +345,13 @@ func (r *TenantRestoreReconciler) restoreApp(
 		// Worse here than on the export side: silently resolving no claims put
 		// the database back without the files it references and resumed the app
 		// on top of the mismatch, reporting Ready.
-		return r.failApp(ctx, restore, tenant, appName, spec,
+		return r.failApp(ctx, restore, tenant, appName,
 			fmt.Sprintf("enumerate what to restore: %v", err))
 	}
 	if err := r.stageFor(ctx, restore, units, decryption); err != nil {
 		// The app is paused: failing is what resumes it. Nothing of it was
 		// replaced by a unit that never ran.
-		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
+		return r.failApp(ctx, restore, tenant, appName, err.Error())
 	}
 	allDone := true
 	var pending []string
@@ -373,7 +373,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			if entry.LastFailure != "" {
 				why += " — " + entry.LastFailure
 			}
-			return r.failApp(ctx, restore, tenant, appName, spec, why)
+			return r.failApp(ctx, restore, tenant, appName, why)
 		}
 		entry.Message = fmt.Sprintf("restoring; waiting on %s", strings.Join(pending, ", "))
 		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
@@ -430,7 +430,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			// already carries the capture Jobs' failures, and a pod that has
 			// not appeared in this long is not going to.
 			if time.Since(entry.QuiesceEnd.Time) > restoreHookPodTimeout {
-				return r.failApp(ctx, restore, tenant, appName, spec,
+				return r.failApp(ctx, restore, tenant, appName,
 					fmt.Sprintf("post-restore hooks: %s", why))
 			}
 			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
@@ -438,12 +438,12 @@ func (r *TenantRestoreReconciler) restoreApp(
 	}
 
 	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry, restoreHookEnv(restore, tenant, appName, profile, r.Tenant)); err != nil {
-		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
+		return r.failApp(ctx, restore, tenant, appName, err.Error())
 	}
 	if owesResume && r.Tenant.Exec != nil {
 		_, resume := spec.QuiesceCommands()
 		if _, err := r.Tenant.execAppCommand(ctx, tenant.Name, appName, spec, resume); err != nil {
-			return r.failApp(ctx, restore, tenant, appName, spec,
+			return r.failApp(ctx, restore, tenant, appName,
 				fmt.Sprintf("the app was scaled down because its maintenance command could not run, and its resume command failed after the restore: %v", err))
 		}
 	}
@@ -1423,7 +1423,6 @@ func (r *TenantRestoreReconciler) failApp(
 	restore *gentianov1alpha1.TenantRestore,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
-	spec *gentianov1alpha1.BackupSpec,
 	message string,
 ) (ctrl.Result, error) {
 	entry := appStatus(&restore.Status.Apps, appName)

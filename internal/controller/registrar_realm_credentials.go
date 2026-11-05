@@ -152,8 +152,7 @@ func writeRegistrarRealmSecret(ctx context.Context, c client.Client, data map[st
 				Name:      RegistrarRealmSecretName,
 				Namespace: registrarRealmSecretNamespace(),
 				Labels: map[string]string{
-					"app.kubernetes.io/managed-by": "gentian-operator",
-					"app.kubernetes.io/part-of":    "gentian-os",
+					"app.kubernetes.io/part-of": "gentian-os",
 				},
 				Annotations: map[string]string{
 					"gentianos.io/description": "The registrar's Keycloak client secret per realm. " +

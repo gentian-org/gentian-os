@@ -5,7 +5,7 @@
 # provides: nothing at install time — tenants are created after installation
 # mutates: Tenant, Component and App CRs, and the finalizer of the RoleBinding gentian-tenant-apps-helm in tenant namespaces, on teardown only
 
-# The one destroy-only step, carried over from v4 unchanged in intent.
+# The one destroy-only step.
 #
 # Tenants are created by operators through the console or `kubectl gentian`,
 # never by the installer, so apply() has nothing to do. It exists because
@@ -18,7 +18,7 @@
 # thing able to clear them. `--purge` covers most of this through its own
 # sweeps; an uninstall has none.
 #
-# v5 adds Components to what v4 removed. A Component carries
+# Components are removed too. A Component carries
 # gentianos.io/component-cleanup, and a Component whose finalizer cannot clear
 # blocks its tenant namespace exactly as an App does — which is not theoretical:
 # two of them deadlocked this cluster on 2026-09-25, terminating and

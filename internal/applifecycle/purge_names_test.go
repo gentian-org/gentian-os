@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,13 +27,13 @@ import (
 func TestPostgresNamesDifferForHyphenatedApps(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
-	if got, want := databaseName(tenant, "docmost-ce"), "demo_docmost_ce"; got != want {
+	if got, want := backup.DatabaseName(tenant, "docmost-ce"), "demo_docmost_ce"; got != want {
 		t.Errorf("databaseName = %q, want %q", got, want)
 	}
-	if got, want := pgRoleName(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
+	if got, want := backup.PostgresRole(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
 		t.Errorf("pgRoleName = %q, want %q", got, want)
 	}
-	if databaseName(tenant, "docmost-ce") == pgRoleName(tenant.Name, "docmost-ce") {
+	if backup.DatabaseName(tenant, "docmost-ce") == backup.PostgresRole(tenant.Name, "docmost-ce") {
 		t.Error("database and role names must not be equal for a hyphenated app; " +
 			"purge relies on dropping each by its own name")
 	}
@@ -43,10 +44,10 @@ func TestPostgresNamesDifferForHyphenatedApps(t *testing.T) {
 func TestPostgresNamesAgreeWithoutHyphens(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
-	if got, want := databaseName(tenant, "xwiki"), "demo_xwiki"; got != want {
+	if got, want := backup.DatabaseName(tenant, "xwiki"), "demo_xwiki"; got != want {
 		t.Errorf("databaseName = %q, want %q", got, want)
 	}
-	if got, want := pgRoleName(tenant.Name, "xwiki"), "demo_xwiki"; got != want {
+	if got, want := backup.PostgresRole(tenant.Name, "xwiki"), "demo_xwiki"; got != want {
 		t.Errorf("pgRoleName = %q, want %q", got, want)
 	}
 }
@@ -62,10 +63,10 @@ func TestDatabasePrefixDoesNotChangeRoleName(t *testing.T) {
 		},
 	}
 
-	if got, want := databaseName(tenant, "docmost-ce"), "custom_docmost_ce"; got != want {
+	if got, want := backup.DatabaseName(tenant, "docmost-ce"), "custom_docmost_ce"; got != want {
 		t.Errorf("databaseName = %q, want %q", got, want)
 	}
-	if got, want := pgRoleName(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
+	if got, want := backup.PostgresRole(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
 		t.Errorf("pgRoleName = %q, want %q", got, want)
 	}
 }

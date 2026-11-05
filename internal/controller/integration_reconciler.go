@@ -130,7 +130,6 @@ func (r *TenantReconciler) deleteIntegrationBindings(ctx context.Context, tenant
 // or an empty string if none is found. The consumer app is excluded from the search.
 func (r *TenantReconciler) findProviderInTenant(
 	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
 	contract string,
 	presentApps map[string]struct{},
 	consumerApp string,
@@ -209,7 +208,6 @@ func buildIntegrationBinding(
 			},
 			Capabilities: integration.Capabilities,
 			Auth: &gentianov1alpha1.BindingAuth{
-				Method:    "api-key",
 				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
 			},
 			Endpoint: endpoint,

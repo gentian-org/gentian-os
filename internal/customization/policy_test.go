@@ -59,23 +59,6 @@ func TestSupportsRungDefaultsWhenUndeclared(t *testing.T) {
 	}
 }
 
-func TestLowestSupportedRungPicksCheapest(t *testing.T) {
-	surface := &gentianov1alpha1.CustomizationSurface{
-		SupportedRungs: []gentianov1alpha1.CustomizationRung{
-			gentianov1alpha1.RungConfigure,
-			gentianov1alpha1.RungDropIn,
-			gentianov1alpha1.RungExtension,
-		},
-	}
-	got, ok := LowestSupportedRung(surface, []gentianov1alpha1.CustomizationRung{
-		gentianov1alpha1.RungExtension,
-		gentianov1alpha1.RungDropIn,
-	})
-	if !ok || got != gentianov1alpha1.RungDropIn {
-		t.Fatalf("expected L1, got %q (ok=%v)", got, ok)
-	}
-}
-
 func TestValidateRecordRejectsPatchAtTenantScope(t *testing.T) {
 	record := &gentianov1alpha1.Customization{
 		ObjectMeta: metav1.ObjectMeta{Name: "bad"},
@@ -197,42 +180,6 @@ func TestValidateRecordRejectsTenantScopeWithoutTenants(t *testing.T) {
 	}
 	if errs := ValidateRecord(record); !containsMessage(errs, "spec.tenants must be non-empty") {
 		t.Fatalf("expected tenants requirement, got %v", errs)
-	}
-}
-
-func TestValidateNamespaceScopingEnforcesTenantNamespace(t *testing.T) {
-	record := &gentianov1alpha1.Customization{
-		Spec: gentianov1alpha1.CustomizationSpec{
-			Target:  gentianov1alpha1.CustomizationTarget{Profile: "odoo-cb-base"},
-			Rung:    gentianov1alpha1.RungExtension,
-			Scope:   gentianov1alpha1.ScopeTenant,
-			Tenants: []string{"acme"},
-		},
-	}
-	if err := ValidateNamespaceScoping(record, "tenant-acme", []string{"tenant-acme"}); err != nil {
-		t.Fatalf("expected dedicated namespace to pass, got %v", err)
-	}
-	err := ValidateNamespaceScoping(record, "shared-erp", []string{"tenant-acme"})
-	if err == nil || !strings.Contains(err.Error(), "shared runtime are") {
-		t.Fatalf("expected shared-namespace rejection, got %v", err)
-	}
-}
-
-func TestGradeForScoreBanding(t *testing.T) {
-	cases := map[int32]gentianov1alpha1.CustomizationGrade{
-		8: gentianov1alpha1.GradeA,
-		7: gentianov1alpha1.GradeA,
-		6: gentianov1alpha1.GradeB,
-		5: gentianov1alpha1.GradeB,
-		4: gentianov1alpha1.GradeC,
-		3: gentianov1alpha1.GradeC,
-		2: gentianov1alpha1.GradeD,
-		0: gentianov1alpha1.GradeD,
-	}
-	for score, want := range cases {
-		if got := GradeForScore(score); got != want {
-			t.Fatalf("score %d: expected %q, got %q", score, want, got)
-		}
 	}
 }
 

@@ -13,7 +13,6 @@ package arbiter
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 )
 
@@ -94,18 +93,9 @@ func (e Entry) StoreName() string { return e.Tenant + "/" + e.Component }
 // neither name, so no two entries share one.
 func (e Entry) recordKey() string { return e.Tenant + "." + e.Component }
 
-// LoadTable reads the table the operator wrote. An entry that names no
+// ParseTable reads the table the operator wrote. An entry that names no
 // tenant, no component, no key or no model is refused with the whole table:
 // a table the operator did not write is not one to decide by.
-func LoadTable(path string) (*Table, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return ParseTable(raw)
-}
-
-// ParseTable is LoadTable for bytes already read.
 func ParseTable(raw []byte) (*Table, error) {
 	t := &Table{}
 	if err := json.Unmarshal(raw, t); err != nil {

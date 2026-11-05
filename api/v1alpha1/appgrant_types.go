@@ -89,10 +89,6 @@ type AppGrantStatus struct {
 	// ObservedGeneration is the last reconciled spec generation.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-
-	// TupleCount is the number of OpenFGA tuples managed for this grant.
-	// +optional
-	TupleCount int `json:"tupleCount,omitempty"`
 }
 
 // AppGrant is a tenant-scoped authorization grant — a subset of what the ComponentProfile declares.

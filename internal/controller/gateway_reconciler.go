@@ -22,15 +22,11 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ensureGateway handles operator-only gateway edge work when ROUTING_MODE=gateway:
+// ensureGateway handles operator-only gateway edge work:
 // Cloudflare DNS, stale route/policy cleanup, and readiness waits.
 // Kubernetes edge objects (Gateway, HTTPRoutes, ReferenceGrants, BackendTrafficPolicy)
 // are owned by Crossplane via the manifest bridge.
 func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	if !isGatewayRoutingMode(r.RoutingMode) {
-		return ctrl.Result{}, nil
-	}
-
 	nsName := tenantNamespaceName(tenant)
 	intents, err := r.collectTenantIngressIntents(ctx, tenant)
 	if err != nil {
@@ -100,7 +96,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue, "Programmed", message)
-	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm, r.RoutingMode); err != nil {
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile CoreDNS tenant hairpin: %w", err)
 	}
 	return ctrl.Result{}, nil

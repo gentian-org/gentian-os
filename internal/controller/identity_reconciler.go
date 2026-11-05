@@ -67,7 +67,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	// We must always provision the tenant Keycloak realm for app OIDC and the
 	// kernel IdP broker, even when no apps currently require OIDC clients.
 
-	realmDone, err := r.ensureRealmJob(ctx, tenant, realmName)
+	realmDone, err := r.ensureRealmJob(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure Keycloak realm Job: %w", err)
 	}
@@ -88,7 +88,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	}
 
 	// Ensure realm-admin user exists in the realm (Option A tenant admin).
-	adminDone, err := r.ensureAdminJob(ctx, tenant, realmName)
+	adminDone, err := r.ensureAdminJob(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure Keycloak tenant admin Job: %w", err)
 	}
@@ -123,7 +123,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	}
 
 	for _, cfg := range samlConfigs {
-		done, err := r.ensureSAMLClientJob(ctx, tenant, realmName, cfg)
+		done, err := r.ensureSAMLClientJob(ctx, tenant, cfg)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Keycloak SAML Job for app %s: %w", cfg.profileName, err)
 		}
@@ -188,22 +188,22 @@ func (r *TenantReconciler) reportRefusedOIDCClients(ctx context.Context, tenant 
 }
 
 // ensureRealmJob waits for the Crossplane-owned Keycloak realm Job.
-func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
+func (r *TenantReconciler) ensureRealmJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 }
 
 // ensureAdminJob waits for the Crossplane-owned tenant realm-admin Job.
-func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
+func (r *TenantReconciler) ensureAdminJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, adminJobName(tenant.Name))
 }
 
 // ensureClientJob waits for the Crossplane-owned OIDC client Job for one app.
-func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string) (bool, error) {
+func (r *TenantReconciler) ensureClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName, clientID string, redirectURIs []string) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, appName))
 }
 
 // ensureSAMLClientJob waits for the Keycloak SAML client Job for one app.
-func (r *TenantReconciler) ensureSAMLClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg samlAppConfig) (bool, error) {
+func (r *TenantReconciler) ensureSAMLClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, cfg samlAppConfig) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
@@ -254,7 +254,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			return err
 		}
 		jobName = realmDisableJobName(tenant.Name)
-		makeJob = func() *batchv1.Job { return makeRealmDisableJob(tenant, realmName, r.KernelRealm) }
+		makeJob = func() *batchv1.Job { return makeRealmDisableJob(tenant, realmName) }
 	}
 
 	existing := &batchv1.Job{}
@@ -306,7 +306,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 // --- Job constructors --------------------------------------------------------
 
-func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string) *batchv1.Job {
+func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
@@ -445,7 +445,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *
 	}
 }
 
-func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
+func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	return &batchv1.Job{
@@ -887,27 +887,6 @@ func jobHasCondition(job *batchv1.Job, condType batchv1.JobConditionType) bool {
 
 func jobIsComplete(job *batchv1.Job) bool {
 	return jobHasCondition(job, batchv1.JobComplete)
-}
-
-func jobCompletionTime(job *batchv1.Job) *metav1.Time {
-	if job.Status.CompletionTime != nil {
-		return job.Status.CompletionTime
-	}
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
-			return &c.LastTransitionTime
-		}
-	}
-	return nil
-}
-
-func jobCompletedAfter(sync, source *batchv1.Job) bool {
-	syncTime := jobCompletionTime(sync)
-	sourceTime := jobCompletionTime(source)
-	if syncTime == nil || sourceTime == nil {
-		return false
-	}
-	return sourceTime.After(syncTime.Time)
 }
 
 func jobIsFailed(job *batchv1.Job) bool {

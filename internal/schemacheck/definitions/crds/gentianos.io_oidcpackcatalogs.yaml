@@ -168,10 +168,6 @@ spec:
             type: object
           status:
             description: OIDCPackCatalogStatus is optional observed state.
-            properties:
-              packCount:
-                description: PackCount is the number of entries in spec.packs.
-                type: integer
             type: object
         type: object
     served: true

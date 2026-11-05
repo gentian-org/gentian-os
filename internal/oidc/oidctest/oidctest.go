@@ -8,7 +8,8 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-package oidc
+// Package oidctest loads OIDC pack catalog fixtures for tests.
+package oidctest
 
 import (
 	"os"
@@ -22,9 +23,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// NewTestClientWithCatalogFile loads an OIDCPackCatalog YAML file into a fake client.
-// Intended for unit tests in other packages.
-func NewTestClientWithCatalogFile(t *testing.T, path string) client.Client {
+// NewClientWithCatalogFile loads an OIDCPackCatalog YAML file into a fake client.
+func NewClientWithCatalogFile(t *testing.T, path string) client.Client {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {

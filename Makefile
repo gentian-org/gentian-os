@@ -157,19 +157,13 @@ tidy:
 ## Run every linter the CI Lint job runs (Go, YAML, shell)
 lint: lint-go lint-yaml lint-shell lint-docs lint-spelling
 
-## Everything CI runs, in one target.
-##
-## It exists because of the way the v4 removal was verified: make lint, make
-## test and make test-unit-render all passed, and the one target NOT run was
-## make test-unit -- which CI ran, and which caught a schema fixture still
-## carrying the field the XRD had just lost. A local gate set that is a
-## subset of CI's is a gate set that reports green on work CI will reject.
+## Everything CI runs, in one target. A local gate set that is a subset of
+## CI's reports green on work CI will reject.
 verify: verify-gen lint validate-steps test test-unit
 	@bash install.sh --explain >/dev/null
 	@printf '\n\033[0;32mThe local gates are green.\033[0m\n'
 
 
-## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 # The documentation site, built as CI builds it; GENTIAN_APPS_DIR and
 # GENTIAN_UI_DIR name local checkouts of the other repositories (optional).
 docs-site:
@@ -182,6 +176,7 @@ lint-docs:
 lint-spelling:
 	codespell docs README.md GETTING-STARTED.md AGENTS.md CONTRIBUTING.md SECURITY.md LICENSING.md
 
+## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 lint-go:
 	golangci-lint run ./...
 	@# The API module carries its own license header and its own config for it.
@@ -217,8 +212,6 @@ test-cert-manager-dns01-args:
 test-step0-sync:
 	@bash scripts/tests/test-step0-sync.sh
 
-## The bootstrap chart's phase switches render as the installer passes them
-## (--set-string, so "false" is a string). Needs helm, no cluster.
 ## test-user-tenant-scaffold: what step 0 writes for the user tenant of a
 ## single-tenancy cluster, and that it writes nothing under multi. The one
 ## tenant the installer ever creates: held to the Tenant CRD, admitted by
@@ -266,6 +259,8 @@ test-platform-role-groups:
 test-kubectl-gentian:
 	@bash scripts/tests/test-kubectl-gentian.sh
 
+## The bootstrap chart's phase switches render as the installer passes them
+## (--set-string, so "false" is a string). Needs helm, no cluster.
 test-bootstrap-switches:
 	@bash scripts/tests/test-bootstrap-switches.sh
 
@@ -482,8 +477,7 @@ lint-image-digests:
 lint-image-pins:
 	@bash scripts/lint/lint-image-pins.sh
 
-## Assert every function call in every shell file resolves. Catches deleting a
-## function whose last caller was not checked — the most repeated mistake here.
+## Assert every step's check() agrees with its provides: header.
 lint-step-contracts:
 	@bash scripts/lint/lint-step-contracts.sh
 
@@ -493,6 +487,8 @@ lint-step-contracts:
 lint-job-scripts:
 	@bash scripts/lint/lint-job-scripts.sh
 
+## Assert every function call in every shell file resolves. Catches deleting a
+## function whose last caller was not checked — the most repeated mistake here.
 lint-resolvable:
 	@bash scripts/lint/lint-resolvable.sh
 
@@ -515,12 +511,12 @@ lint-credential-validators:
 lint-credential-catalogue:
 	@python3 scripts/lint/lint-credential-catalogue.py
 
-## Report shell defaults for settings the Cluster XRD already answers. Expected
-## non-zero until the call sites read the claim; the number must only go down.
 ## Fail if anything writes a password where Dovecot expects a hash.
 lint-password-schemes:
 	@bash scripts/lint/lint-password-schemes.sh
 
+## Report shell defaults for settings the Cluster XRD already answers. Not
+## fatal; the number must only go down.
 lint-claim-defaults:
 	@bash scripts/lint/lint-claim-defaults.sh
 
@@ -615,8 +611,6 @@ lint-sequencer-targets:
 lint-eso-readable-paths:
 	@python3 scripts/lint/lint-eso-readable-paths.py
 
-## Regenerate the §11 phase table from the phase sections
-## Fail when the phase table disagrees with the phase sections
 ## Fail when a render fixture composes a kind provider-kubernetes-kinds.yaml does not cover
 lint-provider-rbac:
 	@python3 scripts/lint/lint-provider-rbac.py
@@ -651,19 +645,18 @@ refresh-provider-types:
 lint-template-placeholders:
 	@python3 scripts/lint/lint-template-placeholders.py
 
-## Report macOS/BSD portability violations. Expected non-zero until Phase 13
-## migrates the call sites; the count must only go down.
+## Fail on macOS/BSD portability violations in the shell the installer runs.
 lint-portability:
 	@bash scripts/lint/lint-portability.sh
 
-## Assert every bootstrap Application name resolves to a chart template.
-## Reads only the repository — no cluster.
 ## Assert every shell function is reached by something that runs. The other
 ## half of lint-resolvable: that one catches a call with no definition, this
 ## one a definition with no call.
 lint-unreachable:
 	@python3 scripts/lint/lint-unreachable.py
 
+## Assert every bootstrap Application name resolves to a chart template.
+## Reads only the repository — no cluster.
 lint-bootstrap-apps:
 	@bash scripts/lint/lint-bootstrap-apps.sh
 
@@ -897,10 +890,6 @@ verify-argocd-config:
 verify-image-updates:
 	@bash scripts/tools/verify-image-updates.sh
 
-# ---------------------------------------------------------------------------
-# E2E tests (live dev cluster required)
-# ---------------------------------------------------------------------------
-
 ## Install crossplane CLI (if not present) and kubeconform (if not present)
 install-tools:
 	@which crossplane >/dev/null 2>&1 || { \
@@ -920,6 +909,10 @@ install-tools:
 	}
 	@echo "crossplane: $$(crossplane version 2>&1 | head -1)"
 	@echo "kubeconform: $$(kubeconform -v)"
+
+# ---------------------------------------------------------------------------
+# E2E tests (live dev cluster required)
+# ---------------------------------------------------------------------------
 
 ## Keycloak + Dovecot install smoke (requires an installed cluster)
 e2e-p5-keycloak-dovecot:

@@ -25,9 +25,8 @@ re-run `./install.sh`.
 
 ## How should I set up edge routing?
 
-Gentian OS uses **Gateway API + Envoy Gateway** as the only edge stack;
-`routingMode: gateway` is the only supported value and the default, so there
-is nothing to set.
+Gentian OS uses **Gateway API + Envoy Gateway** as the only edge stack, so
+there is nothing to set.
 
 See [routing.md](../concepts/routing.md) for the topology: the
 `gentian-envoy` GatewayClass and the kernel's two Gateways, `authenticated`

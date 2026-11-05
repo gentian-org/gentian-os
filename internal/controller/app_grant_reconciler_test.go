@@ -34,7 +34,6 @@ func TestAppGrantIsRecordedWithoutAStore(t *testing.T) {
 			Name:       "provider",
 			Namespace:  "tenant-demo",
 			Labels:     map[string]string{tenantLabel: "demo"},
-			Finalizers: []string{appGrantFinalizer},
 			Generation: 3,
 		},
 		Spec: gentianov1alpha1.AppGrantSpec{
@@ -59,6 +58,35 @@ func TestAppGrantIsRecordedWithoutAStore(t *testing.T) {
 	}
 	if updated.Status.ObservedGeneration != 3 {
 		t.Fatalf("observedGeneration = %d, want 3", updated.Status.ObservedGeneration)
+	}
+}
+
+// A grant that carries the cleanup finalizer has it taken off, so its delete
+// is never held.
+func TestAppGrantFinalizerIsTakenOff(t *testing.T) {
+	t.Parallel()
+	grant := &gentianov1alpha1.AppGrant{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "provider",
+			Namespace:  "tenant-demo",
+			Finalizers: []string{appGrantFinalizer},
+		},
+		Spec: gentianov1alpha1.AppGrantSpec{App: "provider"},
+	}
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(grant).WithStatusSubresource(grant).Build()
+	r := &AppGrantReconciler{Client: c}
+	key := types.NamespacedName{Name: grant.Name, Namespace: grant.Namespace}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	updated := &gentianov1alpha1.AppGrant{}
+	if err := c.Get(context.Background(), key, updated); err != nil {
+		t.Fatalf("get grant: %v", err)
+	}
+	if len(updated.Finalizers) != 0 {
+		t.Fatalf("finalizers = %v, want none", updated.Finalizers)
 	}
 }
 
@@ -216,7 +244,7 @@ func TestBindingWritesTheProvidersAddress(t *testing.T) {
 			Contract: "orders",
 			Provider: gentianov1alpha1.AppEndpoint{App: "provider", Namespace: "tenant-demo"},
 			Consumer: gentianov1alpha1.AppEndpoint{App: "consumer", Namespace: "tenant-demo"},
-			Auth:     &gentianov1alpha1.BindingAuth{Method: "api-key", VaultPath: path},
+			Auth:     &gentianov1alpha1.BindingAuth{VaultPath: path},
 			Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "provider-api", Port: 8000, Path: "/v1"},
 		},
 	}

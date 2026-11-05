@@ -208,16 +208,6 @@ func insertHostsBlock(corefile, block string) (string, bool) {
 	return corefile[:kubeIdx] + hostsBlock + corefile[kubeIdx:], true
 }
 
-func sortedHairpinHosts(kernelDomain string) []string {
-	return []string{
-		kernelDomain,
-		"argocd." + kernelDomain,
-		desktopHost(kernelDomain),
-		"id." + kernelDomain,
-		platformDesktopHost(kernelDomain),
-	}
-}
-
 func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	for i, line := range lines {
 		if strings.TrimSpace(line) == marker {
@@ -230,7 +220,7 @@ func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	return append(lines, newLine)
 }
 
-func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string, error) {
+func kernelEdgeClusterIP(ctx context.Context, c client.Client) (string, error) {
 	svc, err := findKernelEdgeService(ctx, c)
 	if err != nil {
 		return "", err
@@ -242,8 +232,8 @@ func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string
 	return ip, nil
 }
 
-func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm, routingMode string) error {
-	edgeIP, err := kernelEdgeClusterIP(ctx, c, routingMode)
+func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) error {
+	edgeIP, err := kernelEdgeClusterIP(ctx, c)
 	if err != nil {
 		return err
 	}

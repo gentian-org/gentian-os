@@ -44,16 +44,6 @@ func InternalPath(tenant, app, name string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, app, name)
 }
 
-// SuppliedPath is where a credential a person supplies for an app is kept
-// (a ComponentProfile.spec.secrets.supplied entry): one property per field
-// the entry declares. Below AppPath, so purging the app removes it. The app
-// Composition and the custodian's requirement agree on this path through
-// the CredentialRequirement the Composition emits, named by
-// SuppliedRequirementName.
-func SuppliedPath(tenant, app, name string) string {
-	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/supplied/%s", tenant, app, name)
-}
-
 // SuppliedRequirementName is the CredentialRequirement asking for one
 // supplied credential of one app of one tenant. Cluster-scoped, so all three
 // are in the name.
@@ -85,10 +75,4 @@ const MasterPasswordPath = "gentian-os/kernel/internal/master-password"
 // subtree rather than a list that has to be kept in step with the paths.
 func TenantPath(tenant string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s", tenant)
-}
-
-// TenantAdminPath returns the canonical KV v2 logical path for the
-// tenant-scoped realm admin credentials created by the identity reconciler.
-func TenantAdminPath(tenant string) string {
-	return fmt.Sprintf("gentian-os/tenants/%s/admin", tenant)
 }

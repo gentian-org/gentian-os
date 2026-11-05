@@ -99,9 +99,8 @@ gentian_dns_credential_secret_name() {
 
 # gentian_cert_manager_namespace — where cert-manager runs on THIS cluster.
 #
-# Not a constant: the v4 layout gave cert-manager a namespace of its own, the
-# v5 layout runs it at the edge beside the Gateway, and a distro addon puts it
-# wherever it likes. The webhook Deployment is the one object every
+# Not a constant: the layout runs it at the edge beside the Gateway, and a
+# distro addon puts it wherever it likes. The webhook Deployment is the one object every
 # installation has exactly one of, so it is what the question is asked of, and
 # the answer is cached in CERT_MANAGER_NAMESPACE for the rest of the run.
 gentian_cert_manager_namespace() {
@@ -497,15 +496,12 @@ apply_edge_envoyproxy() {
 }
 
 wait_for_gateway_platform() {
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        return 0
-    fi
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         warn "KERNEL_DOMAIN unset; skipping gateway platform wait."
         return 0
     fi
 
-    banner "Waiting for kernel Gateway API platform (ROUTING_MODE=gateway)"
+    banner "Waiting for kernel Gateway API platform"
     local ns
     ns="$(_gentian_os_services_namespace)"
     local deadline=$(( SECONDS + 300 ))
@@ -555,9 +551,6 @@ wait_for_gateway_platform() {
 }
 
 print_gateway_tunnel_hints() {
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        return 0
-    fi
     local ns; ns="$(gentian_services_namespace)"
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
@@ -573,7 +566,6 @@ print_gateway_tunnel_hints() {
 # mail.<kernelDomain> is left unchanged (Dovecot). The operator reconciles this
 # continuously; install/update runs it once so clusters recover before sync.
 _reconcile_kernel_https_coredns_hairpin() {
-    [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"

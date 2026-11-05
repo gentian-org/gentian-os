@@ -171,7 +171,7 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 				Placement: &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery},
 			}}
 			r := &ComponentReconciler{KernelRealm: "kernel"}
-			np := buildComponentNetworkPolicy(comp, defaultTenantName(comp), releasePods(releaseName(comp)), r.componentEgressNamespaces(nil, profile, tenant), nil)
+			np := buildComponentNetworkPolicy(comp, defaultTenantName(comp), releasePods(releaseName(comp)), r.componentEgressNamespaces(profile, tenant), nil)
 			return egressClient(t, np, layout.System("postgresql"), provisioner.PostgresPort)
 		},
 		"tenant-component-llm": func(t *testing.T) builtClient {

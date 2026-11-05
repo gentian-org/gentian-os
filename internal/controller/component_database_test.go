@@ -248,7 +248,7 @@ func TestATenantDesktopsDatabaseWaitsWithoutAVault(t *testing.T) {
 // client container is built to be admitted there.
 func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 	for name, c := range map[string]corev1.Container{
-		"psql":    psqlContainer("x", "true", ""),
+		"psql":    psqlContainer("x", "true"),
 		"mariadb": mariadbContainer("x", "true"),
 		"redis":   redisContainer("x", "user", "prefix", "true"),
 		"s3":      backup.ObjectStorageProvisionContainer("x", "bucket", ""),

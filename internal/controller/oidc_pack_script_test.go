@@ -19,26 +19,13 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/oidc"
+	"github.com/gentian-org/gentian-os/internal/oidc/oidctest"
 )
 
 const testOIDCCatalogFixture = "../oidc/testdata/minimal-oidc-catalog.yaml"
 
-func TestOIDCPacksNeedEntitlementGroups(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
-	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")
-	if err != nil || !ok {
-		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
-	}
-	if !oidcPacksNeedEntitlementGroups([]oidcAppConfig{{pack: &pack, templates: templates}}) {
-		t.Fatal("expected catalogue-test-client pack to require entitlement groups")
-	}
-	if oidcPacksNeedEntitlementGroups([]oidcAppConfig{{profileName: "custom-app"}}) {
-		t.Fatal("expected custom client without pack to skip entitlement group gate")
-	}
-}
-
 func TestBuildOIDCPackScript(t *testing.T) {
-	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	c := oidctest.NewClientWithCatalogFile(t, testOIDCCatalogFixture)
 	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
@@ -158,7 +145,7 @@ func TestTheOIDCPackScriptCompletesWhenTheClientRoleIsNotThereYet(t *testing.T) 
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is not installed; the script resolves ids with it")
 	}
-	c := oidc.NewTestClientWithCatalogFile(t, testOIDCCatalogFixture)
+	c := oidctest.NewClientWithCatalogFile(t, testOIDCCatalogFixture)
 	pack, templates, ok, err := oidc.ResolvePack(context.Background(), c, "catalogue-test-app", "catalogue-test-client")
 	if err != nil || !ok {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)

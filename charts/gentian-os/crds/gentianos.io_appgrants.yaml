@@ -183,10 +183,6 @@ spec:
                 - Ready
                 - Degraded
                 type: string
-              tupleCount:
-                description: TupleCount is the number of OpenFGA tuples managed for
-                  this grant.
-                type: integer
             type: object
         type: object
     served: true

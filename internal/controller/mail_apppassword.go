@@ -414,7 +414,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 		}
 		pw := deriveMailPassword(seed, mailAppPasswordApp, addr)
 		line := existing[addr]
-		if !argon2idLineMatches(line, addr, pw) {
+		if !argon2idLineMatches(line, pw) {
 			var err error
 			if line, err = argon2idPasswdLine(addr, pw); err != nil {
 				return err
@@ -686,7 +686,7 @@ func secretKeySafe(s string) string {
 //
 // A line that cannot be parsed reports false, so a malformed or foreign entry is
 // replaced rather than trusted.
-func argon2idLineMatches(line, address, password string) bool {
+func argon2idLineMatches(line, password string) bool {
 	_, encoded, ok := strings.Cut(strings.TrimSpace(line), ":")
 	if !ok || !strings.HasPrefix(encoded, "{ARGON2ID}$argon2id$v=19$") {
 		return false

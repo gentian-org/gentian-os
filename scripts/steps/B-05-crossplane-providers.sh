@@ -242,9 +242,8 @@ apply() {
     # A Provider reports Healthy when its pod runs; it creates its own CRDs
     # shortly afterwards. Applying a ProviderConfig in that window fails with
     # "no matches for kind ProviderConfig", and _kubectl_retry does not retry
-    # that -- it retries connection errors only. The v4 installer waits here
-    # for exactly this reason, and the comment there records what it cost:
-    # a Keycloak Release stuck on a ProviderConfig that was never created.
+    # that -- it retries connection errors only, and the cost is a Keycloak
+    # Release stuck on a ProviderConfig that was never created.
     for crd in "${_V5_PROVIDER_CRDS[@]}"; do
         info "waiting for ${crd} to be Established"
         kubectl wait crd "${crd}" --for=condition=Established --timeout=300s >/dev/null

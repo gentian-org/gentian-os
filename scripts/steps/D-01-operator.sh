@@ -97,9 +97,9 @@ destroy() {
         --ignore-not-found=true --wait=false 2>/dev/null || true
 
     # The API scaffold: the gentianos.io CRDs and the tenant validating
-    # webhook. v4 removed these here and v5 did not, so a v5 teardown left the
-    # webhook intercepting PATCH on Tenant CRs with no service behind it --
-    # every patch failing with "service not found", which is what E-01 exists
-    # to get ahead of and cannot if the webhook outlives this step.
+    # webhook. A webhook left behind intercepts PATCH on Tenant CRs with no
+    # service behind it -- every patch failing with "service not found", which
+    # is what E-01 exists to get ahead of and cannot if the webhook outlives
+    # this step.
     _delete_gentianos_api_scaffold || true
 }

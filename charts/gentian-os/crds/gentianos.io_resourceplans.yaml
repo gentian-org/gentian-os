@@ -211,18 +211,6 @@ spec:
             type: object
           status:
             description: ResourcePlanStatus reports observed plan state.
-            properties:
-              observedAt:
-                description: ObservedAt is when TenantCount was last recomputed.
-                format: date-time
-                type: string
-              tenantCount:
-                description: |-
-                  TenantCount is the number of tenants whose quotas currently match this
-                  plan. Maintained for the console's catalog view; it is derived, and
-                  nothing reads it to make a decision.
-                format: int32
-                type: integer
             type: object
         type: object
     served: true

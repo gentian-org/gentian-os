@@ -39,7 +39,7 @@ func provisioningRequeueFromJobAge(job *batchv1.Job) time.Duration {
 	return delay
 }
 
-func (r *TenantReconciler) provisioningRequeueDelay(ctx context.Context, tenantName string, jobNames ...string) time.Duration {
+func (r *TenantReconciler) provisioningRequeueDelay(ctx context.Context, jobNames ...string) time.Duration {
 	delay := provisioningRequeueMin
 	for _, jobName := range jobNames {
 		if jobName == "" {
@@ -63,7 +63,7 @@ func (r *TenantReconciler) provisioningRequeueDelay(ctx context.Context, tenantN
 }
 
 func (r *TenantReconciler) requeueForPendingJob(ctx context.Context, tenantName string, jobNames ...string) ctrl.Result {
-	return ctrl.Result{RequeueAfter: r.provisioningRequeueDelay(ctx, tenantName, jobNames...)}
+	return ctrl.Result{RequeueAfter: r.provisioningRequeueDelay(ctx, jobNames...)}
 }
 
 func (r *TenantReconciler) requeueForPendingApps(

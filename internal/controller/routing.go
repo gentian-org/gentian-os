@@ -11,16 +11,12 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"strings"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 const (
-	// RoutingModeGateway is the only supported edge routing stack.
-	RoutingModeGateway = "gateway"
-
 	GentianGatewayClassName      = "gentian-envoy"
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
 	// The two edges (networking.md §1): one Envoy fleet, two policy domains,
@@ -38,10 +34,8 @@ const (
 	operatorConfigMapName       = "gentian-os-config"
 )
 
-// Where the kernel's functions run. Resolved from the layout the chart passes
-// in (internal/layout), which answers the v4 names when a process is started
-// without it — so an operator of this release behaves identically on a cluster
-// that has not been rebuilt.
+// Where the kernel's functions run, from the layout the chart passes in
+// (internal/layout).
 var (
 	operatorNamespace = layout.Namespace(layout.Control)
 	argocdNamespace   = layout.Namespace(layout.GitOps)
@@ -51,17 +45,6 @@ var (
 	// observabilityNamespace is where the cluster view runs.
 	observabilityNamespace = layout.Namespace(layout.Observability)
 )
-
-func normalizeRoutingMode(mode string) string {
-	if strings.EqualFold(strings.TrimSpace(mode), RoutingModeGateway) || strings.TrimSpace(mode) == "" {
-		return RoutingModeGateway
-	}
-	return RoutingModeGateway
-}
-
-func isGatewayRoutingMode(string) bool {
-	return true
-}
 
 // requeueGatewayAfter is the default requeue interval while waiting for Gateway/HTTPRoute status.
 const requeueGatewayAfter = 15 * time.Second

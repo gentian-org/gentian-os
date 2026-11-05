@@ -34,15 +34,6 @@ var ClusterRoles = []string{
 	"break_glass",
 }
 
-func knownClusterRole(rel string) bool {
-	for _, r := range ClusterRoles {
-		if r == rel {
-			return true
-		}
-	}
-	return false
-}
-
 // ClaimRoles maps each field of the Cluster claim's spec.platformRoles, as an
 // operator writes it, to the cluster relation it grants: the two roles a
 // Keycloak group of the kernel realm holds. The claim's spelling and the
