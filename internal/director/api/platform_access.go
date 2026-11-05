@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
@@ -212,7 +214,7 @@ func (s *Server) setRoleHolder(w http.ResponseWriter, r *http.Request, c call) {
 // of tenant (authz.TenantAdministrator). A tenant that is not a name is not
 // asked about.
 func (s *Server) tenantAdministrator(r *http.Request, tenant, subject string) (bool, error) {
-	if !gitops.ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return false, nil
 	}
 	return authz.TenantAdministrator(r.Context(), s.cfg.Authz, reqID(r.Context()), tenant, subject)

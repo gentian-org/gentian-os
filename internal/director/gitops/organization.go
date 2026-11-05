@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
 	// The director's image has no zone database of its own.
 	_ "time/tzdata"
 
@@ -77,7 +78,7 @@ func parseTenantOrganization(text string) (gentianov1alpha1.TenantSpec, error) {
 
 // TenantOrganization reads who a tenant is back, with what is still missing.
 func (g *GitOps) TenantOrganization(ctx context.Context, tenant string) (Organization, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Organization{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -201,7 +202,7 @@ func CountryCurrency(country string) string {
 // An empty display name leaves it as it is; it is required. A currency left
 // empty is the one of the tenant's country, where it has one.
 func (g *GitOps) SetTenantOrganization(ctx context.Context, tenant, displayName string, org gentianov1alpha1.TenantOrganization, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	displayName = strings.TrimSpace(displayName)

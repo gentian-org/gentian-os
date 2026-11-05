@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
@@ -75,7 +77,7 @@ func (s *Server) requestAdminInvitation(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	tenant := r.PathValue("t")
-	if !dnsLabel.MatchString(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return
 	}
@@ -135,7 +137,7 @@ func (s *Server) requestAdminInvitation(w http.ResponseWriter, r *http.Request, 
 // otherwise what became of the last one. Never where it goes.
 func (s *Server) adminInvitation(w http.ResponseWriter, r *http.Request, _ call) {
 	tenant := r.PathValue("t")
-	if !dnsLabel.MatchString(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return
 	}

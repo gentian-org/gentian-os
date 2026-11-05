@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // What changed, who changed it, and what allowed them to.
@@ -89,7 +91,7 @@ func (g *GitOps) TenantExposureChanges(ctx context.Context, tenant string, limit
 // tenantChanges lists the commits that touched one tenant's directory, or
 // one file in it.
 func (g *GitOps) tenantChanges(ctx context.Context, tenant, file string, limit int, since string) ([]Change, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()

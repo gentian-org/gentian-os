@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -40,7 +42,7 @@ type StoreTerms struct {
 
 // TenantStoreTerms reads the acceptance back; nil when there is none.
 func (g *GitOps) TenantStoreTerms(ctx context.Context, tenant string) (*StoreTerms, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -71,7 +73,7 @@ func (g *GitOps) TenantStoreTerms(ctx context.Context, tenant string) (*StoreTer
 // terms, now: one commit, or "unchanged" when that version is the one
 // recorded already -- accepting again does not move the time.
 func (g *GitOps) SetTenantStoreTerms(ctx context.Context, tenant, version string, now time.Time, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !termsVersionPattern.MatchString(version) {

@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // ClusterRoles are the cluster's role relations: admin and break_glass, held
@@ -91,9 +93,6 @@ var HolderRoles = map[string]string{
 // instead.
 const ScopeCluster = "cluster"
 
-// tenantName is a tenant's name as a scope may name it: a DNS label.
-var tenantName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
-
 // HolderScope is the scope a role holds for a person of tenant, or ok false
 // when that tenant's people may not hold the role:
 //
@@ -137,7 +136,7 @@ func HolderScope(role, tenant string) (scope string, ok bool) {
 func EntryScope(role, tenant, stated string) (scope string, ok bool) {
 	if role == "tenantAuditor" {
 		t, named := strings.CutPrefix(stated, "tenant:")
-		if tenant != PlatformTenant || !named || !tenantName.MatchString(t) || t == PlatformTenant {
+		if tenant != PlatformTenant || !named || !gentianov1alpha1.ValidTenantName(t) || t == PlatformTenant {
 			return "", false
 		}
 		return stated, true

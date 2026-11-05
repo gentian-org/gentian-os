@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
@@ -82,7 +84,7 @@ func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.R
 func (s *Server) admitComponent(w http.ResponseWriter, r *http.Request, pattern string, holder *VouchingKey) (call, bool) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("profile")
-	if !dnsLabel.MatchString(tenant) || !dnsLabel.MatchString(profile) {
+	if !gentianov1alpha1.ValidTenantName(tenant) || !dnsLabel.MatchString(profile) {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return call{}, false
 	}

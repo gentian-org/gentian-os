@@ -270,8 +270,9 @@ func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
 			"the bundle is of tenant %s, and an import makes the tenant under the name its bundle carries and does not rename: rename the bundle with a tool that rewrites it first. Nothing was changed", name))
 		return
 	}
-	if !gitops.ValidName(name) {
-		s.fail(w, r, http.StatusBadRequest, "the tenant name is not a DNS label")
+	if !gentianov1alpha1.ValidTenantName(name) {
+		s.fail(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"the tenant name is not a DNS label of at most %d characters", gentianov1alpha1.MaxTenantNameLength))
 		return
 	}
 	if insp.Manifest.TenantSpec == nil {

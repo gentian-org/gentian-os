@@ -95,6 +95,17 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 		}
 	}
 
+	// Creation only, like the checks below: a tenant's name is built into
+	// names with limits of their own (gentianov1alpha1.MaxTenantNameLength),
+	// and one that cannot fit them is refused before anything is made from
+	// it. A tenant that already exists stays manageable whatever its name.
+	if req.Operation == admissionv1.Create && !gentianov1alpha1.ValidTenantName(tenant.Name) {
+		return admission.Denied(fmt.Sprintf(
+			"tenant %q: a tenant's name is a DNS label of at most %d characters (lower-case letters, digits and hyphens, "+
+				"starting and ending with a letter or digit): the names built from it, such as its desktop's Helm release, "+
+				"must fit their own limits", tenant.Name, gentianov1alpha1.MaxTenantNameLength))
+	}
+
 	// Creation only. An existing tenant must stay manageable: gating updates
 	// would mean a cluster that has not finished handover cannot fix the very
 	// tenant that is misconfigured, which turns a precaution into a trap.

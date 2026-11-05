@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -45,7 +47,7 @@ var languagePattern = regexp.MustCompile(`^[a-z]{2}(-[A-Za-z0-9]{2,8})?$`)
 // TenantLocales reads a tenant's languages back, so a screen shows what it is
 // about to change rather than a blank.
 func (g *GitOps) TenantLocales(ctx context.Context, tenant string) ([]string, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -80,7 +82,7 @@ func (g *GitOps) TenantLocales(ctx context.Context, tenant string) ([]string, er
 // realm offering nothing would be a login page nobody could read, so the
 // absence of the file is what "the platform's own set" is spelled as.
 func (g *GitOps) SetTenantLocales(ctx context.Context, tenant string, locales []string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	clean := make([]string, 0, len(locales))

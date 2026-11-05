@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -142,7 +144,7 @@ func (e Exposure) Key() string { return e.Install + " " + e.ExposureName }
 // TenantExposures reads what a tenant publishes, for the console's view of
 // its own perimeter.
 func (g *GitOps) TenantExposures(ctx context.Context, tenant string) ([]Exposure, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -186,7 +188,7 @@ func (g *GitOps) tenantExposures(ctx context.Context, tenant string) ([]Exposure
 // the caller becomes the last reviewer, not the owner -- so the registry can
 // answer both who put this on the internet and who last said it should stay.
 func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !ValidName(e.Install) {
@@ -300,7 +302,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 // WithdrawExposure takes one down. The operator removes the proxy, the route
 // and the policies on its next reconcile, and the URL stops answering.
 func (g *GitOps) WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()

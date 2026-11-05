@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -120,7 +122,7 @@ func (g *GitOps) Tenants(ctx context.Context) ([]string, error) {
 		if err := yaml.Unmarshal(b, &doc); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
 		}
-		if doc.Metadata.Name == "" || !ValidName(doc.Metadata.Name) {
+		if doc.Metadata.Name == "" || !gentianov1alpha1.ValidTenantName(doc.Metadata.Name) {
 			continue
 		}
 		out = append(out, doc.Metadata.Name)

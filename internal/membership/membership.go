@@ -30,8 +30,9 @@ import (
 	"strings"
 	"sync"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/director/authz"
-	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
 // Store is the part of OpenFGA the projection needs.
@@ -63,7 +64,7 @@ func (s Scope) allows(realm, group string) bool {
 	case "platform":
 		return realm == s.PlatformRealm
 	case "tenant":
-		if len(parts) < 4 || !gitops.ValidName(parts[2]) {
+		if len(parts) < 4 || !gentianov1alpha1.ValidTenantName(parts[2]) {
 			return false
 		}
 		if realm == s.PlatformRealm {

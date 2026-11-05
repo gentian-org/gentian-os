@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"sigs.k8s.io/yaml"
 )
 
@@ -149,7 +151,7 @@ func (g *GitOps) partnerBounds(ctx context.Context) ([]string, error) {
 
 // TenantPartners reads a tenant's partners back.
 func (g *GitOps) TenantPartners(ctx context.Context, tenant string) ([]Partner, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	g.mu.Lock()
@@ -184,7 +186,7 @@ func (g *GitOps) partnersLocked(ctx context.Context, tenant string) ([]Partner, 
 // name: one commit of the patch. A commissioning component (commissioned)
 // writes receiving entries only, and never replaces one that issues.
 func (g *GitOps) SetTenantPartner(ctx context.Context, tenant string, entry Partner, commissioned bool, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if entry.Accept != nil {
@@ -228,7 +230,7 @@ func (g *GitOps) SetTenantPartner(ctx context.Context, tenant string, entry Part
 // identity provider and with it every link to it. Removing one that is not
 // there is unchanged; a component may not remove one that issues.
 func (g *GitOps) RemoveTenantPartner(ctx context.Context, tenant, name string, commissioned bool, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !partnerName.MatchString(name) {

@@ -37,7 +37,7 @@ var MailModes = []string{
 // default, so a mode is written rather than removed: the manifest then says
 // what was decided.
 func (g *GitOps) SetTenantMailMode(ctx context.Context, tenant, mode string, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	mode = strings.ToLower(strings.TrimSpace(mode))

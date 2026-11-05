@@ -48,6 +48,8 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
@@ -266,7 +268,7 @@ var errInvalidName = errors.New("invalid name")
 // recordName is what the name of a record in the cluster looks like.
 var recordName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,251}[a-z0-9])?$`)
 
-// dnsLabel is what a tenant name must be, as everywhere else on the platform.
+// dnsLabel is what a profile's name must be: a DNS label.
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
 // clusterObject accepts only this registrar's own cluster. Another id is not
@@ -280,7 +282,7 @@ func (s *Server) clusterObject(r *http.Request) (string, error) {
 
 func tenantObject(r *http.Request) (string, error) {
 	t := r.PathValue("t")
-	if !dnsLabel.MatchString(t) {
+	if !gentianov1alpha1.ValidTenantName(t) {
 		return "", errInvalidName
 	}
 	return authz.Tenant(t), nil

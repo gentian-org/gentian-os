@@ -72,7 +72,7 @@ type grantsPatch struct {
 // SetAppGrant writes what one app may consume, with who granted it and when,
 // and commits it.
 func (g *GitOps) SetAppGrant(ctx context.Context, tenant, app string, grant AppGrant, meta Meta) (Result, error) {
-	if !ValidName(tenant) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
 	if !ValidName(app) {
@@ -94,7 +94,7 @@ func (g *GitOps) SetAppGrant(ctx context.Context, tenant, app string, grant AppG
 
 // ClearAppGrant removes one, which withdraws everything it permitted.
 func (g *GitOps) ClearAppGrant(ctx context.Context, tenant, app string, meta Meta) (Result, error) {
-	if !ValidName(tenant) || !ValidName(app) {
+	if !gentianov1alpha1.ValidTenantName(tenant) || !ValidName(app) {
 		return Result{}, fmt.Errorf("%w: tenant %q app %q", ErrInvalidName, tenant, app)
 	}
 	return g.writeGrants(ctx, tenant, app, nil,
@@ -127,7 +127,7 @@ const PreApprovedReason = "pre-approved by the platform: both components are pla
 // places itself; a contract the grant already names is left as it stands,
 // so an administrator's narrower grant is not widened back.
 func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, meta Meta) (Result, error) {
-	if !ValidName(tenant) || !ValidName(app) || !ValidName(contract) || len(granted) == 0 {
+	if !gentianov1alpha1.ValidTenantName(tenant) || !ValidName(app) || !ValidName(contract) || len(granted) == 0 {
 		return Result{}, fmt.Errorf("%w: tenant %q app %q contract %q", ErrInvalidName, tenant, app, contract)
 	}
 	message := fmt.Sprintf("Pre-approve %s consuming %s in tenant %s", app, contract, tenant)
