@@ -12,7 +12,6 @@ data:
   network.infraNamespace: kernel-authentication
   network.servicesNamespace: kernel-edge
   network.openbaoNamespace: kernel-secrets
-  network.routingMode: gateway
   network.kubeApiServerCidr: 10.96.0.0/12
   network.kubeApiServerEndpointIp: 10.96.0.1
   tenant.limitRange.default.cpu: 500m

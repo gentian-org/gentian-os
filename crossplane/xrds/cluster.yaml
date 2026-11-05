@@ -24,18 +24,7 @@ spec:
               type: object
               required:
                 - kernelDomain
-              # One rule, and it is about physics rather than about what is
-              # built yet.
-              #
-              # Two rules used to live here, refusing mail.serviceMode 'system'
-              # and llm.enabled on layout v5, because v5 composed a route and a
-              # tenant registration for both and deployed neither. Both are
-              # deployed now, so both rules are gone -- a rule that outlives its
-              # reason is worse than none -- and their schema fixtures moved
-              # from invalid to valid so neither refusal can come back
-              # unnoticed.
-              #
-              # This one does not expire. A tunnel carries HTTP and HTTPS and
+              # One rule, and it is about physics. A tunnel carries HTTP and HTTPS and
               # nothing else: it cannot receive a connection on 25, so the
               # cluster cannot be an MX, and it cannot publish submission on
               # 587. A cluster that asked for its own mail stack behind one
