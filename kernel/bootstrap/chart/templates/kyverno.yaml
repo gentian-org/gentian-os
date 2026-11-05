@@ -38,6 +38,22 @@ spec:
               memory: 256Mi
         reportsController:
           replicas: 1
+          # It aggregates the reports admission leaves behind, through the
+          # same rate limiter as its leader lease. At the default 300 requests
+          # a second, a backlog of a thousand of them queued the lease's
+          # renewal for half a minute: the lease was lost, the controller
+          # exited, and the next one began the same backlog again. Enough
+          # rate to drain one within the lease's renew deadline, and memory to
+          # hold it, which the default 128Mi barely does.
+          extraArgs:
+            clientRateLimitQPS: 1000
+            clientRateLimitBurst: 2000
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
         # The chart's cleanup jobs default to bitnami/kubectl, which no longer
         # pulls; alpine/k8s carries bash and kubectl.
         webhooksCleanup:
