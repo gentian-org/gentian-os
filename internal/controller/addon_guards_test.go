@@ -328,4 +328,3 @@ func TestTheOperatorWritesOnlyAnAddOnsOwnTypes(t *testing.T) {
 	}
 }
 
-func ptrTo[T any](v T) *T { return &v }
