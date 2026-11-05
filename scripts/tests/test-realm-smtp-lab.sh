@@ -39,7 +39,9 @@ if [[ -z "${KUBEBUILDER_ASSETS:-}" && ! -d /tmp/envtest-bins/k8s/1.32.0-linux-am
     export KUBEBUILDER_ASSETS
 fi
 
-KC_VERSION="$(sed -n 's/^keycloakVersion: "\(.*\)"$/\1/p' kernel/services/keycloak-idp/manifests/values.yaml)"
+# The Keycloak the chart deploys: keycloakx.image.tag.
+KC_VERSION="$(awk '/^keycloakx:/{kc=1; next} kc && /^[^ #]/{kc=0} kc && /^  image:/{img=1; next} img && /^  [^ ]/{img=0} img && /^    tag:/{gsub(/"/, "", $2); print $2; exit}' kernel/services/keycloak-idp/manifests/values.yaml)"
+[[ -n "${KC_VERSION}" ]] || { echo "No keycloakx.image.tag in kernel/services/keycloak-idp/manifests/values.yaml" >&2; exit 1; }
 KC_PORT="${REALM_SMTP_LAB_KC_PORT:-28080}"
 MAIL_PORT="${REALM_SMTP_LAB_MAIL_PORT:-28025}"
 KC="http://127.0.0.1:${KC_PORT}/auth"
