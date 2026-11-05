@@ -14,7 +14,9 @@
 # that adopts the kernel realm: its identity provider entry and its client
 # are composed in that realm, and its Secret in the platform tenant's
 # namespace. No app of this tenant asks for an exchanged token, so there is
-# no app scope and the client is given no optional scopes yet.
+# no app scope. It names both director scopes: on this first pass both client
+# scopes are made, and their audience mappers and the client's optional
+# scopes wait for the scopes' ids.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -29,4 +31,4 @@ data:
     desktop
     wiki
   vouchingProfiles: |
-    herald herald 8080 /.well-known/jwks.json
+    herald herald 8080 /.well-known/jwks.json plans-apply,plans-read

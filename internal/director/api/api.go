@@ -415,6 +415,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
 		return call{}, false
 	}
+	// A token a component obtained for the person reaches only the routes
+	// its scopes name (authn/delegated.go), before the graph is asked.
+	if !ident.MayCall(pattern) {
+		s.cfg.Log.WarnContext(ctx, "delegated token refused outside its scopes", "request_id", reqID(ctx),
+			"client", ident.Client, "route", pattern)
+		s.fail(w, r, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
+		return call{}, false
+	}
 	target, err := obj(r)
 	if err != nil {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
@@ -434,17 +442,19 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		s.fail(w, r, http.StatusForbidden, "forbidden")
 		return call{}, false
 	}
-	return call{
-		id:     ident,
-		user:   user,
-		holder: holder,
-		meta: gitops.Meta{
-			Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
-			Subject:   user[len("user:"):],
-			RequestID: reqID(ctx),
-			Decision:  relation + " " + target,
-		},
-	}, true
+	meta := gitops.Meta{
+		Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
+		Subject:   user[len("user:"):],
+		RequestID: reqID(ctx),
+		Decision:  relation + " " + target,
+	}
+	if ident.Delegated() {
+		// Who asked on the person's behalf, and why, in the commit beside
+		// the person and the decision.
+		meta.Via = ident.Client
+		meta.Reason = r.Header.Get("X-Gentian-Reason")
+	}
+	return call{id: ident, user: user, holder: holder, meta: meta}, true
 }
 
 // guarded registers a route with the relation it requires. Together with

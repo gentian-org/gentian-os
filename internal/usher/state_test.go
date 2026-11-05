@@ -334,3 +334,22 @@ func TestARoleHolderReadsTheApprovalsOnlyFromItsOwnRealm(t *testing.T) {
 		t.Errorf("the holder: %d %v", code, body)
 	}
 }
+
+// A token a component obtained for the person reaches only the reads its
+// scopes name, whatever else the person may read.
+func TestADelegatedTokenReadsOnlyWhatItsScopesName(t *testing.T) {
+	s := New(Config{
+		Authn:   fakeAuthn{"read": "vouch:director-plans-read:aud", "app": "vouch:app-wiki:aud"},
+		Authz:   &fakeStore{held: map[string]bool{"user:aud can_audit cluster:demo": true, "user:aud can_view tenant:acme": true}},
+		Cluster: "demo", Lifecycle: &fakeOperator{},
+	})
+	if code, _ := ask(t, s, "/v1/clusters/demo/resources/report?from=2026-10-01T00:00:00Z", "read"); code != http.StatusOK {
+		t.Fatalf("the report: %d", code)
+	}
+	if code, _ := ask(t, s, "/v1/tenants/acme/resources", "read"); code != http.StatusForbidden {
+		t.Fatalf("a tenant's state outside the scope: %d", code)
+	}
+	if code, _ := ask(t, s, "/v1/clusters/demo/resources", "app"); code != http.StatusForbidden {
+		t.Fatalf("a token for an app read the cluster: %d", code)
+	}
+}
