@@ -19,7 +19,7 @@ import (
 
 func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	t.Parallel()
-	script := buildRealmScript("demo", "Demo")
+	script := buildRealmScript()
 	if !strings.Contains(script, "keycloak_json_id_by_attr") {
 		t.Fatal("expected keycloak_json_id_by_attr helper in realm script")
 	}
@@ -72,5 +72,54 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	}
 	if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
 		t.Fatalf("realm script must be valid POSIX sh: %v\n%s", err, out)
+	}
+}
+
+// TestTheRealmScriptRunsNoTenantText runs the realm script against a stub
+// curl with a realm name built to break out of its quotes. The name reaches
+// Keycloak as data and runs nothing; the CRD's pattern refuses such a name
+// before any Job, this is what holds if one gets through.
+func TestTheRealmScriptRunsNoTenantText(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	marker := dir + "/ran"
+	stub := `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    *openid-connect/token) echo '{"access_token":"t"}'; exit 0 ;;
+    *http_code*) echo 404; exit 0 ;;
+  esac
+done
+prev=""
+for a in "$@"; do
+  [ "$prev" = "-d" ] && printf '%s' "$a" > "` + dir + `/body"
+  prev="$a"
+done
+`
+	if err := os.WriteFile(dir+"/curl", []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hostile := `x'"$(touch ` + marker + `)"';touch ` + marker + `;'`
+	cmd := exec.Command("sh", "-c", buildRealmScript())
+	cmd.Env = []string{
+		"PATH=" + dir + ":/usr/bin:/bin",
+		"KEYCLOAK_URL=http://keycloak", "KEYCLOAK_CLIENT_ID=c", "KEYCLOAK_CLIENT_SECRET=s",
+		"REALM_NAME=" + hostile,
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("realm script failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the realm name ran a command")
+	}
+	body, err := os.ReadFile(dir + "/body")
+	if err != nil {
+		t.Fatalf("no realm was posted: %v", err)
+	}
+	if !strings.Contains(string(body), `"realm":"`+hostile+`"`) {
+		t.Fatalf("the realm name did not reach Keycloak as written: %s", body)
+	}
+	if strings.Contains(string(body), "displayName") {
+		t.Fatalf("the script writes the display name, which is the Composition's: %s", body)
 	}
 }
