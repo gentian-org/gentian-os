@@ -39,7 +39,6 @@ type KeycloakPlatformReconciler struct {
 	KernelDomain string
 	TenancyMode  string
 	KernelRealm  string
-	RoutingMode  string
 }
 
 func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {

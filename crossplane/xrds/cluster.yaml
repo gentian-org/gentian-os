@@ -651,13 +651,6 @@ spec:
                     - tunnel
                     - static-ip
                   default: tunnel
-                routingMode:
-                  type: string
-                  description: Which ingress implementation kernel routes use.
-                  enum:
-                    - gateway
-                    - ingress
-                  default: gateway
                 secretMode:
                   type: string
                   description: >

@@ -328,8 +328,6 @@ type TenantReconciler struct {
 	// where the LoadBalancer already routes and the Gateway's own address is
 	// what external-dns reads.
 	Ingress EdgeIngress
-	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
-	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
 	// so tenant lifecycle is driven by the Crossplane graph alone.
 	CrossplaneOnly bool
@@ -578,13 +576,11 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}),
 		)
 
-	if isGatewayRoutingMode(r.RoutingMode) {
-		ctrlBuilder = ctrlBuilder.Watches(
-			&corev1.Service{},
-			handler.EnqueueRequestsFromMapFunc(mapAllTenants),
-			builder.WithPredicates(envoyKernelServicePredicate),
-		)
-	}
+	ctrlBuilder = ctrlBuilder.Watches(
+		&corev1.Service{},
+		handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+		builder.WithPredicates(envoyKernelServicePredicate),
+	)
 
 	// Entering a tenant (kernel_enter.go): a tenant that opens itself to the
 	// platform's administrators, changes realm, or goes, is the kernel

@@ -29,24 +29,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-func TestNormalizeRoutingMode(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		in, want string
-	}{
-		{"", RoutingModeGateway},
-		{"ingress", RoutingModeGateway},
-		{"GATEWAY", RoutingModeGateway},
-		{" gateway ", RoutingModeGateway},
-		{"nginx", RoutingModeGateway},
-	}
-	for _, tc := range tests {
-		if got := normalizeRoutingMode(tc.in); got != tc.want {
-			t.Fatalf("normalizeRoutingMode(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 func TestBuildKernelGateway(t *testing.T) {
 	t.Parallel()
 	tenants := []gentianov1alpha1.Tenant{
@@ -846,7 +828,7 @@ func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
 	s := componentDatabaseScheme(t)
 	r := &TenantReconciler{
 		Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s,
-		KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi", RoutingMode: RoutingModeGateway,
+		KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi",
 	}
 	objects, err := r.buildTenantEdgeObjects(context.Background(), acmeTenantFixture())
 	if err != nil {
@@ -900,7 +882,7 @@ func TestATenantWithoutAppsGetsItsCertificateAndGrants(t *testing.T) {
 	}
 	// The user tenant of a single-tenancy cluster is on the cluster's own
 	// certificate: no certificate of its own is asked for.
-	single := &TenantReconciler{Client: r.Client, Scheme: r.Scheme, KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "single", RoutingMode: r.RoutingMode}
+	single := &TenantReconciler{Client: r.Client, Scheme: r.Scheme, KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "single"}
 	user := &gentianov1alpha1.Tenant{}
 	user.Name = gentianov1alpha1.SingleUserTenantName
 	objects, err = single.buildTenantEdgeObjects(context.Background(), user)

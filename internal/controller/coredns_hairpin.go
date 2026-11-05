@@ -230,7 +230,7 @@ func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	return append(lines, newLine)
 }
 
-func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string, error) {
+func kernelEdgeClusterIP(ctx context.Context, c client.Client) (string, error) {
 	svc, err := findKernelEdgeService(ctx, c)
 	if err != nil {
 		return "", err
@@ -242,8 +242,8 @@ func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string
 	return ip, nil
 }
 
-func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm, routingMode string) error {
-	edgeIP, err := kernelEdgeClusterIP(ctx, c, routingMode)
+func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) error {
+	edgeIP, err := kernelEdgeClusterIP(ctx, c)
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,6 @@
 # Gateway API foundation manifests (gentian-envoy GatewayClass).
 #
-# GatewayClass is reconciled by the gentian-os operator when ROUTING_MODE=gateway.
+# GatewayClass is reconciled by the gentian-os operator.
 # Envoy Gateway must be installed first (install.sh Step 2c).
 #
 # NETWORK_MODE=static-ip adds a spec.parametersRef pointing at the gentian-edge

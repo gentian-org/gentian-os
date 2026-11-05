@@ -27,10 +27,6 @@ tenancyMode: multi
 # domain registration. Plumbed as MAIL_SERVICE_MODE.
 mailServiceMode: external
 
-# routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
-# Plumbed as ROUTING_MODE.
-routingMode: gateway
-
 # handover controls the gate that keeps a cluster's recovery cheap until its
 # administrator has been seen to write a credential through the login path.
 #

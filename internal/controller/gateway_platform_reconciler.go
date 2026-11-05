@@ -73,7 +73,6 @@ type GatewayPlatformReconciler struct {
 	// MainAddressTenant is the tenant the cluster names for its main address
 	// (ClusterMainAddressTenant); "" is the tenancy mode's default.
 	MainAddressTenant string
-	RoutingMode       string
 	Ingress           EdgeIngress
 	// Cluster is this cluster's id in the authorization store: the object
 	// the kernel UIs' relations are asked on (cluster:<c>).
@@ -86,7 +85,7 @@ type GatewayPlatformReconciler struct {
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
-	if !isGatewayRoutingMode(r.RoutingMode) || r.KernelDomain == "" {
+	if r.KernelDomain == "" {
 		return reconcile.Result{}, nil
 	}
 
@@ -110,7 +109,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm, r.RoutingMode); err != nil {
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm); err != nil {
 		logger.Error(err, "reconcile CoreDNS kernel hairpin")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -119,10 +118,6 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 }
 
 func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if !isGatewayRoutingMode(r.RoutingMode) {
-		return nil
-	}
-
 	mapToPlatform := func(_ context.Context, _ client.Object) []reconcile.Request {
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{
 			Name:      gatewayPlatformReconcileKey,

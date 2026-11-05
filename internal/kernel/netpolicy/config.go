@@ -12,16 +12,12 @@ package netpolicy
 
 import (
 	"github.com/gentian-org/gentian-os/internal/layout"
-	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
-const RoutingModeGateway = meta.RoutingModeGateway
-
-// Config carries cluster-specific namespace names and routing options used when
+// Config carries cluster-specific namespace names and options used when
 // building tenant isolation NetworkPolicies.
 type Config struct {
 	ServicesNamespace string
-	RoutingMode       string
 	KubeAPIServerCIDR string
 	// NarrowEdge admits, from the edge namespace, the Gateway's Envoy pods
 	// alone instead of every pod there. It follows the switch the kernel
@@ -35,7 +31,6 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		ServicesNamespace: layout.Kernel(layout.Edge),
-		RoutingMode:       RoutingModeGateway,
 		KubeAPIServerCIDR: "10.0.0.0/8",
 	}
 }

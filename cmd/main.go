@@ -191,10 +191,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	routingMode := os.Getenv("ROUTING_MODE")
-	if routingMode == "" {
-		routingMode = controller.RoutingModeGateway
-	}
 	// Tenancy from the claim, not from this process's Helm value.
 	//
 	// The claim is where a cluster's settings are written down and the
@@ -213,7 +209,6 @@ func main() {
 	if mainAddressTenant != "" {
 		setupLog.Info("the cluster names a tenant for its main address", "tenant", mainAddressTenant)
 	}
-	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
 	// Exec lets a profile's maintenance-mode and restore hooks run inside the
 	// app's own pod. Optional: without it those fall back to scaling the app,
@@ -299,7 +294,6 @@ func main() {
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		Ingress:                  buildEdgeIngress(),
-		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
 		// Whether the cluster offers an App Store: it reports what it runs
 		// and its claim names a store. The first half is this process's own
@@ -386,7 +380,6 @@ func main() {
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:  tenancyMode,
 		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		RoutingMode:  routingMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KeycloakPlatform")
 		os.Exit(1)
@@ -397,7 +390,6 @@ func main() {
 		KernelDomain:      os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:       tenancyMode,
 		MainAddressTenant: mainAddressTenant,
-		RoutingMode:       routingMode,
 		Ingress:           buildEdgeIngress(),
 		Cluster:           envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
 		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),

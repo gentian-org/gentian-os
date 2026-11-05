@@ -1717,7 +1717,6 @@ _claim_cluster_fields() {
     printf '  #                             single-tenancy cluster; the sign-in form on a\n'
     printf '  #                             multi-tenancy one. Its scripts reach every tenant.\n'
     _claim_default_line secretMode   "${SECRET_MODE:-}"   derived 'every kernel secret reproducible from the master password; random = independent'
-    _claim_default_line routingMode  "${ROUTING_MODE:-}"  gateway 'Envoy Gateway plus the Gateway API; the only supported value'
     _claim_default_line storageClass "${STORAGE_CLASS:-}" ''      'empty means the clusters default StorageClass'
 
     printf '\n'

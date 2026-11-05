@@ -23,10 +23,6 @@ import (
 // Certificate, Gateway, HTTPRoutes, ReferenceGrants, and BackendTrafficPolicy.
 // Cloudflare DNS and stale-resource cleanup stay in ensureGateway.
 func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {
-	if !isGatewayRoutingMode(r.RoutingMode) {
-		return nil, nil
-	}
-
 	intents, err := r.collectTenantIngressIntents(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -88,10 +84,6 @@ func (r *TenantReconciler) tenantHasOwnZone(tenant *gentianov1alpha1.Tenant) boo
 // waitForTenantEdgeResources reports whether Crossplane-provisioned edge resources
 // are programmed for the tenant.
 func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, string, error) {
-	if !isGatewayRoutingMode(r.RoutingMode) {
-		return true, "", nil
-	}
-
 	intents, err := r.collectTenantIngressIntents(ctx, tenant)
 	if err != nil {
 		return false, "", err

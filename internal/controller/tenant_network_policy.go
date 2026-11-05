@@ -36,7 +36,6 @@ func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
 	}
 	return netpolicy.Config{
 		ServicesNamespace: servicesNamespace,
-		RoutingMode:       r.RoutingMode,
 		KubeAPIServerCIDR: cidr,
 		NarrowEdge:        kernelNetworkPoliciesEnabled(),
 	}

@@ -142,8 +142,6 @@ spec:
             */}}
             - name: MAIL_SERVICE_MODE
               value: {{ .Values.mailServiceMode | default "external" | quote }}
-            - name: ROUTING_MODE
-              value: {{ .Values.routingMode | default "gateway" | quote }}
             {{- /*
             hasKey, not `default true`: Helm's default treats false as empty, so
             `gateTenants: false | default true` renders true and the switch
