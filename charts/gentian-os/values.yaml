@@ -514,11 +514,6 @@ openbao:
 database:
   clusterName: postgres
 
-# ArgoCD integration
-argocd:
-  namespace: "kernel-gitops"
-  project: "gentianos-tenants"
-
 # Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
 # The postgres client major must be >= the CNPG server major (pg_dump refuses
 # a newer server); CNPG's operator default is 17.x today.
