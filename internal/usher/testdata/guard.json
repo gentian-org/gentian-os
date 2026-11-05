@@ -58,7 +58,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"forbidden\"}\n",
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:u1 can_view tenant:other",
         "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:other"
@@ -78,10 +78,10 @@
         "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"unauthenticated\"}\n",
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": [
-        "WARN \"authentication failed\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
       ],
       "handled": ""
     }
@@ -97,10 +97,10 @@
         "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"unauthenticated\"}\n",
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": [
-        "WARN \"authentication failed\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: no bearer token\" route=\"GET /probe/tenants/{t}\""
       ],
       "handled": ""
     }
@@ -116,10 +116,10 @@
         "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"unauthenticated\"}\n",
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": [
-        "WARN \"authentication failed\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
       ],
       "handled": ""
     }
@@ -134,9 +134,11 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"unauthenticated\"}\n",
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
-      "logs": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"identifier cannot be represented in OpenFGA: \\\"a b\\\"\" route=\"GET /probe/tenants/{t}\""
+      ],
       "handled": ""
     }
   },
@@ -150,7 +152,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"invalid name\"}\n",
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": null,
       "handled": ""
@@ -166,7 +168,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"invalid name\"}\n",
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": null,
       "handled": ""
@@ -182,7 +184,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"authorization unavailable\"}\n",
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
       ],
@@ -233,10 +235,10 @@
         "Www-Authenticate": "Bearer realm=\"gentian-usher\"",
         "X-Request-Id": "\u003cminted\u003e"
       },
-      "body": "{\"error\":\"unauthenticated\"}\n",
+      "body": "{\"error\":\"unauthenticated\",\"request_id\":\"\u003cminted\u003e\"}\n",
       "checks": null,
       "logs": [
-        "WARN \"authentication failed\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
+        "WARN \"authentication failed\" request_id=\"\u003cminted\u003e\" reason=\"unauthenticated: token not recognized\" route=\"GET /probe/tenants/{t}\""
       ],
       "handled": ""
     }
@@ -267,7 +269,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"invalid name\"}\n",
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": null,
       "handled": ""
@@ -283,7 +285,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"forbidden\"}\n",
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:u1 can_configure cluster:c1",
         "request_id=\"req-0001-abcd\" user:demo/u1 can_configure cluster:c1"
@@ -318,7 +320,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"forbidden\"}\n",
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo",
         "request_id=\"req-0001-abcd\" user:demo/u1 can_install_app tenant:demo"
@@ -337,7 +339,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"authorization unavailable\"}\n",
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:u1 can_install_app tenant:demo"
       ],
@@ -394,7 +396,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"forbidden\"}\n",
+      "body": "{\"error\":\"forbidden\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:ada can_audit tenant:other",
         "request_id=\"req-0001-abcd\" user:gentian/ada can_audit tenant:other",
@@ -417,7 +419,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"authorization unavailable\"}\n",
+      "body": "{\"error\":\"authorization unavailable\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": [
         "request_id=\"req-0001-abcd\" user:ada can_audit tenant:demo"
       ],
@@ -435,7 +437,7 @@
         "Content-Type": "application/json",
         "X-Request-Id": "req-0001-abcd"
       },
-      "body": "{\"error\":\"invalid name\"}\n",
+      "body": "{\"error\":\"invalid name\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
       "logs": null,
       "handled": ""

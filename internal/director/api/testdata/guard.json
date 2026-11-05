@@ -60,7 +60,9 @@
       },
       "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
-      "logs": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"identifier cannot be represented in OpenFGA: \\\"a b\\\"\" route=\"GET /probe/me\""
+      ],
       "handled": ""
     }
   },
@@ -210,7 +212,9 @@
       },
       "body": "{\"error\":\"unauthenticated\",\"request_id\":\"req-0001-abcd\"}\n",
       "checks": null,
-      "logs": null,
+      "logs": [
+        "WARN \"authentication failed\" request_id=\"req-0001-abcd\" reason=\"identifier cannot be represented in OpenFGA: \\\"a b\\\"\" route=\"GET /probe/tenants/{t}\""
+      ],
       "handled": ""
     }
   },

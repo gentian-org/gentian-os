@@ -173,6 +173,7 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request, route strin
 	}
 	user, err := authz.User(ident.Subject)
 	if err != nil {
+		g.Log.WarnContext(ctx, "authentication failed", "request_id", ID(ctx), "reason", err.Error(), "route", route)
 		g.Fail(w, r, http.StatusUnauthorized, "unauthenticated")
 		return nil, "", false
 	}
