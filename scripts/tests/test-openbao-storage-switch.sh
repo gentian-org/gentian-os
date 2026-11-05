@@ -28,20 +28,21 @@ SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
 mkdir -p "${SANDBOX}/home" "${SANDBOX}/bin" "${SANDBOX}/co/clusters/c1/kernel/claims"
 
-# kubectl as the cluster would answer the three reads: does the vault's volume
-# exist, what does its annotation say, and which storage stanza does the live
-# openbao Application render.
+# kubectl as the cluster would answer the three reads: does the instance's
+# volume exist (FAKE_PVC names the one that does), what does its annotation
+# say, and which storage stanza does its Application (FAKE_APP, openbao by
+# default) render: FAKE_LIVE, "none" for an Application that names no
+# configuration, empty for no Application.
 cat > "${SANDBOX}/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
 case "${args}" in
-    "get pvc data-openbao-0 -n "*" -o jsonpath="*)
-        [[ "${FAKE_PVC:-}" == yes ]] || exit 1
+    "get pvc ${FAKE_PVC:-none} -n "*" -o jsonpath="*)
         printf '%s' "${FAKE_ANNOTATION:-}" ;;
-    "get pvc data-openbao-0 -n "*)
-        [[ "${FAKE_PVC:-}" == yes ]] || exit 1 ;;
-    "get application openbao -n "*)
+    "get pvc ${FAKE_PVC:-none} -n "*) ;;
+    "get application ${FAKE_APP:-openbao} -n "*)
         [[ -n "${FAKE_LIVE:-}" ]] || exit 1
+        [[ "${FAKE_LIVE}" == none ]] && exit 0
         printf 'ui = true\nstorage "%s" {\n  path = "/openbao/data"\n}\n' "${FAKE_LIVE}" ;;
     *) exit 1 ;;
 esac
@@ -59,7 +60,7 @@ render() {
     env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" SCRIPT_DIR="${REPO}" \
         GENTIAN_DEPLOYMENTS_PATH="${SANDBOX}/co" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 "$@" \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
-                 out="$(openbao_storage_for_render 2>"${HOME}/err")"; echo "${out}"; tr "\n" " " < "${HOME}/err"' 2>&1
+                 out="$(openbao_storage_for_render "${INSTANCE:-openbao}" 2>"${HOME}/err")"; echo "${out}"; tr "\n" " " < "${HOME}/err"' 2>&1
 }
 
 check() { # <what> <output> <first line> [stderr must contain]
@@ -81,21 +82,38 @@ check "a new cluster (no vault volume) whose claim says raft: raft" "$(render)" 
 claim "  networkMode: tunnel"
 check "a claim that says nothing: file, the XRD's default" "$(render)" file
 check "  and so on a cluster whose vault exists on file storage: file, nothing said" \
-    "$(render FAKE_PVC=yes FAKE_LIVE=file)" file
+    "$(render FAKE_PVC=data-openbao-0 FAKE_LIVE=file)" file
 
 claim "  openbao:" "    storage: raft"
 check "the claim says raft on a vault running on file storage, volume not moved: file, and why" \
-    "$(render FAKE_PVC=yes FAKE_LIVE=file)" file "would start an empty vault"
+    "$(render FAKE_PVC=data-openbao-0 FAKE_LIVE=file)" file "would start it empty"
 check "  the same once the move annotated the volume raft: raft" \
-    "$(render FAKE_PVC=yes FAKE_LIVE=file FAKE_ANNOTATION=raft)" raft
+    "$(render FAKE_PVC=data-openbao-0 FAKE_LIVE=file FAKE_ANNOTATION=raft)" raft
 check "a vault on Raft whose claim says raft: raft" \
-    "$(render FAKE_PVC=yes FAKE_LIVE=raft)" raft
+    "$(render FAKE_PVC=data-openbao-0 FAKE_LIVE=raft)" raft
 
 claim "  openbao:" "    storage: file"
 check "the claim says file on a vault running on Raft, volume not marked back: raft, and why" \
-    "$(render FAKE_PVC=yes FAKE_LIVE=raft)" raft "would start an empty vault"
+    "$(render FAKE_PVC=data-openbao-0 FAKE_LIVE=raft)" raft "would start it empty"
 check "  the rollback, the volume annotated file: file" \
-    "$(render FAKE_PVC=yes FAKE_LIVE=raft FAKE_ANNOTATION=file)" file
+    "$(render FAKE_PVC=data-openbao-0 FAKE_LIVE=raft FAKE_ANNOTATION=file)" file
+
+check "a vault volume whose Application is gone: the claim answers" \
+    "$(render OPENBAO_STORAGE=raft FAKE_PVC=data-openbao-0)" raft
+
+# The seal, decided by its own volume. Its Application named no
+# configuration before the seal's storage followed the claim: file.
+claim "  openbao:" "    storage: raft"
+check "the seal on a new cluster whose claim says raft: raft" "$(render INSTANCE=openbao-transit)" raft
+check "the seal whose Application names no configuration, volume not moved: file, and why" \
+    "$(render INSTANCE=openbao-transit FAKE_APP=openbao-transit FAKE_PVC=data-openbao-transit-0 FAKE_LIVE=none)" \
+    file "data-openbao-transit-0"
+check "  the same once its volume is annotated raft: raft" \
+    "$(render INSTANCE=openbao-transit FAKE_APP=openbao-transit FAKE_PVC=data-openbao-transit-0 FAKE_LIVE=none FAKE_ANNOTATION=raft)" raft
+check "the seal on Raft whose claim says raft: raft" \
+    "$(render INSTANCE=openbao-transit FAKE_APP=openbao-transit FAKE_PVC=data-openbao-transit-0 FAKE_LIVE=raft)" raft
+check "the vault's volume says nothing about the seal's" \
+    "$(render INSTANCE=openbao-transit FAKE_APP=openbao FAKE_PVC=data-openbao-0 FAKE_LIVE=file FAKE_ANNOTATION=raft)" raft
 
 claim "  openbao:" "    storage: rafts"
 check "a value that is neither: file, and said" "$(render)" file "it is raft or file"

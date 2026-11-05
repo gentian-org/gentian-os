@@ -88,8 +88,6 @@ type OpenBaoSnapshots struct {
 const (
 	// OpenBaoSnapshotStorePath is the store's record in the vault.
 	OpenBaoSnapshotStorePath = "gentian-os/kernel/openbao-snapshots/storage"
-	// OpenBaoSnapshotPrefix is the key prefix of the snapshots in the bucket.
-	OpenBaoSnapshotPrefix = "openbao/"
 	// openBaoSnapshotBucketJob makes the bucket and its key.
 	openBaoSnapshotBucketJob = "s3-bucket-kernel-openbao-snapshots"
 	// openBaoSnapshotKeyAnnotation names the key a bucket Job made, by a
@@ -98,9 +96,6 @@ const (
 	defaultOpenBaoSnapshotStale  = 30 * time.Hour
 	defaultOpenBaoSnapshotTick   = 10 * time.Minute
 )
-
-// openBaoSnapshotName is a snapshot's object name, as the job writes it.
-var openBaoSnapshotName = regexp.MustCompile(`^openbao-[0-9]{8}T[0-9]{6}Z\.snap\.age$`)
 
 // The states status.openbaoSnapshots.state takes.
 const (
@@ -127,6 +122,8 @@ type SnapshotLister interface {
 
 // SnapshotReport is what status.openbaoSnapshots says.
 type SnapshotReport struct {
+	// Instance is openbao or openbao-transit.
+	Instance string `json:"instance"`
 	// Storage is the vault's storage type, raft or file; empty when the
 	// vault could not be asked.
 	Storage string `json:"storage,omitempty"`
@@ -158,9 +155,10 @@ func (o *OpenBaoSnapshots) Start(ctx context.Context) error {
 		interval = defaultOpenBaoSnapshotTick
 	}
 	for {
-		rep := o.Once(ctx)
-		if rep.State != SnapshotCurrent {
-			logger.Info("the vault's snapshots are not current", "state", rep.State, "message", rep.Message)
+		for _, rep := range o.Once(ctx) {
+			if rep.State != SnapshotCurrent {
+				logger.Info("snapshots are not current", "instance", rep.Instance, "state", rep.State, "message", rep.Message)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -170,10 +168,43 @@ func (o *OpenBaoSnapshots) Start(ctx context.Context) error {
 	}
 }
 
-// Once makes sure the store exists, judges the newest snapshot and writes
-// the report. Every failure ends up in the report rather than an error: the
-// report is what a person reads.
-func (o *OpenBaoSnapshots) Once(ctx context.Context) SnapshotReport {
+// SnapshotInstance is one of the two OpenBao instances that are snapshotted.
+type SnapshotInstance struct {
+	// Name is the instance, the stem of its snapshots' names and their
+	// prefix in the bucket: openbao or openbao-transit.
+	Name string
+	// Field is where its report is written on the Cluster claim's status.
+	Field string
+	// What it is, in a sentence, and the CronJob that snapshots it.
+	What, Job string
+	// Storage asks the instance which storage it is on; nil reads what its
+	// job last found (the object storage.<raft|file> under its prefix).
+	Storage func(ctx context.Context) (string, error)
+}
+
+// prefix is the instance's key prefix in the bucket.
+func (i SnapshotInstance) prefix() string { return i.Name + "/" }
+
+// snapshotName matches the instance's snapshot objects, without the prefix.
+func (i SnapshotInstance) snapshotName() *regexp.Regexp {
+	return regexp.MustCompile(`^` + regexp.QuoteMeta(i.Name) + `-[0-9]{8}T[0-9]{6}Z\.snap\.age$`)
+}
+
+// instances are the vault, asked directly, and the transit seal, which the
+// operator does not reach and knows through its job's marker.
+func (o *OpenBaoSnapshots) instances() []SnapshotInstance {
+	return []SnapshotInstance{
+		{Name: "openbao", Field: "openbaoSnapshots", What: "the vault",
+			Job: "openbao-snapshot in the vault's namespace", Storage: o.storage},
+		{Name: "openbao-transit", Field: "transitSnapshots", What: "the transit seal that unseals the vault",
+			Job: "openbao-transit-snapshot in the seal's namespace"},
+	}
+}
+
+// Once makes sure the store exists, judges each instance's newest snapshot
+// and writes the reports. Every failure ends up in a report rather than an
+// error: the report is what a person reads.
+func (o *OpenBaoSnapshots) Once(ctx context.Context) []SnapshotReport {
 	logger := log.FromContext(ctx).WithName("openbao-snapshots")
 	now := time.Now
 	if o.Now != nil {
@@ -183,42 +214,59 @@ func (o *OpenBaoSnapshots) Once(ctx context.Context) SnapshotReport {
 	if stale <= 0 {
 		stale = defaultOpenBaoSnapshotStale
 	}
-
-	storage, storageErr := o.storage(ctx)
-	if storageErr != nil {
-		logger.Info("which storage the vault is on could not be read", "error", storageErr.Error())
-	}
 	storeErr := o.EnsureStore(ctx)
 	if storeErr != nil {
 		logger.Error(storeErr, "the snapshot store could not be made; it is retried")
 	}
-	objects, listErr := o.list(ctx)
-
-	rep := JudgeOpenBaoSnapshots(now(), stale, o.Bucket, storage, storageErr, objects, listErr)
-	if storeErr != nil && rep.State != SnapshotCurrent {
-		rep.Message += " The store is not made yet: " + storeErr.Error()
+	var reps []SnapshotReport
+	for _, inst := range o.instances() {
+		var storage string
+		var storageErr error
+		if inst.Storage != nil {
+			storage, storageErr = inst.Storage(ctx)
+			if storageErr != nil {
+				logger.Info("which storage the instance is on could not be read", "instance", inst.Name, "error", storageErr.Error())
+			}
+		}
+		objects, listErr := o.list(ctx, inst.prefix())
+		rep := JudgeOpenBaoSnapshots(now(), stale, o.Bucket, inst, storage, storageErr, objects, listErr)
+		if storeErr != nil && rep.State != SnapshotCurrent {
+			rep.Message += " The store is not made yet: " + storeErr.Error()
+		}
+		recordOpenBaoSnapshotMetrics(rep)
+		if err := writeClusterStatus(ctx, o.Reader, o.Client, inst.Field, rep); err != nil {
+			logger.Error(err, "the snapshot report could not be written on the Cluster claim; it is retried", "instance", inst.Name)
+		}
+		reps = append(reps, rep)
 	}
-	recordOpenBaoSnapshotMetrics(rep)
-	if err := writeClusterStatus(ctx, o.Reader, o.Client, "openbaoSnapshots", rep); err != nil {
-		logger.Error(err, "the snapshot report could not be written on the Cluster claim; it is retried")
-	}
-	return rep
+	return reps
 }
 
-// JudgeOpenBaoSnapshots is the report for what was found: the vault's
-// storage, and the snapshot objects in the bucket.
-func JudgeOpenBaoSnapshots(now time.Time, staleAfter time.Duration, bucket, storage string,
-	storageErr error, objects []SnapshotObject, listErr error) SnapshotReport {
+// JudgeOpenBaoSnapshots is the report for what was found of one instance:
+// the storage it said it is on, if it was asked, and the objects under its
+// prefix in the bucket -- its snapshots, and the marker storage.<type> its
+// job leaves, which answers for the storage where the instance was not asked
+// or could not answer.
+func JudgeOpenBaoSnapshots(now time.Time, staleAfter time.Duration, bucket string, inst SnapshotInstance,
+	storage string, storageErr error, objects []SnapshotObject, listErr error) SnapshotReport {
 	rep := SnapshotReport{
-		Storage:    storage,
+		Instance:   inst.Name,
 		Bucket:     bucket,
 		StaleAfter: staleAfter.String(),
 		CheckedAt:  now.UTC().Format(time.RFC3339),
 	}
-	var newest *SnapshotObject
+	name := inst.snapshotName()
+	var newest, marker *SnapshotObject
 	for i := range objects {
 		obj := &objects[i]
-		if !openBaoSnapshotName.MatchString(strings.TrimPrefix(obj.Key, OpenBaoSnapshotPrefix)) {
+		rest := strings.TrimPrefix(obj.Key, inst.prefix())
+		if rest == "storage.raft" || rest == "storage.file" {
+			if marker == nil || obj.LastModified.After(marker.LastModified) {
+				marker = obj
+			}
+			continue
+		}
+		if !name.MatchString(rest) {
 			continue
 		}
 		rep.Count++
@@ -226,6 +274,10 @@ func JudgeOpenBaoSnapshots(now time.Time, staleAfter time.Duration, bucket, stor
 			newest = obj
 		}
 	}
+	if storage == "" && marker != nil {
+		storage = strings.TrimPrefix(strings.TrimPrefix(marker.Key, inst.prefix()), "storage.")
+	}
+	rep.Storage = storage
 	if newest != nil {
 		age := int64(now.Sub(newest.LastModified) / time.Second)
 		rep.Newest = newest.Key
@@ -233,30 +285,38 @@ func JudgeOpenBaoSnapshots(now time.Time, staleAfter time.Duration, bucket, stor
 		rep.AgeSeconds = &age
 	}
 
+	what := inst.What
 	switch {
 	case storage != "" && storage != "raft":
 		rep.State = SnapshotNotRaft
-		rep.Message = fmt.Sprintf("The vault is on %s storage, which has no consistent online snapshot, so none is taken. "+
-			"Moving it to Raft is docs/guides/recovery.md §5.", storage)
+		rep.Message = fmt.Sprintf("%s is on %s storage, which has no consistent online snapshot, so none is taken. "+
+			"Moving it to Raft is docs/guides/recovery.md §5.", upperFirst(what), storage)
 	case listErr != nil:
 		rep.State = SnapshotUnknown
 		rep.Message = "The snapshots in bucket " + bucket + " could not be listed: " + listErr.Error()
 	case newest == nil:
 		rep.State = SnapshotMissing
-		rep.Message = "No snapshot of the vault is in bucket " + bucket + ". The CronJob openbao-snapshot in the vault's namespace writes one every day; its last Job's log says why it did not."
+		rep.Message = fmt.Sprintf("No snapshot of %s is in bucket %s. The CronJob %s writes one every day; its last Job's log says why it did not.",
+			what, bucket, inst.Job)
 	case now.Sub(newest.LastModified) > staleAfter:
 		rep.State = SnapshotStale
-		rep.Message = fmt.Sprintf("The newest snapshot of the vault is %s old, more than %s. "+
-			"The last Job of the CronJob openbao-snapshot in the vault's namespace says why.",
-			now.Sub(newest.LastModified).Round(time.Minute), staleAfter)
+		rep.Message = fmt.Sprintf("The newest snapshot of %s is %s old, more than %s. The last Job of the CronJob %s says why.",
+			what, now.Sub(newest.LastModified).Round(time.Minute), staleAfter, inst.Job)
 	default:
 		rep.State = SnapshotCurrent
-		rep.Message = "The newest snapshot of the vault is " + now.Sub(newest.LastModified).Round(time.Minute).String() + " old."
+		rep.Message = fmt.Sprintf("The newest snapshot of %s is %s old.", what, now.Sub(newest.LastModified).Round(time.Minute))
 	}
 	if storageErr != nil && rep.State != SnapshotNotRaft {
-		rep.Message += " Which storage the vault is on could not be read: " + storageErr.Error()
+		rep.Message += " Which storage it is on could not be read: " + storageErr.Error()
 	}
 	return rep
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // storage asks the vault which storage it is on: sys/seal-status, which
@@ -287,15 +347,15 @@ func (o *OpenBaoSnapshots) storage(ctx context.Context) (string, error) {
 	return seal.StorageType, nil
 }
 
-func (o *OpenBaoSnapshots) list(ctx context.Context) ([]SnapshotObject, error) {
+func (o *OpenBaoSnapshots) list(ctx context.Context, prefix string) ([]SnapshotObject, error) {
 	if o.Snapshots != nil {
-		return o.Snapshots.List(ctx, o.Bucket, OpenBaoSnapshotPrefix)
+		return o.Snapshots.List(ctx, o.Bucket, prefix)
 	}
 	mc, err := (&bundlestore.Store{Client: o.Reader}).Minio(ctx, &gentianov1alpha1.BundleRef{})
 	if err != nil {
 		return nil, err
 	}
-	return minioSnapshots{mc}.List(ctx, o.Bucket, OpenBaoSnapshotPrefix)
+	return minioSnapshots{mc}.List(ctx, o.Bucket, prefix)
 }
 
 // minioSnapshots lists a bucket of the cluster's own store.
@@ -475,12 +535,12 @@ func writeClusterStatus(ctx context.Context, reader client.Reader, writer client
 var (
 	openBaoSnapshotState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gentianos_openbao_snapshot_state",
-		Help: "The state of the vault's snapshots, 1 for the one that holds: Current, Stale, Missing, NotRaft or Unknown.",
-	}, []string{"state"})
-	openBaoSnapshotAge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Help: "The state of an OpenBao instance's snapshots (openbao, openbao-transit), 1 for the one that holds: Current, Stale, Missing, NotRaft or Unknown.",
+	}, []string{"instance", "state"})
+	openBaoSnapshotAge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "gentianos_openbao_snapshot_age_seconds",
-		Help: "Age of the newest snapshot of the vault in its bucket, in seconds; -1 while there is none.",
-	})
+		Help: "Age of the newest snapshot of an OpenBao instance (openbao, openbao-transit) in its bucket, in seconds; -1 while there is none.",
+	}, []string{"instance"})
 )
 
 func recordOpenBaoSnapshotMetrics(rep SnapshotReport) {
@@ -489,11 +549,11 @@ func recordOpenBaoSnapshotMetrics(rep SnapshotReport) {
 		if s == rep.State {
 			v = 1
 		}
-		openBaoSnapshotState.WithLabelValues(s).Set(v)
+		openBaoSnapshotState.WithLabelValues(rep.Instance, s).Set(v)
 	}
 	if rep.AgeSeconds != nil {
-		openBaoSnapshotAge.Set(float64(*rep.AgeSeconds))
+		openBaoSnapshotAge.WithLabelValues(rep.Instance).Set(float64(*rep.AgeSeconds))
 	} else {
-		openBaoSnapshotAge.Set(-1)
+		openBaoSnapshotAge.WithLabelValues(rep.Instance).Set(-1)
 	}
 }

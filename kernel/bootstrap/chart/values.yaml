@@ -195,6 +195,9 @@ signing:
 # the backend a running vault has until the volume says it was migrated.
 openbao:
   storage: file
+  # The same for the transit seal that unseals the vault (openbao-transit):
+  # the claim's one setting, decided per instance by its own volume.
+  transitStorage: file
 
 # On the switches above (appsets.enabled, operator.enabled,
 # headlamp.oidc.enabled): the templates compare them to "true" rather than

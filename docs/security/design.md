@@ -1415,9 +1415,13 @@ at random. A vault on Raft storage is snapshotted every day by the CronJob
 `openbao-snapshot` in the vault's namespace, with a token whose policy reads
 `sys/storage/raft/snapshot` and nothing else, and the snapshot is encrypted
 to the backup recipient inside the pod before it is written to the platform's
-object store ([recovery.md §4](../guides/recovery.md)). A vault on file
-storage is not snapshotted; the operator says so on the `Cluster` claim's
-status. What follows:
+object store ([recovery.md §4](../guides/recovery.md)). The transit seal
+that unseals the vault is snapshotted the same way, by
+`openbao-transit-snapshot` in the seal's namespace with a role of the seal's
+own, because the key that unseals the vault exists nowhere else: it is not
+exportable, and is not made so. A restored seal opens with the recovery
+kit's `TRANSIT_UNSEAL_KEY`. An instance on file storage is not snapshotted;
+the operator says so on the `Cluster` claim's status. What follows:
 
 - *A tenant's backup, restore and import work as under `derived`.* The one
   kind of credential an app's restored data depends on, the app's own
@@ -1437,8 +1441,9 @@ status. What follows:
   every service and app is locked out of its own store until each credential
   is set by hand, unless the vault is restored from its snapshot
   ([recovery.md §4](../guides/recovery.md)): a cluster that runs `random`
-  needs its vault on Raft, and the recovery kit, whose backup identity opens
-  the snapshot and whose unseal material opens the vault restored from it.
+  needs its vault and its seal on Raft, and the recovery kit, whose backup
+  identity opens the snapshots and whose `TRANSIT_UNSEAL_KEY` opens the seal
+  restored from its own, which then unseals the vault.
   The snapshots sit on the cluster's own object store; a copy off the
   cluster is the operator's to make.
 

@@ -32,8 +32,13 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
+var (
+	vaultInstance   = SnapshotInstance{Name: "openbao", What: "the vault", Job: "openbao-snapshot"}
+	transitInstance = SnapshotInstance{Name: "openbao-transit", What: "the transit seal", Job: "openbao-transit-snapshot"}
+)
+
 func snap(key string, at time.Time) SnapshotObject {
-	return SnapshotObject{Key: OpenBaoSnapshotPrefix + key, LastModified: at, Size: 4096}
+	return SnapshotObject{Key: "openbao/" + key, LastModified: at, Size: 4096}
 }
 
 func TestTheNewestSnapshotDecidesTheState(t *testing.T) {
@@ -66,7 +71,7 @@ func TestTheNewestSnapshotDecidesTheState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rep := JudgeOpenBaoSnapshots(now, 30*time.Hour, "b", tc.storage, tc.storageErr, tc.objects, tc.listErr)
+			rep := JudgeOpenBaoSnapshots(now, 30*time.Hour, "b", vaultInstance, tc.storage, tc.storageErr, tc.objects, tc.listErr)
 			if rep.State != tc.want || rep.Newest != tc.newest || rep.Count != tc.count {
 				t.Fatalf("state %s newest %q count %d, want %s %q %d (%s)", rep.State, rep.Newest, rep.Count, tc.want, tc.newest, tc.count, rep.Message)
 			}
@@ -81,8 +86,42 @@ func TestTheNewestSnapshotDecidesTheState(t *testing.T) {
 			}
 		})
 	}
-	if rep := JudgeOpenBaoSnapshots(now, 30*time.Hour, "b", "file", nil, nil, nil); !strings.Contains(rep.Message, "docs/guides/recovery.md §5") {
+	if rep := JudgeOpenBaoSnapshots(now, 30*time.Hour, "b", vaultInstance, "file", nil, nil, nil); !strings.Contains(rep.Message, "docs/guides/recovery.md §5") {
 		t.Fatalf("a vault on file storage is not pointed at the migration: %s", rep.Message)
+	}
+}
+
+// The transit seal is not asked: the marker its job leaves says what
+// storage it is on, and only its own prefix's objects count.
+func TestTheSealsSnapshotsAreJudgedUnderItsOwnPrefix(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	tsnap := func(key string, at time.Time) SnapshotObject {
+		return SnapshotObject{Key: "openbao-transit/" + key, LastModified: at}
+	}
+	fresh := tsnap("openbao-transit-20261105T021700Z.snap.age", now.Add(-time.Hour))
+	cases := []struct {
+		name    string
+		objects []SnapshotObject
+		want    string
+		storage string
+	}{
+		{name: "a fresh one, marked raft", objects: []SnapshotObject{fresh, tsnap("storage.raft", now.Add(-time.Hour))}, want: SnapshotCurrent, storage: "raft"},
+		{name: "marked file", objects: []SnapshotObject{tsnap("storage.file", now)}, want: SnapshotNotRaft, storage: "file"},
+		{name: "the newer marker counts", objects: []SnapshotObject{fresh, tsnap("storage.file", now.Add(-48*time.Hour)), tsnap("storage.raft", now.Add(-time.Hour))}, want: SnapshotCurrent, storage: "raft"},
+		{name: "nothing yet", want: SnapshotMissing},
+		// The vault's snapshots are not the seal's.
+		{name: "a vault snapshot is not one", objects: []SnapshotObject{tsnap("openbao-20261105T021700Z.snap.age", now)}, want: SnapshotMissing},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := JudgeOpenBaoSnapshots(now, 30*time.Hour, "b", transitInstance, "", nil, tc.objects, nil)
+			if rep.State != tc.want || rep.Storage != tc.storage || rep.Instance != "openbao-transit" {
+				t.Fatalf("state %s storage %q instance %q, want %s %q (%s)", rep.State, rep.Storage, rep.Instance, tc.want, tc.storage, rep.Message)
+			}
+			if tc.want == SnapshotMissing && !strings.Contains(rep.Message, "openbao-transit-snapshot") {
+				t.Fatalf("the message does not name the seal's CronJob: %s", rep.Message)
+			}
+		})
 	}
 }
 
@@ -187,9 +226,9 @@ func TestTheSnapshotReportIsWrittenOnTheClaimsComposite(t *testing.T) {
 		Storage:   func(context.Context) (string, error) { return "file", nil },
 		Snapshots: listed(nil),
 	}
-	rep := o.Once(ctx)
-	if rep.State != SnapshotNotRaft {
-		t.Fatalf("state = %s (%s)", rep.State, rep.Message)
+	reps := o.Once(ctx)
+	if len(reps) != 2 || reps[0].State != SnapshotNotRaft || reps[1].Instance != "openbao-transit" || reps[1].State != SnapshotMissing {
+		t.Fatalf("reports = %+v", reps)
 	}
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(xr.GroupVersionKind())
@@ -200,6 +239,10 @@ func TestTheSnapshotReportIsWrittenOnTheClaimsComposite(t *testing.T) {
 	if status["state"] != SnapshotNotRaft || status["storage"] != "file" || status["bucket"] != "gentian-openbao-snapshots" ||
 		status["checkedAt"] != "2026-11-05T12:00:00Z" {
 		t.Fatalf("status.openbaoSnapshots = %v", status)
+	}
+	// The seal's report, beside the vault's.
+	if seal, _, _ := unstructured.NestedMap(got.Object, "status", "transitSnapshots"); seal["state"] != SnapshotMissing || seal["instance"] != "openbao-transit" {
+		t.Fatalf("status.transitSnapshots = %v", seal)
 	}
 	// Beside what else is there: a merge.
 	if build, _, _ := unstructured.NestedString(got.Object, "status", "platform", "build"); build != "abc1234" {

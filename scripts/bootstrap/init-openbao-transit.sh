@@ -258,6 +258,44 @@ curl -sf -X PUT \
   "${TRANSIT_ADDR}/v1/sys/policies/acl/transit-autounseal" >/dev/null
 success "Policy transit-autounseal written."
 
+# ─── The seal's snapshot role (idempotent) ───────────────────────────────────
+# The CronJob openbao-transit-snapshot in this namespace reads a Raft snapshot
+# of the seal every day (charts/gentian-os/templates/openbao-snapshots.yaml,
+# docs/guides/recovery.md §4). It logs in with a token of its own
+# ServiceAccount, issued for this audience alone, and the role may read the
+# snapshot and nothing else: no default policy, five minutes to live. The
+# seal checks the token with the Kubernetes API (its own ServiceAccount is a
+# token reviewer, the chart's authDelegator).
+write_transit_snapshot_role() {
+  local mounts
+  mounts=$(curl -sf -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" "${TRANSIT_ADDR}/v1/sys/auth")
+  if ! echo "$mounts" | jq -e '."kubernetes/"' >/dev/null 2>&1; then
+    curl -sf -X POST -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+      -d '{"type": "kubernetes"}' "${TRANSIT_ADDR}/v1/sys/auth/kubernetes" >/dev/null
+  fi
+  curl -sf -X POST -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+    -d '{"kubernetes_host": "https://kubernetes.default.svc"}' \
+    "${TRANSIT_ADDR}/v1/auth/kubernetes/config" >/dev/null
+  jq -n --rawfile policy "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/kernel/openbao/transit-snapshot-policy.hcl" \
+      '{policy: $policy}' |
+    curl -sf -X PUT -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+      -d @- "${TRANSIT_ADDR}/v1/sys/policies/acl/openbao-transit-snapshot" >/dev/null
+  jq -n --arg ns "${TRANSIT_NS}" '{
+      bound_service_account_names: ["openbao-transit-snapshot"],
+      bound_service_account_namespaces: [$ns],
+      audience: "vault://openbao-transit-snapshot",
+      token_policies: ["openbao-transit-snapshot"],
+      token_no_default_policy: true,
+      token_ttl: 300,
+      token_max_ttl: 300
+    }' |
+    curl -sf -X POST -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" -H "Content-Type: application/json" \
+      -d @- "${TRANSIT_ADDR}/v1/auth/kubernetes/role/openbao-transit-snapshot" >/dev/null
+}
+info "Writing the seal's snapshot role openbao-transit-snapshot..."
+write_transit_snapshot_role
+success "Role openbao-transit-snapshot written."
+
 # ─── Create autounseal token + k8s Secret (idempotent + validating) ──────────
 # Important: a Secret left over from a prior install can hold a token from a
 # now-gone transit instance (transit raft state was wiped, namespace was

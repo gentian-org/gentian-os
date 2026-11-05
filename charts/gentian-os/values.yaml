@@ -93,6 +93,14 @@ openbaoSnapshots:
   # sys/storage/raft/snapshot and nothing else.
   vaultRole: openbao-snapshot
   vaultAudience: vault://openbao-snapshot
+  # The transit seal that unseals the vault, on the same schedule, into the
+  # same bucket under openbao-transit/: without the seal's key no snapshot of
+  # the vault unseals. Its role, openbao-transit-snapshot, is written in the
+  # seal (kernel/openbao/transit-snapshot-policy.hcl).
+  transit:
+    enabled: true
+    vaultRole: openbao-transit-snapshot
+    vaultAudience: vault://openbao-transit-snapshot
   # Where the ciphertext is staged before the upload.
   workSizeLimit: 2Gi
   resources:

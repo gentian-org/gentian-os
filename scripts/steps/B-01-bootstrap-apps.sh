@@ -191,7 +191,8 @@ _v5_render() {
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=$(gentian_os_ref)" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
-        --set-string "openbao.storage=$(openbao_storage_for_render)" \
+        --set-string "openbao.storage=$(openbao_storage_for_render openbao)" \
+        --set-string "openbao.transitStorage=$(openbao_storage_for_render openbao-transit)" \
         --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
         --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
         --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \

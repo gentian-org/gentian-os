@@ -18,12 +18,19 @@
 #                recipient, or a store, it refuses;
 #   the restore  the snapshot, decrypted with the identity, restored into a
 #                new vault with snapshot-force (§4), unsealed with the old
-#                vault's key, holds the secret.
+#                vault's key, holds the secret;
+#   the seal     a transit seal on Raft, set up as
+#                scripts/bootstrap/init-openbao-transit.sh does, and a vault
+#                it unseals: the same job snapshots the seal with the seal's
+#                own role, under its own prefix; both volumes lost, the seal
+#                is restored from its snapshot and unsealed with the one key
+#                the recovery kit carries (TRANSIT_UNSEAL_KEY), and the vault
+#                then unseals itself through it.
 #
 # The cluster's pieces are stood in for: the Kubernetes auth mount by a JWT
 # mount (the login body is the same, {role, jwt}), the object store by an
-# rclone on PATH that writes to a directory, the transit seal by a Shamir key.
-# The policy is the one the Cluster composition renders.
+# rclone on PATH that writes to a directory. The policies are the ones the
+# Cluster composition renders and kernel/openbao/transit-snapshot-policy.hcl.
 #
 # Needs bao, age, age-keygen, openssl, curl, jq, python3 with PyYAML. Skips
 # (exit 0) when one is missing.
@@ -150,15 +157,17 @@ RECIPIENT="$(age-keygen -y "${W}/identity.txt")"
 run_job() {
     env -i PATH="${W}/bin:${PATH}" HOME="${W}" FAKE_S3="${W}/s3" \
         BAO_ADDR="${BAO_ADDR}" BAO_CACERT="${W}/tls.crt" BAO_AUTH_PATH=jwt BAO_ROLE=openbao-snapshot \
-        JWT_FILE="${W}/jwt" KEEP=14 SNAPSHOT_PREFIX=openbao WORK_DIR="${W}/work" \
+        JWT_FILE="${W}/jwt" KEEP=14 SNAPSHOT_NAME=openbao SNAPSHOT_PREFIX=openbao WORK_DIR="${W}/work" \
         S3_ENDPOINT=http://s3.invalid:9000 S3_BUCKET=b S3_ACCESS_KEY=ak S3_SECRET_KEY=sk S3_REGION=us-east-1 \
         "$@" sh "${SCRIPT}" > "${W}/job.log" 2>&1
 }
 run_job BACKUP_AGE_RECIPIENTS="${RECIPIENT}"
 rc=$?
-check "the job on a vault on file storage: exits 0, says NOT ON RAFT and points at §5, writes nothing" \
+check "the job on a vault on file storage: exits 0, says NOT ON RAFT and points at §5, writes no snapshot" \
     "$([[ ${rc} -eq 0 ]] && grep -q 'NOT ON RAFT' "${W}/job.log" && grep -q 'recovery.md §5' "${W}/job.log" &&
-        [[ -z "$(ls -A "${W}/s3/b/openbao")" ]] && echo 1 || echo 0)"
+        [[ "$(ls -A "${W}/s3/b/openbao")" == storage.file ]] && echo 1 || echo 0)"
+check "  and leaves the marker storage.file the operator reads" \
+    "$([[ -f "${W}/s3/b/openbao/storage.file" && ! -s "${W}/s3/b/openbao/storage.file" ]] && echo 1 || echo 0)"
 
 # The move, as §5 does it: the vault stopped, migrate into staging, the
 # result copied beside the file data.
@@ -235,6 +244,8 @@ newest="$(ls -1 "${W}/s3/b/openbao" | grep -E '^openbao-[0-9]{8}T[0-9]{6}Z\.snap
 check "the job on Raft: exits 0 and writes a new snapshot" \
     "$([[ ${rc} -eq 0 && "${newest}" != openbao-202610* && -s "${W}/s3/b/openbao/${newest}" ]] && echo 1 || echo 0)"
 [[ ${rc} -eq 0 ]] || sed 's/^/      /' "${W}/job.log"
+check "the marker now says raft, and storage.file is gone" \
+    "$([[ -f "${W}/s3/b/openbao/storage.raft" && ! -f "${W}/s3/b/openbao/storage.file" ]] && echo 1 || echo 0)"
 check "it keeps the newest 14 and deletes the older, and leaves what is not a snapshot" \
     "$([[ "$(ls -1 "${W}/s3/b/openbao" | grep -c '\.snap\.age$')" -eq 14 && -f "${W}/s3/b/openbao/notes.txt" &&
         ! -f "${W}/s3/b/openbao/openbao-20261001T021700Z.snap.age" ]] && echo 1 || echo 0)"
@@ -286,6 +297,185 @@ check "snapshot-force restores the decrypted snapshot into the new vault" \
 BAO_TOKEN="${ROOT_TOKEN}"
 check "unsealed with the old vault's key, it answers with the old root token and holds the secret" \
     "$([[ "$(sealed)" == false && "$(bao kv get -mount=secret -field=value gentian-os/kernel/probe 2>/dev/null)" == on-raft ]] && echo 1 || echo 0)"
+stop_server
+
+echo ""
+echo "The transit seal: its snapshot, and its restore before the vault's (recovery.md §4)"
+echo ""
+
+# The seal, as the platform runs it: plain HTTP, Raft, one key share,
+# initialized through the API as scripts/bootstrap/init-openbao-transit.sh
+# does -- so its unseal key is keys_base64[0], the value the recovery kit
+# carries as TRANSIT_UNSEAL_KEY.
+TPORT=$((PORT + 2))
+while [[ ${TPORT} -lt 18400 ]]; do
+    if ! (exec 3<>"/dev/tcp/127.0.0.1/${TPORT}") 2>/dev/null &&
+        ! (exec 3<>"/dev/tcp/127.0.0.1/$((TPORT + 1))") 2>/dev/null; then
+        break
+    fi
+    TPORT=$((TPORT + 2))
+done
+TADDR="http://127.0.0.1:${TPORT}"
+TPID=""
+stop_transit() {
+    if [[ -n "${TPID}" ]]; then kill "${TPID}" 2>/dev/null; wait "${TPID}" 2>/dev/null; TPID=""; fi
+}
+trap 'stop_transit; cleanup' EXIT INT TERM
+start_transit() {
+    stop_transit
+    mkdir -p "${W}/transit"
+    cat > "${W}/transit.hcl" <<EOF
+listener "tcp" {
+  address         = "127.0.0.1:${TPORT}"
+  cluster_address = "127.0.0.1:$((TPORT + 1))"
+  tls_disable     = 1
+}
+api_addr     = "${TADDR}"
+cluster_addr = "https://127.0.0.1:$((TPORT + 1))"
+storage "raft" {
+  path    = "${W}/transit"
+  node_id = "openbao-transit-0"
+}
+EOF
+    bao server -config="${W}/transit.hcl" > "${W}/transit.log" 2>&1 &
+    TPID=$!
+    local i
+    for i in $(seq 1 100); do
+        curl -s "${TADDR}/v1/sys/seal-status" >/dev/null 2>&1 && return 0
+        sleep 0.1
+    done
+    echo "${RED}the seal did not start:${NC}"; tail -5 "${W}/transit.log"
+    return 1
+}
+t_api() { # <method> <path> [body] — the seal's API with T_ROOT
+    if [[ $# -ge 3 ]]; then
+        curl -sf -X "$1" -H "X-Vault-Token: ${T_ROOT}" -H "Content-Type: application/json" -d "$3" "${TADDR}/v1/$2"
+    else
+        curl -sf -X "$1" -H "X-Vault-Token: ${T_ROOT}" "${TADDR}/v1/$2"
+    fi
+}
+t_sealed() { curl -s "${TADDR}/v1/sys/seal-status" | jq -r '.sealed'; }
+# Raft elects its one node leader a moment after the unseal; until then the
+# API answers nothing a test can use.
+t_active() {
+    local i
+    for i in $(seq 1 100); do
+        [[ "$(curl -s -o /dev/null -w '%{http_code}' "${TADDR}/v1/sys/health")" == 200 ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+start_transit || exit 1
+curl -sf -X PUT -d '{"secret_shares": 1, "secret_threshold": 1}' "${TADDR}/v1/sys/init" > "${W}/transit-init.json"
+TRANSIT_UNSEAL_KEY="$(jq -r '.keys_base64[0]' "${W}/transit-init.json")"
+T_ROOT="$(jq -r '.root_token' "${W}/transit-init.json")"
+curl -sf -X PUT -d "{\"key\": \"${TRANSIT_UNSEAL_KEY}\"}" "${TADDR}/v1/sys/unseal" >/dev/null
+t_active
+t_api POST sys/mounts/transit '{"type": "transit"}' >/dev/null
+t_api POST transit/keys/autounseal '{"type": "aes256-gcm96"}' >/dev/null
+t_api PUT sys/policies/acl/transit-autounseal \
+    "$(jq -n --arg p 'path "transit/encrypt/autounseal" { capabilities = ["update"] }
+path "transit/decrypt/autounseal" { capabilities = ["update"] }' '{policy: $p}')" >/dev/null
+AUTOUNSEAL_TOKEN="$(t_api POST auth/token/create-orphan '{"policies":["transit-autounseal"],"period":"8760h"}' | jq -r '.auth.client_token')"
+# The snapshot role, with the policy the seal is given
+# (kernel/openbao/transit-snapshot-policy.hcl), on a JWT mount standing in for
+# Kubernetes.
+t_api PUT sys/policies/acl/openbao-transit-snapshot \
+    "$(jq -n --rawfile p "${ROOT}/kernel/openbao/transit-snapshot-policy.hcl" '{policy: $p}')" >/dev/null
+t_api POST sys/auth/jwt '{"type": "jwt"}' >/dev/null
+t_api POST auth/jwt/config "$(jq -n --rawfile k "${W}/jwt.pub" '{jwt_validation_pubkeys: [$k]}')" >/dev/null
+t_api POST auth/jwt/role/openbao-transit-snapshot '{"role_type":"jwt","bound_audiences":["vault://openbao-transit-snapshot"],"user_claim":"sub","token_policies":["openbao-transit-snapshot"],"token_no_default_policy":true,"token_ttl":300,"token_max_ttl":300}' >/dev/null
+check "the seal is on Raft, initialized with one share, and holds the auto-unseal key" \
+    "$([[ "$(curl -s "${TADDR}/v1/sys/seal-status" | jq -r '.storage_type,.n,.t' | tr '\n' ' ')" == "raft 1 1 " &&
+        -n "$(t_api GET transit/keys/autounseal | jq -r '.data.name // empty')" ]] && echo 1 || echo 0)"
+
+# A vault unsealed by the seal, with a secret.
+rm -rf "${W}/data"; mkdir -p "${W}/data"
+SEALED_BY_TRANSIT="${RAFT_STORAGE}
+seal \"transit\" {
+  address    = \"${TADDR}\"
+  token      = \"${AUTOUNSEAL_TOKEN}\"
+  key_name   = \"autounseal\"
+  mount_path = \"transit/\"
+}"
+start_server "${SEALED_BY_TRANSIT}" || exit 1
+bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json > "${W}/init3.json" 2>/dev/null
+for _ in $(seq 1 100); do
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' --cacert "${W}/tls.crt" "${BAO_ADDR}/v1/sys/health")" == 200 ]] && break
+    sleep 0.1
+done
+BAO_TOKEN="$(jq -r '.root_token' "${W}/init3.json")"
+bao secrets enable -path=secret kv-v2 >/dev/null 2>&1
+bao kv put -mount=secret gentian-os/kernel/probe value=sealed-by-transit >/dev/null 2>&1
+check "a vault on Raft unsealed by the seal holds a secret" \
+    "$([[ "$(sealed)" == false && "$(bao kv get -mount=secret -field=value gentian-os/kernel/probe 2>/dev/null)" == sealed-by-transit ]] && echo 1 || echo 0)"
+unset BAO_TOKEN
+
+# The seal's job: plain HTTP, its own role and audience, its own prefix.
+payload="$(printf '{"sub":"system:serviceaccount:kernel-seal:openbao-transit-snapshot","aud":"vault://openbao-transit-snapshot","iat":%d,"nbf":%d,"exp":%d}' \
+    "$((now - 60))" "$((now - 60))" "$((now + 600))" | b64url)"
+sig="$(printf '%s.%s' "${hdr}" "${payload}" | openssl dgst -sha256 -sign "${W}/jwt.key" -binary | b64url)"
+printf '%s.%s.%s' "${hdr}" "${payload}" "${sig}" > "${W}/jwt-transit"
+run_job BACKUP_AGE_RECIPIENTS="${RECIPIENT}" BAO_ADDR="${TADDR}" BAO_CACERT= BAO_ROLE=openbao-transit-snapshot \
+    JWT_FILE="${W}/jwt-transit" SNAPSHOT_NAME=openbao-transit SNAPSHOT_PREFIX=openbao-transit
+rc=$?
+tnewest="$(ls -1 "${W}/s3/b/openbao-transit" 2>/dev/null | grep -E '^openbao-transit-[0-9]{8}T[0-9]{6}Z\.snap\.age$' | sort | tail -1)"
+check "the seal's job writes its snapshot under openbao-transit/, and the marker storage.raft" \
+    "$([[ ${rc} -eq 0 && -n "${tnewest}" && -f "${W}/s3/b/openbao-transit/storage.raft" ]] && echo 1 || echo 0)"
+[[ ${rc} -eq 0 ]] || sed 's/^/      /' "${W}/job.log"
+check "  encrypted to the same recipient: the backup identity opens it" \
+    "$(age -d -i "${W}/identity.txt" -o "${W}/transit.snap" "${W}/s3/b/openbao-transit/${tnewest}" 2>/dev/null &&
+        gzip -t "${W}/transit.snap" 2>/dev/null && echo 1 || echo 0)"
+run_job BACKUP_AGE_RECIPIENTS="${RECIPIENT}" BAO_ADDR="${TADDR}" BAO_CACERT= BAO_ROLE=openbao-snapshot \
+    JWT_FILE="${W}/jwt" SNAPSHOT_NAME=openbao-transit SNAPSHOT_PREFIX=openbao-transit
+check "the vault's token is not one the seal's role takes" \
+    "$([[ $? -ne 0 ]] && grep -q 'refused the login' "${W}/job.log" && echo 1 || echo 0)"
+
+# Both volumes lost. The seal comes back first: a new one, initialized anew,
+# which the vault cannot unseal through.
+stop_server
+stop_transit
+rm -rf "${W}/transit"
+start_transit || exit 1
+curl -sf -X PUT -d '{"secret_shares": 1, "secret_threshold": 1}' "${TADDR}/v1/sys/init" > "${W}/transit-init2.json"
+curl -sf -X PUT -d "{\"key\": \"$(jq -r '.keys_base64[0]' "${W}/transit-init2.json")\"}" "${TADDR}/v1/sys/unseal" >/dev/null
+t_active
+# (It may not start at all: the new seal knows neither its token nor its key.)
+start_server "${SEALED_BY_TRANSIT}" >/dev/null 2>&1
+sleep 1
+check "a new seal does not unseal the vault: its key is not the old one" \
+    "$([[ "$(sealed)" != false ]] && echo 1 || echo 0)"
+stop_server
+
+# The seal restored from its snapshot with the new seal's temporary root
+# token, then unsealed with the kit's TRANSIT_UNSEAL_KEY.
+BAO_ADDR="${TADDR}" BAO_CACERT= BAO_TOKEN="$(jq -r '.root_token' "${W}/transit-init2.json")" \
+    bao operator raft snapshot restore -force "${W}/transit.snap" > "${W}/transit-restore.log" 2>&1
+check "snapshot-force restores the seal's snapshot into the new seal" "$([[ $? -eq 0 ]] && echo 1 || echo 0)"
+for _ in $(seq 1 50); do [[ "$(t_sealed)" == true ]] && break; sleep 0.1; done
+check "  after the restore the seal is sealed, under the restored seal configuration (one share of one)" \
+    "$([[ "$(curl -s "${TADDR}/v1/sys/seal-status" | jq -r '.sealed,.n,.t' | tr '\n' ' ')" == "true 1 1 " ]] && echo 1 || echo 0)"
+curl -s -X PUT -d "{\"key\": \"$(jq -r '.keys_base64[0]' "${W}/transit-init2.json")\"}" "${TADDR}/v1/sys/unseal" >/dev/null
+check "  the new seal's own key does not unseal it" "$([[ "$(t_sealed)" == true ]] && echo 1 || echo 0)"
+curl -s -X PUT -d '{"reset": true}' "${TADDR}/v1/sys/unseal" >/dev/null
+curl -sf -X PUT -d "{\"key\": \"${TRANSIT_UNSEAL_KEY}\"}" "${TADDR}/v1/sys/unseal" >/dev/null
+t_active
+check "  unsealed with TRANSIT_UNSEAL_KEY alone, it holds the auto-unseal key again" \
+    "$([[ "$(t_sealed)" == false && -n "$(t_api GET transit/keys/autounseal | jq -r '.data.name // empty')" ]] && echo 1 || echo 0)"
+
+# Then the vault, which unseals itself through the restored seal.
+start_server "${SEALED_BY_TRANSIT}" || exit 1
+for _ in $(seq 1 100); do
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' --cacert "${W}/tls.crt" "${BAO_ADDR}/v1/sys/health")" == 200 ]] && break
+    sleep 0.1
+done
+BAO_TOKEN="$(jq -r '.root_token' "${W}/init3.json")" \
+    bao kv get -mount=secret -field=value gentian-os/kernel/probe > "${W}/probe" 2>/dev/null
+check "the vault unseals through the restored seal and holds its secret" \
+    "$([[ "$(sealed)" == false && "$(cat "${W}/probe")" == sealed-by-transit ]] && echo 1 || echo 0)"
+stop_server
+stop_transit
 
 echo ""
 if (( fail > 0 )); then

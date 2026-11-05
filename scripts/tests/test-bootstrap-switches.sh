@@ -193,9 +193,16 @@ check "openbao.storage unset: the vault is rendered on file storage" \
 storage_raft="$(render false false false --set-string openbao.storage=raft)"
 check "openbao.storage=raft: Raft at /openbao/data, the pod's name as its node id" \
     "$(has "${storage_raft}" '^              storage "raft" \{$' && has "${storage_raft}" 'node_id = "openbao-0"' &&
-        ! has "${storage_raft}" 'storage "file"' && echo 1 || echo 0)"
+        [[ "$(grep -c 'storage "file"' <<<"${storage_raft}")" -eq 1 ]] && echo 1 || echo 0)"
 check "openbao.storage=raft keeps the transit seal" \
     "$(has "${storage_raft}" 'seal "transit"' && echo 1 || echo 0)"
+check "openbao.transitStorage unset: the seal is rendered on file storage, with its plain listener" \
+    "$(! has "${storage_default}" 'node_id = "openbao-transit-0"' && has "${storage_default}" 'tls_disable     = 1' && echo 1 || echo 0)"
+storage_seal="$(render false false false --set-string openbao.transitStorage=raft)"
+check "openbao.transitStorage=raft: the seal on Raft, its pod's name as its node id; the vault left alone" \
+    "$(has "${storage_seal}" 'node_id = "openbao-transit-0"' && ! has "${storage_seal}" 'node_id = "openbao-0"' && echo 1 || echo 0)"
+check "openbao.transitStorage that is neither is refused" \
+    "$(has "$(render false false false --set-string openbao.transitStorage=consul)" 'it is raft or file' && echo 1 || echo 0)"
 check "openbao.storage that is neither is refused" \
     "$(has "$(render false false false --set-string openbao.storage=consul)" 'it is raft or file' && echo 1 || echo 0)"
 

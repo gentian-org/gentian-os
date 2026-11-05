@@ -483,6 +483,9 @@ spec:
                         directory of files and has no consistent online
                         snapshot; it is the default so that a claim written
                         before this field keeps the backend its data is in.
+                        One setting for both OpenBao instances, the vault and
+                        the transit seal that unseals it; the installer moves
+                        neither until its own volume says its data was moved.
                         Moving a cluster with data from file to raft is a
                         migration (docs/guides/recovery.md §5), not an edit of
                         this field: Raft started on file data is an empty vault.
@@ -1429,6 +1432,9 @@ spec:
                     (docs/guides/recovery.md §4). What a console shows to say
                     a snapshot is missing or stale. Read, never set.
                   properties:
+                    instance:
+                      type: string
+                      description: The instance this reports on, openbao (the vault) or openbao-transit (its seal).
                     state:
                       type: string
                       description: >-
@@ -1438,7 +1444,55 @@ spec:
                         could not be read).
                     storage:
                       type: string
-                      description: The vault's storage, raft or file; empty when the vault could not be asked.
+                      description: The instance's storage, raft or file; empty when nothing says.
+                    newest:
+                      type: string
+                      description: The newest snapshot's object key in the bucket.
+                    newestAt:
+                      type: string
+                      description: When it was written.
+                    ageSeconds:
+                      type: integer
+                      description: How old it is, in seconds, when checkedAt was.
+                    count:
+                      type: integer
+                      description: How many snapshots the bucket holds.
+                    bucket:
+                      type: string
+                      description: The bucket in the platform's object store.
+                    staleAfter:
+                      type: string
+                      description: How old the newest may be before it is stale.
+                    message:
+                      type: string
+                      description: What the state means, and where to look.
+                    checkedAt:
+                      type: string
+                      description: When the operator last wrote this.
+                transitSnapshots:
+                  type: object
+                  description: >-
+                    The same for the transit seal that unseals the vault
+                    (openbao-transit), whose snapshots are under
+                    openbao-transit/ in the same bucket. The operator does not
+                    reach the seal: its storage is what the seal's snapshot
+                    job last found. Without a current snapshot of the seal, no
+                    snapshot of the vault can be unsealed after the seal's
+                    volume is lost. Read, never set.
+                  properties:
+                    instance:
+                      type: string
+                      description: The instance this reports on, openbao (the vault) or openbao-transit (its seal).
+                    state:
+                      type: string
+                      description: >-
+                        Current (the newest is younger than staleAfter), Stale,
+                        Missing (none in the bucket), NotRaft (the vault is on
+                        file storage and none is taken) or Unknown (the bucket
+                        could not be read).
+                    storage:
+                      type: string
+                      description: The instance's storage, raft or file; empty when nothing says.
                     newest:
                       type: string
                       description: The newest snapshot's object key in the bucket.

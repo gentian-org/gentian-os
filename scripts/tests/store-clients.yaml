@@ -345,6 +345,13 @@ clients:
     built: none
     proof: charts/gentian-os/templates/openbao-snapshots.yaml, files/openbao-snapshot.sh
   - store: s3
+    client: the CronJob that writes the transit seal's encrypted snapshot and deletes the oldest
+    namespace: kernel-seal
+    podLabels: {app.kubernetes.io/component: openbao-snapshot}
+    port: 9000
+    built: none
+    proof: charts/gentian-os/templates/openbao-snapshots.yaml, files/openbao-snapshot.sh
+  - store: s3
     client: the bucket Job that makes the vault snapshot's bucket and identity, at the master
     namespace: system-s3
     podLabels: {gentianos.io/object-store-shell: "true"}
@@ -516,6 +523,11 @@ denied:
     client: the vault itself, beside the snapshot job in its namespace
     namespace: kernel-secrets
     podLabels: {app.kubernetes.io/name: openbao, app.kubernetes.io/instance: openbao}
+    port: 9000
+  - store: s3
+    client: the transit seal itself, beside its snapshot job
+    namespace: kernel-seal
+    podLabels: {app.kubernetes.io/name: openbao, app.kubernetes.io/instance: openbao-transit}
     port: 9000
   - store: s3
     client: a pod of another kernel namespace carrying the snapshot job's label

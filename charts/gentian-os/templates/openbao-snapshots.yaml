@@ -1,21 +1,28 @@
 {{- /*
-  The vault's daily snapshot (docs/guides/recovery.md §4).
+  The daily snapshots of the platform's two OpenBao instances
+  (docs/guides/recovery.md §4): the vault, and the transit seal that unseals
+  it. Without the seal's key no snapshot of the vault can be unsealed, so the
+  seal is snapshotted beside it.
 
-  A CronJob in the vault's namespace runs files/openbao-snapshot.sh: it asks
-  the vault which storage it is on, takes nothing unless that is Raft, and
-  otherwise reads a snapshot with a token of its own (the vault role
-  openbao-snapshot, composed by the Cluster claim, which may read
-  sys/storage/raft/snapshot and nothing else), encrypts it to the backup
-  recipient inside the pod, writes the ciphertext to the platform's object
-  store and keeps the newest `keep`.
+  Each instance gets a CronJob in its own namespace -- the vault's in the
+  secrets namespace, the seal's in the seal namespace, which keeps the seal's
+  RBAC domain its own -- running files/openbao-snapshot.sh. It asks the
+  instance which storage it is on, takes nothing unless that is Raft, and
+  otherwise reads a snapshot with a token of its own, encrypts it to the
+  backup recipient inside the pod, writes the ciphertext to the platform's
+  object store under the instance's prefix and keeps the newest `keep`.
 
-  Where it writes is the operator's: it makes the bucket and the key that may
+  The roles they log in to may read sys/storage/raft/snapshot and nothing
+  else: the vault's (openbao-snapshot) is composed by the Cluster claim, the
+  seal's (openbao-transit-snapshot, kernel/openbao/transit-snapshot-policy.hcl)
+  is written when the seal is set up or moved to Raft.
+
+  Where they write is the operator's: it makes the bucket and the key that may
   write to it, and keeps both in the vault at
-  gentian-os/kernel/openbao-snapshots/storage, which the ExternalSecret below
-  turns into the Secret the job reads. The operator also reads the bucket
-  back and writes on the Cluster claim's status how old the newest snapshot
-  is (status.openbaoSnapshots), which is what says a snapshot is missing or
-  stale.
+  gentian-os/kernel/openbao-snapshots/storage, which the ExternalSecrets below
+  turn into the Secret each job reads. The operator also reads the bucket back
+  and writes on the Cluster claim's status how old each instance's newest
+  snapshot is (status.openbaoSnapshots, status.transitSnapshots).
 
   The recipient is the one this cluster's values pin (backupRecipients), else
   the one the recovery kit wrote to the vault: the order every backup reads
@@ -24,44 +31,58 @@
 */ -}}
 {{- if .Values.openbaoSnapshots.enabled }}
 {{- $s := .Values.openbaoSnapshots }}
-{{- $name := "openbao-snapshot" }}
-{{- $vaultNamespace := .Values.openbaoNamespace | default "kernel-secrets" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
 {{- $caSecret := (.Values.custodian).caSecret | default "openbao-tls" }}
+{{- $vaultNamespace := .Values.openbaoNamespace | default "kernel-secrets" }}
+{{- $sealNamespace := (.Values.layout).seal | default "kernel-seal" }}
+{{- $instances := list
+      (dict "name" "openbao" "job" "openbao-snapshot" "namespace" $vaultNamespace
+            "address" .Values.openbao.address "caSecret" $caSecret
+            "role" $s.vaultRole "audience" $s.vaultAudience)
+}}
+{{- if $s.transit.enabled }}
+{{- $instances = append $instances
+      (dict "name" "openbao-transit" "job" "openbao-transit-snapshot" "namespace" $sealNamespace
+            "address" (printf "http://openbao-transit.%s.svc.cluster.local:8200" $sealNamespace) "caSecret" ""
+            "role" $s.transit.vaultRole "audience" $s.transit.vaultAudience) }}
+{{- end }}
+{{- range $i := $instances }}
+{{- $name := $i.job }}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ $name }}
-  namespace: {{ $vaultNamespace }}
+  namespace: {{ $i.namespace }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     app.kubernetes.io/component: openbao-snapshot
 # It calls no Kubernetes API. Its one token is the projected one below, for
-# the vault's audience alone.
+# the instance's audience alone.
 automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $name }}-script
-  namespace: {{ $vaultNamespace }}
+  namespace: {{ $i.namespace }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     app.kubernetes.io/component: openbao-snapshot
 data:
   openbao-snapshot.sh: |
-{{ .Files.Get "files/openbao-snapshot.sh" | indent 4 }}
+{{ $.Files.Get "files/openbao-snapshot.sh" | indent 4 }}
 ---
 # Where the snapshots go and the key that may write there, made by the
 # operator (internal/controller/openbao_snapshots.go). Until it has, this
-# does not sync and the job's pod waits for the Secret.
+# does not sync and the job says so in its log.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: {{ $name }}-storage
-  namespace: {{ $vaultNamespace }}
+  namespace: {{ $i.namespace }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     app.kubernetes.io/component: openbao-snapshot
 spec:
   refreshInterval: 1h
@@ -78,7 +99,7 @@ spec:
         key: gentian-os/kernel/openbao-snapshots/storage
         property: {{ $field }}
     {{- end }}
-{{- if not .Values.backupRecipients }}
+{{- if not $.Values.backupRecipients }}
 ---
 # No recipient is pinned in this cluster's values, so the one the recovery
 # kit wrote to the vault. Public: the private half is never read here.
@@ -86,9 +107,9 @@ apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: {{ $name }}-recipients
-  namespace: {{ $vaultNamespace }}
+  namespace: {{ $i.namespace }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     app.kubernetes.io/component: openbao-snapshot
 spec:
   refreshInterval: 1h
@@ -109,9 +130,9 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: {{ $name }}
-  namespace: {{ $vaultNamespace }}
+  namespace: {{ $i.namespace }}
   labels:
-    {{- include "gentian-os.labels" . | nindent 4 }}
+    {{- include "gentian-os.labels" $ | nindent 4 }}
     app.kubernetes.io/component: openbao-snapshot
 spec:
   schedule: {{ $s.schedule | quote }}
@@ -128,15 +149,16 @@ spec:
       template:
         metadata:
           labels:
-            {{- include "gentian-os.selectorLabels" . | nindent 12 }}
+            {{- include "gentian-os.selectorLabels" $ | nindent 12 }}
             # What the object store's NetworkPolicy admits to its S3 port from
-            # the vault's namespace (kernel/services/infra-seaweedfs).
+            # the vault's and the seal's namespaces
+            # (kernel/services/infra-seaweedfs).
             app.kubernetes.io/component: openbao-snapshot
         spec:
           serviceAccountName: {{ $name }}
           automountServiceAccountToken: false
           restartPolicy: Never
-          {{- with .Values.imagePullSecrets }}
+          {{- with $.Values.imagePullSecrets }}
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -148,28 +170,32 @@ spec:
               type: RuntimeDefault
           containers:
             - name: snapshot
-              image: {{ .Values.provisioners.storageTools | default (printf "ghcr.io/gentian-org/storage-tools:%s" $imageTag) | quote }}
+              image: {{ $.Values.provisioners.storageTools | default (printf "ghcr.io/gentian-org/storage-tools:%s" $imageTag) | quote }}
               command: ["/bin/sh", "/opt/openbao-snapshot/openbao-snapshot.sh"]
               env:
+                - name: SNAPSHOT_NAME
+                  value: {{ $i.name | quote }}
+                - name: SNAPSHOT_PREFIX
+                  value: {{ $i.name | quote }}
                 - name: BAO_ADDR
-                  value: {{ .Values.openbao.address | quote }}
+                  value: {{ $i.address | quote }}
+                {{- if $i.caSecret }}
                 - name: BAO_CACERT
                   value: /etc/gentian/openbao-ca/ca.crt
+                {{- end }}
                 - name: BAO_AUTH_PATH
-                  value: {{ .Values.openbao.authPath | quote }}
+                  value: {{ $.Values.openbao.authPath | quote }}
                 - name: BAO_ROLE
-                  value: {{ $s.vaultRole | quote }}
+                  value: {{ $i.role | quote }}
                 - name: JWT_FILE
                   value: /var/run/secrets/openbao/token
                 - name: KEEP
                   value: {{ $s.keep | quote }}
-                - name: SNAPSHOT_PREFIX
-                  value: openbao
                 - name: WORK_DIR
                   value: /work
-                {{- if .Values.backupRecipients }}
+                {{- if $.Values.backupRecipients }}
                 - name: BACKUP_AGE_RECIPIENTS
-                  value: {{ join "," .Values.backupRecipients | quote }}
+                  value: {{ join "," $.Values.backupRecipients | quote }}
                 {{- else }}
                 - name: RECIPIENTS_FILE
                   value: /etc/gentian/backup-recipients/recipients
@@ -198,10 +224,12 @@ spec:
                 - name: vault-token
                   mountPath: /var/run/secrets/openbao
                   readOnly: true
+                {{- if $i.caSecret }}
                 - name: vault-ca
                   mountPath: /etc/gentian/openbao-ca
                   readOnly: true
-                {{- if not .Values.backupRecipients }}
+                {{- end }}
+                {{- if not $.Values.backupRecipients }}
                 - name: recipients
                   mountPath: /etc/gentian/backup-recipients
                   readOnly: true
@@ -216,22 +244,24 @@ spec:
             - name: script
               configMap:
                 name: {{ $name }}-script
-            # A token for the vault and nobody else, short-lived.
+            # A token for this instance and nobody else, short-lived.
             - name: vault-token
               projected:
                 sources:
                   - serviceAccountToken:
-                      audience: {{ $s.vaultAudience | quote }}
+                      audience: {{ $i.audience | quote }}
                       expirationSeconds: 600
                       path: token
+            {{- if $i.caSecret }}
             # The vault's CA certificate, and only that key of the Secret.
             - name: vault-ca
               secret:
-                secretName: {{ $caSecret }}
+                secretName: {{ $i.caSecret }}
                 items:
                   - key: ca.crt
                     path: ca.crt
-            {{- if not .Values.backupRecipients }}
+            {{- end }}
+            {{- if not $.Values.backupRecipients }}
             - name: recipients
               secret:
                 secretName: {{ $name }}-recipients
@@ -248,4 +278,5 @@ spec:
               emptyDir:
                 medium: Memory
                 sizeLimit: 16Mi
+{{- end }}
 {{- end }}

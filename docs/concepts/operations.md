@@ -21,13 +21,14 @@ how long they are kept; the operator turns it into a `TenantExportSchedule`
 per tenant. What a bundle carries per kind is in
 [data-lifecycle.md](data-lifecycle.md); the reference is §9.
 
-The vault is the one kernel store the platform snapshots: on Raft storage,
-every day, encrypted to the backup recipient, into the bucket
-`gentian-openbao-snapshots` of the platform's object store, keeping the newest
-14. The operator writes how old the newest is on the `Cluster` claim's status
-(`status.openbaoSnapshots`) and as metrics (§6). A vault on file storage is
-reported and not snapshotted. Restoring a snapshot and moving a vault to Raft
-are [recovery.md](../guides/recovery.md) §4 and §5.
+The vault, and the transit seal that unseals it, are the kernel stores the
+platform snapshots: on Raft storage, every day, encrypted to the backup
+recipient, into the bucket `gentian-openbao-snapshots` of the platform's
+object store, keeping the newest 14 of each. The operator writes how old each
+newest is on the `Cluster` claim's status (`status.openbaoSnapshots`,
+`status.transitSnapshots`) and as metrics (§6). An instance on file storage
+is reported and not snapshotted. Restoring the snapshots and moving the two
+to Raft are [recovery.md](../guides/recovery.md) §4 and §5.
 
 Nothing else is backed up by the platform. There is no continuous archiving of
 a database (no WAL archive, no point-in-time recovery), no replication of the
@@ -131,8 +132,8 @@ is enabled. The platform installs no Prometheus.
 | `gentianos_integration_bindings_status` | Binding state by contract |
 | `gentianos_externalsecrets_sync_status` | ExternalSecret sync state per tenant |
 | `gentianos_tenant_export_total`, `gentianos_tenant_export_quiesce_duration_seconds` | Exports that ended, and how long an app was paused for one |
-| `gentianos_openbao_snapshot_state` | The state of the vault's snapshots, 1 on the one that holds: `Current`, `Stale`, `Missing`, `NotRaft`, `Unknown` |
-| `gentianos_openbao_snapshot_age_seconds` | Age of the newest snapshot of the vault; -1 while there is none |
+| `gentianos_openbao_snapshot_state` | The state of the snapshots of `instance` (`openbao`, `openbao-transit`), 1 on the one that holds: `Current`, `Stale`, `Missing`, `NotRaft`, `Unknown` |
+| `gentianos_openbao_snapshot_age_seconds` | Age of the newest snapshot of `instance`; -1 while there is none |
 
 Crossplane, External Secrets and Argo CD expose their own upstream metrics.
 

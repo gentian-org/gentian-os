@@ -412,10 +412,15 @@ _kit_gather() {
     # recovery_keys_base64; the _b64 spellings below are what older builds and
     # Vault's own docs use. Reading only one meant the value was silently
     # absent — see the recovery-key case just below, which is the reason this
-    # matters.
+    # matters. The seal's own init file is the API's answer to sys/init, which
+    # spells it keys_base64 (scripts/bootstrap/init-openbao-transit.sh).
+    #
+    # The seal is one share of one, and its seal configuration is in its own
+    # storage, so this one key is all a seal restored from its snapshot needs
+    # to unseal (docs/guides/recovery.md §4.3).
     TRANSIT_UNSEAL_KEY="${TRANSIT_UNSEAL_KEY:-$(
         _kit_from_json "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
-            '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
+            '(.unseal_keys_base64 // .unseal_keys_b64 // .keys_base64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
         TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" \
             -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
@@ -531,9 +536,10 @@ export_recovery_kit() {
     body+="# gentian-os recovery kit"$'\n'
     # Where the vault's own copies are, for whoever opens this in the worst
     # hour: a comment, which load_recovery_kit skips.
-    body+="# The vault's daily snapshots: bucket gentian-openbao-snapshots, prefix openbao/,"$'\n'
-    body+="# in the cluster's object store; opened with BACKUP_AGE_IDENTITY below and"$'\n'
-    body+="# restored as docs/guides/recovery.md section 4 says."$'\n'
+    body+="# The daily snapshots: bucket gentian-openbao-snapshots in the cluster's object"$'\n'
+    body+="# store, the vault under openbao/ and its transit seal under openbao-transit/;"$'\n'
+    body+="# opened with BACKUP_AGE_IDENTITY below, the seal unsealed with"$'\n'
+    body+="# TRANSIT_UNSEAL_KEY, restored as docs/guides/recovery.md section 4 says."$'\n'
     body+="GENTIAN_KIT_VERSION=${GENTIAN_KIT_VERSION}"$'\n'
     for key in "${_KIT_KEYS[@]}"; do
         value="${!key:-}"
@@ -651,7 +657,8 @@ export_recovery_kit() {
     info "  the keys here belong to the old one — they open a vault restored from"
     info "  one of its snapshots (docs/guides/recovery.md §4), nothing else."
     info "  Those snapshots are in the bucket gentian-openbao-snapshots of the"
-    info "  cluster's object store, encrypted to this kit's backup key."
+    info "  cluster's object store, encrypted to this kit's backup key, with those"
+    info "  of the transit seal that unseals the vault, which TRANSIT_UNSEAL_KEY opens."
 
     _record_kit_export_proof "${out}"
 }

@@ -42,13 +42,14 @@
                         (internal/bundlestore, applifecycle/bundle_*.go); and
                         lists the vault's snapshots to say how old the newest
                         is (controller/openbao_snapshots.go).
-    the vault snapshot  the CronJob openbao-snapshot in the vault's namespace
-                        writes the encrypted snapshot and deletes the oldest,
-                        with a key scoped to its bucket
+    the vault snapshots the CronJobs openbao-snapshot in the vault's
+                        namespace and openbao-transit-snapshot in the seal's
+                        write each its encrypted snapshot and delete the
+                        oldest, with a key scoped to their bucket
                         (charts/gentian-os/templates/openbao-snapshots.yaml).
-                        Admitted by its label,
+                        Admitted by their label,
                         app.kubernetes.io/component=openbao-snapshot, from
-                        that namespace alone.
+                        those two namespaces alone.
 
   The master's and the filer's gRPC ports accept a connection only with a
   certificate of the internal CA whose common name is the pod's own or the
@@ -119,13 +120,15 @@ spec:
             matchLabels:
               gentianos.io/component: tenant-export
         {{- end }}
-        {{- with $np.namespaces.secrets }}
+        {{- range $fn := list "secrets" "seal" }}
+        {{- with index $np.namespaces $fn }}
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ . | quote }}
           podSelector:
             matchLabels:
               app.kubernetes.io/component: openbao-snapshot
+        {{- end }}
         {{- end }}
       ports:
         - protocol: TCP

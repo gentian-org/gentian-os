@@ -766,9 +766,12 @@ Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
 A vault on Raft storage (`openbao.storage: raft` on the claim, what a new
 claim states) is snapshotted every day, encrypted to the backup key, into the
 bucket `gentian-openbao-snapshots` of the platform's object store, and the
-newest 14 are kept; [recovery.md §4](../guides/recovery.md) restores one. A
-vault on file storage, a cluster whose claim predates the setting, is not
-snapshotted until it is moved to Raft ([recovery.md §5](../guides/recovery.md)).
+newest 14 are kept; the transit seal that unseals it is snapshotted beside
+it, and opens with the kit's `TRANSIT_UNSEAL_KEY`.
+[recovery.md §4](../guides/recovery.md) restores the seal, then the vault.
+An instance on file storage, on a cluster whose claim predates the setting,
+is not snapshotted until it is moved to Raft
+([recovery.md §5](../guides/recovery.md)).
 The snapshots live on the cluster's own object store: a copy off the cluster
 is yours to make. The recovery kit holds no generated credential, and a
 tenant's backup holds its apps' own secrets and no other.
