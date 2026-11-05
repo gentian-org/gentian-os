@@ -2489,9 +2489,6 @@ kernelDomain: ${domain}
 stage: ${stage}
 llmSupport: ${LLM_SUPPORT:-false}
 
-image:
-  tag: "develop"
-
 appLifecycle:
   deployments:
     cluster: ${cluster}

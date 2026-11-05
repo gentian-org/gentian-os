@@ -625,7 +625,9 @@ the manifests Argo CD syncs and the binary the kubelet pulls come from one
 commit. A release tag resolves to its version. Set it only to run something
 else — and a value that names a moving tag is warned about, because a
 Deployment on one never rolls by itself and a pod that restarts picks up
-whatever the tag meant at that second. A set value is otherwise used as it
+whatever the tag meant at that second. On a `prod` stage pre-flight refuses
+a moving tag outright, whichever way it was reached: install a release from
+its tag. A set value is otherwise used as it
 stands, so a line left in `install.env` by an earlier install pins the
 cluster to that older build without a warning: remove it.
 

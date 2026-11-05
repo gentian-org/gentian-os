@@ -16,7 +16,7 @@
   image to roll on its own gets an `ImageUpdater` CR, which is a thing someone
   writes on purpose rather than an annotation that quietly does nothing.
 */}}
-{{- $imageTag := .Values.operator.tag | default .Values.gentianOsBranch }}
+{{- $imageTag := required "operator.tag: the installer resolves the image tag (resolve_gentian_os_image_tag); a branch name is not one" .Values.operator.tag }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
