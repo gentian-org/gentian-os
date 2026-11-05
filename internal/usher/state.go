@@ -181,7 +181,7 @@ var (
 func (s *Server) tenantExtensionObjects(w http.ResponseWriter, r *http.Request, c call) {
 	path, ok := extensionPath(r, tenantPath(c, ""))
 	if !ok {
-		fail(w, http.StatusBadRequest, "invalid name")
+		fail(w, r, http.StatusBadRequest, "invalid name")
 		return
 	}
 	s.relayed(w, r, path)
@@ -190,7 +190,7 @@ func (s *Server) tenantExtensionObjects(w http.ResponseWriter, r *http.Request, 
 func (s *Server) clusterExtensionObjects(w http.ResponseWriter, r *http.Request, _ call) {
 	path, ok := extensionPath(r, "/v1")
 	if !ok {
-		fail(w, http.StatusBadRequest, "invalid name")
+		fail(w, r, http.StatusBadRequest, "invalid name")
 		return
 	}
 	s.relayed(w, r, path)
