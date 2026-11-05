@@ -413,13 +413,25 @@ runs both back to back, which is why they are listed together.
    `image.tag | default .Chart.AppVersion`, so `appVersion` is the image a
    cluster pulls where no tag is set. It must match what CI publishes —
    `docker/metadata-action` strips the `v`, so tag `vX.Y.Z` becomes image
-   `:X.Y.Z`. Between releases the tree carries the next-dev number (§5.5):
-   the commit after the tag sets `X.(Y+1).0-dev`, so a build from `develop`
-   is never mistaken for a release.
+   `:X.Y.Z`. The same target points the Cluster composition's infra charts
+   (`charts/infra/packages`) at the tag `vX.Y.0`, so the release installs
+   its own charts and not `develop`'s; the tag in step 3 must therefore be
+   `v` plus the chart's version. Commit everything it rewrites:
+   `internal/platformversion/line.go`,
+   `crossplane/compositions/cluster-default.yaml` and the render fixtures
+   under `crossplane/tests/unit/render/` (`make verify-gen` fails while they
+   disagree with the chart). Between releases the tree carries the next-dev
+   number (§5.5): the commit after the tag sets `X.(Y+1).0-dev` and runs
+   `make gen-platform-version` again, which points the infra charts back at
+   `develop`, so a build from `develop` is never mistaken for a release.
 2. Merge `develop` → `main`.
 3. Write the release notes as `docs/releases/vX.Y.md` — what the release
    contains, and what an operator must do differently after it. Create an
    annotated tag `vX.Y.Z` on `main` whose message summarizes them.
+   Tag promptly, and run the next-dev commit right after: from the release
+   commit until the tag exists, `develop` names a tag that is not there, so
+   an install or re-run from `develop` in that window cannot fetch the infra
+   charts. It recovers by itself once the tag is pushed.
 4. Wait for CI on the tag. Its `docker` job publishes
    `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y`; nothing downstream can
    adopt the release until that lands.
@@ -462,7 +474,9 @@ constant the operator and the director compare profiles' floors and backup
 bundles against is generated from the chart
 (`make gen-platform-version`, `scripts/gen/gen-platform-version.py` →
 `internal/platformversion/line.go`), so the chart and the binary cannot
-disagree ([versioning.md §2](../concepts/versioning.md)).
+disagree ([versioning.md §2](../concepts/versioning.md)). The same target
+writes the git ref the Cluster composition reads the infra charts at:
+`develop` on a `-dev` number, the tag `vX.Y.Z` on a release.
 
 A profile build follows the same rule: `spec.version` on the apps
 repository's `develop` carries the `-dev` suffix with a counter per change

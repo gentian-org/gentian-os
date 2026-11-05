@@ -22,7 +22,7 @@ entries:
     name: mariadb
     type: application
     urls:
-    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/mariadb-3.0.3.tgz
+    - mariadb-3.0.3.tgz
     version: 3.0.3
   openfga:
   - annotations:
@@ -46,7 +46,7 @@ entries:
     name: openfga
     type: application
     urls:
-    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/openfga-0.3.10-gentian.1.tgz
+    - openfga-0.3.10-gentian.1.tgz
     version: 0.3.10-gentian.1
   redis:
   - apiVersion: v2
@@ -60,7 +60,7 @@ entries:
     - https://github.com/valkey-io/valkey-container
     type: application
     urls:
-    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/redis-19.0.1.tgz
+    - redis-19.0.1.tgz
     version: 19.0.1
   seaweedfs:
   - apiVersion: v1
@@ -70,6 +70,6 @@ entries:
     digest: 40b4c119d3837af1ea44243ef56fa4c5805cae2745ea297c4222856277cc039b
     name: seaweedfs
     urls:
-    - https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages/seaweedfs-4.48.0-gentian.1.tgz
+    - seaweedfs-4.48.0-gentian.1.tgz
     version: 4.48.0-gentian.1
 generated: "2026-11-01T16:14:02.893450667+01:00"

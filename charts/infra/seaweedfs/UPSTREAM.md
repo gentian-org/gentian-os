@@ -6,7 +6,7 @@
 | Upstream | SeaweedFS's own Helm chart, from the SeaweedFS project (github.com/seaweedfs/seaweedfs, `k8s/charts/seaweedfs`) |
 | Version | 4.48.0 (app 4.48), packaged as `4.48.0-gentian.1` with the patch below |
 | Source | `helm pull seaweedfs --repo https://seaweedfs.github.io/seaweedfs/helm --version 4.48.0` (tgz sha256 `fa9beb4b68ee1e56129779643194968210381a33caf47fc177fd17d43efb686e`) |
-| Package repo | `charts/infra/packages/` — regenerate with `CHART_PACKAGES_BRANCH=develop scripts/tools/publish-infra-charts.sh` |
+| Package repo | `charts/infra/packages/` — regenerate with `scripts/tools/publish-infra-charts.sh` |
 | Runtime image | Pinned by digest in `kernel/services/infra-seaweedfs/manifests/templates/configmap.yaml` |
 | License | Apache-2.0 (chart and server), Copyright the SeaweedFS authors |
 
@@ -39,5 +39,5 @@ tar -xzf /tmp/seaweedfs-<v>.tgz -C charts/infra/seaweedfs.new
 cp charts/infra/seaweedfs/UPSTREAM.md charts/infra/seaweedfs.new/seaweedfs/
 # re-apply the patch above (or drop it once provider-helm's Helm has fromToml)
 rm -rf charts/infra/seaweedfs && mv charts/infra/seaweedfs.new/seaweedfs charts/infra/seaweedfs
-CHART_PACKAGES_BRANCH=develop ./scripts/tools/publish-infra-charts.sh
+./scripts/tools/publish-infra-charts.sh
 ```
