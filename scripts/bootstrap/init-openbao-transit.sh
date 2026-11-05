@@ -20,11 +20,8 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
-info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
-success() { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# shellcheck source=scripts/lib/log.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/log.sh"
 
 TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}"
 TRANSIT_NS="${TRANSIT_NAMESPACE:-kernel-seal}"
