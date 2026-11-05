@@ -114,3 +114,49 @@ func TestAStoresKeysReadWhatIsExportedToIt(t *testing.T) {
 		t.Fatal("another tenant's store gave its keys")
 	}
 }
+
+// An export asking for the policy's keys is encrypted to the keys the
+// tenant's backup policy resolves to -- what the policy's own schedule copied
+// into its exports -- and to the cluster's while the policy names none.
+func TestAnExportAskingForThePolicysKeysGetsThem(t *testing.T) {
+	cluster := "age1clusterkeyclusterkeyclusterkeyclusterkeyclusterkeyclust"
+	t.Setenv(backupRecipientsEnv, cluster)
+	s := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	tenantKey := "age1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jn54khce"
+	policy := &gentianov1alpha1.BackupPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.BackupPolicySpec{Scope: "tenant", Tenant: "demo",
+			Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}}},
+	}
+	tenants := []*gentianov1alpha1.Tenant{
+		{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "acme"}},
+	}
+	b := fake.NewClientBuilder().WithScheme(s).WithObjects(policy)
+	for _, tn := range tenants {
+		b = b.WithObjects(tn)
+	}
+	r := &TenantExportReconciler{Client: b.Build(), Scheme: s}
+	ask := func(ns string) []string {
+		t.Helper()
+		enc, err := r.resolveEncryption(context.Background(), &gentianov1alpha1.TenantExport{
+			ObjectMeta: metav1.ObjectMeta{Name: "policy-20261105-0300", Namespace: ns},
+			Spec: gentianov1alpha1.TenantExportSpec{
+				Encryption: &gentianov1alpha1.ExportEncryption{Mode: gentianov1alpha1.ExportEncryptionPolicy},
+			},
+		})
+		if err != nil || enc.Mode != gentianov1alpha1.ExportEncryptionRecipient {
+			t.Fatalf("%s: %+v, %v", ns, enc, err)
+		}
+		return enc.Recipients
+	}
+	if got := ask("tenant-demo"); strings.Join(got, ",") != tenantKey {
+		t.Fatalf("a policy naming the tenant's key: %v", got)
+	}
+	if got := ask("tenant-acme"); strings.Join(got, ",") != cluster {
+		t.Fatalf("a policy naming none: %v, want the cluster's", got)
+	}
+}

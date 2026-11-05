@@ -150,6 +150,24 @@ func (r *TenantExportReconciler) resolveEncryption(
 			enc.Recipients = keys
 		}
 
+	case gentianov1alpha1.ExportEncryptionPolicy:
+		// The policy's keys, resolved now, as a recipient bundle: what the
+		// policy's own schedule copied into its exports
+		// (scheduleEncryption), asked for instead of copied.
+		enc.Mode = gentianov1alpha1.ExportEncryptionRecipient
+		enc.Recipients = r.clusterRecipients(ctx)
+		tenant := &gentianov1alpha1.Tenant{}
+		if err := r.Get(ctx, types.NamespacedName{Name: tenantNameFromNamespace(export.Namespace)}, tenant); err != nil {
+			return enc, fmt.Errorf("read the tenant for its backup policy's keys: %w", err)
+		}
+		eff, err := r.effectivePolicy(ctx, tenant)
+		if err != nil {
+			return enc, err
+		}
+		if len(eff.Recipients) > 0 {
+			enc.Recipients = slices.Clone(eff.Recipients)
+		}
+
 	case gentianov1alpha1.ExportEncryptionPassphrase:
 		if spec == nil || spec.PassphraseSecretRef == nil {
 			return enc, fmt.Errorf("mode: passphrase requires spec.encryption.passphraseSecretRef")

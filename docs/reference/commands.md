@@ -643,6 +643,15 @@ pending privileges, each with who answers it (APPROVER: `security-officer`,
 kubectl gentian approvals list     # every tenant's waiting privileges: who answers, who asked, when, why, and what was declined
 ```
 
+A cluster role is approved only for a profile the cluster permits it to.
+Break-glass changes that list:
+
+```bash
+kubectl gentian approvals cluster-roles                                          # what is permitted, per profile
+kubectl gentian approvals cluster-roles allow backup-scheduler-ee tenant-exports
+kubectl gentian approvals cluster-roles disallow backup-scheduler-ee tenant-exports
+```
+
 It is read with `cluster#can_approve`, `can_approve_perimeter` or
 `can_configure` (the usher's `GET /v1/clusters/{c}/approvals`, each entry
 with `approvedBy`); the answer is `apps approve` as above, with the

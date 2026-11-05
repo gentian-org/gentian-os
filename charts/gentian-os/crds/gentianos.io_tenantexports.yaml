@@ -193,6 +193,7 @@ spec:
                     enum:
                     - recipient
                     - passphrase
+                    - policy
                     type: string
                   passphraseSecretRef:
                     description: |-
@@ -663,6 +664,7 @@ spec:
                     enum:
                     - recipient
                     - passphrase
+                    - policy
                     type: string
                   platformReadable:
                     description: |-

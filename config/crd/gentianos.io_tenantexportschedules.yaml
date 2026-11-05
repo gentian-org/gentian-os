@@ -82,6 +82,7 @@ spec:
                     enum:
                     - recipient
                     - passphrase
+                    - policy
                     type: string
                   passphraseSecretRef:
                     description: |-

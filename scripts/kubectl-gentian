@@ -104,6 +104,8 @@
 #                                                             approver, across all tenants: who answers, who asked,
 #                                                             when, why the app wants it, and what was declined
 #   kubectl gentian approvals granted                          every tenant's approved privilege exceptions
+#   kubectl gentian approvals cluster-roles [allow|disallow <profile> <role>]
+#                                                             the cluster roles the cluster permits, per profile
 #
 #   kubectl gentian exposures requests --tenant <tenant>        what its apps ask to have on the internet, or to keep
 #                                                               of their own Authorization header behind sign-in
@@ -3111,13 +3113,59 @@ cmd_approvals_granted() {
         column -t -s $'\t'
 }
 
+# kubectl gentian approvals cluster-roles [allow|disallow <profile> <role>]
+#
+# The cluster roles this cluster permits, each to one profile: the
+# PlatformSecurityPolicy's allowedClusterRoles. A profile's request for a role
+# the list does not permit for it is refused before anybody can approve it.
+# Changing the list is break-glass's (cluster#can_set_admission); it is read
+# under can_audit. The director replaces the whole list on a write, so the
+# list is read, changed by the one entry and written back.
+cmd_approvals_cluster_roles() {
+    need jq
+    local action="${1:-show}" profile="${2:-}" role="${3:-}" answer list
+    case "${action}" in
+        show|allow|disallow) ;;
+        *) die "usage: kubectl gentian approvals cluster-roles [allow|disallow <profile> <role>]" ;;
+    esac
+    if [[ "${action}" != "show" ]]; then
+        [[ $# -eq 3 && -n "${profile}" && -n "${role}" ]] \
+            || die "usage: kubectl gentian approvals cluster-roles ${action} <profile> <role>"
+    fi
+    _discover
+    answer="$(_call GET "/v1/clusters/${_CLUSTER}/platform-security")" || exit 1
+    if [[ "${action}" == "show" ]]; then
+        if [[ "$(jq '.allowedClusterRoles | length' <<<"${answer}")" == "0" ]]; then
+            echo "This cluster permits no cluster role to any profile."
+            return 0
+        fi
+        jq -r '(["PROFILE","ROLE"] | @tsv), (.allowedClusterRoles[] | [.profile, .role] | @tsv)' <<<"${answer}" \
+            | column -t -s $'\t'
+        return 0
+    fi
+    list="$(jq -c --arg p "${profile}" --arg r "${role}" --arg a "${action}" '
+        [.allowedClusterRoles[] | select(.profile != $p or .role != $r)]
+        + (if $a == "allow" then [{profile: $p, role: $r}] else [] end)' <<<"${answer}")"
+    if [[ "${list}" == "$(jq -c '.allowedClusterRoles' <<<"${answer}")" ]]; then
+        echo "Unchanged: ${role} is $([[ "${action}" == "allow" ]] || echo "not ")permitted to ${profile}."
+        return 0
+    fi
+    _call PUT "/v1/clusters/${_CLUSTER}/platform-security" "$(jq -nc --argjson l "${list}" '{allowedClusterRoles: $l}')" >/dev/null
+    if [[ "${action}" == "allow" ]]; then
+        echo "${role} permitted to ${profile}: committed. Its request still needs an approval (apps approve)."
+    else
+        echo "${role} no longer permitted to ${profile}: committed."
+    fi
+}
+
 cmd_approvals() {
     local sub="${1:-}"
     shift || true
     case "${sub}" in
         list) cmd_approvals_list "$@" ;;
         granted) cmd_approvals_granted "$@" ;;
-        *) die "usage: kubectl gentian approvals list|granted" ;;
+        cluster-roles) cmd_approvals_cluster_roles "$@" ;;
+        *) die "usage: kubectl gentian approvals list|granted|cluster-roles" ;;
     esac
 }
 

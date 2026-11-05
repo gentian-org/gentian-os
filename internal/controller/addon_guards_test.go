@@ -199,6 +199,8 @@ func TestAnExportAComponentStartsStaysWhereTheTenantDeclared(t *testing.T) {
 		{"the cluster's storage", export("platform", &gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationPlatform}, nil), true},
 		{"a store the tenant declared", export("store", &gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationSource, Source: "acme.offsite"}, nil), true},
 		{"the cluster's recovery keys, said", export("recipient", nil, &gentianov1alpha1.ExportEncryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}), true},
+		{"the policy's keys, asked for", export("policy-keys", nil, &gentianov1alpha1.ExportEncryption{Mode: gentianov1alpha1.ExportEncryptionPolicy}), true},
+		{"the policy's keys with a key of its own", export("policy-own-key", nil, &gentianov1alpha1.ExportEncryption{Mode: gentianov1alpha1.ExportEncryptionPolicy, Recipients: []string{"age1ownkeyofthecomponent"}}), false},
 		{"an endpoint of its own", export("custom", custom, nil), false},
 		{"a key of its own", export("own-key", nil, ownKey), false},
 		{"a passphrase", export("passphrase", nil, passphrase), false},
