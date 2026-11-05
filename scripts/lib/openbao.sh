@@ -111,7 +111,7 @@ try_load_creds_from_openbao() {
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
         # Missing paths (404) are normal before OpenBao is bootstrapped — must not abort install.
         bao_curl -sf --max-time 5 \
-            -H "X-Vault-Token: ${token}" \
+            -H @<(printf 'X-Vault-Token: %s\n' "${token}") \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
             | jq -r "$2 // empty" 2>/dev/null || true
     }
@@ -290,7 +290,7 @@ init_openbao() {
                 # on a bare 403 — so ask OpenBao first, and when it is dead say
                 # which kind of dead: revoked on purpose, or orphaned by a
                 # re-initialisation.
-                if bao_curl -sf -H "X-Vault-Token: ${stored_token}" \
+                if bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${stored_token}") \
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
                     info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
                     if [[ "$(kubectl get configmap gentian-handover \
@@ -413,7 +413,7 @@ init_openbao() {
 
         bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
             -H "Content-Type: application/json" \
-            -d "{\"key\": \"${unseal_key}\"}" | jq .
+            --data-binary @<(printf '{"key": "%s"}' "${unseal_key}") | jq .
         export BAO_TOKEN="$root_token"
         success "OpenBao initialized and unsealed (Shamir)."
     fi
@@ -603,12 +603,12 @@ seed_secrets() {
     if [[ -n "${CF_API_TOKEN:-}" && -n "${KERNEL_DOMAIN:-}" ]]; then
         info "Resolving Cloudflare Zone ID for domain ${KERNEL_DOMAIN}..."
         zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${KERNEL_DOMAIN}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+            -H @<(printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}") | jq -r '.result[0].id // empty')
         if [[ -z "${zone_id}" && "${KERNEL_DOMAIN}" == *.*.* ]]; then
             local apex_domain
             apex_domain=$(echo "${KERNEL_DOMAIN}" | awk -F. '{print $(NF-1)"."$NF}')
             zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${apex_domain}" \
-                -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+                -H @<(printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}") | jq -r '.result[0].id // empty')
         fi
         if [[ -n "${zone_id}" ]]; then
             info "Resolved Cloudflare Zone ID: ${zone_id}"

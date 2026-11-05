@@ -18,7 +18,7 @@ _transit_token_valid_in() {
     token="$(kubectl get secret openbao-transit-token -n "${ns}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null)" || return 1
     [[ -n "${token}" ]] || return 1
     addr="$(gentian_service_addr openbao-transit "$(_seal_ns)" 8200 http 2>/dev/null)" || return 1
-    [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "X-Vault-Token: ${token}" "${addr}/v1/auth/token/lookup-self")" == "200" ]]
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H @<(printf 'X-Vault-Token: %s\n' "${token}") "${addr}/v1/auth/token/lookup-self")" == "200" ]]
 }
 
 check() {
