@@ -458,6 +458,7 @@ func TestEveryReconcilerThatWritesIsBehindTheCheck(t *testing.T) {
 		"bundlefetch_controller.go":       "deletes a fetch's NetworkPolicy",
 		"authorization_engine.go":         "writes the arbiter's workload and policies",
 		"turn_edge.go":                    "writes the TURN edge's workload, policy, certificate and address record",
+		"externalsecret_retry.go":         "writes one annotation on an ExternalSecret",
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

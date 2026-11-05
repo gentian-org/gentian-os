@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -135,6 +136,44 @@ func (r *ComponentReconciler) handOff(ctx context.Context, comp *gentianov1alpha
 		return "waiting for the App claim to go", nil
 	}
 	return "", r.dropWrappers(ctx, xrName)
+}
+
+// recordHelmRelease writes down, once, the Helm release a taken-over app was
+// installed as. The platform's former app Composition named it
+// <app>-release; a profile's own Composition that sets no external-name left
+// it named after its Release object, <composite>-release. The one Helm keeps
+// a history of in the app's namespace is the app's: rendered under the other,
+// provider-helm installs the chart a second time over the first one's objects.
+func (r *ComponentReconciler) recordHelmRelease(ctx context.Context, comp *gentianov1alpha1.Component) error {
+	xr := comp.Annotations[compositeAnnotation]
+	if xr == "" || comp.Annotations[helmReleaseAnnotation] != "" {
+		return nil
+	}
+	name := comp.Name + composedReleaseSuffix
+	named, err := r.hasHelmHistory(ctx, comp.Namespace, name)
+	if err != nil {
+		return err
+	}
+	if !named {
+		object := xr + composedReleaseSuffix
+		if own, err := r.hasHelmHistory(ctx, comp.Namespace, object); err != nil {
+			return err
+		} else if own {
+			name = object
+		}
+	}
+	return r.annotate(ctx, comp, helmReleaseAnnotation, name)
+}
+
+// hasHelmHistory is whether Helm keeps a revision of the named release in the
+// namespace.
+func (r *ComponentReconciler) hasHelmHistory(ctx context.Context, namespace, release string) (bool, error) {
+	revisions := &corev1.SecretList{}
+	if err := r.List(ctx, revisions, client.InNamespace(namespace),
+		client.MatchingLabels{"owner": "helm", "name": release}); err != nil {
+		return false, err
+	}
+	return len(revisions.Items) > 0, nil
 }
 
 // dropWrappers removes, once the composite is gone, its wrappers without what

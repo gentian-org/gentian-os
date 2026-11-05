@@ -73,12 +73,19 @@ const takenAnnotation = "gentianos.io/taken-over"
 // after it as the Composition named them (renderNames).
 const compositeAnnotation = "gentianos.io/composite"
 
+// helmReleaseAnnotation names, on a Component taken over from a composite,
+// the Helm release its app was installed as (recordHelmRelease).
+const helmReleaseAnnotation = "gentianos.io/helm-release"
+
 // renderNames are the names of the release object, the Helm release it
 // installs, the ConfigMap its keep rule is read from, and the name the rest
 // of what the Composition named after its composite is named after.
 func renderNames(comp *gentianov1alpha1.Component) (releaseObject, helmRelease, keepVolumes, composite string) {
 	if xr := comp.Annotations[compositeAnnotation]; xr != "" {
-		helm := comp.Name + composedReleaseSuffix
+		helm := comp.Annotations[helmReleaseAnnotation]
+		if helm == "" {
+			helm = comp.Name + composedReleaseSuffix
+		}
 		return xr + composedReleaseSuffix, helm, helm + "-keep-volumes", xr
 	}
 	return releaseName(comp), releaseName(comp), keepVolumesName(comp), releaseName(comp)
