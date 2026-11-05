@@ -69,7 +69,7 @@ first. It adds and does nothing else:
 - a store that cannot be reached, or lists no catalogs, is a warning; the install goes on;
 - a catalog the store stops listing stays until you remove it (`kubectl gentian catalogues
   remove`). One the store still lists is added again by the next run;
-- with usage statistics off there is no App Store, and the store is not asked.
+- on a cluster that offers no App Store, the store is not asked.
 
 This trusts the store's word for where its catalogs are: the store decides which addresses the
 cluster may fetch profiles from. Every bundle fetched from one is still held to the digest of its

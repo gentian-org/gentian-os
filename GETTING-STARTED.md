@@ -772,9 +772,9 @@ order:
    kubectl get configmap gentian-tiles -n kernel-control -o jsonpath='{.data.tiles\.yaml}' | grep -A2 '^appStore:'
    ```
 
-   `reason: usage-statistics-disabled` — the install ran with
-   `--no-usage-statistics` or `GENTIAN_NO_USAGE_STATISTICS=1`; set it to `0` in
-   `install.env` and run `./install.sh`. `reason: no-store-configured` — the
+   `reason: usage-statistics-disabled` — the cluster does not send its usage
+   statistics report, which the App Store needs; set
+   `GENTIAN_NO_USAGE_STATISTICS=0` in `install.env` and run `./install.sh`. `reason: no-store-configured` — the
    claim names no store, or not an `https://` address; add
    `spec.catalogue.storeUrl` to `claims/cluster.yaml` in your deployments
    checkout and run `./install.sh`. `reason: store-address-is-own-host` —
@@ -1145,16 +1145,12 @@ GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
 GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
 ```
 
-### Turning the usage statistics report off
+### The usage statistics report
 
-By default the cluster tells a report address once a day what it runs: its
-tenants, how many accounts each has, and the apps installed through the App
-Store — no personal data. `./install.sh --no-usage-statistics` (or
-`GENTIAN_NO_USAGE_STATISTICS=1` in `install.env`) turns that off; nothing is then
-sent, and there are no extra services: no App Store, Operations Console or
-Aluvian Center (as with `--no-extra-services`) — for people who manage
-their own cluster at their own risk. What is sent, and where to read the
-last report, is in [docs/concepts/operations.md §6.2](docs/concepts/operations.md).
+The cluster tells a report address once a day what it runs: its tenants, how
+many accounts each has, and the apps installed through the App Store — no
+personal data. What is sent, and where to read the last report, is in
+[docs/concepts/operations.md §6.2](docs/concepts/operations.md).
 
 ### Which Crossplane resource types exist
 

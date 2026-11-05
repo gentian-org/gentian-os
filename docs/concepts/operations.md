@@ -237,13 +237,8 @@ GET /v1/clusters/{cluster}/usage-statistics
 `signing-key-absent`, `signing-key-invalid` or `inventory-unavailable`) or
 `sending`. A cluster that does not report answers `{"enabled": false}`.
 
-**Turning it off.** `./install.sh --no-usage-statistics`, or
-`GENTIAN_NO_USAGE_STATISTICS=1` in `install.env`; a later run that says neither
-leaves it off. The operator chart's own default is off with no address, so a
-cluster installed without the installer reports nowhere. Off, nothing is sent,
-ever, and no signing key is created.
-
-**What turning it off costs.** The cluster has no App Store app. A store
+**A cluster that does not report** sends nothing, ever, and creates no
+signing key. It has no App Store app. A store
 serves a tenant only when the reports it has received list that tenant's
 address ([store-contract.md](store-contract.md) §6.2), so the usher's tiles
 answer (`GET /v1/tenants/{tenant}/tiles`) carries
@@ -375,8 +370,7 @@ waits for them to be established, and the operator arrives at D-01.
 - **Backups are not verified by the platform.** Nothing runs a restore or
   checks a bundle on a schedule, and nothing alerts. `scripts/recovery.sh
   inspect` reads a bundle and its key without writing anything, and
-  [commands.md](../reference/commands.md) §15 is the restore drill. A schedule records
-  its last success so that it can be watched.
+  [commands.md](../reference/commands.md) §13 is the restore drill.
 
 ### 8.1 The object store's certificates and keys
 

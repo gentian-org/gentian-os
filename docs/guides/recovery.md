@@ -124,7 +124,7 @@ scripts/recovery.sh tenant --tenant corp --export policy-20260904-0300 \
 scripts/recovery.sh cluster --kit gentian-recovery-kit-ifk-w4h.age
 ```
 
-For the underlying resources see [commands.md](../reference/commands.md) §11–§15; for the
+For the underlying resources see [commands.md](../reference/commands.md) §11–§13; for the
 tenant-facing view see [tenant-backup.md](tenant-backup.md).
 
 ---
@@ -474,7 +474,7 @@ kit's credentials are current.
 
 ## Testing this before you need it
 
-An untested backup is a hypothesis. [commands.md §15](../reference/commands.md) has the
+An untested backup is a hypothesis. [commands.md §13](../reference/commands.md) has the
 drill to run on a scratch tenant.
 
 The cheapest useful check costs nothing and touches nothing:
