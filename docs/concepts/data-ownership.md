@@ -71,9 +71,8 @@ comes from.
 Two things are not part of the commitment:
 
 - **A store.** The App Store app on a cluster shows the data of a store run
-  outside it. A cluster with no store installs apps by command, and a
-  cluster that has turned its usage statistics report off has no App Store
-  app ([store-contract.md](store-contract.md) §6, §9); nothing else changes.
+  outside it. A cluster with no store installs apps by command
+  ([store-contract.md](store-contract.md) §6, §9); nothing else changes.
 - **Software the OS installs that is not the project's.** The system
   services and the catalog's apps keep their own licenses
   ([LICENSING.md](../../LICENSING.md)).

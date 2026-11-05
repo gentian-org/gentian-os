@@ -138,6 +138,16 @@ func (r *TenantExportReconciler) resolveEncryption(
 			// the whole reason to name your own key is that assumption being
 			// false.
 			enc.Recipients = spec.Recipients
+		} else if keys, err := r.storeRecipients(ctx, export); err != nil {
+			return enc, err
+		} else if len(keys) > 0 {
+			// A tenant's store that declares its keys is read by them, in
+			// place of the cluster's, for the reason an export's own
+			// recipients replace them. The keys are the tenant's
+			// declaration, so an export that names none -- an add-on's,
+			// which may name none (tenant-export-guard.yaml) -- is still
+			// the tenant's to read.
+			enc.Recipients = keys
 		}
 
 	case gentianov1alpha1.ExportEncryptionPassphrase:
@@ -155,6 +165,22 @@ func (r *TenantExportReconciler) resolveEncryption(
 		return enc, err
 	}
 	return enc, nil
+}
+
+// storeRecipients are the keys the tenant's store an export goes to
+// declares, or none for any other destination.
+func (r *TenantExportReconciler) storeRecipients(ctx context.Context, export *gentianov1alpha1.TenantExport) ([]string, error) {
+	if export.Spec.Destination.Resolved() != gentianov1alpha1.ExportDestinationSource {
+		return nil, nil
+	}
+	store := &gentianov1alpha1.BundleSource{}
+	if err := r.Get(ctx, types.NamespacedName{Name: export.Spec.Destination.Source}, store); err != nil {
+		return nil, fmt.Errorf("read store %s: %w", export.Spec.Destination.Source, err)
+	}
+	if store.Spec.Tenant != tenantNameFromNamespace(export.Namespace) {
+		return nil, fmt.Errorf("store %s is not this tenant's", store.Name)
+	}
+	return store.Spec.Recipients, nil
 }
 
 // stagePassphrase copies the requester's passphrase next to the capture Jobs.

@@ -63,3 +63,54 @@ func TestAnExportWritesOnlyToTheTenantsOwnReadyStore(t *testing.T) {
 		}
 	}
 }
+
+// An export to a store that declares keys, naming none of its own, is
+// encrypted to the store's keys in place of the cluster's; one that names its
+// own keeps them; any other destination takes the cluster's.
+func TestAStoresKeysReadWhatIsExportedToIt(t *testing.T) {
+	t.Setenv(backupRecipientsEnv, "age1clusterkeyclusterkeyclusterkeyclusterkeyclusterkeyclust")
+	s := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	tenantKey := "age1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jn54khce"
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		&gentianov1alpha1.BundleSource{
+			ObjectMeta: metav1.ObjectMeta{Name: "demo.offsite"},
+			Spec: gentianov1alpha1.BundleSourceSpec{Tenant: "demo", Endpoint: "https://s3.example", Bucket: "b",
+				Recipients: []string{tenantKey}},
+		},
+		&gentianov1alpha1.BundleSource{
+			ObjectMeta: metav1.ObjectMeta{Name: "acme.offsite"},
+			Spec: gentianov1alpha1.BundleSourceSpec{Tenant: "acme", Endpoint: "https://s3.example", Bucket: "b",
+				Recipients: []string{tenantKey}},
+		},
+	).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+	export := func(d *gentianov1alpha1.ExportDestination, e *gentianov1alpha1.ExportEncryption) *gentianov1alpha1.TenantExport {
+		return &gentianov1alpha1.TenantExport{
+			ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "tenant-demo"},
+			Spec:       gentianov1alpha1.TenantExportSpec{Destination: d, Encryption: e},
+		}
+	}
+	toStore := &gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationSource, Source: "demo.offsite"}
+	ctx := context.Background()
+
+	enc, err := r.resolveEncryption(ctx, export(toStore, nil))
+	if err != nil || strings.Join(enc.Recipients, ",") != tenantKey {
+		t.Fatalf("to the store: %v, %v; want the store's key alone", enc.Recipients, err)
+	}
+	own := "age1ownkeyownkeyownkeyownkeyownkeyownkeyownkeyownkeyownkeyo"
+	enc, err = r.resolveEncryption(ctx, export(toStore, &gentianov1alpha1.ExportEncryption{Recipients: []string{own}}))
+	if err != nil || strings.Join(enc.Recipients, ",") != own {
+		t.Fatalf("naming its own: %v, %v", enc.Recipients, err)
+	}
+	enc, err = r.resolveEncryption(ctx, export(&gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationPlatform}, nil))
+	if err != nil || len(enc.Recipients) != 1 || enc.Recipients[0] == tenantKey {
+		t.Fatalf("to the cluster's storage: %v, %v; want the cluster's key", enc.Recipients, err)
+	}
+	if _, err := r.resolveEncryption(ctx, export(&gentianov1alpha1.ExportDestination{
+		Mode: gentianov1alpha1.ExportDestinationSource, Source: "acme.offsite"}, nil)); err == nil {
+		t.Fatal("another tenant's store gave its keys")
+	}
+}

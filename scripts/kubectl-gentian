@@ -2783,8 +2783,20 @@ cmd_apps_approve() {
     reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what a reviewer reads in the commit."
 
+    # An API extension's approval names the definitions it approves: the
+    # digest the cluster reports for the request as the profile has it now.
+    # A later change to them waits for a new approval.
+    local digest=""
+    if [[ "${kind}" == "apiExtensions" ]]; then
+        answer="$(_call_usher GET "/v1/tenants/${t}/apps/status")" || exit 1
+        digest="$(jq -r --arg a "${app}" --arg p "${privilege}" \
+            '[.apps[]? | (., .addons[]?) | select(.name == $a or .profile == $a) | .pendingPrivilegeApprovals[]? | select(.privilege == $p) | .digest // empty][0] // empty' <<<"${answer}")"
+        [[ -n "${digest}" ]] || die "${app} in ${t} is not waiting for ${privilege}, so there are no definitions to approve."
+        echo "Approving the definitions of ${privilege} as the profile has them now (${digest})."
+    fi
+
     answer="$(_call PUT "/v1/tenants/${t}/privileges/${app}/${kind}/${name}" \
-        "$(jq -n --arg r "${reason}" --arg e "${expires}" '{reason: $r} + (if $e == "" then {} else {expiresAt: $e} end)')")" || exit 1
+        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" '{reason: $r} + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end)')")" || exit 1
     if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
         echo "${privilege} of ${app} in ${t} is approved already; nothing was committed."
         return 0

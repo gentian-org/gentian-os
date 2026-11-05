@@ -61,7 +61,6 @@ func (s *Service) APIExtensions(ctx context.Context) ([]APIExtensionType, error)
 	out := []APIExtensionType{}
 	for i := range comps.Items {
 		comp := &comps.Items[i]
-		granted := security.GrantedSet(comp.Spec.Privileges, now)
 		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := s.client.Get(ctx, client.ObjectKey{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -69,6 +68,7 @@ func (s *Service) APIExtensions(ctx context.Context) ([]APIExtensionType, error)
 			}
 			return nil, fmt.Errorf("get profile %s: %w", comp.Spec.ProfileRef.Name, err)
 		}
+		granted := security.LiveGrants(profile, comp.Spec.Privileges, now)
 		p := profile.Privileges()
 		if p == nil {
 			continue

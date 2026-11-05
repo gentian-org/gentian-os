@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"sigs.k8s.io/yaml"
 
@@ -640,24 +641,89 @@ func scalarOf(line string) string {
 
 // quoteScalar quotes only what YAML would otherwise read as something else.
 // An unquoted value keeps the file looking like the one a person wrote.
+//
+// What it writes reads back as the same text under YAML 1.1, the version
+// Argo CD, Helm and the installer's PyYAML read the deployments repository
+// with, and under YAML 1.2. Three kinds of value stay bare on purpose, because
+// a claim setting of that type is written as one: the booleans true and false,
+// and a canonical decimal integer, which a reader turns back into the same
+// text. Everything else a YAML 1.1 reader resolves to another type is quoted:
+// every boolean spelling (y, No, ON, False), every null (~, Null), integers in
+// octal, hex, binary and base 60, floats including .inf and .nan, timestamps,
+// and the merge and value keys.
 func quoteScalar(v string) string {
 	if v == "" {
 		return `""`
 	}
-	if v == "true" || v == "false" || v == "null" || v == "~" {
+	if v == "true" || v == "false" || canonicalInt(v) {
 		return v
 	}
-	// The words a YAML 1.1 reader, Argo CD's among them, takes for a boolean:
-	// bare, "off" reaches the cluster as false and a string setting is lost.
-	switch strings.ToLower(v) {
-	case "y", "n", "yes", "no", "on", "off":
-		return strconv.Quote(v)
-	}
-	if _, err := strconv.ParseFloat(v, 64); err == nil {
-		return v
-	}
-	if strings.ContainsAny(v, ":#{}[]&*!|>%@`\"'") || strings.TrimSpace(v) != v {
+	if yaml11Implicit(v) || needsQuotes(v) {
 		return strconv.Quote(v)
 	}
 	return v
+}
+
+// canonicalInt is a decimal integer that every YAML reader turns back into
+// the same text: no sign but a minus, no leading zero, no underscore, and
+// small enough to stay an integer.
+func canonicalInt(v string) bool {
+	if !canonicalIntText.MatchString(v) || v == "-0" {
+		return false
+	}
+	_, err := strconv.ParseInt(v, 10, 64)
+	return err == nil
+}
+
+var canonicalIntText = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
+
+// yaml11Types are the implicit types of YAML 1.1 (https://yaml.org/type/),
+// each as its resolver matches a plain scalar. A plain scalar matching one is
+// not a string.
+var yaml11Types = []*regexp.Regexp{
+	// bool
+	regexp.MustCompile(`^(y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$`),
+	// null
+	regexp.MustCompile(`^(~|null|Null|NULL)$`),
+	// int: binary, octal, decimal, hex, base 60
+	regexp.MustCompile(`^[-+]?(0b[0-1_]+|0[0-7_]+|(0|[1-9][0-9_]*)|0x[0-9a-fA-F_]+|[1-9][0-9_]*(:[0-5]?[0-9])+)$`),
+	// float: decimal, base 60, infinity, not-a-number
+	regexp.MustCompile(`^([-+]?([0-9][0-9_]*)?\.[0-9.]*([eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))$`),
+	// timestamp
+	regexp.MustCompile(`^[0-9][0-9][0-9][0-9]-[0-9][0-9]?-[0-9][0-9]?(([Tt]|[ \t]+)[0-9][0-9]?:[0-9][0-9]:[0-9][0-9](\.[0-9]*)?(([ \t]*)Z|[-+][0-9][0-9]?(:[0-9][0-9])?)?)?$`),
+	// merge, value
+	regexp.MustCompile(`^(<<|=)$`),
+}
+
+func yaml11Implicit(v string) bool {
+	for _, re := range yaml11Types {
+		if re.MatchString(v) {
+			return true
+		}
+	}
+	// What a YAML 1.2 reader, or a lenient 1.1 one, takes for a number
+	// besides: 1e3, 0o17, +5.
+	if _, err := strconv.ParseFloat(v, 64); err == nil {
+		return true
+	}
+	_, err := strconv.ParseInt(v, 0, 64)
+	return err == nil
+}
+
+// needsQuotes is a value YAML would not read as a plain scalar at all: one
+// carrying an indicator, starting with one, or with space or a control
+// character at an end or inside.
+func needsQuotes(v string) bool {
+	if strings.ContainsAny(v, ":#{}[]&*!|>%@`\"'\\") || strings.TrimSpace(v) != v {
+		return true
+	}
+	if strings.ContainsAny(v[:1], "-?,") {
+		return true
+	}
+	for _, r := range v {
+		if r != ' ' && !unicode.IsPrint(r) {
+			return true
+		}
+	}
+	return false
 }

@@ -624,6 +624,10 @@ kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
   --reason "reads the website's and the store's order requests over https"
 ```
 
+An `apiExtensions` approval names the definitions it approves: the command
+sends the digest the cluster reports for the pending request, and a later
+change to them waits for a new approval.
+
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 
@@ -1293,9 +1297,6 @@ kubectl get tenantexports -n tenant-demo
 kubectl describe tenantexport nightly-2026-08-18 -n tenant-demo
 ```
 
-Because the default mode needs no input, a `CronJob` that applies a resource
-like this is all a scheduled backup requires.
-
 To one of the tenant's own stores (§12a), whose keys are set:
 
 ```yaml
@@ -1304,6 +1305,10 @@ spec:
     mode: source
     source: demo.offsite   # <tenant>.<name>; another tenant's or the cluster's is refused
 ```
+
+A store may declare the age keys its bundles are read by (`recipients` on
+the store); an export to it that names none of its own is encrypted to them
+in place of the cluster's.
 
 ### Watching one
 
@@ -1658,7 +1663,7 @@ GET    /v1/clusters/{c}/tenants/{t}/bundle-sources[/{name}/bundles]   a tenant's
 GET    /v1/clusters/{c}/bundle-fetches/{f}                      running | ready | failed
 GET    /v1/clusters/{c}/bundles/{prefix}/download               a fetched or uploaded bundle, as one file
 GET    /v1/tenants/{t}/bundle-sources[/{name}/bundles]          the tenant's own, under can_set_policy
-PUT    /v1/tenants/{t}/bundle-sources/{name}                    a store of the tenant's own, as <t>.<name>; the cluster's body
+PUT    /v1/tenants/{t}/bundle-sources/{name}                    a store of the tenant's own, as <t>.<name>; the cluster's body, and recipients?
 DELETE /v1/tenants/{t}/bundle-sources/{name}                    removed from git, and so from the cluster
 POST   /v1/tenants/{t}/bundle-sources/{name}/actions/fetch      {prefix}: the tenant's administrator's fetch
 GET    /v1/tenants/{t}/bundle-fetches/{f}                       a fetch made on the tenant's route
@@ -1713,153 +1718,7 @@ grants the access rights granted in the tenant the bundle was taken of only
 when the bundle is this cluster's own, of a tenant of the same name; any
 other bundle's are each named in `notes`, to be granted again here.
 
-## 13. Backup Policy
-
-Where bundles go, how often, and how long they are kept. One cluster default,
-overridden per tenant.
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: gentianos.io/v1alpha1
-kind: BackupPolicy
-metadata:
-  name: default          # the cluster policy is a singleton by this name
-spec:
-  scope: cluster
-  destination:
-    endpoint: https://sos-ch-gva-2.exo.io
-    bucket: gentian-bundles
-    region: ch-gva-2
-  schedule: "0 3 * * *"  # UTC; omit for no scheduled backups
-  retention:
-    keepLast: 7
-    keepWeekly: 4
-    keepMonthly: 12
-EOF
-
-kubectl get backuppolicies
-```
-
-**Naming an endpoint declares a credential rather than taking one.** The
-operator creates a `CredentialRequirement` — `backup-destination` for the
-cluster, `backup-destination-<tenant>` for a tenant — and the policy reports
-`Accepted=False` with `CredentialUnsatisfied` until the keys are supplied
-through the custodian. That is deliberate: the gap shows when the
-destination is set, not at 03:00 when the first export fails.
-
-```bash
-kubectl get backuppolicy default \
-  -o jsonpath='{.status.credentialRequirement} satisfied={.status.credentialSatisfied}{"\n"}'
-```
-
-**The name is not free.** Every reader fetches a policy by name: the cluster's
-as `default`, a tenant's as the tenant's own name. Admission enforces both, so a
-misnamed policy is rejected at `kubectl apply` rather than accepted and then
-read by nothing.
-
-A tenant states its own with `scope: tenant` and a `tenant` field. Name it from
-one variable so the two cannot drift:
-
-```bash
-TENANT=demo
-kubectl apply -f - <<EOF
-apiVersion: gentianos.io/v1alpha1
-kind: BackupPolicy
-metadata:
-  name: ${TENANT}          # must equal spec.tenant
-spec:
-  scope: tenant
-  tenant: ${TENANT}
-  destination:
-    endpoint: https://sos-ch-gva-2.exo.io
-    bucket: ${TENANT}-bundles
-    region: ch-gva-2
-  schedule: "0 3 * * *"
-EOF
-```
-
-Every field is optional and an unset one inherits. `suspendSchedule: true` means
-*none*, as distinct from *not stated* — without it a tenant could not opt out of
-a cluster-wide schedule. Set `allowTenantOverride: false` on the cluster policy
-to refuse tenant policies outright; they are then rejected rather than ignored.
-
-Retention tiers are a union: a bundle any rule keeps survives. `keepLast: 7`
-alone reaches back seven nights; adding `keepMonthly: 12` reaches back a year
-for the cost of twelve more bundles. With nothing set, nothing is deleted.
-
-**A bundle records where it was written.** Changing a destination does not move
-what already exists, so restore and cleanup read each bundle's own endpoint
-rather than the policy's current answer — last month's bundles stay reachable
-after a tenant moves its storage.
-
-**`addressingStyle`** says how a request names the bucket at the endpoint:
-`path` (`https://host/bucket/key`, the default when unset) or `virtualHost`
-(`https://bucket.host/key`), for a provider that serves a bucket only by its
-own host name. Anything else is refused by the schema, and by the director
-before it commits. A manual export's `mode: custom` destination takes the same
-field. Each bundle records the style it was written with
-(`status.bundle.addressingStyle`), and its restore, download and deletion use
-it.
-
-```yaml
-  destination:
-    endpoint: https://s3.example.org
-    bucket: gentian-bundles
-    addressingStyle: virtualHost
-```
-
-**Leaving the cluster.** A backup's or a restore's steps in the tenant's
-namespace (a volume's capture and restore) may reach the destination's
-endpoint and nothing else outside the cluster, and only while the run lasts:
-its port, and its address when the endpoint names an address rather than a
-host name. A run to the platform's own storage gets no way out.
-
-### Object Lock
-
-Full bundles suit WORM storage because no object is ever rewritten; each export
-occupies a fresh prefix. Object Lock is a property a bucket is made with and
-cannot be switched on later, so this is for an external destination whose
-bucket you create with it, with a default retention every uploaded object
-inherits (e.g. `aws s3api put-object-lock-configuration` there). The
-platform's own store makes the bundle bucket itself, without a lock.
-
-Retention deletes will then fail for locked objects until they expire, which is
-the lock doing its job. Size the policy's tiers against the lock period rather
-than against the bucket.
-
-## 14. Scheduled Backups
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: gentianos.io/v1alpha1
-kind: TenantExportSchedule
-metadata:
-  name: nightly
-  namespace: tenant-demo
-spec:
-  schedule: "0 3 * * *"    # UTC, always
-  keepLast: 7              # older finished exports are deleted; 0 keeps all
-EOF
-
-kubectl get tenantexportschedules -n tenant-demo
-```
-
-Encryption defaults to the cluster's recipients, which is the only mode that
-works unattended — a passphrase has nobody to type it at 03:00.
-
-`status.lastSuccessfulTime` is the field to watch. A schedule that fires nightly
-but never succeeds looks healthy by every other measure, and that is precisely
-the failure a backup regime cannot afford.
-
-Two behaviors worth knowing:
-
-- A new schedule does **not** fire immediately. Creating a backup the moment
-  someone writes YAML would pause a tenant's apps as a side effect.
-- A window missed by more than an hour is skipped rather than caught up. Waking
-  from a long outage should not take six identical backups, each pausing the
-  tenant's apps again.
-
-## 15. Restore Drill
+## 13. Restore Drill
 
 Run this on a scratch tenant before you need it. An untested backup is a
 hypothesis. For the procedures themselves — rebuilding a cluster, restoring a

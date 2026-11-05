@@ -586,6 +586,15 @@ rules:
     resources:
     - clusterroles
     resourceNames:
+    - gentian-api-extensions-reader
+    verbs:
+    - update
+    - escalate
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
     - gentian-profile-role-tenant-exports
     verbs:
     - bind

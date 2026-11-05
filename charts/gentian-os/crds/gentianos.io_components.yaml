@@ -319,6 +319,14 @@ spec:
                       maxLength: 256
                       minLength: 1
                       type: string
+                    digest:
+                      description: |-
+                        Digest pins an apiExtensions grant to the definitions it approved:
+                        sha256 of the request as the approver read it
+                        (security.APIExtensionDigest). A request whose definitions changed is
+                        not answered by it, and the install waits for a new approval.
+                      pattern: ^sha256:[0-9a-f]{64}$
+                      type: string
                     expiresAt:
                       description: |-
                         ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody

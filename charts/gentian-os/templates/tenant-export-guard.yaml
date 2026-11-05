@@ -10,9 +10,9 @@
 #     policy (policy, or no destination), or to a store the tenant declared
 #     (source; the operator refuses another tenant's store) -- never to an
 #     endpoint the export names (custom);
-#   - it is encrypted to the cluster's recovery keys: no recipients of its
-#     own and no passphrase, so the component cannot make a bundle that only
-#     it can read.
+#   - it names no recipients of its own and no passphrase, so the component
+#     cannot make a bundle that only it can read: it is encrypted to the
+#     cluster's recovery keys, or to the keys the tenant's store declares.
 #
 # A person is not looked at: what a person may export is the director's and
 # the console's to decide, and a person with kubectl here is break-glass.

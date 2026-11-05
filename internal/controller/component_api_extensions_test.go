@@ -99,6 +99,16 @@ func (c apiExtensionCase) build(t *testing.T) (*ComponentReconciler, *gentianov1
 			Privileges: c.grants,
 		},
 	}
+	// A grant names the request it approved, as the director records it.
+	for i := range comp.Spec.Privileges {
+		if comp.Spec.Privileges[i].Digest == "" {
+			d, err := security.APIExtensionDigest(&profile.Spec.Requires.Privileges.APIExtensions[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			comp.Spec.Privileges[i].Digest = d
+		}
+	}
 	objs := append([]client.Object{profile}, c.existing...)
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	disc := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
@@ -160,6 +170,16 @@ func TestAGrantedAPIExtensionIsInstalledAndRead(t *testing.T) {
 		}
 	}
 
+	// The operator's own read: the types and nothing of their status.
+	reader := &rbacv1.ClusterRole{}
+	if err := r.Get(context.Background(), client.ObjectKey{Name: security.APIExtensionsReaderClusterRole}, reader); err != nil {
+		t.Fatal(err)
+	}
+	if len(reader.Rules) != 1 || strings.Join(reader.Rules[0].APIGroups, ",") != extensionGroup ||
+		strings.Join(reader.Rules[0].Resources, ",") != "schedules" || strings.Join(reader.Rules[0].Verbs, ",") != "get,list,watch" {
+		t.Fatalf("the operator's reading role = %+v", reader.Rules)
+	}
+
 	bindings := &rbacv1.ClusterRoleBindingList{}
 	if err := r.List(context.Background(), bindings); err != nil {
 		t.Fatal(err)
@@ -201,6 +221,9 @@ func TestAnAPIExtensionIsNotInstalledWhenItMayNotBe(t *testing.T) {
 		"not granted": {func(c *apiExtensionCase) { c.grants = nil }, reasonAPIExtensionNotGranted, false},
 		"granted, expired": {func(c *apiExtensionCase) { c.grants[0].ExpiresAt = &expired },
 			reasonAPIExtensionNotGranted, false},
+		"granted, and the definitions changed since": {func(c *apiExtensionCase) {
+			c.grants[0].Digest = "sha256:" + strings.Repeat("0", 64)
+		}, reasonAPIExtensionNotGranted, false},
 		"another's type in the group": {func(c *apiExtensionCase) {
 			c.served = []metav1.APIResource{{Name: "others"}, {Name: "others/status"}}
 		}, reasonAPIExtensionGroupTaken, true},

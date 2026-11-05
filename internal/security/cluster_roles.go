@@ -50,7 +50,7 @@ var PlatformClusterRoles = ClusterRoleSet{
 	// cluster's storage or a store the tenant declared, and readable by the
 	// cluster's recovery keys.
 	"tenant-exports": {
-		What:   "start, read and remove TenantExports in every tenant's namespace; the exports go to the cluster's storage or a store the tenant declared",
+		What:   "start, read and remove TenantExports in every tenant's namespace, and read which tenants there are; the exports go to the cluster's storage or a store the tenant declared",
 		Writes: true,
 	},
 }

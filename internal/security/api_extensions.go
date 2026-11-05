@@ -11,8 +11,13 @@ SPDX-License-Identifier: MPL-2.0
 package security
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +48,13 @@ const APIExtensionLabel = "gentianos.io/api-extension"
 // rather than one per profile, because the operator may change this one by
 // name and no other (escalate is held to it).
 const APIExtensionsClusterRole = "gentian-api-extensions"
+
+// APIExtensionsReaderClusterRole is the operator's own read of the installed
+// types: get, list and watch, no status. The chart binds it to the operator,
+// which keeps its rules beside APIExtensionsClusterRole's, so that it can
+// answer what objects of an add-on's type a tenant holds
+// (internal/applifecycle/extension_objects.go).
+const APIExtensionsReaderClusterRole = "gentian-api-extensions-reader"
 
 // reservedAPIGroups are the groups, and the domains of groups, no extension
 // may be in: Kubernetes' own and the platform's. The profile's schema refuses
@@ -105,4 +117,65 @@ func APIExtensionDefinitions(req *gentianov1alpha1.APIExtensionRequest) ([]*apie
 		})
 	}
 	return out, nil
+}
+
+// APIExtensionDigest is what an approval of the request is pinned to: the
+// sha256 of its group, its ServiceAccount and its definitions, written as
+// JSON with every object's keys sorted and nothing escaped that JSON does not
+// require -- the form `jq -cS` writes, so that the installer, which approves
+// at a cluster's initial install, reaches the same digest from the profile's
+// YAML. The name and the reason are not in it: a change to either changes
+// nothing the cluster is given.
+func APIExtensionDigest(req *gentianov1alpha1.APIExtensionRequest) (string, error) {
+	definitions := make([]any, 0, len(req.Definitions))
+	for i := range req.Definitions {
+		var d any
+		if err := json.Unmarshal(req.Definitions[i].Raw, &d); err != nil {
+			return "", fmt.Errorf("definition %d: %w", i+1, err)
+		}
+		definitions = append(definitions, d)
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	// encoding/json writes a map's keys sorted, which is what makes this
+	// one byte sequence however the profile was written.
+	if err := enc.Encode(map[string]any{
+		"group":          req.Group,
+		"serviceAccount": req.ServiceAccount,
+		"definitions":    definitions,
+	}); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(bytes.TrimRight(buf.Bytes(), "\n"))
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// LiveGrants are the grants that answer the profile's requests now: live
+// (GrantedSet), and, for an API extension, pinned to the request as it is. An
+// approval of definitions that have since changed answers nothing, so the
+// install waits for somebody to approve what the profile now asks.
+func LiveGrants(profile *gentianov1alpha1.ComponentProfile, grants []gentianov1alpha1.PrivilegeGrant, now time.Time) map[string]struct{} {
+	out := map[string]struct{}{}
+	digests := map[string]string{}
+	if p := profile.Privileges(); p != nil {
+		for i := range p.APIExtensions {
+			if d, err := APIExtensionDigest(&p.APIExtensions[i]); err == nil {
+				digests[PrivilegeRef(PrivilegeAPIExtensions, p.APIExtensions[i].Name)] = d
+			}
+		}
+	}
+	for i := range grants {
+		g := &grants[i]
+		if g.ExpiresAt != nil && !now.Before(g.ExpiresAt.Time) {
+			continue
+		}
+		if kind, _ := SplitPrivilegeRef(g.Privilege); kind == PrivilegeAPIExtensions {
+			if want, ok := digests[g.Privilege]; !ok || g.Digest != want {
+				continue
+			}
+		}
+		out[g.Privilege] = struct{}{}
+	}
+	return out
 }
