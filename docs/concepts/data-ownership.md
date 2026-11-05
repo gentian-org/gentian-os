@@ -48,9 +48,10 @@ comes from.
    types, the CRDs generated from them and the bundle format are Apache-2.0.
    No code the project writes for the OS is under a source-available or
    network-copyleft license ([LICENSING.md](../../LICENSING.md)).
-2. **Leaving is part of the core.** Export, import, restore, retire and purge
-   are core functions under the core's license, so that a tenant's mobility
-   never depends on an add-on ([LICENSING.md](../../LICENSING.md)).
+2. **Leaving is part of the core.** Export on demand, import, restore, retire
+   and purge are core functions under the core's license, so that a tenant's
+   mobility never depends on an add-on ([LICENSING.md](../../LICENSING.md)).
+   Regular backups are not part of this commitment (§5).
 3. **The bundle format belongs to the OS and there is one of it.** It is
    defined in `api/bundle` (§3); anything that reads or writes a tenant's
    data in bulk uses it, and it is readable with standard tools and no
@@ -80,8 +81,8 @@ Two things are not part of the commitment:
 ## 3. The one object: the bundle
 
 A **bundle** is a self-contained, encrypted snapshot of one tenant. It is the
-unit everything else moves: an export produces one, a scheduled export is an
-export on a timer, an import consumes one, a restore reads one, and deletion
+unit everything else moves: an export produces one, an import consumes one, a
+restore reads one, and deletion
 is the promise that nothing the bundle would have contained survives. Its
 format is normative here, in Gentian OS, in `api/bundle`
 ([bundle.go](../../api/bundle/bundle.go)), and anything built on top of the
@@ -148,7 +149,7 @@ protected inside a bundle is [security/design.md](../security/design.md) §6.4.
 | Flow | Who | What happens |
 |---|---|---|
 | **Export** | the tenant's administrator | Every store the inventory lists is captured, one app paused at a time, into a bundle in the cluster's own bucket; the bundle is downloaded as one `.gentian` file through the director |
-| **Scheduled export** | declared in the tenant's backup policy | The same export, on a timer, to the destination the policy names |
+| **Scheduled export** | declared in the tenant's backup policy, which an add-on manages (§5) | The same export, on a timer, to the destination the policy names |
 | **Import** | the cluster's administrator | The director reads `manifest.json`, declares the tenant from the bundle's `TenantSpec` with the same commit a create makes, waits for the platform to make the tenant and its apps empty, and restores into it — on this cluster or another |
 | **Restore** | an administrator | A bundle is loaded into the tenant it was taken of: pause, load, run the profile's restore commands, resume |
 | **Retire** | the cluster's administrator | The tenant's manifest is removed; its data stays (`deletionPolicy: Retain`, the default) |
@@ -165,12 +166,14 @@ calls the OS through the director like any other client (§5).
 ## 5. Add-ons, and where the OS ends
 
 Everything a tenant needs to **own** their data is in Gentian OS, and every
-commitment of §2 holds with nothing but Gentian OS installed: exports on
-demand and on a schedule, the bundle, import, restore, retire and purge.
+commitment of §2 holds with nothing but Gentian OS installed: an export on
+demand, the bundle, import, restore, retire and purge.
 
-What goes beyond that — screens over schedules and destinations, an evidence
-store for the audit log, recovery on a click, drills, moving data in from
-other products — can be built on top by anyone, and a vendor may sell it.
+What goes beyond that is an add-on's: regular backups — a schedule, a
+standing destination, retention — and the screens over them, an evidence
+store for the audit log, recovery on a click, drills, importing a tenant
+through a screen, moving data in from other products. Anyone can build it on
+top, and a vendor may sell it.
 Such an add-on is delivered as catalog entries under its own license, and it
 brings its own packaging as every add-on does: its profiles, its controller
 if it has one, and its own AppProject. What its license asks of whoever

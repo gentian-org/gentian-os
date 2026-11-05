@@ -42,12 +42,12 @@ service's answer from OpenFGA.
 
 | Screen | What it does | Answered by |
 |---|---|---|
-| **Tenants** (platform administrator) | Create, retire and purge tenants, import one from a bundle, issue a tenant administrator's activation link | director, registrar |
+| **Tenants** (platform administrator) | Create, retire and purge tenants, issue a tenant administrator's activation link | director, registrar |
 | **Members** | List, invite, update, switch off, remove; password reset; require or remove an authenticator; mailboxes of removed people (§4.3a) | registrar |
 | **Groups** | Custom groups and who is in each group, the app groups included | registrar |
 | **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
 | **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
-| **Export** | Take one export now, list and download what exists | usher (read), director |
+| **Export** | Take one export now; download or delete the exports a person started. Scheduled backups are not listed | usher (read), director |
 | **Security** | The realm's password, session and lockout policy (§4.5) | director |
 | **Integrations** | What the tenant's apps consume from each other, and the grants | director |
 | **Credentials** | Repository credentials, backup identity | custodian, director |

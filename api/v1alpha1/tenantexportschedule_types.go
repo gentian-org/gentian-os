@@ -22,6 +22,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// TenantExportScheduleLabel names, on an export, the schedule that took it.
+// An export without it was started by a person.
+const TenantExportScheduleLabel = "gentianos.io/tenant-export-schedule"
+
 // TenantExportScheduleSpec takes exports on a schedule and expires old ones.
 //
 // A CronJob applying TenantExports would have worked, but it would need an
