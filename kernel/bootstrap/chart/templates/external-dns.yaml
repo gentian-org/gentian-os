@@ -271,7 +271,7 @@ spec:
         # rather than failing, so records with no HTTP object behind them — MX,
         # SPF, DKIM, DMARC — silently never appear.
   - repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     ref: values
   destination:
     server: https://kubernetes.default.svc
@@ -325,7 +325,7 @@ spec:
   project: gentian
   source:
     repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
-    targetRevision: {{ .Values.gentianOsBranch }}
+    targetRevision: {{ include "gentianOsRevision" . }}
     path: kernel/manifests/dns-records/chart
     helm:
       valuesObject:

@@ -200,13 +200,15 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"cache-destroy-job":      job(backup.CacheDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
 		"s3-bucket-job":          job(makeS3BucketJob(tenant, "wiki", false, backup.ObjectStorageOptions{})),
 		"s3-destroy-job":         job(backup.ObjectStorageDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
-		"export-s3-archive":      unit(exports, bundle.ArtefactS3),
-		"restore-s3":             unit(restores, bundle.ArtefactS3),
-		"export-manifest":        unit(exports, "manifest"),
-		"export-volume-archive":  unit(exports, bundle.ArtefactVolume),
-		"restore-volume":         unit(restores, bundle.ArtefactVolume),
-		"export-realm-upload":    unit(exports, bundle.ArtefactIdentity),
-		"restore-realm-fetch":    unit(restores, bundle.ArtefactIdentity),
+		// The vault snapshot's bucket, made as an app's is.
+		"openbao-snapshot-bucket-job": job(makeOpenBaoSnapshotBucketJob(SnapshotInstance{Name: "openbao"}, "gentian-openbao-snapshots", "k")),
+		"export-s3-archive":           unit(exports, bundle.ArtefactS3),
+		"restore-s3":                  unit(restores, bundle.ArtefactS3),
+		"export-manifest":             unit(exports, "manifest"),
+		"export-volume-archive":       unit(exports, bundle.ArtefactVolume),
+		"restore-volume":              unit(restores, bundle.ArtefactVolume),
+		"export-realm-upload":         unit(exports, bundle.ArtefactIdentity),
+		"restore-realm-fetch":         unit(restores, bundle.ArtefactIdentity),
 		// The two units that are not beside a store of the system tier, made
 		// as the reconcilers place them: beside the mail server's volume, and
 		// beside the kernel's PostgreSQL.

@@ -807,3 +807,78 @@ func TestALockedBucketAgainstAServer(t *testing.T) {
 		t.Errorf("the app's key still works after the purge:\n%s", out)
 	}
 }
+
+// Two writers sharing one bucket, each with an identity scoped to its own
+// prefix (ObjectStorageOptions.Prefix), as the vault's and the transit
+// seal's snapshot jobs are: each writes, lists, reads and deletes under its
+// prefix, and can do none of it under the other's or at the bucket's root --
+// not even under a prefix that merely begins with its own name.
+func TestPrefixScopedIdentitiesAgainstAServer(t *testing.T) {
+	l := startLiveStore(t)
+	const bucket = "kernel-snapshots"
+	type writer struct{ prefix, identity, job, key, secret string }
+	vault := writer{"openbao", "kernel_openbao-snapshot", "s3-bucket-kernel-openbao-snapshots", "vault-snap-key", "vault-snap-secret-0123456789"}
+	seal := writer{"openbao-transit", "kernel_openbao-transit-snapshot", "s3-bucket-kernel-openbao-transit-snapshots", "seal-snap-key", "seal-snap-secret-0123456789"}
+	for _, w := range []writer{vault, seal} {
+		l.keySecret(w.job, w.key, w.secret)
+		provision := ObjectStorageProvisionContainerWith("create-bucket", bucket, w.job,
+			ObjectStorageOptions{Prefix: w.prefix, Identity: w.identity})
+		for run := 0; run < 2; run++ {
+			if out, err := l.pod(fmt.Sprintf("%s-%d", w.job, run), provision); err != nil ||
+				!strings.Contains(out, "identity for "+bucket+"/"+w.prefix+"/* ready") {
+				t.Fatalf("the bucket Job for %s (run %d) failed: %v\n%s", w.prefix, run, err, out)
+			}
+		}
+	}
+	try := func(w writer, stdin string, args ...string) error {
+		_, err := l.rclone(w.key, w.secret, stdin, args...)
+		return err
+	}
+	for _, c := range []struct{ w, other writer }{{vault, seal}, {seal, vault}} {
+		own := "s:" + bucket + "/" + c.w.prefix + "/"
+		if err := try(c.w, "snapshot\n", "rcat", own+c.w.prefix+"-1.snap.age"); err != nil {
+			t.Fatalf("%s cannot write under its own prefix: %v", c.w.prefix, err)
+		}
+		if out, err := l.rclone(c.w.key, c.w.secret, "", "lsf", own); err != nil || !strings.Contains(out, c.w.prefix+"-1.snap.age") {
+			t.Fatalf("%s cannot list its own prefix (%v):\n%s", c.w.prefix, err, out)
+		}
+		if err := try(c.w, "", "cat", own+c.w.prefix+"-1.snap.age"); err != nil {
+			t.Fatalf("%s cannot read its own snapshot: %v", c.w.prefix, err)
+		}
+		if err := try(c.w, "marker\n", "rcat", own+"storage.raft"); err != nil {
+			t.Fatalf("%s cannot write its marker: %v", c.w.prefix, err)
+		}
+		if err := try(c.w, "", "deletefile", own+"storage.raft"); err != nil {
+			t.Fatalf("%s cannot delete under its own prefix: %v", c.w.prefix, err)
+		}
+	}
+	for _, c := range []struct{ w, other writer }{{vault, seal}, {seal, vault}} {
+		theirs := "s:" + bucket + "/" + c.other.prefix + "/"
+		if err := try(c.w, "forged\n", "rcat", theirs+"forged.snap.age"); err == nil {
+			t.Errorf("%s wrote under %s/", c.w.prefix, c.other.prefix)
+		}
+		if out, err := l.rclone(c.w.key, c.w.secret, "", "lsf", theirs); err == nil {
+			t.Errorf("%s listed %s/:\n%s", c.w.prefix, c.other.prefix, out)
+		}
+		if err := try(c.w, "", "cat", theirs+c.other.prefix+"-1.snap.age"); err == nil {
+			t.Errorf("%s read a snapshot of %s", c.w.prefix, c.other.prefix)
+		}
+		if err := try(c.w, "", "deletefile", theirs+c.other.prefix+"-1.snap.age"); err == nil {
+			t.Errorf("%s deleted a snapshot of %s", c.w.prefix, c.other.prefix)
+		}
+		if out, err := l.rclone(c.w.key, c.w.secret, "", "lsf", "s:"+bucket+"/"); err == nil {
+			t.Errorf("%s listed the whole bucket:\n%s", c.w.prefix, out)
+		}
+		if err := try(c.w, "loose\n", "rcat", "s:"+bucket+"/loose.snap.age"); err == nil {
+			t.Errorf("%s wrote at the bucket's root", c.w.prefix)
+		}
+	}
+	// openbao/ is not a prefix of openbao-transit/: the vault's grant ends in
+	// a slash.
+	if err := try(vault, "x\n", "rcat", "s:"+bucket+"/openbao-transitx/x"); err == nil {
+		t.Errorf("the vault's identity wrote under a prefix that only begins with its name")
+	}
+	if got := l.objects(bucket); len(got) != 2 {
+		t.Errorf("the bucket holds %v; want one snapshot of each", got)
+	}
+}

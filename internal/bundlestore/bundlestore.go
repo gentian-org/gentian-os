@@ -93,13 +93,22 @@ type Store struct {
 // configured destination has its address on the bundle and only the keys in
 // the Secret -- the same asymmetry the capture Jobs' environment explains.
 func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*minio.Client, error) {
+	mc, _, err := s.MinioAt(ctx, ref)
+	return mc, err
+}
+
+// MinioAt is Minio, and the address it reaches the store at: for the
+// platform's own store (an empty ref), the endpoint its administrator's
+// Secret records, which is what a client in the cluster is told to write to.
+// One read of that Secret for both.
+func (s *Store) MinioAt(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*minio.Client, string, error) {
 	secretName := ref.CredentialSecret
 	if secretName == "" {
 		secretName = backup.StorageAdminSecret
 	}
 	secret := &corev1.Secret{}
 	if err := s.Client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: layout.System("s3")}, secret); err != nil {
-		return nil, fmt.Errorf("bundle credentials %q: %w", secretName, err)
+		return nil, "", fmt.Errorf("bundle credentials %q: %w", secretName, err)
 	}
 	endpoint := ref.Endpoint
 	if endpoint == "" {
@@ -107,9 +116,9 @@ func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*mi
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("bundle endpoint %q is not a URL", endpoint)
+		return nil, "", fmt.Errorf("bundle endpoint %q is not a URL", endpoint)
 	}
-	return minio.New(u.Host, &minio.Options{
+	mc, err := minio.New(u.Host, &minio.Options{
 		Creds: credentials.NewStaticV4(string(secret.Data[backup.DestinationAccessKeyField]),
 			string(secret.Data[backup.DestinationSecretKeyField]), ""),
 		Secure: u.Scheme == "https",
@@ -118,6 +127,7 @@ func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*mi
 		// bundle records virtualHost. Never minio-go's guess from the host.
 		BucketLookup: BucketLookup(ref.AddressingStyle),
 	})
+	return mc, endpoint, err
 }
 
 // BucketLookup is minio-go's name for an addressing style: path when empty.

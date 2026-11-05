@@ -143,6 +143,10 @@ is "the installer resolves it to the same" \
 is "also when the image tag is given, which used to skip it" \
     "$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_IMAGE_TAG=1.2.3 -- "$(at)"'resolve_gentian_os_image_tag >/dev/null 2>&1; echo "${GENTIAN_OS_BRANCH:-unset} ${GENTIAN_OS_IMAGE_TAG}"')" \
     "feature-x 1.2.3"
+head="$(git -C "${OS}" rev-parse HEAD)"
+is "a branch: the Applications follow the checkout's commit, not the branch tip" \
+    "$(run -- "$(at)gentian_os_revision")" "${head}"
+is "a release tag: they follow the tag" "$(run GENTIAN_OS_BRANCH=v9.9.9 -- "$(at)gentian_os_revision")" "v9.9.9"
 is "a release tag resolves to its version" \
     "$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_BRANCH=v9.9.9 -- "$(at)"'resolve_gentian_os_image_tag >/dev/null 2>&1; echo "${GENTIAN_OS_IMAGE_TAG}"')" "9.9.9"
 is "a branch resolves to the image of the checkout's commit" \

@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, job-keycloak-gentian-groups-platform,
-      keycloak-edge-exchange-client, and 18 more'
+      keycloak-edge-exchange-client, and 20 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -727,6 +727,58 @@ spec:
         resolve: Always
     defaultScopes:
     - basic
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-director-scope-plans-apply
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-director-scope-plans-apply
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: A token of a cluster administrator for the director, plans-apply
+      and nothing else
+    includeInTokenScope: true
+    name: director-plans-apply
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-director-scope-plans-read
+  labels:
+    crossplane.io/composite: platform
+  name: platform-vouching-director-scope-plans-read
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: A token of a cluster administrator for the director, plans-read and
+      nothing else
+    includeInTokenScope: true
+    name: director-plans-read
     realmId: kernel
   providerConfigRef:
     name: keycloak

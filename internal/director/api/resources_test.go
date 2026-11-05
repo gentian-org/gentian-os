@@ -715,3 +715,51 @@ func TestLiveStateIsNotServedHere(t *testing.T) {
 		}
 	}
 }
+
+// A component that keeps plans in step with a commerce backend moves a
+// tenant as a cluster administrator who linked themselves to it: with a
+// token of theirs it obtained by vouching, which reaches the routes its
+// scopes name and nothing else, never forces, and is named in the commit.
+func TestADelegatedTokenMovesATenantWithinItsScopes(t *testing.T) {
+	h, _ := startWithOperator(t)
+	delegated := func(realm, sub string, scopes string) string {
+		return h.issuer.Token(t, dt.Claims{Realm: realm, Subject: sub, Audience: audience, Name: "Alice", Email: sub + "@example.com",
+			Extra: map[string]any{"azp": "vouch-ops-sync", "scope": scopes}})
+	}
+	apply := delegated("gentian", "alice", "director-plans-apply")
+	read := delegated("gentian", "alice", "director-plans-read")
+
+	req, _ := http.NewRequest(http.MethodPut, h.URL+tenantPlanPath, strings.NewReader(`{"plan":"nodes-3"}`))
+	req.Header.Set("Authorization", "Bearer "+apply)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gentian-Reason", "order 4711")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delegated move: %d", resp.StatusCode)
+	}
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%(trailers)", "main")
+	if !strings.Contains(trailer, "can_configure cluster:"+dt.Cluster+" allowed via vouch-ops-sync") || !strings.Contains(trailer, "Gentian-Reason: order 4711") {
+		t.Fatalf("trailers = %q", trailer)
+	}
+
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, apply, `{"plan":"nodes-1","force":true}`); code != http.StatusForbidden {
+		t.Fatalf("a delegated token forced a plan: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, read, `{"plan":"nodes-2"}`); code != http.StatusForbidden {
+		t.Fatalf("a read scope moved a tenant: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPut, "/v1/clusters/"+dt.Cluster+"/resource-plans/x", apply, basePlan); code != http.StatusForbidden {
+		t.Fatalf("a delegated token wrote the catalog: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodDelete, "/v1/clusters/"+dt.Cluster+"/plan-ordering", apply, ""); code != http.StatusForbidden {
+		t.Fatalf("a delegated token reached another route: %d", code)
+	}
+	// The person's own relations are asked as well.
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, delegated("tenant-demo", "tom", "director-plans-apply"), `{"plan":"nodes-2"}`); code != http.StatusForbidden {
+		t.Fatalf("a delegated token did more than its person may: %d", code)
+	}
+}

@@ -1847,6 +1847,26 @@ spec:
                                 signs a short statement naming the person, and the tenant's realm
                                 answers with a token of that person for one app.
                               properties:
+                                director:
+                                  description: |-
+                                    Director names what a token the component obtains for a person may do
+                                    at the platform's own API, beside the apps: plans-read reads the
+                                    cluster's plans, its tenants and their billed intervals, plans-apply
+                                    also moves a tenant to another plan, never forced. The person's own
+                                    relations are asked on every call as well, so a component never does
+                                    more than the person may. Given only to a component placed in the
+                                    platform tenant, whose realm the cluster's administrators sign in at;
+                                    anywhere else it is ignored.
+                                  items:
+                                    description: DirectorScope is one thing a vouched
+                                      token may do at the director.
+                                    enum:
+                                    - plans-read
+                                    - plans-apply
+                                    type: string
+                                  maxItems: 2
+                                  type: array
+                                  x-kubernetes-list-type: set
                                 keys:
                                   description: |-
                                     Keys says where the component publishes the keys its statements are
@@ -4034,6 +4054,26 @@ spec:
                               signs a short statement naming the person, and the tenant's realm
                               answers with a token of that person for one app.
                             properties:
+                              director:
+                                description: |-
+                                  Director names what a token the component obtains for a person may do
+                                  at the platform's own API, beside the apps: plans-read reads the
+                                  cluster's plans, its tenants and their billed intervals, plans-apply
+                                  also moves a tenant to another plan, never forced. The person's own
+                                  relations are asked on every call as well, so a component never does
+                                  more than the person may. Given only to a component placed in the
+                                  platform tenant, whose realm the cluster's administrators sign in at;
+                                  anywhere else it is ignored.
+                                items:
+                                  description: DirectorScope is one thing a vouched
+                                    token may do at the director.
+                                  enum:
+                                  - plans-read
+                                  - plans-apply
+                                  type: string
+                                maxItems: 2
+                                type: array
+                                x-kubernetes-list-type: set
                               keys:
                                 description: |-
                                   Keys says where the component publishes the keys its statements are

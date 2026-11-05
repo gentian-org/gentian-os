@@ -1065,7 +1065,7 @@ load_deployments_cluster_settings() {
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS DNS_ZONES DNS_RECORDS \
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
-             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV CERT_ISSUER_MODE \
+             LETSENCRYPT_EMAIL KV_MOUNT OPENBAO_STORAGE ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
              MAIL_EGRESS_HOST; do
         [[ -n "${!v:-}" ]] || continue
@@ -1095,6 +1095,11 @@ load_deployments_cluster_settings() {
         # setting, free to disagree with no precedence between them to appeal to.
         claim_setting LETSENCRYPT_EMAIL certManager.letsencryptEmail "${claim_file}"
         claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
+        # The vault's storage backend, raft or file (B-01). The XRD's default
+        # is file, so a claim written before the field keeps the backend its
+        # vault's data is in; openbao_storage_for_render refuses a switch the
+        # volume was not migrated for.
+        claim_setting OPENBAO_STORAGE   openbao.storage              "${claim_file}"
         # Which Let's Encrypt endpoint. Read here rather than from the stage
         # profile that deployment.md points at, because the issuers are applied
         # at A-09 and a stage profile is Helm values Argo CD renders later —
@@ -2883,6 +2888,29 @@ resolve_gentian_os_image_tag() {
             fi
             ;;
     esac
+}
+
+# =============================================================================
+# gentian_os_revision — the git revision every Application on the gentian-os
+# repository follows: the commit of this checkout, which is the commit the
+# operator image is built from (resolve_gentian_os_image_tag). A release tag
+# is the tag. Without a checkout to read, the ref.
+#
+# Not the branch: an Application that follows a branch takes every commit
+# merged after this checkout at once, beside a binary from before them. A
+# release that removed a step and the vault rights it used left the old
+# migrator running against the new rights, refused, until the install failed.
+# A run of the installer from a newer checkout moves the revision with the
+# image.
+# =============================================================================
+gentian_os_revision() {
+    local ref sha
+    ref="$(gentian_os_ref)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "${ref}"; return 0 ;;
+    esac
+    sha="$(git -C "${SCRIPT_DIR:-.}" rev-parse HEAD 2>/dev/null || true)"
+    printf '%s\n' "${sha:-${ref}}"
 }
 
 # =============================================================================
