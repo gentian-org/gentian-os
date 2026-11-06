@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
@@ -35,10 +36,10 @@ func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, err
 	if addr == "" {
 		addr = ":8082"
 	}
-	namespace := envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control))
+	namespace := envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control))
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
 		OperatorNamespace: namespace,
-		OperatorSA:        envOrDefault("OPERATOR_SA", "gentian-os"),
+		OperatorSA:        envvar.Or("OPERATOR_SA", "gentian-os"),
 		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
 		UsageStatistics:   usagestatistics.SettingsFromEnv(),
 		Vault:             vaultFromEnv(),
@@ -71,14 +72,7 @@ func vaultFromEnv() CredentialStore {
 	if addr == "" {
 		return nil
 	}
-	return secrets.NewKVClient(addr, envOrDefault("BAO_ROLE", "gentian-os-operator"), "")
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+	return secrets.NewKVClient(addr, envvar.Or("BAO_ROLE", "gentian-os-operator"), "")
 }
 
 // Start implements manager.Runnable.

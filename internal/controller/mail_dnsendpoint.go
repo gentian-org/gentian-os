@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 // Mail DNS records, published as a DNSEndpoint for external-dns to reconcile.
@@ -240,7 +241,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	if !ownedByTenant {
 		records = append(records,
 			dnsEndpointRecord(r.KernelDomain, "TXT", mailSPFRecord(
-				clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))),
+				clusterMailEgressHost(ctx, r.Client, envvar.Or("MAIL_EGRESS_HOST", "")))),
 			dnsEndpointRecord("_dmarc."+r.KernelDomain, "TXT", mailDMARCRecord(r.KernelDomain)))
 	}
 
@@ -302,7 +303,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	// Published only when the cluster names an egress host. Without one the
 	// cluster sends from the shared address or relays through a smarthost, and
 	// there is no name to publish.
-	if egress := clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")); egress != "" {
+	if egress := clusterMailEgressHost(ctx, r.Client, envvar.Or("MAIL_EGRESS_HOST", "")); egress != "" {
 		if addr := r.mailEgressAddress(ctx); addr != "" {
 			records = append(records, dnsEndpointRecord(egress, "A", addr))
 		}
@@ -368,7 +369,7 @@ const (
 // so mail.<kernelDomain> and imap.<kernelDomain> were never published and the
 // MX of every tenant named a host with no address.
 func mailEdgeServiceName() string {
-	return envOrDefault("MAIL_EDGE_SERVICE", "mail-edge-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev")))
+	return envvar.Or("MAIL_EDGE_SERVICE", "mail-edge-"+envvar.Or("GENTIAN_STAGE", envvar.Or("ENV", "dev")))
 }
 
 // mailEdgeAddress is the load balancer's address, if the edge's Service
