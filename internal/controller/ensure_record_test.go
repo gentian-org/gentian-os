@@ -37,7 +37,7 @@ import (
 func ensureScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := SchemeForTest(t)
-	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK} {
+	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK, externalSecretGVK} {
 		s.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		s.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
 	}
