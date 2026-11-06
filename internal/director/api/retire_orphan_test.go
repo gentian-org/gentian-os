@@ -93,3 +93,7 @@ func TestRetiringATenantGitLacksRemovesTheOrphanTheClusterStillRuns(t *testing.T
 		}
 	}
 }
+
+func (o *orphanOperator) Delete(context.Context, string, string, url.Values) (int, []byte, error) {
+	return http.StatusNoContent, nil, nil
+}

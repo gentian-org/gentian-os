@@ -147,6 +147,16 @@ func (o *importingOperator) Upload(_ context.Context, path, _ string, body io.Re
 	return http.StatusCreated, []byte(`{"bundle":{"bucket":"gentian-imports","prefix":"x"}}`), nil
 }
 
+func (o *importingOperator) Delete(_ context.Context, path, actor string, q url.Values) (int, []byte, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.asked = append(o.asked, "DELETE "+path+"?"+q.Encode()+" by "+actor)
+	if strings.HasSuffix(path, "/in-use-0") {
+		return http.StatusConflict, []byte(`{"error":"a restore that has not ended reads this bundle"}`), nil
+	}
+	return http.StatusNoContent, nil, nil
+}
+
 func (o *importingOperator) Stream(context.Context, string) (*http.Response, error) {
 	return nil, io.EOF
 }
@@ -877,5 +887,33 @@ func TestAnUploadInStepsIsTheSameUploadEachTime(t *testing.T) {
 		"POST /v1/bundles?into=" + prefix + "&tenant=demo"}
 	if strings.Join(op.asked, "|") != strings.Join(want, "|") {
 		t.Errorf("the operator was asked %q, want %q", op.asked, want)
+	}
+}
+
+// An import deleted in a console takes its bundle out of the import storage:
+// on the cluster's route as the cluster's administrator, on a tenant's route
+// scoped to that tenant whatever the query says, and a refusal from the
+// operator -- a restore still reads it -- reaches the console as it is.
+func TestAnImportedBundleIsRemovedOnRequest(t *testing.T) {
+	op := &importingOperator{}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	prefix := "20261029-070021-f585ab2b"
+
+	if code, body := h.do(t, "DELETE", "/v1/clusters/"+dt.Cluster+"/bundles/"+prefix, alice, ""); code != http.StatusNoContent {
+		t.Fatalf("cluster delete = %d %v", code, body)
+	}
+	if code, body := h.do(t, "DELETE", "/v1/tenants/demo/bundles/"+prefix+"?tenant=solo", alice, ""); code != http.StatusNoContent {
+		t.Fatalf("tenant delete = %d %v", code, body)
+	}
+	if len(op.asked) != 2 ||
+		!strings.HasPrefix(op.asked[0], "DELETE /v1/bundles/"+prefix+"? by ") ||
+		!strings.HasPrefix(op.asked[1], "DELETE /v1/bundles/"+prefix+"?tenant=demo by ") ||
+		strings.HasSuffix(op.asked[0], " by ") {
+		t.Errorf("the operator was asked %q", op.asked)
+	}
+
+	if code, _ := h.do(t, "DELETE", "/v1/clusters/"+dt.Cluster+"/bundles/in-use-0", alice, ""); code != http.StatusConflict {
+		t.Errorf("a bundle in use: %d, want 409", code)
 	}
 }

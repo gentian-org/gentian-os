@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -226,6 +227,51 @@ func (s *Service) uploadOf(ctx context.Context, tenant, prefix string) (*minio.C
 		return nil, nil, nil, fmt.Errorf("%w: %q", errNoUpload, prefix)
 	}
 	return mc, imports, rec, nil
+}
+
+// errImportInUse is a bundle a restore that has not ended still reads.
+var errImportInUse = errors.New("a restore that has not ended reads this bundle")
+
+// RemoveImported deletes an upload or a fetch from the import bucket, with
+// its record, when the person who put it there is done with it: an import
+// deleted in a console, rather than left for the sweep (ImportMaxAge). A
+// tenant's administrator removes only the tenant's own (tenant set); the
+// cluster's removes any. A bundle a restore that has not ended reads is
+// refused, as the sweep leaves it.
+func (s *Service) RemoveImported(ctx context.Context, prefix, tenant string) error {
+	if !importPrefix.MatchString(prefix) {
+		return errNoImported
+	}
+	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{Bucket: bundlestore.ImportBucket, Prefix: prefix})
+	if err != nil {
+		return err
+	}
+	imports := bundlestore.ImportsOf(mc)
+	rec, err := imports.Record(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	if tenant != "" && (rec == nil || rec.Tenant != tenant) {
+		return errNoImported
+	}
+	if rec == nil {
+		// Without a record only what is stored says it is there.
+		stored, err := imports.Stored(ctx, prefix)
+		if err != nil {
+			return err
+		}
+		if len(stored) == 0 {
+			return errNoImported
+		}
+	}
+	inUse, err := bundlestore.ImportsInUse(ctx, s.client)
+	if err != nil {
+		return err
+	}
+	if inUse[prefix] {
+		return errImportInUse
+	}
+	return imports.Remove(ctx, prefix)
 }
 
 // removeUpload deletes an upload and its record.
@@ -497,6 +543,7 @@ func (h *HTTPServer) registerImportRoutes(mux router) {
 	mux.HandleFunc("POST /v1/bundles", h.handleBundleUpload)
 	mux.HandleFunc("POST /v1/bundles/uploads", h.handleStartUpload)
 	mux.HandleFunc("GET /v1/bundles/{prefix}/files", h.handleUploadedFiles)
+	mux.HandleFunc("DELETE /v1/bundles/{prefix}", h.handleBundleRemove)
 	mux.HandleFunc("POST /v1/bundles/inspect", h.handleBundleInspect)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/restore", h.handleRestore)
 	// Where a restore stands is state, and the usher's to answer as well.
@@ -547,6 +594,24 @@ func (h *HTTPServer) handleStartUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"bundle": ref})
+}
+
+func (h *HTTPServer) handleBundleRemove(w http.ResponseWriter, r *http.Request) {
+	prefix := r.PathValue("prefix")
+	err := h.Service.RemoveImported(r.Context(), prefix, r.URL.Query().Get("tenant"))
+	switch {
+	case errors.Is(err, errNoImported):
+		writeErr(w, http.StatusNotFound, fmt.Errorf("%w: %q", err, prefix))
+		return
+	case errors.Is(err, errImportInUse):
+		writeErr(w, http.StatusConflict, fmt.Errorf("%w: %q", err, prefix))
+		return
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	ctrllog.FromContext(r.Context()).Info("removed a bundle from the import bucket", "prefix", prefix, "tenant", r.URL.Query().Get("tenant"), "actor", r.Header.Get("X-Gentian-Actor"))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HTTPServer) handleUploadedFiles(w http.ResponseWriter, r *http.Request) {

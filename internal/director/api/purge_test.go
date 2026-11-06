@@ -165,3 +165,7 @@ func gitShow(remote, path string) (string, error) {
 	out, err := exec.Command("git", "--git-dir", remote, "show", "main:"+path).Output()
 	return string(out), err
 }
+
+func (l *liveTenants) Delete(context.Context, string, string, url.Values) (int, []byte, error) {
+	return http.StatusNoContent, nil, nil
+}

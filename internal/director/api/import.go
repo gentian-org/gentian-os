@@ -195,6 +195,20 @@ func (s *Server) startUpload(w http.ResponseWriter, r *http.Request, c call) {
 	s.relay(w, r, status, body, err)
 }
 
+// removeImportedBundle deletes an upload or a fetch from the cluster's import
+// storage, when the person who put it there is done with it -- an import
+// deleted in a console -- rather than leaving it for the sweep. On a tenant's
+// route, only one recorded as that tenant's; one a restore still reads is
+// refused (409).
+func (s *Server) removeImportedBundle(w http.ResponseWriter, r *http.Request, c call) {
+	status, body, err := s.cfg.Lifecycle.Delete(r.Context(), "/v1/bundles/"+url.PathEscape(r.PathValue("prefix")), c.meta.ActorName(), ownTenant(r))
+	if err == nil && status == http.StatusNoContent {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.relay(w, r, status, body, err)
+}
+
 // uploadedFiles lists what an upload being filled holds: each file's size,
 // by its name in the bundle.
 func (s *Server) uploadedFiles(w http.ResponseWriter, r *http.Request, _ call) {

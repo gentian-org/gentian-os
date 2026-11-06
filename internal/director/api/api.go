@@ -183,6 +183,9 @@ type Lifecycle interface {
 	// Do asks the cluster to do something once, as the person named. Only
 	// the action routes call it.
 	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
+	// Delete asks the cluster to remove one thing, as the person named: a
+	// bundle of the import storage.
+	Delete(ctx context.Context, path, actor string, query url.Values) (int, []byte, error)
 }
 
 // Config assembles a Server.
@@ -592,6 +595,7 @@ func (s *Server) routes() {
 			// continues: started, then filled with ?into=, its files listed.
 			s.guarded("POST /v1/clusters/{c}/bundles/uploads", "can_configure", s.clusterObject, s.startUpload)
 			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/files", "can_configure", s.clusterObject, s.uploadedFiles)
+			s.guarded("DELETE /v1/clusters/{c}/bundles/{prefix}", "can_configure", s.clusterObject, s.removeImportedBundle)
 			s.guarded("POST /v1/clusters/{c}/bundles/inspect", "can_configure", s.clusterObject, s.inspectBundle)
 			// Removing one thing the catalog left behind: an object no
 			// bundle owns any more, or a profile nobody uses. The list is
@@ -880,6 +884,7 @@ func (s *Server) routes() {
 		s.guarded("POST /v1/tenants/{t}/bundles", "can_set_policy", tenantObject, s.uploadBundle)
 		s.guarded("POST /v1/tenants/{t}/bundles/uploads", "can_set_policy", tenantObject, s.startUpload)
 		s.guarded("GET /v1/tenants/{t}/bundles/{prefix}/files", "can_set_policy", tenantObject, s.uploadedFiles)
+		s.guarded("DELETE /v1/tenants/{t}/bundles/{prefix}", "can_set_policy", tenantObject, s.removeImportedBundle)
 		s.guarded("POST /v1/tenants/{t}/bundles/inspect", "can_set_policy", tenantObject, s.inspectTenantBundle)
 		s.action("POST /v1/tenants/{t}/actions/restore", "can_set_policy", tenantObject, s.restoreTenant)
 		// Where the tenant's bundles are: its bucket in the cluster's storage

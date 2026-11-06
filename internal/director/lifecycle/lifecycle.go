@@ -359,6 +359,34 @@ func ErrorMessage(body []byte) string {
 	return strings.TrimSpace(string(body))
 }
 
+// Delete asks the operator to remove one thing, as the person named, and
+// answers as Get does.
+func (c *Client) Delete(ctx context.Context, path, actor string, query url.Values) (int, []byte, error) {
+	u := c.base + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	c.authorize(req)
+	if actor != "" {
+		req.Header.Set("X-Gentian-Actor", actor)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	status, body := c.refusedByOperator(resp.StatusCode, body)
+	return status, body, nil
+}
+
 // Do asks the operator to do something once, as the person named.
 //
 // The only write in this client, and it is not a write of state: the director
