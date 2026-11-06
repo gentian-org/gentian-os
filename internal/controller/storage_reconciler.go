@@ -25,7 +25,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -115,8 +114,6 @@ const backupBucketUnit = "gentian-backup"
 // so tenant workloads never need OpenBao access to provision storage (SEC-1)
 // and the key is in no Job spec, no ConfigMap and no composed Object.
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bool, opts backup.ObjectStorageOptions) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	keySecret := ""
 	if withKey {
 		keySecret = s3BucketJobName(tenant.Name, appName)
@@ -125,27 +122,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName string, withKey bo
 	// inventory's: a restore runs the same one before it writes a bucket's
 	// objects back.
 	container := backup.ObjectStorageProvisionContainerWith("create-bucket", s3BucketName(tenant, appName), keySecret, opts)
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      s3BucketJobName(tenant.Name, appName),
-			Namespace: s3Namespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	job := newKernelProvisioningJob(s3BucketJobName(tenant.Name, appName), s3Namespace, tenant, appName, container)
 	// The container administers the store through the master and the
 	// filer, which admit this pod by its label and its client certificate.
 	backup.ObjectStoreShellPod(&job.Spec.Template)

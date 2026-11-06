@@ -14,6 +14,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/meta"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -52,7 +53,7 @@ func (r *TenantReconciler) provisioningRequeueDelay(ctx context.Context, jobName
 			}
 			return delay
 		}
-		if jobIsComplete(job) {
+		if meta.JobComplete(job) {
 			continue
 		}
 		if d := provisioningRequeueFromJobAge(job); d > delay {

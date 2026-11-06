@@ -126,7 +126,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// Not an error: the policy is correct and waiting for a human to
 			// supply keys. Reported as a false condition so the console can
 			// show a field to fill rather than a failure to debug.
-			setPolicyCondition(policy, metav1.ConditionFalse, "CredentialUnsatisfied",
+			replaceChangedCondition(&policy.Status.Conditions, policy.Generation, conditionPolicyAccepted, metav1.ConditionFalse, "CredentialUnsatisfied",
 				fmt.Sprintf("supply %s in the custodian: %s", eff.CredentialName, why))
 			logger.Info("policy awaiting its credential", "policy", policy.Name, "requirement", eff.CredentialName)
 			return ctrl.Result{}, r.persistPolicy(ctx, policy)
@@ -138,7 +138,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.failPolicy(ctx, policy, "ScheduleFailed", err.Error())
 	}
 
-	setPolicyCondition(policy, metav1.ConditionTrue, "Accepted", message)
+	replaceChangedCondition(&policy.Status.Conditions, policy.Generation, conditionPolicyAccepted, metav1.ConditionTrue, "Accepted", message)
 	return ctrl.Result{}, r.persistPolicy(ctx, policy)
 }
 
@@ -545,37 +545,13 @@ func (r *BackupPolicyReconciler) failPolicy(
 	policy *gentianov1alpha1.BackupPolicy,
 	reason, message string,
 ) (ctrl.Result, error) {
-	setPolicyCondition(policy, metav1.ConditionFalse, reason, message)
+	replaceChangedCondition(&policy.Status.Conditions, policy.Generation, conditionPolicyAccepted, metav1.ConditionFalse, reason, message)
 	return ctrl.Result{}, r.persistPolicy(ctx, policy)
 }
 
 func (r *BackupPolicyReconciler) persistPolicy(ctx context.Context, policy *gentianov1alpha1.BackupPolicy) error {
 	policy.Status.ObservedGeneration = policy.Generation
 	return r.Status().Update(ctx, policy)
-}
-
-func setPolicyCondition(policy *gentianov1alpha1.BackupPolicy, status metav1.ConditionStatus, reason, message string) {
-	cond := metav1.Condition{
-		Type:               conditionPolicyAccepted,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
-		ObservedGeneration: policy.Generation,
-	}
-	for i := range policy.Status.Conditions {
-		if policy.Status.Conditions[i].Type != conditionPolicyAccepted {
-			continue
-		}
-		if policy.Status.Conditions[i].Status == status &&
-			policy.Status.Conditions[i].Reason == reason &&
-			policy.Status.Conditions[i].Message == message {
-			return // Unchanged: keep the original transition time.
-		}
-		policy.Status.Conditions[i] = cond
-		return
-	}
-	policy.Status.Conditions = append(policy.Status.Conditions, cond)
 }
 
 // isCredentialProbe keeps the watch below to the ExternalSecrets this

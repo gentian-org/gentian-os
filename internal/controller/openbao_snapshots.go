@@ -539,16 +539,16 @@ func (o *OpenBaoSnapshots) EnsureStore(ctx context.Context, inst SnapshotInstanc
 		return false, err
 	case job.DeletionTimestamp != nil:
 		return false, nil
-	case job.Annotations[openBaoSnapshotKeyAnnotation] != keyID || jobIsFailed(job):
+	case job.Annotations[openBaoSnapshotKeyAnnotation] != keyID || meta.JobFailed(job):
 		prop := metav1.DeletePropagationBackground
 		if err := o.Client.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !apierrors.IsNotFound(err) {
 			return false, fmt.Errorf("remove the snapshot bucket Job %s to run it again: %w", name.Name, err)
 		}
-		if jobIsFailed(job) {
+		if meta.JobFailed(job) {
 			return false, fmt.Errorf("the snapshot bucket Job %s failed; it is run again", name.Name)
 		}
 		return false, nil
-	case jobIsComplete(job):
+	case meta.JobComplete(job):
 		return true, deleteJobSecret(ctx, o.Client, job)
 	default:
 		return false, o.handKey(ctx, job, creds)

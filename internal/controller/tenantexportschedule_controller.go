@@ -74,7 +74,7 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 		// An unusable expression is reported rather than retried: nothing about
 		// waiting will make it parse, and a schedule silently doing nothing is
 		// the worst way for a backup regime to fail.
-		setScheduleCondition(schedule, metav1.ConditionFalse, "InvalidSchedule",
+		setStatusCondition(&schedule.Status.Conditions, schedule.Generation, conditionScheduleReady, metav1.ConditionFalse, "InvalidSchedule",
 			fmt.Sprintf("%q is not a valid cron expression: %v", schedule.Spec.Schedule, err))
 		return ctrl.Result{}, r.persist(ctx, schedule)
 	}
@@ -91,7 +91,7 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 
 	if schedule.Spec.Suspend {
-		setScheduleCondition(schedule, metav1.ConditionFalse, "Suspended",
+		setStatusCondition(&schedule.Status.Conditions, schedule.Generation, conditionScheduleReady, metav1.ConditionFalse, "Suspended",
 			"suspended; no exports will be created")
 		schedule.Status.NextScheduleTime = nil
 		return ctrl.Result{}, r.persist(ctx, schedule)
@@ -101,7 +101,7 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 	// blocked behind it until the window passed. Skipping is the honest
 	// outcome, and it is recorded rather than silent.
 	if running := firstRunning(exports); running != "" {
-		setScheduleCondition(schedule, metav1.ConditionTrue, "Waiting",
+		setStatusCondition(&schedule.Status.Conditions, schedule.Generation, conditionScheduleReady, metav1.ConditionTrue, "Waiting",
 			fmt.Sprintf("export %s is still running; this window is skipped", running))
 		next := spec.Next(now.UTC())
 		schedule.Status.NextScheduleTime = &metav1.Time{Time: next}
@@ -121,7 +121,7 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 
 	schedule.Status.NextScheduleTime = &metav1.Time{Time: next}
-	setScheduleCondition(schedule, metav1.ConditionTrue, "Scheduled",
+	setStatusCondition(&schedule.Status.Conditions, schedule.Generation, conditionScheduleReady, metav1.ConditionTrue, "Scheduled",
 		fmt.Sprintf("next export due %s", next.UTC().Format(time.RFC3339)))
 	return resultUnlessError(ctrl.Result{RequeueAfter: requeueUntil(now, next)}, r.persist(ctx, schedule))
 }
@@ -336,34 +336,6 @@ func (r *TenantExportScheduleReconciler) now() time.Time {
 		return r.Now()
 	}
 	return time.Now().UTC()
-}
-
-func setScheduleCondition(
-	schedule *gentianov1alpha1.TenantExportSchedule,
-	status metav1.ConditionStatus,
-	reason, message string,
-) {
-	now := metav1.Now()
-	for i := range schedule.Status.Conditions {
-		c := &schedule.Status.Conditions[i]
-		if c.Type != conditionScheduleReady {
-			continue
-		}
-		if c.Status != status {
-			c.LastTransitionTime = now
-		}
-		c.Status, c.Reason, c.Message = status, reason, message
-		c.ObservedGeneration = schedule.Generation
-		return
-	}
-	schedule.Status.Conditions = append(schedule.Status.Conditions, metav1.Condition{
-		Type:               conditionScheduleReady,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-		ObservedGeneration: schedule.Generation,
-	})
 }
 
 func (r *TenantExportScheduleReconciler) persist(

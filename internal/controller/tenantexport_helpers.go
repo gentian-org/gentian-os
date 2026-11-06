@@ -161,35 +161,6 @@ func unmarkQuiesced(quiesced *[]string, appName string) {
 	*quiesced = out
 }
 
-func setExportCondition(
-	export *gentianov1alpha1.TenantExport,
-	condType string,
-	status metav1.ConditionStatus,
-	reason, message string,
-) {
-	now := metav1.Now()
-	for i := range export.Status.Conditions {
-		c := &export.Status.Conditions[i]
-		if c.Type != condType {
-			continue
-		}
-		if c.Status != status {
-			c.LastTransitionTime = now
-		}
-		c.Status, c.Reason, c.Message = status, reason, message
-		c.ObservedGeneration = export.Generation
-		return
-	}
-	export.Status.Conditions = append(export.Status.Conditions, metav1.Condition{
-		Type:               condType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-		ObservedGeneration: export.Generation,
-	})
-}
-
 // profileBackupSpec returns the profile's backup contract, or nil when it
 // declares none — which the accessors read as the platform default.
 func profileBackupSpec(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.BackupSpec {

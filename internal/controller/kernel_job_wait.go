@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -60,12 +61,12 @@ func crossplaneObjectReady(obj *unstructured.Unstructured) bool {
 func (r *TenantReconciler) waitForProvisioningJob(ctx context.Context, tenantName, jobName string) (bool, error) {
 	job, err := r.getProvisioningJob(ctx, jobName)
 	if err == nil {
-		if jobIsFailed(job) {
+		if meta.JobFailed(job) {
 			prop := metav1.DeletePropagationBackground
 			_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
 			return false, nil
 		}
-		return jobIsComplete(job), nil
+		return meta.JobComplete(job), nil
 	}
 	if !errors.IsNotFound(err) {
 		return false, err

@@ -21,6 +21,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
@@ -145,11 +146,14 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 	return ctrl.Result{}, nil
 }
 
+// newKernelProvisioningJob is a provisioning Job of a kernel namespace for a
+// tenant, and for one of its apps when appName is set.
 func newKernelProvisioningJob(name, namespace string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
-	return provisioner.NewKernelProvisioningJob(
-		name, namespace, tenantLabel, managedByLabel, managedByValue, appLabel,
-		tenant.Name, appName, container,
-	)
+	labels := map[string]string{tenantLabel: tenant.Name, managedByLabel: managedByValue}
+	if appName != "" {
+		labels[appLabel] = appName
+	}
+	return meta.ProvisioningJob(name, namespace, labels, container)
 }
 
 func (r *TenantReconciler) ensureDeleteJobs(
@@ -160,5 +164,5 @@ func (r *TenantReconciler) ensureDeleteJobs(
 	jobName func(tenantName, appName string) string,
 	makeJob func(*gentianov1alpha1.Tenant, string) *batchv1.Job,
 ) error {
-	return provisioner.EnsureDeleteJobs(ctx, r.Client, namespace, tenant, apps, jobName, makeJob, jobIsComplete)
+	return provisioner.EnsureDeleteJobs(ctx, r.Client, namespace, tenant, apps, jobName, makeJob, meta.JobComplete)
 }

@@ -18,8 +18,6 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -796,23 +794,7 @@ func (r *GatewayPlatformReconciler) ensureRouteReferenceGrant(ctx context.Contex
 		return err
 	}
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: ns}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 // kernelHTTPSRedirectRule sends any plaintext request straight to https on the
@@ -1080,23 +1062,7 @@ func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicyNamed(
 		return err
 	}
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(clientTrafficPolicyGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, policySpec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 func attachKernelClientTrafficPolicyTarget(spec map[string]interface{}, sectionName string) {
@@ -1134,23 +1100,7 @@ func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicyNamed(
 		return err
 	}
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(backendTrafficPolicyGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, policySpec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 func (r *GatewayPlatformReconciler) deleteStaleKernelHTTPRoutes(ctx context.Context, expected map[string]struct{}) error {

@@ -41,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/locales"
+	gentianmeta "github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
@@ -439,7 +440,7 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 		return false, "DatabaseProvisioning", "the database role is being created", nil
 	case err != nil:
 		return false, "", "", err
-	case !jobIsComplete(job) && job.Annotations[roleJobHashAnnotation] != wanted:
+	case !gentianmeta.JobComplete(job) && job.Annotations[roleJobHashAnnotation] != wanted:
 		// A Job made by an earlier build of this. Its pod template cannot be
 		// changed, and if that template is what kept it from running -- a pod
 		// the namespace refuses is no pod at all -- waiting on it is waiting
@@ -449,13 +450,13 @@ func ensurePostgresStore(ctx context.Context, c client.Client, seeder *secrets.S
 			return false, "", "", err
 		}
 		return false, "DatabaseProvisioning", "the database role Job is replaced by the current one", nil
-	case jobIsFailed(job):
+	case gentianmeta.JobFailed(job):
 		prop := metav1.DeletePropagationBackground
 		if err := c.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
 			return false, "", "", err
 		}
 		return false, "DatabaseProvisioning", "the database role Job failed and is retried", nil
-	case !jobIsComplete(job):
+	case !gentianmeta.JobComplete(job):
 		if job.DeletionTimestamp == nil {
 			if err := ensureJobSecret(ctx, c, job, jobSecret(job, password)); err != nil {
 				return false, "", "", err

@@ -307,23 +307,7 @@ func (r *GatewayPlatformReconciler) ensureKernelSecurityPolicy(ctx context.Conte
 	if err := unstructured.SetNestedField(desired.Object, policySpec, "spec"); err != nil {
 		return err
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(securityPolicyGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, policySpec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 func (r *GatewayPlatformReconciler) deleteStaleKernelSecurityPolicies(ctx context.Context, expected map[string]struct{}) error {
@@ -472,21 +456,13 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 		},
 		Data: map[string]string{bouncerRoutesKey: table},
 	}
-	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Data[bouncerRoutesKey] == table {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
+		if existing.Data[bouncerRoutesKey] == table {
+			return false
+		}
+		existing.Data, existing.Labels = desired.Data, desired.Labels
+		return true
+	})
 }
 
 func (r *GatewayPlatformReconciler) kernelRealm() string {

@@ -61,7 +61,7 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if grant.Status.Phase == gentianov1alpha1.AppGrantPhaseReady && grant.Status.ObservedGeneration == grant.Generation {
 		return ctrl.Result{}, nil
 	}
-	setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionTrue, "Recorded",
+	stampCondition(&grant.Status.Conditions, conditionAppGrantReady, metav1.ConditionTrue, "Recorded",
 		"grant recorded; the director projects it to the authorization store from git")
 	grant.Status.Phase = gentianov1alpha1.AppGrantPhaseReady
 	grant.Status.ObservedGeneration = grant.Generation
@@ -72,26 +72,6 @@ func (r *AppGrantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.AppGrant{}).
 		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.AppGrant{}, r))
-}
-
-func setAppGrantCondition(grant *gentianov1alpha1.AppGrant, typ string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.Now()
-	for i := range grant.Status.Conditions {
-		if grant.Status.Conditions[i].Type == typ {
-			grant.Status.Conditions[i].Status = status
-			grant.Status.Conditions[i].Reason = reason
-			grant.Status.Conditions[i].Message = message
-			grant.Status.Conditions[i].LastTransitionTime = now
-			return
-		}
-	}
-	grant.Status.Conditions = append(grant.Status.Conditions, metav1.Condition{
-		Type:               typ,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-	})
 }
 
 // The tenant reconciler writes no AppGrant.

@@ -230,10 +230,8 @@ func StateOf(job *batchv1.Job) JobState {
 	if job.Spec.BackoffLimit != nil {
 		backoff = *job.Spec.BackoffLimit
 	}
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return JobFailed
-		}
+	if meta.JobFailed(job) {
+		return JobFailed
 	}
 	if backoff > 0 && job.Status.Failed > backoff {
 		return JobFailed

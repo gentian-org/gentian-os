@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gentian-org/gentian-os/internal/meta"
 	runtimeMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -230,7 +231,7 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	prop := metav1.DeletePropagationBackground
 	for i := range jobList.Items {
 		job := &jobList.Items[i]
-		if isTenantCleanupJobName(tenant.Name, job.Name) && !jobIsComplete(job) && job.DeletionTimestamp == nil {
+		if isTenantCleanupJobName(tenant.Name, job.Name) && !meta.JobComplete(job) && job.DeletionTimestamp == nil {
 			continue
 		}
 		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
