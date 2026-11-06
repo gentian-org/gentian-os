@@ -10,10 +10,9 @@ moment a tenant can take all of their data with them, and at any moment they
 can have all of it destroyed, without asking the platform's permission and
 without depending on anyone's tooling to read what they took.
 
-Anyone may build on Gentian OS, and a vendor may sell add-ons and services on
-top of it. An add-on is not part of this repository: it comes from a catalog
-under its own license and brings its own packaging (§5). Nothing in this
-document depends on one.
+An add-on is not part of this repository: it comes from a catalog under its
+own license and brings its own packaging (§5). Nothing in this document
+depends on one.
 
 ## 1. What a tenant owns
 
