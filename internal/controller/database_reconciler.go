@@ -27,6 +27,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -45,7 +46,7 @@ const (
 )
 
 // cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
-var cnpgClusterName = envOrDefault("CNPG_CLUSTER_NAME", "postgres")
+var cnpgClusterName = envvar.Or("CNPG_CLUSTER_NAME", "postgres")
 
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.

@@ -26,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
@@ -99,7 +100,7 @@ type kernelHTTPRouteSpec struct {
 
 // keycloakHTTPServiceName is the keycloakx chart's HTTP Service, as the identity ApplicationSet releases it.
 func keycloakHTTPServiceName() string {
-	if v := envOrDefault("KEYCLOAK_HTTP_SERVICE", ""); v != "" {
+	if v := envvar.Or("KEYCLOAK_HTTP_SERVICE", ""); v != "" {
 		return v
 	}
 	return "gentian-idp-keycloak-keycloakx-http"

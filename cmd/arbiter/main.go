@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 func main() {
@@ -44,15 +45,8 @@ func main() {
 	}
 }
 
-func envOr(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
-}
-
 func run(log *slog.Logger) error {
-	namespace := envOr("POD_NAMESPACE", arbiter.Namespace)
+	namespace := envvar.Or("POD_NAMESPACE", arbiter.Namespace)
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return err
@@ -70,13 +64,13 @@ func run(log *slog.Logger) error {
 	if key == "" {
 		return errors.New("OPENFGA_API_TOKEN is required: the app instance's key, from the Secret " + arbiter.KeySecret)
 	}
-	fga := arbiter.NewOpenFGA(envOr("OPENFGA_API_URL",
+	fga := arbiter.NewOpenFGA(envvar.Or("OPENFGA_API_URL",
 		"http://"+arbiter.InstanceRelease+"."+namespace+".svc.cluster.local:8080"), key)
 	stores := arbiter.NewStores(fga, &arbiter.ConfigMapRecorder{Client: kube, Namespace: namespace}, log)
 	srv := arbiter.NewServer(fga, stores, log)
-	go arbiter.Follow(ctx, envOr("ARBITER_TABLE", "/etc/arbiter/"+arbiter.TableKey), 5*time.Second, srv, log)
+	go arbiter.Follow(ctx, envvar.Or("ARBITER_TABLE", "/etc/arbiter/"+arbiter.TableKey), 5*time.Second, srv, log)
 
-	health := &http.Server{Addr: envOr("ARBITER_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
+	health := &http.Server{Addr: envvar.Or("ARBITER_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
 	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	go func() { _ = health.ListenAndServe() }()
 
@@ -84,7 +78,7 @@ func run(log *slog.Logger) error {
 	// server's word on a token projected for this path alone.
 	platform := &arbiter.PlatformAuth{Reviews: kube.AuthenticationV1().TokenReviews(), Caller: os.Getenv("ARBITER_PLATFORM_CALLER")}
 	api := &http.Server{
-		Addr: envOr("ARBITER_LISTEN", ":8080"), Handler: srv.Handler(platform),
+		Addr: envvar.Or("ARBITER_LISTEN", ":8080"), Handler: srv.Handler(platform),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
 	}
 	done := make(chan error, 1)

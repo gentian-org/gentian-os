@@ -16,6 +16,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 // mailEgressNodeLabel marks the node mail must leave from.
@@ -45,7 +47,7 @@ const mailEgressNodeLabel = "gentianos.io/mail-egress"
 // label a node should not stop a tenant reconcile; the consequence is that
 // Postfix may schedule elsewhere, which is what happens today anyway.
 func (r *TenantReconciler) syncMailEgressNodeLabel(ctx context.Context) error {
-	egress := clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", ""))
+	egress := clusterMailEgressHost(ctx, r.Client, envvar.Or("MAIL_EGRESS_HOST", ""))
 	if egress == "" {
 		return nil
 	}
