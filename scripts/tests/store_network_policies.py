@@ -57,6 +57,11 @@ CNPG_INSTANCE_PORTS = {"postgresql": 5432, "metrics": 9187, "status": 8000}
 CNPG_OPERATOR_LABELS = {"app.kubernetes.io/name": "cloudnative-pg", "app.kubernetes.io/instance": "cnpg"}
 
 
+def cnpg_chart_pin():
+    """The chart version the cnpg Application installs: versions.yaml's pin."""
+    return yaml.safe_load((ROOT / "versions.yaml").read_text())["cnpg"]["chart"]
+
+
 def cnpg_instance_labels(cluster):
     return {"cnpg.io/cluster": cluster, "cnpg.io/instanceName": cluster + "-1",
             "cnpg.io/instanceRole": "primary", "cnpg.io/podRole": "instance"}
@@ -418,7 +423,7 @@ def check_wiring():
     # CloudNativePG: the version the pinned labels and ports were read at, and
     # the namespace its operator runs in.
     application = CNPG_APPLICATION.read_text()
-    if f'targetRevision: "{CNPG_CHART_VERSION}"' not in application:
+    if cnpg_chart_pin() != CNPG_CHART_VERSION:
         raise Failure(f"the cnpg Application no longer installs chart {CNPG_CHART_VERSION}: read CloudNativePG's pod spec at the "
                       "new version, then move the pin in this file")
     if 'namespace: {{ include "ns" (list . "data") }}' not in application:

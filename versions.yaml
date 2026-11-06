@@ -66,15 +66,43 @@ argocd:
   # is behind, and an air-gapped mirror knows what to hold.
   imageUpdaterChart: "1.3.2"
 
+# The CLI is what the installer runs against the vault; the chart is what the
+# bootstrap chart's openbao and openbao-transit Applications install.
 openbao:
   cli: "v2.5.0"
+  chart: "0.25.5"
+  repo: https://openbao.github.io/openbao-helm
+
+# The components below are Applications of the bootstrap chart
+# (kernel/bootstrap/chart). B-01 passes this file to the chart as its
+# `versions` value, so each Application reads its chart and repository from
+# here and the two cannot drift.
 
 # Headlamp: the cluster administrator's view of the cluster, in
-# kernel-observability. Delivered by the v5 bootstrap chart, whose Application
-# takes the version from here so the chart and this file cannot drift.
+# kernel-observability.
 headlamp:
   chart: "0.45.0"
   repo: https://kubernetes-sigs.github.io/headlamp/
+
+reloader:
+  chart: "2.2.9"
+  repo: ghcr.io/stakater/charts
+
+# CloudNativePG 1.25.0. The network policy tests pin the operator's pod labels
+# and ports read at this chart version (scripts/tests/store_network_policies.py).
+cnpg:
+  chart: "0.23.0"
+  repo: ghcr.io/cloudnative-pg/charts
+
+kyverno:
+  chart: "3.3.7"
+  repo: https://kyverno.github.io/kyverno/
+
+# external-dns: 1.22.0 at the earliest; the reasons are beside its Application
+# (kernel/bootstrap/chart/templates/external-dns.yaml).
+external-dns:
+  chart: "1.22.0"
+  repo: https://kubernetes-sigs.github.io/external-dns/
 
 # kube-prometheus-stack (Apache-2.0): the platform's metrics and alerts when
 # the Cluster claim's monitoring.enabled is true. The Cluster Composition

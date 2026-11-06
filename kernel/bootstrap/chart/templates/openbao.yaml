@@ -12,9 +12,9 @@ metadata:
 spec:
   project: gentian
   sources:
-  - repoURL: https://openbao.github.io/openbao-helm
+  - repoURL: {{ .Values.versions.openbao.repo }}
     chart: openbao
-    targetRevision: "0.25.5"
+    targetRevision: {{ .Values.versions.openbao.chart | quote }}
     helm:
       valueFiles:
       - $values/kernel/openbao/values.yaml

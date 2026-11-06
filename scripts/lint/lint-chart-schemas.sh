@@ -35,6 +35,7 @@ minor="$(sed -n 's/^GENTIAN_MIN_KUBERNETES_MINOR=\([0-9][0-9]*\)$/\1/p' scripts/
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 { echo "namespaces:"; sed 's/^/  /' kernel/namespaces.yaml; } > "${TMP}/namespaces.yaml"
+{ echo "versions:"; sed 's/^/  /' versions.yaml; } > "${TMP}/versions.yaml"
 
 # Values a chart requires and its defaults leave empty, by chart directory.
 chart_args() {
@@ -50,10 +51,8 @@ for chart in $(git ls-files '*Chart.yaml' | sed 's|/Chart.yaml$||' | grep -v '.\
     count=$((count + 1))
     # shellcheck disable=SC2046  # chart_args yields separate words on purpose
     if ! helm template lint "${chart}" \
-            -f "${TMP}/namespaces.yaml" -f kernel/platforms.yaml \
+            -f "${TMP}/namespaces.yaml" -f "${TMP}/versions.yaml" -f kernel/platforms.yaml \
             --set-string kernelDomain=k.example --set-string cluster=c \
-            --set-string versions.headlamp.chart=0.0.0 \
-            --set-string versions.headlamp.repo=https://example.invalid \
             $(chart_args "${chart}") > "${TMP}/rendered.yaml" 2> "${TMP}/helm.err"; then
         echo "FAIL  ${chart}: does not render"
         sed 's/^/      /' "${TMP}/helm.err"

@@ -8,9 +8,9 @@ metadata:
 spec:
   project: gentian
   source:
-    repoURL: https://kyverno.github.io/kyverno/
+    repoURL: {{ .Values.versions.kyverno.repo }}
     chart: kyverno
-    targetRevision: 3.3.7
+    targetRevision: {{ .Values.versions.kyverno.chart }}
     helm:
       values: |
         # The kernel is exempt from the baseline policies by its tier label,
