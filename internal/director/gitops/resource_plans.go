@@ -196,6 +196,33 @@ func (g *GitOps) planDefinitionsLocked() ([]PlanDefinition, error) {
 	return out, nil
 }
 
+// TenantQuotasOf is a plan's quotas as a Tenant's spec.quotas, the inverse
+// of quotasOf: what the operator compares a tenant's usage against. A value
+// CheckPlanDefinition would refuse is left out.
+func TenantQuotasOf(quotas map[string]string) *gentianov1alpha1.TenantQuotas {
+	out := &gentianov1alpha1.TenantQuotas{}
+	parse := func(k string) *resource.Quantity {
+		v, ok := quotas[k]
+		if !ok {
+			return nil
+		}
+		q, err := resource.ParseQuantity(v)
+		if err != nil {
+			return nil
+		}
+		return &q
+	}
+	out.RequestsCPU = parse("requestsCpu")
+	out.RequestsMemory = parse("requestsMemory")
+	out.CPU = parse("cpu")
+	out.Memory = parse("memory")
+	out.Storage = parse("storage")
+	if n, err := strconv.Atoi(quotas["maxPods"]); err == nil && n > 0 {
+		out.MaxPods = int32(n)
+	}
+	return out
+}
+
 func quotasOf(q *gentianov1alpha1.TenantQuotas) map[string]string {
 	out := map[string]string{}
 	set := func(k string, v *resource.Quantity) {
@@ -218,6 +245,11 @@ func quotasOf(q *gentianov1alpha1.TenantQuotas) map[string]string {
 type PlanWrite struct {
 	Plan   PlanDefinition
 	Remove bool
+	// Tenants are the tenants on the plan, whose copies of its quotas
+	// (resource-plan.yaml) are written with it in the same commit: a plan
+	// changed under them changes their ceiling, and never leaves them on one
+	// that is no longer the plan's.
+	Tenants []string
 }
 
 // WritePlans writes or removes plans and keeps the directory's kustomization
@@ -257,8 +289,46 @@ func (g *GitOps) writePlansLocked(ctx context.Context, message string, meta Meta
 	if strings.TrimSpace(listed) == "" {
 		listed = planKustomization()
 	}
-	changed := listed != string(kustomization)
 	paths := []string{}
+	// The tenants' copies of a changed plan. Every tenant's manifest is found
+	// before anything is written: finding one may bring the checkout up to
+	// date, which would drop a file written before it.
+	type tenantWrite struct {
+		manifest, tenant string
+		plan             Plan
+	}
+	var tenantWrites []tenantWrite
+	for _, w := range writes {
+		if w.Remove {
+			continue
+		}
+		for _, tenant := range w.Tenants {
+			manifest, err := g.tenantPlanManifest(ctx, tenant)
+			if err != nil {
+				return Result{}, fmt.Errorf("tenant %s: %w", tenant, err)
+			}
+			tenantWrites = append(tenantWrites, tenantWrite{manifest, tenant, Plan{Name: w.Plan.Name, Quotas: w.Plan.Quotas}})
+		}
+	}
+	if len(tenantWrites) > 0 {
+		// The plans' kustomization as the checkout now holds it.
+		kustomization, err = os.ReadFile(kustomizationPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Result{}, err
+		}
+		listed = string(kustomization)
+		if strings.TrimSpace(listed) == "" {
+			listed = planKustomization()
+		}
+	}
+	for _, tw := range tenantWrites {
+		files, err := writeTenantPlan(tw.manifest, tw.tenant, tw.plan, meta)
+		if err != nil {
+			return Result{}, fmt.Errorf("tenant %s: %w", tw.tenant, err)
+		}
+		paths = append(paths, files...)
+	}
+	changed := listed != string(kustomization)
 	for _, w := range writes {
 		// The name becomes a file name: checked here, where the path is
 		// made, and not only where the plan was, so no path a caller
@@ -370,8 +440,8 @@ func planKustomization() string {
 func renderPlan(p PlanDefinition) string {
 	var b strings.Builder
 	b.WriteString("# Managed by the director: one of this cluster's resource plans, set by\n")
-	b.WriteString("# whoever the commit names. Its quotas do not change while a tenant is on\n")
-	b.WriteString("# it; a different ceiling is a new plan.\n")
+	b.WriteString("# whoever the commit names. A change of its quotas changes the copies the\n")
+	b.WriteString("# tenants on it hold, in the same commit.\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: ResourcePlan\n")
 	b.WriteString("metadata:\n")

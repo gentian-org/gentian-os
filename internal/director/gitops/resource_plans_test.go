@@ -113,3 +113,34 @@ func TestRemovingTheLastPlanLeavesAnEmptyList(t *testing.T) {
 		t.Fatalf("kustomization:\n%s", k)
 	}
 }
+
+// A plan changed with tenants on it is one commit with every tenant's copy of
+// its quotas: none is left on a ceiling that is no longer the plan's.
+func TestAPlanChangedWithItsTenantsIsOneCommit(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t, "demo", "acme")
+	checkout := dt.Clone(t, remote)
+	g := gitops.NewGitOps(checkout, remote, dt.Cluster, director)
+	if _, err := g.SeedPlans(ctx, seedPlans()); err != nil {
+		t.Fatal(err)
+	}
+	plan := seedPlans()[1]
+	plan.Quotas = map[string]string{"requestsCpu": "12", "maxPods": "60"}
+	res, err := g.WritePlans(ctx, "Change resource plan nodes-2", meta("u-ada"),
+		gitops.PlanWrite{Plan: plan, Tenants: []string{"demo", "acme"}})
+	if err != nil || !res.Changed {
+		t.Fatalf("write: %+v (%v)", res, err)
+	}
+	changed := dt.Git(t, "", "--git-dir", remote, "show", "--name-only", "--format=", "main")
+	for _, want := range []string{"resource-plans/nodes-2.yaml", "tenants/demo/resource-plan.yaml", "tenants/acme/resource-plan.yaml"} {
+		if !strings.Contains(changed, want) {
+			t.Fatalf("the commit is missing %s:\n%s", want, changed)
+		}
+	}
+	for _, tenant := range []string{"demo", "acme"} {
+		patch := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/tenants/"+tenant+"/resource-plan.yaml")
+		if !strings.Contains(patch, "resource-plan: nodes-2") || !strings.Contains(patch, `requestsCpu: "12"`) {
+			t.Fatalf("%s's copy:\n%s", tenant, patch)
+		}
+	}
+}
