@@ -84,7 +84,7 @@ type RepositoryView struct {
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
 	c, err := s.identify(r.Context(), r)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
+		writeUnauthenticated(w, err)
 		return
 	}
 	items, err := s.listRepositories(r.Context(), c.view)

@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -213,4 +214,26 @@ func TestTheCallersTokenNeverReachesTheVault(t *testing.T) {
 			t.Errorf("a request to the vault was not made as the custodian: %s", req)
 		}
 	}
+}
+
+// A caller who cannot be identified is told "unauthenticated" and nothing
+// more: the verifier's account of the token goes to the log.
+func TestAnUnidentifiedCallerIsToldUnauthenticated(t *testing.T) {
+	s, _ := newServer(t)
+	s.Authz = verifierSays{}
+	for _, target := range []string{"/v1/credentials", "/v1/credentials/x", "/v1/backup-identity", "/v1/repositories"} {
+		w := do(t, s, http.MethodGet, target, "")
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s = %d", target, w.Code)
+		}
+		if body := strings.TrimSpace(w.Body.String()); body != `{"error":"unauthenticated"}` {
+			t.Errorf("%s answered %s", target, body)
+		}
+	}
+}
+
+type verifierSays struct{ refusing }
+
+func (verifierSays) Identify(context.Context, string) (Principal, error) {
+	return Principal{}, fmt.Errorf("%w: oidc: issuer https://kc.internal/realms/x did not match", ErrUnauthenticated)
 }
