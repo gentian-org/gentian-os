@@ -301,7 +301,7 @@ check "_derived stops when the salt is not set" \
 
 # settled <shell-master> <shell-salt|-> <stored-master> <stored-salt> — the
 # master password and salt gentian_settle_derivation leaves; "-" is unset.
-# shellcheck disable=SC2329 # called from the strings check evaluates
+# shellcheck disable=SC2317,SC2329 # called from the strings check evaluates
 settled() {
     env -i PATH="${PATH}" M="$1" S="$2" bash -c 'set -u; source scripts/lib/derive.sh
         MASTER_PASSWORD="${M}"; [[ "${S}" == - ]] || DERIVATION_SALT="${S}"

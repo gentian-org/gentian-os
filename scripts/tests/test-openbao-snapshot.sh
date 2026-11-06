@@ -74,7 +74,7 @@ stop_server() {
         PID=""
     fi
 }
-# shellcheck disable=SC2329 # called by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # called by the EXIT trap
 cleanup() { stop_server; rm -rf "${W}"; }
 trap cleanup EXIT INT TERM
 

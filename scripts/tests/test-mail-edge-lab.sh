@@ -51,7 +51,7 @@ lab_down() {
     docker network rm mlab-pods mlab-inet >/dev/null 2>&1 || true
 }
 
-# shellcheck disable=SC2329 # called by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # called by the EXIT trap
 cleanup() {
     if [[ ${KEEP} -eq 0 ]]; then
         lab_down

@@ -36,7 +36,7 @@ PATH="${STUB_DIR}:${PATH}"
 export CERT_MANAGER_NAMESPACE=kernel-edge
 
 # The real XRD default, not a copy of it.
-# shellcheck disable=SC2329 # called by the library under test
+# shellcheck disable=SC2317,SC2329 # called by the library under test
 xrd_default() {
     python3 - "$1" <<'PY'
 import sys, yaml

@@ -50,9 +50,9 @@ if [[ -z "${modes}" ]]; then
 fi
 
 MODE=""
-# shellcheck disable=SC2329 # called by the library under test
+# shellcheck disable=SC2317,SC2329 # called by the library under test
 gentian_mail_service_mode() { printf '%s' "${MODE}"; }
-# shellcheck disable=SC2329 # called by the library under test
+# shellcheck disable=SC2317,SC2329 # called by the library under test
 _derived() { printf 'derived-%s-%s' "$1" "$2"; }
 eval "$(sed -n '/^_keycloak_smtp_settings() {/,/^}/p' scripts/lib/portal-login-bootstrap.sh)"
 if ! declare -F _keycloak_smtp_settings >/dev/null; then

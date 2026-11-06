@@ -121,7 +121,7 @@ run() {
 source "scripts/steps/${STEP}.sh"
 '"$2" 2>&1
 }
-# shellcheck disable=SC2329 # called from the strings check evaluates
+# shellcheck disable=SC2317,SC2329 # called from the strings check evaluates
 asked() { grep -q "kubectl patch application $1 " "${STATE}/calls.log"; }
 
 # 1. Everything synced and there.

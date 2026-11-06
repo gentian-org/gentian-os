@@ -49,7 +49,7 @@ for d in yaml.safe_load_all(open(sys.argv[1])):
     m = d.get("spec", {}).get("forProvider", {}).get("manifest") if d.get("kind") == "Object" else None
     print(json.dumps(m or d))' "$1"
 }
-# shellcheck disable=SC2329 # called from the strings check evaluates
+# shellcheck disable=SC2317,SC2329 # called from the strings check evaluates
 has() { grep -q "\"kind\": \"$1\".*\"name\": \"$2\"" <<<"$3" || grep -q "\"name\": \"$2\".*\"kind\": \"$1\"" <<<"$3"; }
 
 off="$(objects "${FIXTURES}/cluster-bootstrap/expected.yaml")"

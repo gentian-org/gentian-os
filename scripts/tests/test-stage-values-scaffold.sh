@@ -54,7 +54,7 @@ check() { # <what> <condition, as a command>
     if "$@"; then ok "${what}"; else bad "${what}"; fi
 }
 # empty_values <file> — a YAML document that is an empty map, comments aside.
-# shellcheck disable=SC2329 # called by check, as its command
+# shellcheck disable=SC2317,SC2329 # called by check, as its command
 empty_values() {
     [[ -f "$1" ]] || return 1
     [[ "$(grep -v -E '^[[:space:]]*(#|$)' "$1")" == "{}" ]]
