@@ -22,7 +22,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -706,31 +705,25 @@ func withAllowedRoutes(listener gatewayv1.Listener, crossNamespace bool) gateway
 }
 
 func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewayv1.Gateway) error {
-	existing := &gatewayv1.Gateway{}
-	err := c.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	// Annotations as well as spec. The external-dns target lives here and
-	// changes whenever the tunnel is rebuilt under a new id; a spec-only
-	// comparison would carry the old target for the life of the Gateway, and
-	// every hostname would resolve to a tunnel that no longer exists.
-	//
-	// Merged rather than replaced: other controllers annotate this object too,
-	// and reconciling ours must not delete theirs.
-	annotationsDiffer := false
-	for k, v := range desired.Annotations {
-		if existing.Annotations[k] != v {
-			annotationsDiffer = true
-			break
+	return ensureObject(ctx, c, desired, func(existing *gatewayv1.Gateway) bool {
+		// Annotations as well as spec. The external-dns target lives here
+		// and changes whenever the tunnel is rebuilt under a new id; a
+		// spec-only comparison would carry the old target for the life of
+		// the Gateway, and every hostname would resolve to a tunnel that no
+		// longer exists.
+		//
+		// Merged rather than replaced: other controllers annotate this
+		// object too, and reconciling ours must not delete theirs.
+		annotationsDiffer := false
+		for k, v := range desired.Annotations {
+			if existing.Annotations[k] != v {
+				annotationsDiffer = true
+				break
+			}
 		}
-	}
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || annotationsDiffer {
-		patch := client.MergeFrom(existing.DeepCopy())
+		if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsDiffer {
+			return false
+		}
 		existing.Spec = desired.Spec
 		if annotationsDiffer {
 			if existing.Annotations == nil {
@@ -740,7 +733,6 @@ func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewa
 				existing.Annotations[k] = v
 			}
 		}
-		return c.Patch(ctx, existing, patch)
-	}
-	return nil
+		return true
+	})
 }

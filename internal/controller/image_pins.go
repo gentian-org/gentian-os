@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -116,22 +115,8 @@ func (r *ComponentReconciler) ensureImagePins(ctx context.Context, comp *gentian
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err
 	}
-	err := r.Get(ctx, key, existing)
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return fmt.Errorf("create Policy %s: %w", key.Name, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		return nil
-	}
-	existing.Object["spec"] = desired.Object["spec"]
-	if err := r.Update(ctx, existing); err != nil {
-		return fmt.Errorf("update Policy %s: %w", key.Name, err)
+	if err := ensureSpec(ctx, r.Client, desired); err != nil {
+		return fmt.Errorf("ensure Policy %s: %w", key.Name, err)
 	}
 	return nil
 }

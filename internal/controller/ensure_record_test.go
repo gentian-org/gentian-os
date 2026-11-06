@@ -13,11 +13,13 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -29,6 +31,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
@@ -37,7 +40,8 @@ import (
 func ensureScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := SchemeForTest(t)
-	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK} {
+	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK,
+		certManagerCertGVK, backendTLSPolicyGVK, kyvernoPolicyGVK, dnsEndpointGVK, externalSecretGVK} {
 		s.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		s.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
 	}
@@ -45,7 +49,8 @@ func ensureScheme(t *testing.T) *runtime.Scheme {
 }
 
 // ensureCase is one ensure: what it writes on an empty cluster, on the
-// cluster it left, and after drift changed what it wrote.
+// cluster it left, and after drift changed what it wrote, and what it says
+// when the write before the first and the one after drift are turned down.
 type ensureCase struct {
 	name string
 	// seed is on the cluster before the first run.
@@ -80,6 +85,9 @@ func describeWritten(t *testing.T, obj client.Object) string {
 	return string(out)
 }
 
+// errEnsureRefused is what a write turned down answers.
+var errEnsureRefused = errors.New("refused")
+
 func ensureTranscript(t *testing.T, cases []ensureCase) string {
 	t.Helper()
 	var out []string
@@ -88,18 +96,30 @@ func ensureTranscript(t *testing.T, cases []ensureCase) string {
 		record := func(verb string, obj client.Object) {
 			calls = append(calls, fmt.Sprintf("%s %s/%s", verb, obj.GetNamespace(), obj.GetName()))
 		}
+		// refuse turns every write down, to show what an ensure says when
+		// one fails.
+		refuse := false
 		cl := fake.NewClientBuilder().WithScheme(ensureScheme(t)).WithObjects(c.seed...).WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 				record("create", obj)
+				if refuse {
+					return errEnsureRefused
+				}
 				return cl.Create(ctx, obj, opts...)
 			},
 			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
 				record("update", obj)
+				if refuse {
+					return errEnsureRefused
+				}
 				return cl.Update(ctx, obj, opts...)
 			},
 			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				data, _ := patch.Data(obj)
 				record("patch "+string(patch.Type())+" "+string(data), obj)
+				if refuse {
+					return errEnsureRefused
+				}
 				return cl.Patch(ctx, obj, patch, opts...)
 			},
 		}).Build()
@@ -118,6 +138,9 @@ func ensureTranscript(t *testing.T, cases []ensureCase) string {
 			}
 			out = append(out, line)
 		}
+		refuse = true
+		step("refused on an empty cluster")
+		refuse = false
 		step("first")
 		step("again")
 		obj := c.written.DeepCopyObject().(client.Object)
@@ -127,6 +150,9 @@ func ensureTranscript(t *testing.T, cases []ensureCase) string {
 				t.Fatal(err)
 			}
 		}
+		refuse = true
+		step("refused after drift")
+		refuse = false
 		step("after drift")
 	}
 	sort.Strings(out)
@@ -165,6 +191,37 @@ func driftSpec(obj client.Object) {
 	u := obj.(*unstructured.Unstructured)
 	u.Object["spec"] = map[string]any{"drifted": true}
 	u.SetLabels(map[string]string{"drifted": "true"})
+}
+
+func testComponent() *gentianov1alpha1.Component {
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace, comp.UID = "wiki", "tenant-demo", "uid"
+	return comp
+}
+
+func testProfile() *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{}
+	p.Name = "wiki"
+	return p
+}
+
+func testTenant() *gentianov1alpha1.Tenant {
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "demo"
+	return tenant
+}
+
+func turnEdgeService() *corev1.Service {
+	svc := &corev1.Service{}
+	svc.Name, svc.Namespace = turnEdgeName, turnEdgeNamespace
+	svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "203.0.113.9"}}
+	return svc
+}
+
+func driftNetworkPolicy(obj client.Object) {
+	np := obj.(*networkingv1.NetworkPolicy)
+	np.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}
+	np.Labels = map[string]string{"drifted": "true"}
 }
 
 // What each ensure writes, held to testdata/ensure.txt.
@@ -304,6 +361,172 @@ func TestEnsureTranscript(t *testing.T) {
 				np := obj.(*networkingv1.NetworkPolicy)
 				np.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
 				np.Labels = map[string]string{"drifted": "true"}
+			},
+		},
+		{
+			name: "argocd server certificate",
+			run:  func(ctx context.Context, c client.Client) error { return withClient(c).ensureArgoCDBackendTLS(ctx) },
+			written: unstructuredOf(certManagerCertGVK, argocdNamespace,
+				buildArgoCDServerCertificate(argocdNamespace).GetName()),
+			drift: driftSpec,
+		},
+		{
+			name: "argocd backend TLS policy",
+			run:  func(ctx context.Context, c client.Client) error { return withClient(c).ensureArgoCDBackendTLS(ctx) },
+			written: unstructuredOf(backendTLSPolicyGVK, argocdNamespace,
+				buildArgoCDBackendTLSPolicy(argocdNamespace).GetName()),
+			drift: driftSpec,
+		},
+		{
+			name: "log destination certificate",
+			run: func(ctx context.Context, c client.Client) error {
+				return (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).applyLogDestinationCertificate(ctx, testComponent(),
+					&gentianov1alpha1.LogDestinationRequirement{Service: "syslog", Port: 6514})
+			},
+			written: unstructuredOf(certManagerCertGVK, buildLogDestinationCertificate(testComponent(), &gentianov1alpha1.LogDestinationRequirement{}).GetNamespace(),
+				logDestinationCertificate),
+			drift: driftSpec,
+		},
+		{
+			name: "log destination policy",
+			run: func(ctx context.Context, c client.Client) error {
+				return (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).applyLogDestinationPolicy(ctx, testComponent(), "demo", testProfile(), 6514)
+			},
+			written: namedObject(&networkingv1.NetworkPolicy{}, "tenant-demo", logDestinationPolicyName(testComponent())),
+			drift:   driftNetworkPolicy,
+		},
+		{
+			name: "image pins",
+			run: func(ctx context.Context, c client.Client) error {
+				p := testProfile()
+				p.Spec.Package.Images = []gentianov1alpha1.PinnedImage{{Repository: "registry.example/wiki", Digest: "sha256:0"}}
+				return (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).ensureImagePins(ctx, testComponent(), p)
+			},
+			written: unstructuredOf(kyvernoPolicyGVK, "tenant-demo", imagePinsName(testComponent())),
+			drift:   driftSpec,
+		},
+		{
+			name: "job secret",
+			run: func(ctx context.Context, c client.Client) error {
+				job := &batchv1.Job{}
+				job.Name, job.Namespace, job.UID, job.Labels = "role", "tenant-demo", "job-uid", map[string]string{"a": "b"}
+				return ensureJobSecret(ctx, c, job, jobSecret(job, map[string][]byte{"password": []byte("p")}))
+			},
+			written: namedObject(&corev1.Secret{}, "tenant-demo", "role"),
+			drift: func(obj client.Object) {
+				s := obj.(*corev1.Secret)
+				s.Data = map[string][]byte{"x": []byte("y")}
+				s.Labels = map[string]string{"drifted": "true"}
+				s.OwnerReferences = nil
+			},
+		},
+		{
+			name: "turn DNS endpoint",
+			seed: []client.Object{turnEdgeService()},
+			run: func(ctx context.Context, c client.Client) error {
+				return (&TURNEdgeReconciler{Client: c, KernelDomain: "example.org"}).ensureDNS(ctx)
+			},
+			written: unstructuredOf(dnsEndpointGVK, turnEdgeNamespace, turnEdgeName),
+			drift:   driftSpec,
+		},
+		{
+			name: "mail password file",
+			run: func(ctx context.Context, c client.Client) error {
+				return (&TenantReconciler{Client: c}).upsertSecret(ctx, "passwd", "kernel-mail", map[string][]byte{"demo.users": []byte("a@demo:{X}h")})
+			},
+			written: namedObject(&corev1.Secret{}, "kernel-mail", "passwd"),
+			drift: func(obj client.Object) {
+				s := obj.(*corev1.Secret)
+				s.Data = map[string][]byte{"x": []byte("y")}
+				s.Labels = map[string]string{"drifted": "true"}
+			},
+		},
+		{
+			name: "component egress policy",
+			run: func(ctx context.Context, c client.Client) error {
+				return (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).ensureNetworkPolicy(ctx, testComponent(), testProfile(), testTenant(), true)
+			},
+			written: namedObject(&networkingv1.NetworkPolicy{}, "tenant-demo", componentNetworkPolicyName(testComponent())),
+			drift:   driftNetworkPolicy,
+		},
+		{
+			name: "tenant policy",
+			run: func(ctx context.Context, c client.Client) error {
+				np := &networkingv1.NetworkPolicy{}
+				np.Name, np.Namespace, np.Labels = "tnp", "tenant-demo", map[string]string{"a": "b"}
+				np.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
+				return (&TenantReconciler{Client: c}).applyTenantNetworkPolicy(ctx, np)
+			},
+			written: namedObject(&networkingv1.NetworkPolicy{}, "tenant-demo", "tnp"),
+			drift:   driftNetworkPolicy,
+		},
+		{
+			name: "run destination egress",
+			run: func(ctx context.Context, c client.Client) error {
+				run := &gentianov1alpha1.TenantExport{}
+				run.Name, run.Namespace, run.UID = "exp", "tenant-demo", "run-uid"
+				job := &batchv1.Job{}
+				job.Namespace = "tenant-demo"
+				return ensureRunDestinationEgress(ctx, c, c.Scheme(), run, "export",
+					&gentianov1alpha1.BundleRef{Endpoint: "https://203.0.113.7:9000"}, []captureUnit{{Job: job}})
+			},
+			written: namedObject(&networkingv1.NetworkPolicy{}, "tenant-demo", runEgressPolicyName("export", "exp")),
+			drift:   driftNetworkPolicy,
+		},
+		{
+			name: "database secret",
+			run: func(ctx context.Context, c client.Client) error {
+				ready, reason, message, err := (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).ensureDatabaseSecret(ctx, testComponent(), "demo", "store",
+					map[string]interface{}{"url": "{{ .password }}"}, []interface{}{map[string]interface{}{"secretKey": "password"}})
+				return fmt.Errorf("answered ready=%v reason=%q message=%q, error %v", ready, reason, message, err)
+			},
+			written: unstructuredOf(externalSecretGVK, "tenant-demo", testComponent().Name+componentDatabaseSecretSuffix),
+			drift:   driftSpec,
+		},
+		{
+			name: "http route",
+			run: func(ctx context.Context, c client.Client) error {
+				route := &gatewayv1.HTTPRoute{}
+				route.Name, route.Namespace = "route", "tenant-demo"
+				route.Labels, route.Annotations = map[string]string{"a": "b"}, map[string]string{"k": "v"}
+				route.Spec.Hostnames = []gatewayv1.Hostname{"wiki.example.org"}
+				return ensureHTTPRouteResource(ctx, c, route)
+			},
+			written: namedObject(&gatewayv1.HTTPRoute{}, "tenant-demo", "route"),
+			drift: func(obj client.Object) {
+				r := obj.(*gatewayv1.HTTPRoute)
+				r.Spec.Hostnames = []gatewayv1.Hostname{"else.example.org"}
+				r.Labels = map[string]string{"drifted": "true"}
+				r.Annotations = map[string]string{"k": "old", "theirs": "kept"}
+			},
+		},
+		{
+			name: "gateway",
+			run: func(ctx context.Context, c client.Client) error {
+				gw := &gatewayv1.Gateway{}
+				gw.Name, gw.Namespace = "edge", "kernel-edge"
+				gw.Labels, gw.Annotations = map[string]string{"a": "b"}, map[string]string{"k": "v"}
+				gw.Spec.GatewayClassName = GentianGatewayClassName
+				return ensureGatewayResource(ctx, c, gw)
+			},
+			written: namedObject(&gatewayv1.Gateway{}, "kernel-edge", "edge"),
+			drift: func(obj client.Object) {
+				g := obj.(*gatewayv1.Gateway)
+				g.Spec.GatewayClassName = "else"
+				g.Labels = map[string]string{"drifted": "true"}
+				g.Annotations = map[string]string{"k": "old", "theirs": "kept"}
+			},
+		},
+		{
+			name: "key list",
+			run: func(ctx context.Context, c client.Client) error {
+				return ensureKeyList(ctx, c, "keys", "keys.json", []componentkeys.Key{{Tenant: "demo", Component: "wiki", KeyHash: componentkeys.Hash("k")}})
+			},
+			written: namedObject(&corev1.ConfigMap{}, registrarRealmSecretNamespace(), "keys"),
+			drift: func(obj client.Object) {
+				cm := obj.(*corev1.ConfigMap)
+				cm.Data = map[string]string{"x": "y"}
+				cm.Labels = map[string]string{"drifted": "true"}
 			},
 		},
 	}
