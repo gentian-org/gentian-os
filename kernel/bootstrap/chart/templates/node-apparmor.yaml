@@ -1,0 +1,29 @@
+# node-apparmor — reloads containerd's default AppArmor profile on nodes that
+# stack container labels, so processes in one container can signal each other
+# (kernel/security/node-apparmor/daemonset.yaml says why). Without it, a
+# PostgreSQL that stopped uncleanly never finishes its crash recovery.
+#
+# Wave -1: before kernel-postgres and the data plane, so the databases start on
+# nodes that already have the profile.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: node-apparmor
+  namespace: {{ include "ns" (list . "gitops") }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: {{ default "https://github.com/gentian-org/gentian-os" .Values.osRepo }}
+    targetRevision: {{ include "gentianOsRevision" . }}
+    path: kernel/security/node-apparmor
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "admission") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -22,7 +22,7 @@ The cluster's namespace layout by tier, as `kernel/namespaces.yaml` declares it:
 | `kernel-authorization` | authorization | OpenFGA; reachable from enforcement points only |
 | `kernel-control` | control | the operator, the director, the usher, the custodian, the registrar |
 | `kernel-edge` | edge | Envoy Gateway, both Gateway objects, cert-manager, external-dns, cloudflared |
-| `kernel-admission` | admission | Kyverno and the baseline policies |
+| `kernel-admission` | admission | Kyverno and the baseline policies; node-apparmor, which keeps containerd's AppArmor profile from blocking signals inside a container |
 | `kernel-observability` | observability | Headlamp (the cluster administrator's view of the cluster, with their own identity); the platform's monitoring and log forwarder when switched on |
 
 ## 2. `system`
