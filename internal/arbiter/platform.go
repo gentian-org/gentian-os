@@ -12,17 +12,14 @@ package arbiter
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
-	authenticationv1 "k8s.io/api/authentication/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/gentian-org/gentian-os/internal/tokenreview"
 )
 
 // The platform's path to the arbiter: what the operator writes into stores
@@ -30,7 +27,7 @@ import (
 // memberships, a store's export and its restore, a purge.
 //
 // It is admitted by workload identity, as the operator's own listener admits
-// the director and the usher (internal/applifecycle, CallerAuth): the
+// the director and the usher (internal/tokenreview): the
 // operator presents a ServiceAccount token the kubelet projected into its
 // pod for one audience, the arbiter's platform path, and the API server
 // (TokenReview) says whether it is genuine, meant for that audience, and
@@ -44,69 +41,33 @@ import (
 // projected for.
 const PlatformAudience = "gentian-arbiter"
 
-// TokenReviewer asks the API server about a token: the one method of
-// client-go's TokenReviewInterface.
-type TokenReviewer interface {
-	Create(ctx context.Context, review *authenticationv1.TokenReview, opts metav1.CreateOptions) (*authenticationv1.TokenReview, error)
-}
-
 // PlatformAuth admits the operator, and nobody else, to the platform path.
 type PlatformAuth struct {
-	Reviews TokenReviewer
+	Reviews tokenreview.Reviewer
 	// Caller is the operator's ServiceAccount as the API server names it:
 	// system:serviceaccount:<namespace>:<name>. Empty admits nobody.
 	Caller string
 
-	mu    sync.Mutex
-	cache map[[sha256.Size]byte]time.Time
+	once   sync.Once
+	review *tokenreview.Cache
 }
-
-// platformReviewTTL is how long a token the API server vouched for is
-// admitted without asking again.
-const platformReviewTTL = 30 * time.Second
 
 func (a *PlatformAuth) admit(ctx context.Context, header string) *refusal {
 	token, ok := strings.CutPrefix(header, "Bearer ")
 	if a == nil || a.Reviews == nil || a.Caller == "" || !ok || token == "" {
 		return &refusal{status: http.StatusUnauthorized, code: "unauthenticated", message: "the platform's token is required"}
 	}
-	sum := sha256.Sum256([]byte(token))
-	a.mu.Lock()
-	until, cached := a.cache[sum]
-	a.mu.Unlock()
-	if cached && time.Now().Before(until) {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	review, err := a.Reviews.Create(ctx, &authenticationv1.TokenReview{
-		Spec: authenticationv1.TokenReviewSpec{Token: token, Audiences: []string{PlatformAudience}},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		return &refusal{status: http.StatusServiceUnavailable, code: "unavailable", message: "the token could not be reviewed"}
-	}
-	if !review.Status.Authenticated || !audienceIn(review.Status.Audiences) {
+	a.once.Do(func() { a.review = tokenreview.New(a.Reviews, PlatformAudience) })
+	username, err := a.review.Identify(ctx, token)
+	switch {
+	case errors.Is(err, tokenreview.ErrNotAuthenticated):
 		return &refusal{status: http.StatusUnauthorized, code: "unauthenticated", message: "not a token for this path"}
-	}
-	if review.Status.User.Username != a.Caller {
+	case err != nil:
+		return &refusal{status: http.StatusServiceUnavailable, code: "unavailable", message: "the token could not be reviewed"}
+	case username != a.Caller:
 		return &refusal{status: http.StatusForbidden, code: "forbidden", message: "only the platform may use this path"}
 	}
-	a.mu.Lock()
-	if a.cache == nil || len(a.cache) > 64 {
-		a.cache = map[[sha256.Size]byte]time.Time{}
-	}
-	a.cache[sum] = time.Now().Add(platformReviewTTL)
-	a.mu.Unlock()
 	return nil
-}
-
-func audienceIn(audiences []string) bool {
-	for _, a := range audiences {
-		if a == PlatformAudience {
-			return true
-		}
-	}
-	return false
 }
 
 // MembershipsRequest states one person's complete set of groups in a realm,
