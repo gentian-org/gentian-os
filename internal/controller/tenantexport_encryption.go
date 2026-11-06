@@ -26,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // backupRecipientsEnv names the cluster's age recipients, comma-separated.
@@ -38,7 +39,7 @@ const backupRecipientsEnv = "BACKUP_AGE_RECIPIENTS"
 // The public half only. The identity goes into the kit and nowhere else: a key
 // stored on the cluster it protects is readable by whoever takes that cluster,
 // which is the situation backups exist for.
-const BackupRecipientsPath = "gentian-os/kernel/backup/recipients"
+var BackupRecipientsPath = secrets.KernelPath("backup", "recipients")
 
 // backupRecipientsKey is the field at that path.
 const backupRecipientsKey = "recipients"

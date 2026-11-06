@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // renderValues renders the app's release and what its values read: the
@@ -81,7 +82,7 @@ func (r *valuesRender) secretName() string {
 // appPath is where the tenant's store holds one category of the app's
 // values.
 func (r *valuesRender) appPath(category string) string {
-	return fmt.Sprintf("gentian-os/tenants/%s/apps/%s/%s", r.tenant, r.in.App, category)
+	return secrets.CategoryPath(r.tenant, r.in.App, category)
 }
 
 func (r *valuesRender) generated() []gentianov1alpha1.AppSecret {

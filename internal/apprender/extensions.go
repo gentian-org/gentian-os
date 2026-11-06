@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // renderExtensions renders each extension's release beside the app's: its
@@ -67,7 +68,7 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 	for _, s := range ext.AppSecrets {
 		if s.Name != "" && s.ValuePath != "" {
 			add("internal-"+s.Name,
-				fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, key, s.Name),
+				secrets.InternalPath(tenant, key, s.Name),
 				"value", s.ValuePath)
 		}
 	}
@@ -76,7 +77,7 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 	// named.
 	if ext.ValueMapping != nil && ext.ValueMapping.OIDC != nil {
 		vm := ext.ValueMapping.OIDC
-		oidcPath := fmt.Sprintf("gentian-os/tenants/%s/apps/%s/oidc", tenant, key)
+		oidcPath := secrets.CategoryPath(tenant, key, "oidc")
 		if vm.IssuerKey != "" {
 			add("oidc-issuer", oidcPath, "issuer", vm.IssuerKey)
 		}

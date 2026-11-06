@@ -12,9 +12,10 @@ package apprender
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // extensionClients are the clients of the extensions that sign people in
@@ -67,7 +68,7 @@ func (id *identityScope) extensionClients() []*unstructured.Unstructured {
 
 		if confidential {
 			objs = append(objs, id.clientCreds(credsName,
-				fmt.Sprintf("gentian-os/tenants/%s/apps/%s/oidc", id.tenant, key)))
+				secrets.CategoryPath(id.tenant, key, "oidc")))
 		}
 		name := oidc.Name
 		if name == "" {

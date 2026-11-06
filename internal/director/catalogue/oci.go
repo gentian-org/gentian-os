@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"golang.org/x/net/publicsuffix"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // A catalog that is an OCI artifact.
@@ -817,9 +819,9 @@ type VaultRegistries struct {
 // kept in the vault: a tenant's, or the cluster's for "".
 func RepositoryCredentialPrefix(owner string) string {
 	if owner == "" {
-		return "gentian-os/kernel/repositories/"
+		return secrets.KernelPath("repositories", "")
 	}
-	return "gentian-os/tenants/" + owner + "/repositories/"
+	return secrets.TenantPath(owner) + "/repositories/"
 }
 
 // Registry implements Registries.
