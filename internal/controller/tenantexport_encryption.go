@@ -123,6 +123,15 @@ func (r *TenantExportReconciler) resolveEncryption(
 	ctx context.Context,
 	export *gentianov1alpha1.TenantExport,
 ) (backup.Encryption, error) {
+	// Resolved once, like the destination: every artifact of a bundle is
+	// encrypted to the same keys. Looking them up again on a later pass
+	// could find none -- OpenBao briefly out of reach -- and fail an export
+	// that had already captured half the tenant with the keys it had.
+	if rec := export.Status.Encryption; rec != nil &&
+		rec.Mode == gentianov1alpha1.ExportEncryptionRecipient && len(rec.Recipients) > 0 {
+		return backup.Encryption{Mode: rec.Mode, Recipients: slices.Clone(rec.Recipients)}, nil
+	}
+
 	spec := export.Spec.Encryption
 	mode := spec.Resolved()
 

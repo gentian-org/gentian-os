@@ -265,7 +265,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant, export.Name)
 			export.Status.Bundle = &gentianov1alpha1.BundleRef{
 				Bucket:           eff.Bucket,
-				Prefix:           export.Name,
+				Prefix:           backup.BundlePrefix(eff, tenant, export.Name),
 				Endpoint:         eff.Endpoint,
 				Region:           eff.Region,
 				AddressingStyle:  eff.AddressingStyle,
@@ -293,7 +293,9 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.stageDestinationCredential(ctx, export); err != nil {
 		return r.fail(ctx, export, "DestinationUnavailable", err.Error())
 	}
-	recordEncryption(export, encryption, r.clusterRecipients(ctx))
+	if export.Status.Encryption == nil {
+		recordEncryption(export, encryption, r.clusterRecipients(ctx))
+	}
 
 	apps, err := r.exportAppSet(ctx, tenant, export)
 	if err != nil {

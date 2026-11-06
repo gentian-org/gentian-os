@@ -87,7 +87,8 @@ inspect
 Reaching the bundle straight from object storage, with no cluster
   --s3-endpoint URL  e.g. https://sos-ch-dk-2.exo.io
   --s3-bucket NAME
-  --s3-prefix NAME   the bundle's prefix, e.g. policy-20260904-0300
+  --s3-prefix NAME   the bundle's prefix, e.g. policy-20260904-0300, or
+                     corp/policy-20260904-0300 in a bucket tenants share
   --s3-region NAME
   --s3-addressing-style path|virtualHost   how the bucket is named (default path)
   --s3-access-key K  or AWS_ACCESS_KEY_ID
@@ -105,7 +106,7 @@ Examples
   read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
   AWS_ACCESS_KEY_ID=EXO... \
   scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
-                              --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
+                              --s3-bucket bigbucket --s3-prefix corp/policy-20260904-0300 \
                               --qr backup-key.png
   scripts/recovery.sh tenant  --tenant corp --export policy-20260904-0300 \
                               --qr backup-key.png --confirm corp
@@ -242,7 +243,7 @@ locate_bundle() {
         BUNDLE_REGION="${OPT_S3_REGION}"
         BUNDLE_STYLE="${OPT_S3_STYLE}"
         [[ -n "${BUNDLE_ENDPOINT}" ]] || { error "--s3-bucket needs --s3-endpoint."; return 1; }
-        [[ -n "${BUNDLE_PREFIX}" ]]  || { error "--s3-bucket needs --s3-prefix."; return 1; }
+        [[ -n "${BUNDLE_PREFIX}" || "${COMMAND}" == "list" ]] || { error "--s3-bucket needs --s3-prefix."; return 1; }
         return 0
     fi
     need kubectl || return 1
@@ -250,13 +251,16 @@ locate_bundle() {
     local ns="tenant-${OPT_TENANT}"
     # Newest by completion time, not by name. kubectl lists in name order, so
     # taking the last line picks whatever sorts last -- which on a tenant with
-    # both scheduled and manual exports is the wrong backup, silently.
+    # both scheduled and manual exports is the wrong backup, silently. The
+    # snapshots taken before an app moves to a new build are left out: they
+    # hold that one app, not the tenant.
     if [[ -z "${OPT_EXPORT}" ]]; then
         local newest
         newest="$(kubectl get tenantexports.gentianos.io -n "${ns}" -o json 2>/dev/null | jq -r '
             [ .items[]
               | select(.status.phase == "Ready")
-              | select(.status.completedAt != null) ]
+              | select(.status.completedAt != null)
+              | select((.metadata.labels["gentianos.io/export-reason"] // "") != "move") ]
             | sort_by(.status.completedAt) | last
             | if . == null then "" else "\(.metadata.name) \(.status.completedAt)" end')"
         OPT_EXPORT="$(printf '%s' "${newest}" | cut -d' ' -f1)"
@@ -412,7 +416,9 @@ cmd_list() {
         rclone_remote || return 1
         banner "Bundles in ${BUNDLE_BUCKET}"
         info "listed from storage: whether each finished is not recorded here"
-        rclone lsf --dirs-only "gtnrecovery:${BUNDLE_BUCKET}/" | sed 's/^/  /'
+        # A bucket shared by tenants keeps each one's bundles under its name.
+        local under="${OPT_S3_PREFIX:-${OPT_TENANT:+${OPT_TENANT}/}}"
+        rclone lsf --dirs-only "gtnrecovery:${BUNDLE_BUCKET}/${under}" | sed "s|^|  ${under}|"
         return 0
     fi
 

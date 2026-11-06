@@ -160,3 +160,28 @@ func TestAnExportAskingForThePolicysKeysGetsThem(t *testing.T) {
 		t.Fatalf("a policy naming none: %v, want the cluster's", got)
 	}
 }
+
+func TestAnExportKeepsTheKeysItStartedWith(t *testing.T) {
+	// No cluster key reachable now: OpenBao out of reach, nothing pinned.
+	t.Setenv(backupRecipientsEnv, "")
+	s := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	key := "age1clusterkeyclusterkeyclusterkeyclusterkeyclusterkeyclust"
+	r := &TenantExportReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s}
+	enc, err := r.resolveEncryption(context.Background(), &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy-20261106-0300", Namespace: "tenant-team"},
+		Spec: gentianov1alpha1.TenantExportSpec{
+			Encryption: &gentianov1alpha1.ExportEncryption{Mode: gentianov1alpha1.ExportEncryptionPolicy},
+		},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Encryption: &gentianov1alpha1.ExportEncryptionStatus{
+				Mode: gentianov1alpha1.ExportEncryptionRecipient, Recipients: []string{key}, PlatformReadable: true,
+			},
+		},
+	})
+	if err != nil || enc.Mode != gentianov1alpha1.ExportEncryptionRecipient || strings.Join(enc.Recipients, ",") != key {
+		t.Fatalf("a running export must keep the keys it recorded: %+v, %v", enc, err)
+	}
+}
