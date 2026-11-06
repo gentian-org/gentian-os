@@ -378,15 +378,11 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm 
 // A script writes only below /tmp (mktemp), which the image keeps writable by
 // anyone.
 func keycloakContainer(name, script string) corev1.Container {
-	user := kernel.StorageToolsUser
-	yes := true
-	sc := provisioningSecurityContext()
-	sc.RunAsUser, sc.RunAsGroup, sc.RunAsNonRoot = &user, &user, &yes
 	return corev1.Container{
 		Name:            name,
 		Image:           kernel.StorageToolsImage(),
 		Command:         []string{"/bin/sh", "-c", script},
-		SecurityContext: sc,
+		SecurityContext: meta.RestrictedContainerAs(kernel.StorageToolsUser),
 		Env: []corev1.EnvVar{
 			{
 				Name: "KEYCLOAK_URL",

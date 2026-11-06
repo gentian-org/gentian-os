@@ -40,17 +40,10 @@ func renderHooks(in *Input, out *Rendered) error {
 	pij := in.Profile.Hooks.PostInstall
 	ns, app, tenant := in.Namespace, in.App, in.Tenant()
 
-	// The same tokens extraValues are expanded with: a token left in the
-	// script reaches the container as literal text, and `set -u` kills it.
-	script := pij.Script
-	for _, r := range [][2]string{
-		{"${TENANT_DOMAIN}", in.TenantDomain()},
-		{"${TENANT_NAMESPACE}", ns},
-		{"${TENANT_ID}", tenant},
-		{"${APP_ID}", app},
-	} {
-		script = strings.ReplaceAll(script, r[0], r[1])
-	}
+	// The app's own tokens, as in the addon activation script: a token left
+	// in the script reaches the container as literal text, and `set -u`
+	// kills it.
+	script := expand(pij.Script, in.placeholders()...)
 	env := hooksEnv(in.Profile)
 
 	// The Job runs once, and again only when what it runs changes. Its pod

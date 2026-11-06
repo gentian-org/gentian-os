@@ -729,6 +729,10 @@ func signInDeployment(comp *gentianov1alpha1.Component, s *signInSidecar, labels
 	replicas := int32(1)
 	no, yes := false, true
 	user := int64(1000) // the image's own unprivileged user
+	sc := meta.ReadOnlyContainer()
+	sc.RunAsNonRoot = &yes
+	pod := meta.NonRootPod(user)
+	pod.RunAsGroup = &user
 	env := []corev1.EnvVar{
 		{Name: "SSO_ENTITY_ID", Value: "https://" + s.host + "/sso"},
 		{Name: "SSO_ACS_URL", Value: "https://" + s.host + signInACSPath},
@@ -750,13 +754,8 @@ func signInDeployment(comp *gentianov1alpha1.Component, s *signInSidecar, labels
 		Ports: []corev1.ContainerPort{{
 			Name: "http", ContainerPort: signInSidecarPort, Protocol: corev1.ProtocolTCP,
 		}},
-		Env: env,
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: &no,
-			ReadOnlyRootFilesystem:   &yes,
-			RunAsNonRoot:             &yes,
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		},
+		Env:             env,
+		SecurityContext: sc,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "handler", MountPath: "/usr/src/app/custom", ReadOnly: true},
 		},
@@ -809,13 +808,8 @@ func signInDeployment(comp *gentianov1alpha1.Component, s *signInSidecar, labels
 					AutomountServiceAccountToken: &no,
 					EnableServiceLinks:           &no,
 					ImagePullSecrets:             pullRefs,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot:   &yes,
-						RunAsUser:      &user,
-						RunAsGroup:     &user,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
-					Containers: []corev1.Container{container},
+					SecurityContext:              pod,
+					Containers:                   []corev1.Container{container},
 					Volumes: []corev1.Volume{{
 						Name: "handler", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: s.service + "-handler"},

@@ -1,0 +1,3 @@
+sync: 46eca3973d4a0414
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
+  .spec.template.spec.securityContext {"seccompProfile":{"type":"RuntimeDefault"}}
