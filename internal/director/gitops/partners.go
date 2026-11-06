@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/issuerpattern"
 
 	"sigs.k8s.io/yaml"
 )
@@ -106,22 +107,6 @@ func ValidPartner(p Partner) error {
 	return nil
 }
 
-// IssuerAllowed reports whether an issuer matches one of the patterns, "*"
-// matching any run of characters (the operator's IssuerAllowed: the two
-// must agree).
-func IssuerAllowed(patterns []string, issuer string) bool {
-	for _, p := range patterns {
-		parts := strings.Split(p, "*")
-		for i := range parts {
-			parts[i] = regexp.QuoteMeta(parts[i])
-		}
-		if regexp.MustCompile("^" + strings.Join(parts, ".*") + "$").MatchString(issuer) {
-			return true
-		}
-	}
-	return false
-}
-
 // partnerBounds reads the Cluster claim's spec.partners: the issuers a
 // tenant may name, and the defaults' issuers, which are allowed by being
 // declared.
@@ -202,7 +187,7 @@ func (g *GitOps) SetTenantPartner(ctx context.Context, tenant string, entry Part
 	if err != nil {
 		return Result{}, err
 	}
-	if !IssuerAllowed(bounds, entry.Issuer) {
+	if !issuerpattern.Allowed(bounds, entry.Issuer) {
 		return Result{}, fmt.Errorf("%w: %s is not in the Cluster claim's spec.partners.allowedIssuers", ErrPartnerNotAllowed, entry.Issuer)
 	}
 	g.mu.Lock()

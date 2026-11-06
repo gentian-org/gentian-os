@@ -8,15 +8,11 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-package controller
+package issuerpattern
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/gentian-org/gentian-os/internal/director/gitops"
-)
-
-// issuerAllowedCases is the transcript of IssuerAllowed: anchoring, "*",
+// issuerAllowedCases is the transcript of Allowed: anchoring, "*",
 // case, trailing slash, scheme and the characters a regular expression
 // would read as syntax.
 var issuerAllowedCases = []struct {
@@ -67,18 +63,14 @@ var issuerAllowedCases = []struct {
 	{"unicode", []string{"https://ïd.example/*"}, "https://ïd.example/r", true},
 }
 
-// TestIssuerAllowedCopiesAgree runs the operator's and the director's
-// IssuerAllowed over the same inputs.
-func TestIssuerAllowedCopiesAgree(t *testing.T) {
+func TestAllowed(t *testing.T) {
 	for _, c := range issuerAllowedCases {
 		t.Run(c.name, func(t *testing.T) {
-			op := IssuerAllowed(c.patterns, c.issuer)
-			dir := gitops.IssuerAllowed(c.patterns, c.issuer)
-			if op != dir {
-				t.Fatalf("operator %v, director %v", op, dir)
-			}
-			if op != c.want {
-				t.Fatalf("got %v, want %v", op, c.want)
+			// Twice: the second call reads the compiled pattern.
+			for range 2 {
+				if got := Allowed(c.patterns, c.issuer); got != c.want {
+					t.Fatalf("got %v, want %v", got, c.want)
+				}
 			}
 		})
 	}
