@@ -310,26 +310,6 @@ func (r *GatewayPlatformReconciler) ensureKernelSecurityPolicy(ctx context.Conte
 	return ensureSpec(ctx, r.Client, desired)
 }
 
-func (r *GatewayPlatformReconciler) deleteStaleKernelSecurityPolicies(ctx context.Context, expected map[string]struct{}) error {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{Group: securityPolicyGVK.Group, Version: securityPolicyGVK.Version, Kind: "SecurityPolicyList"})
-	if err := r.List(ctx, list,
-		client.InNamespace(servicesNamespace),
-		client.MatchingLabels{managedByLabel: managedByValue, gatewayComponentLabel: gatewayComponentKernel},
-	); err != nil {
-		return err
-	}
-	for i := range list.Items {
-		if _, ok := expected[list.Items[i].GetName()]; ok {
-			continue
-		}
-		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // bouncerRoute is one line of the bouncer's table (internal/bouncer).
 type bouncerRoute struct {
 	Host            string `json:"host"`

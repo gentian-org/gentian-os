@@ -12,8 +12,6 @@ package controller
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -27,7 +25,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -86,10 +83,8 @@ func authorizationModelRefusal(profile *gentianov1alpha1.ComponentProfile) strin
 	return ""
 }
 
-// ensureAuthorization keeps the Secret a component's key is delivered in.
-//
-// The key is made once and kept: a component reads it at start, and a key
-// that changed on every reconcile would be refused until its pods restarted.
+// ensureAuthorization keeps the Secret a component's key for the arbiter is
+// delivered in (ensureKeySecret), with the arbiter's address.
 //
 // A component whose profile does not declare the requirement is not looked
 // at. If it declared it once, its Secret stays until the component goes, and
@@ -99,51 +94,7 @@ func (r *ComponentReconciler) ensureAuthorization(ctx context.Context, comp *gen
 	if !wantsAuthorization(profile) {
 		return nil
 	}
-	key := types.NamespacedName{Name: authorizationSecretName(comp.Name), Namespace: comp.Namespace}
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, key, existing)
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	found := err == nil
-	url := authorizationURL()
-	if found {
-		if !metav1.IsControlledBy(existing, comp) {
-			return fmt.Errorf("secret %s exists and is not this component's", key.Name)
-		}
-		if len(existing.Data[authorizationKeyKey]) > 0 && string(existing.Data[authorizationURLKey]) == url &&
-			existing.Labels[authorizationHolderLabel] == "true" {
-			return nil
-		}
-	}
-	secret := string(existing.Data[authorizationKeyKey])
-	if secret == "" {
-		raw := make([]byte, 32)
-		if _, err := rand.Read(raw); err != nil {
-			return err
-		}
-		secret = base64.RawURLEncoding.EncodeToString(raw)
-	}
-	labels := componentLabels(comp, tenantName)
-	labels[authorizationHolderLabel] = "true"
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labels},
-		Type:       corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			authorizationURLKey: []byte(url),
-			authorizationKeyKey: []byte(secret),
-		},
-	}
-	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
-		return err
-	}
-	if !found {
-		return r.Create(ctx, desired)
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Labels = desired.Labels
-	existing.Data = desired.Data
-	return r.Patch(ctx, existing, patch)
+	return r.ensureKeySecret(ctx, comp, tenantName, authorizationKeys, map[string]string{authorizationURLKey: authorizationURL()})
 }
 
 // authorizationEgress is the way to the arbiter: its pods, on its one port,

@@ -224,10 +224,16 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 // and no question for as long as the second delete took to follow, or for
 // good if it failed. A policy that outlives its route targets nothing.
 func (r *GatewayPlatformReconciler) deleteStaleKernelRoutesAndPolicies(ctx context.Context, routes, policies map[string]struct{}) error {
-	if err := r.deleteStaleKernelHTTPRoutes(ctx, routes); err != nil {
+	selected := []client.ListOption{
+		client.InNamespace(servicesNamespace),
+		client.MatchingLabels{managedByLabel: managedByValue, gatewayComponentLabel: gatewayComponentKernel},
+	}
+	if err := deleteUnlisted(ctx, r.Client, "HTTPRoute", &gatewayv1.HTTPRouteList{}, routes, selected...); err != nil {
 		return fmt.Errorf("delete stale kernel HTTPRoutes: %w", err)
 	}
-	if err := r.deleteStaleKernelSecurityPolicies(ctx, policies); err != nil {
+	policyList := &unstructured.UnstructuredList{}
+	policyList.SetGroupVersionKind(securityPolicyGVK.GroupVersion().WithKind(securityPolicyGVK.Kind + "List"))
+	if err := deleteUnlisted(ctx, r.Client, securityPolicyGVK.Kind, policyList, policies, selected...); err != nil {
 		return fmt.Errorf("delete stale kernel SecurityPolicies: %w", err)
 	}
 	return nil
@@ -1102,25 +1108,6 @@ func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicyNamed(
 	}
 
 	return ensureSpec(ctx, r.Client, desired)
-}
-
-func (r *GatewayPlatformReconciler) deleteStaleKernelHTTPRoutes(ctx context.Context, expected map[string]struct{}) error {
-	list := &gatewayv1.HTTPRouteList{}
-	if err := r.List(ctx, list,
-		client.InNamespace(servicesNamespace),
-		client.MatchingLabels{managedByLabel: managedByValue, gatewayComponentLabel: gatewayComponentKernel},
-	); err != nil {
-		return err
-	}
-	for i := range list.Items {
-		if _, ok := expected[list.Items[i].Name]; ok {
-			continue
-		}
-		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func kernelKeycloakHTTPRouteName() string {
