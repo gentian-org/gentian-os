@@ -13,9 +13,6 @@ ignore: |
   # (scripts/gen/gen-envoy-gateway-crds.py). Upstream's text, not ours.
   internal/controller/testdata/envoy-gateway-crds/
   charts/gentian-os/crds/
-  # The operator's embedded copy of one of those CRDs, written by
-  # `make manifests` and compared byte for byte with them.
-  internal/profilebundle/componentprofiles.crd.yaml
   # Profile bundles as gentian-apps' build wrote them, copied byte for byte:
   # their digests are over these bytes, Compositions and inline tile art
   # included.

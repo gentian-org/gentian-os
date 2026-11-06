@@ -84,10 +84,6 @@ manifests:
 		case "$$f" in *_apps.yaml|*_xtenants.yaml) continue ;; esac; \
 		cp "$$f" charts/gentian-os/crds/; \
 	done
-	@# The operator applies the ComponentProfile schema's defaults to a profile
-	@# bundle before it compares it with the profile in the cluster, so it
-	@# carries the schema it was built with (internal/profilebundle).
-	cp config/crd/gentianos.io_componentprofiles.yaml internal/profilebundle/componentprofiles.crd.yaml
 	@# Both binaries carry every definition they were built with -- the chart's
 	@# CRDs and the Crossplane XRDs -- to compare with what a cluster serves
 	@# (internal/schemacheck). Copied here, and the names the operator may
@@ -145,7 +141,7 @@ verify-gen: gen-all
 	@# for the first time is exactly that, and a build without it would not
 	@# check the kind at all.
 	@test -z "$$(git status --porcelain --untracked-files=all internal/schemacheck/definitions/ | grep '^??')" || (echo "A newly embedded definition is not committed: git add internal/schemacheck/definitions/" && exit 1)
-	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go internal/platformversion/line.go crossplane/compositions/cluster-default.yaml crossplane/tests/unit/render/ config/crd/ charts/gentian-os/crds/ internal/profilebundle/componentprofiles.crd.yaml internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go internal/platformversion/line.go crossplane/compositions/cluster-default.yaml crossplane/tests/unit/render/ config/crd/ charts/gentian-os/crds/ internal/schemacheck/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml kernel/security/network-policies/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 	@# The same for the generated docs pages: a page written for the first
 	@# time, or rewritten, is a change the diff above would not see while it
 	@# is untracked, so any status line at all under these paths fails.

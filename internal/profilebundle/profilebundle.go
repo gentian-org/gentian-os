@@ -45,13 +45,12 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
-	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // Annotation carries the bundle on a ComponentProfile: the bytes the source
@@ -329,37 +328,19 @@ func metadataDiffers(said, live *gentianov1alpha1.ComponentProfile) string {
 	return ""
 }
 
-// The ComponentProfile CRD as this operator was built with it, which is where
-// the defaults the API server applies are written down. A copy of
-// config/crd/gentianos.io_componentprofiles.yaml, made by `make manifests`.
-//
-//go:embed componentprofiles.crd.yaml
-var crd []byte
-
-var (
-	schemaOnce sync.Once
-	schema     *apiextensionsv1.JSONSchemaProps
-	schemaErr  error
-)
-
-// profileSchema is the schema of the version this operator reads.
+// profileSchema is the schema of the version this operator reads: the
+// ComponentProfile CRD as this operator was built with it (schemacheck), which
+// is where the defaults the API server applies are written down.
 func profileSchema() (*apiextensionsv1.JSONSchemaProps, error) {
-	schemaOnce.Do(func() {
-		var def apiextensionsv1.CustomResourceDefinition
-		if err := yaml.Unmarshal(crd, &def); err != nil {
-			schemaErr = fmt.Errorf("the ComponentProfile schema cannot be read: %w", err)
-			return
-		}
-		for i := range def.Spec.Versions {
-			v := &def.Spec.Versions[i]
-			if v.Name == gentianov1alpha1.GroupVersion.Version && v.Schema != nil && v.Schema.OpenAPIV3Schema != nil {
-				schema = v.Schema.OpenAPIV3Schema
-				return
-			}
-		}
-		schemaErr = fmt.Errorf("the ComponentProfile schema has no version %s", gentianov1alpha1.GroupVersion.Version)
-	})
-	return schema, schemaErr
+	def, ok := schemacheck.Embedded().Kind("ComponentProfile")
+	if !ok {
+		return nil, fmt.Errorf("the ComponentProfile schema is not among the definitions this operator was built with")
+	}
+	s := def.Versions[gentianov1alpha1.GroupVersion.Version]
+	if s == nil {
+		return nil, fmt.Errorf("the ComponentProfile schema has no version %s", gentianov1alpha1.GroupVersion.Version)
+	}
+	return s, nil
 }
 
 // applyDefaults fills in the defaults a schema states, the way the API server
