@@ -441,3 +441,7 @@ func TestAProfileSomebodyDependsOnIsNotRemoved(t *testing.T) {
 		}
 	}
 }
+
+func (o *residueOperator) Delete(context.Context, string, string, url.Values) (int, []byte, error) {
+	return http.StatusNoContent, nil, nil
+}
