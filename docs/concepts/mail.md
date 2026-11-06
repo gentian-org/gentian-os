@@ -18,6 +18,7 @@ Three layers are easy to conflate:
 | **Cluster** | `mail.serviceMode` on the Cluster claim (`external` \| `system`) | Whether the cluster runs its own Postfix and Dovecot, or relays everything to an external SMTP host. A claim that says `kernel`, the value's former name, is refused |
 | **Per tenant** | `Tenant.spec.mail.mode` | What the operator provisions: the tenant's mail domain, its entries in the Postfix maps, and its Dovecot realm auth |
 | **Per app** | `ComponentProfile` `spec.requires.services.mail.smtp` / `.imap` | Whether the operator hands an app kernel or external mail endpoints |
+| **Cluster** | `mailAdminContact` and `mailAliases` in the chart's values | Where `abuse@` and `postmaster@` of every hosted domain, and any other listed address, are forwarded: an address off the cluster, written into Postfix's `virtual_alias` map by the operator |
 
 Postfix and Dovecot run in `system-mail`, and the operator writes what they
 mount into that namespace: a Pod can only mount a ConfigMap or a Secret from
@@ -340,8 +341,9 @@ test-mail-edge-lab`, part a2).
 
 - A person whose record is gone is not known: mail to that address is accepted under `catchall` as before.
 - An IMAP session that was open when the person was removed is not ended.
-- The platform has no shared mailboxes and no aliases other than `abuse@`
-  and `postmaster@`, which forward and have no mailbox.
+- The platform has no shared mailboxes. The only aliases are `abuse@` and
+  `postmaster@`, forwarded to the chart's `mailAdminContact`, and the
+  addresses the chart's `mailAliases` list forwards; all have no mailbox.
 - The record of a mailbox that is gone is removed after 30 days, and its
   address is refused for those 30 days. The record of an archived mailbox
   stays as long as the archive.

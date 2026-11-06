@@ -290,6 +290,11 @@ type TenantReconciler struct {
 	// today and syncRoleAliasWarning says so; there is no local address worth
 	// defaulting to, because every one of them is just as unreadable.
 	MailAdminContact string
+	// MailAliases are other addresses of hosted domains forwarded to an
+	// address off this cluster, as "address=target" pairs separated by
+	// commas. Sourced from MAIL_ALIASES; parsed by parseMailAliases, which
+	// holds each target to the rule MailAdminContact is held to.
+	MailAliases string
 	// MailRecipientPolicy decides whether an address nobody owns is accepted:
 	// catchall (default), observe, or strict. Sourced from
 	// MAIL_RECIPIENT_POLICY.

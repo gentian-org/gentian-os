@@ -127,6 +127,16 @@ spec:
             - name: MAIL_ADMIN_CONTACT
               value: {{ .Values.mailAdminContact | default "" | quote }}
             {{- /*
+            Other addresses of a hosted domain forwarded off the cluster, as
+            address=target pairs — see mailAliases in values.yaml.
+            */}}
+            {{- $aliases := list }}
+            {{- range .Values.mailAliases }}
+            {{- $aliases = append $aliases (printf "%s=%s" .address .to) }}
+            {{- end }}
+            - name: MAIL_ALIASES
+              value: {{ join "," $aliases | quote }}
+            {{- /*
             Whether an address nobody owns is accepted. catchall (default),
             observe, or strict — see mailRecipientPolicy in values.yaml.
             */}}

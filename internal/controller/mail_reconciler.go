@@ -219,14 +219,73 @@ func resolveRoleAliasTarget(contact string, hosted map[string]bool) (target, rej
 	if contact == "" {
 		return "", ""
 	}
-	at := strings.LastIndex(contact, "@")
-	if at < 0 || at == len(contact)-1 {
-		return "", "MAIL_ADMIN_CONTACT is not an e-mail address; abuse@ and postmaster@ stay unreadable"
-	}
-	if hosted[strings.ToLower(contact[at+1:])] {
-		return "", "MAIL_ADMIN_CONTACT is inside a domain this cluster hosts, so it would alias into a mailbox nobody can open; set it to an address off this cluster"
+	if problem := aliasTargetProblem(contact, hosted); problem != "" {
+		return "", "MAIL_ADMIN_CONTACT " + problem + "; abuse@ and postmaster@ stay unreadable"
 	}
 	return contact, ""
+}
+
+// aliasTargetProblem says why target may not be aliased to, or "" when it may:
+// it is not an address, or it is inside a domain this cluster hosts and would
+// alias into a mailbox nobody can open.
+func aliasTargetProblem(target string, hosted map[string]bool) string {
+	at := strings.LastIndex(target, "@")
+	if at < 1 || at == len(target)-1 {
+		return "is not an e-mail address"
+	}
+	if hosted[strings.ToLower(target[at+1:])] {
+		return "is inside a domain this cluster hosts, so it would alias into a mailbox nobody can open; set it to an address off this cluster"
+	}
+	return ""
+}
+
+// mailAlias is one configured forward: an address of a hosted domain and the
+// off-cluster address it is delivered to.
+type mailAlias struct {
+	address, to string
+}
+
+// parseMailAliases reads MAIL_ALIASES, "address=target" pairs separated by
+// commas, into the aliases to write per hosted domain, and the entries it
+// refused with the reason. An address is lower-cased, as Postfix compares
+// it; a target is kept as written. An entry whose domain this cluster does
+// not host is refused rather than written, because Postfix never asks the
+// alias map about a domain it does not accept, so the line could never
+// match. Duplicates of one address keep the first target.
+func parseMailAliases(raw string, hosted map[string]bool) (byDomain map[string][]mailAlias, refused []string) {
+	byDomain = map[string][]mailAlias{}
+	seen := map[string]bool{}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		address, to, ok := strings.Cut(entry, "=")
+		address, to = strings.ToLower(strings.TrimSpace(address)), strings.TrimSpace(to)
+		at := strings.LastIndex(address, "@")
+		switch {
+		case !ok || address == "" || to == "":
+			refused = append(refused, fmt.Sprintf("%q is not address=target", entry))
+			continue
+		case at < 1 || at == len(address)-1:
+			refused = append(refused, fmt.Sprintf("%q: the address is not an e-mail address", entry))
+			continue
+		case !hosted[address[at+1:]]:
+			refused = append(refused, fmt.Sprintf("%q: this cluster does not accept mail for %s", entry, address[at+1:]))
+			continue
+		}
+		if problem := aliasTargetProblem(to, hosted); problem != "" {
+			refused = append(refused, fmt.Sprintf("%q: the target %s", entry, problem))
+			continue
+		}
+		if seen[address] {
+			continue
+		}
+		seen[address] = true
+		domain := address[at+1:]
+		byDomain[domain] = append(byDomain[domain], mailAlias{address: address, to: to})
+	}
+	return byDomain, refused
 }
 
 const (
@@ -799,6 +858,10 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	case aliasTarget == "":
 		log.FromContext(ctx).Info("no MAIL_ADMIN_CONTACT set: abuse@ and postmaster@ are accepted but unreadable. RFC 5321 and RFC 2142 require them to work, and Microsoft's JMRP/SNDS enrolment mails them")
 	}
+	configuredAliases, refusedAliases := parseMailAliases(r.MailAliases, hostedDomains)
+	for _, why := range refusedAliases {
+		log.FromContext(ctx).Error(nil, "MAIL_ALIASES entry not written", "reason", why)
+	}
 
 	var domainsFile, mapsFile, aliasFile strings.Builder
 	domainList := make([]string, 0, len(names))
@@ -876,6 +939,12 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 			for _, lp := range roleAliasLocalParts {
 				fmt.Fprintf(&aliasFile, "%s@%s %s\n", lp, d, aliasTarget)
 			}
+		}
+		// The configured forwards of this domain, after the role addresses
+		// and in the order configured: a role address named here as well
+		// keeps the admin contact, since Postfix takes the first match.
+		for _, a := range configuredAliases[d] {
+			fmt.Fprintf(&aliasFile, "%s %s\n", a.address, a.to)
 		}
 	}
 	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
