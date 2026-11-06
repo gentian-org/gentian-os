@@ -217,7 +217,7 @@ func TenantQuotasOf(quotas map[string]string) *gentianov1alpha1.TenantQuotas {
 	out.CPU = parse("cpu")
 	out.Memory = parse("memory")
 	out.Storage = parse("storage")
-	if n, err := strconv.Atoi(quotas["maxPods"]); err == nil && n > 0 {
+	if n, err := strconv.ParseInt(quotas["maxPods"], 10, 32); err == nil && n > 0 {
 		out.MaxPods = int32(n)
 	}
 	return out
