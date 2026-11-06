@@ -112,13 +112,6 @@ func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames 
 	return goerrors.Join(errs...)
 }
 
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func EnvBool(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
 	case "1", "true", "yes", "on":

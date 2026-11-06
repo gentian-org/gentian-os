@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/placement"
 )
@@ -269,13 +270,13 @@ const (
 // Override with MAIL_SMTP_HOST. Without a kernel domain there is no public name
 // to use, and the Service name remains the only option.
 func mailSharedPostfixHost(kernelDomain string) string {
-	if v := envOrDefault("MAIL_SMTP_HOST", ""); v != "" {
+	if v := envvar.Or("MAIL_SMTP_HOST", ""); v != "" {
 		return v
 	}
 	if kernelDomain != "" {
 		return "mail." + kernelDomain
 	}
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
+	stage := envvar.Or("GENTIAN_STAGE", envvar.Or("ENV", "dev"))
 	// Postfix runs in the mail namespace; its DMZ holds a proxy and no Postfix.
 	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, postfixNamespace)
 }
@@ -528,7 +529,7 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// egress A record instead of having to be edited in two places whenever the
 	// address changes; the one that gets forgotten fails closed and silently.
 	tenant.Status.Mail.SPFRecord = mailSPFRecord(
-		clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))
+		clusterMailEgressHost(ctx, r.Client, envvar.Or("MAIL_EGRESS_HOST", "")))
 	tenant.Status.Mail.DMARCRecord = mailDMARCRecord(domain)
 
 	// 2. Register the tenant domain in the shared Postfix virtual-domains ConfigMap.

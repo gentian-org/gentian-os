@@ -32,6 +32,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/handover"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -128,7 +129,7 @@ func (s *Server) Start(ctx context.Context) error {
 // the store before every read and write, and a custodian with no store to
 // ask would have to either refuse everybody or let something else decide.
 func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Checker) (*Server, error) {
-	addr := envOr("CUSTODIAN_ADDR", ":9444")
+	addr := envvar.Or("CUSTODIAN_ADDR", ":9444")
 	if graph == nil {
 		return nil, fmt.Errorf("the custodian needs the authorization store (OPENFGA_API_URL): it decides who may touch a credential")
 	}
@@ -145,7 +146,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 		JWKSBase:   os.Getenv("CUSTODIAN_JWKS_BASE_URL"),
 		// The zone's token, minted for the director and relayed here by a
 		// console as it is relayed to the director.
-		Audience: envOr("CUSTODIAN_AUDIENCE", "gentian-director"),
+		Audience: envvar.Or("CUSTODIAN_AUDIENCE", "gentian-director"),
 	})
 	if err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 		Verifier:    verifier,
 		Graph:       graph,
 		Cluster:     cluster,
-		KernelRealm: envOr("KERNEL_REALM", "kernel"),
+		KernelRealm: envvar.Or("KERNEL_REALM", "kernel"),
 		Client:      mgr.GetClient(),
 	}
 	baoAddr := os.Getenv("BAO_ADDR")
@@ -179,15 +180,15 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 		Addr: addr,
 		Catalogue: &Catalogue{
 			Client:         mgr.GetClient(),
-			ProbeNamespace: envOr("CUSTODIAN_PROBE_NAMESPACE", layout.Namespace(layout.Control)),
+			ProbeNamespace: envvar.Or("CUSTODIAN_PROBE_NAMESPACE", layout.Namespace(layout.Control)),
 		},
 		Bao: NewOpenBao(
 			baoAddr,
-			envOr("BAO_KV_MOUNT", "secret"),
+			envvar.Or("BAO_KV_MOUNT", "secret"),
 			// The custodian's own role at the vault: write and metadata on
 			// credential paths, no reading of values. Bound to this pod's
 			// ServiceAccount by the cluster's Composition.
-			envOr("CUSTODIAN_BAO_ROLE", "gentian-os-custodian"),
+			envvar.Or("CUSTODIAN_BAO_ROLE", "gentian-os-custodian"),
 			loadBaoCA(mgr),
 			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
 		),
@@ -196,7 +197,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 		Client:    mgr.GetClient(),
 		// The operator's own namespace by default: the record belongs beside
 		// the thing that gates on it, not beside the credentials.
-		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
+		HandoverNamespace: envvar.Or("HANDOVER_NAMESPACE", envvar.Or("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 	}, nil
 }
 
@@ -270,8 +271,8 @@ func loadBaoCA(mgr manager.Manager) []byte {
 		return pem
 	}
 
-	name := envOr("BAO_CA_SECRET", "openbao-tls")
-	namespace := envOr("BAO_CA_SECRET_NAMESPACE", "openbao")
+	name := envvar.Or("BAO_CA_SECRET", "openbao-tls")
+	namespace := envvar.Or("BAO_CA_SECRET_NAMESPACE", "openbao")
 	sec := &corev1.Secret{}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -307,13 +308,6 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	}
 	log.Info("OpenBao CA Secret has neither ca.crt nor tls.crt", "secret", namespace+"/"+name)
 	return nil
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 // caller carries the authenticated identity for one request.

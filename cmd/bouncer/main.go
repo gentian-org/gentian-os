@@ -37,6 +37,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/bouncer"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 func main() {
@@ -47,15 +48,8 @@ func main() {
 	}
 }
 
-func envOr(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
-}
-
 func envDuration(name, def string) (time.Duration, error) {
-	d, err := time.ParseDuration(envOr(name, def))
+	d, err := time.ParseDuration(envvar.Or(name, def))
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", name, err)
 	}
@@ -64,9 +58,9 @@ func envDuration(name, def string) (time.Duration, error) {
 
 func run(log *slog.Logger) error {
 	issuerBase := os.Getenv("DIRECTOR_ISSUER_BASE_URL")
-	audience := envOr("BOUNCER_AUDIENCE", "gentian-director")
+	audience := envvar.Or("BOUNCER_AUDIENCE", "gentian-director")
 	fgaURL := os.Getenv("OPENFGA_API_URL")
-	tablePath := envOr("BOUNCER_ROUTES", "/etc/bouncer/routes.yaml")
+	tablePath := envvar.Or("BOUNCER_ROUTES", "/etc/bouncer/routes.yaml")
 	if issuerBase == "" || fgaURL == "" {
 		return errors.New("DIRECTOR_ISSUER_BASE_URL and OPENFGA_API_URL are required")
 	}
@@ -109,8 +103,8 @@ func run(log *slog.Logger) error {
 	// mounted for it; a realm with no secret there has no exchange, and a
 	// route of it that asks for one is refused.
 	exchanger := &bouncer.RealmExchanger{
-		TokenBase:  envOr("BOUNCER_TOKEN_BASE_URL", envOr("DIRECTOR_JWKS_BASE_URL", issuerBase)),
-		SecretsDir: envOr("BOUNCER_EXCHANGE_SECRETS", "/etc/bouncer-exchange"),
+		TokenBase:  envvar.Or("BOUNCER_TOKEN_BASE_URL", envvar.Or("DIRECTOR_JWKS_BASE_URL", issuerBase)),
+		SecretsDir: envvar.Or("BOUNCER_EXCHANGE_SECRETS", "/etc/bouncer-exchange"),
 	}
 	decider := bouncer.New(bouncer.Options{Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log, Exchanger: exchanger})
 
@@ -127,7 +121,7 @@ func run(log *slog.Logger) error {
 		}
 	})
 
-	lis, err := net.Listen("tcp", envOr("BOUNCER_LISTEN", ":9001"))
+	lis, err := net.Listen("tcp", envvar.Or("BOUNCER_LISTEN", ":9001"))
 	if err != nil {
 		return err
 	}
@@ -135,14 +129,14 @@ func run(log *slog.Logger) error {
 	authv3.RegisterAuthorizationServer(srv, &bouncer.Server{Decider: decider, BrandingBase: bouncer.BrandingBase(issuerBase)})
 	healthpb.RegisterHealthServer(srv, health.NewServer())
 
-	httpSrv := &http.Server{Addr: envOr("BOUNCER_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
+	httpSrv := &http.Server{Addr: envvar.Or("BOUNCER_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
 	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	go func() { _ = httpSrv.ListenAndServe() }()
 
 	// The one question a component may ask for a person who is not at a
 	// browser, on a port of its own so that the network can admit components
 	// to it and to nothing else here.
-	checkSrv := &http.Server{Addr: envOr("BOUNCER_CHECK_LISTEN", ":8082"), Handler: decider.CheckHandler(), ReadHeaderTimeout: 5 * time.Second}
+	checkSrv := &http.Server{Addr: envvar.Or("BOUNCER_CHECK_LISTEN", ":8082"), Handler: decider.CheckHandler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = checkSrv.ListenAndServe() }()
 
 	done := make(chan error, 1)

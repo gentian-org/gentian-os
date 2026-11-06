@@ -21,17 +21,11 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
-
-func envOr(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
-}
 
 // NewFromEnv wires the server from the registrar's environment.
 //
@@ -64,7 +58,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		JWKSBase:   os.Getenv("REGISTRAR_JWKS_BASE_URL"),
 		// The zone's token, minted for the director and relayed here by a
 		// console as it is relayed to the director.
-		Audience: envOr("REGISTRAR_AUDIENCE", "gentian-director"),
+		Audience: envvar.Or("REGISTRAR_AUDIENCE", "gentian-director"),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -76,10 +70,10 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	// Secret minutes after this process starts and a tenant's realm arrives
 	// later still; a realm with no credential yet is a 503 naming it, from
 	// the route.
-	realmDir := envOr("REGISTRAR_REALM_CREDENTIALS_PATH", "/etc/gentian/realms")
+	realmDir := envvar.Or("REGISTRAR_REALM_CREDENTIALS_PATH", "/etc/gentian/realms")
 	idClient, err := identity.New(identity.Config{
 		// In-cluster. The public issuer refuses /admin by design.
-		BaseURL: envOr("REGISTRAR_IDENTITY_BASE_URL", issuer),
+		BaseURL: envvar.Or("REGISTRAR_IDENTITY_BASE_URL", issuer),
 		Source:  identity.NewDirectorySource(realmDir, identity.ClientID),
 		// The groups whose members hold a platform role, and the platform
 		// tenant's people who hold one by name, from the Cluster claim on
@@ -127,7 +121,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	// installed long after this starts, and one that stops declaring the
 	// requirement must stop being recognized without a restart.
 	vouchingKeys := &VouchingKeys{}
-	go vouchingKeys.Follow(ctx, envOr("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log, VouchingKeysList)
+	go vouchingKeys.Follow(ctx, envvar.Or("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log, VouchingKeysList)
 
 	// The Tenants, and -- for one that is not there -- its Argo CD
 	// Application, which says whether its creation failed.
@@ -160,7 +154,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		closer()
 		return nil, nil, err
 	}
-	srv.Addr = envOr("REGISTRAR_ADDR", ":9445")
+	srv.Addr = envvar.Or("REGISTRAR_ADDR", ":9445")
 	return srv, closer, nil
 }
 

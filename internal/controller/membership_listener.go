@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
@@ -83,8 +84,8 @@ func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logge
 		return nil, fmt.Errorf("GENTIAN_LISTENER_KEYS: %w", err)
 	}
 	projector, err := membership.NewProjector(graph, membership.Scope{
-		PlatformRealm:  envOrDefault("GENTIAN_PLATFORM_REALM", "kernel"),
-		PlatformTenant: envOrDefault("GENTIAN_PLATFORM_TENANT", "platform"),
+		PlatformRealm:  envvar.Or("GENTIAN_PLATFORM_REALM", "kernel"),
+		PlatformTenant: envvar.Or("GENTIAN_PLATFORM_TENANT", "platform"),
 	}, logger)
 	if err != nil {
 		return nil, err
@@ -100,7 +101,7 @@ func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logge
 		receiver.SetMirror(mirror)
 	}
 	return &MembershipListener{
-		Addr:    envOrDefault("GENTIAN_MEMBERSHIP_ADDR", ":8090"),
+		Addr:    envvar.Or("GENTIAN_MEMBERSHIP_ADDR", ":8090"),
 		Handler: receiver,
 		Log:     logger,
 	}, nil

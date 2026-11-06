@@ -34,6 +34,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
@@ -56,13 +57,6 @@ func (r *required) env(name string) string {
 		r.missing = append(r.missing, name)
 	}
 	return v
-}
-
-func envOr(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
 }
 
 func run(log *slog.Logger) error {
@@ -98,7 +92,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("%w (the operator creates the store and the model and records them; this service only reads them)", err)
 	}
 	repo := gitops.NewGitOps(repoPath, repoURL, cluster, gitops.Person{
-		Name:  envOr("DIRECTOR_COMMITTER_NAME", "gentian-director"),
+		Name:  envvar.Or("DIRECTOR_COMMITTER_NAME", "gentian-director"),
 		Email: os.Getenv("DIRECTOR_COMMITTER_EMAIL"),
 	})
 	// One audit record per commit that reached the remote, on the same
@@ -116,7 +110,7 @@ func run(log *slog.Logger) error {
 	// the director must not do is sign with anything other than the key it
 	// was given -- there is no fallback and none is generated.
 	if keyPath := os.Getenv("DIRECTOR_SIGNING_KEY_FILE"); keyPath != "" {
-		home := envOr("DIRECTOR_GNUPGHOME", "/tmp/gentian-director-gnupg")
+		home := envvar.Or("DIRECTOR_GNUPGHOME", "/tmp/gentian-director-gnupg")
 		signCtx, cancelSign := context.WithTimeout(context.Background(), time.Minute)
 		err := repo.SignFrom(signCtx, keyPath, home)
 		cancelSign()
@@ -195,7 +189,7 @@ func run(log *slog.Logger) error {
 		// replaces every few minutes, so it is read from its file on every
 		// request. A director with no such file reaches nothing, and saying
 		// so here is better than every call answering 502 with no clue why.
-		tokenFile := envOr("DIRECTOR_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
+		tokenFile := envvar.Or("DIRECTOR_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
 		if _, err := os.Stat(tokenFile); err != nil {
 			log.Warn("no ServiceAccount token for the operator's listener: it will refuse every request from here",
 				"setting", "DIRECTOR_LIFECYCLE_TOKEN_FILE", "file", tokenFile)
@@ -267,8 +261,8 @@ func run(log *slog.Logger) error {
 	// repository that declares no credential.
 	registries := catalogue.VaultRegistries{Declared: repo.RegistryRepository}
 	if addr := os.Getenv("DIRECTOR_BAO_ADDR"); addr != "" {
-		vault := secrets.NewKVClient(addr, envOr("DIRECTOR_BAO_ROLE", "gentian-os-director"),
-			envOr("DIRECTOR_BAO_TOKEN_FILE", "/var/run/secrets/gentian/openbao/token"))
+		vault := secrets.NewKVClient(addr, envvar.Or("DIRECTOR_BAO_ROLE", "gentian-os-director"),
+			envvar.Or("DIRECTOR_BAO_TOKEN_FILE", "/var/run/secrets/gentian/openbao/token"))
 		registries.Read = vault.Get
 	} else {
 		log.Info("no vault address (DIRECTOR_BAO_ADDR): a catalog kept as an OCI artifact is read only from a repository without a credential")
@@ -305,7 +299,7 @@ func run(log *slog.Logger) error {
 	// lists them: a mounted ConfigMap, followed for as long as this runs.
 	commissionKeys := &api.CommissionKeys{}
 	go commissionKeys.Follow(context.Background(),
-		envOr("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
+		envvar.Or("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		Catalogue:      entries,
@@ -322,7 +316,7 @@ func run(log *slog.Logger) error {
 	handler.ResumeImports(context.Background())
 
 	srv := &http.Server{
-		Addr:              envOr("DIRECTOR_LISTEN", ":8080"),
+		Addr:              envvar.Or("DIRECTOR_LISTEN", ":8080"),
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
