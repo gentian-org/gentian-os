@@ -459,8 +459,12 @@ spec:
                     server:
                       type: string
                       description: >
-                        OpenBao service address reachable from within the cluster.
-                      default: "http://openbao.kernel-secrets.svc.cluster.local:8200"
+                        OpenBao service address reachable from within the
+                        cluster. Left unset, the Composition uses
+                        https://openbao.<secrets namespace>.svc.cluster.local:8200.
+                        No schema default: the API server would fill one in
+                        wherever the claim has an openbao block, and an
+                        address that does not follow the namespace would win.
                     kvMount:
                       type: string
                       description: Path of the KV v2 secret engine mount.
