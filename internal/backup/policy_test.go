@@ -66,17 +66,22 @@ func TestResolveEffectiveWithNoPolicies(t *testing.T) {
 	}
 }
 
+// tenantKey is an age recipient a tenant states as its own.
+const tenantKey = "age17lr9cmnutfg66r92rwc20umdz82sgx3wq86c5lmht8d7sm8dlqpqr3d4zw"
+
 // A tenant policy with no cluster policy is ordinary on a fresh cluster.
 // Reaching through the absent cluster policy to ask whether overrides are
 // allowed panicked the reconciler on exactly this input.
 func TestResolveEffectiveOverrideWithoutClusterPolicy(t *testing.T) {
 	eff, err := ResolveEffective(policyTenant(), nil,
-		tenantPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *"}))
+		tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+			Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}},
+		}))
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
-	if eff.Schedule != "0 3 * * *" {
-		t.Errorf("schedule = %q, want the tenant's", eff.Schedule)
+	if len(eff.Recipients) != 1 || eff.Recipients[0] != tenantKey {
+		t.Errorf("recipients = %v, want the tenant's key", eff.Recipients)
 	}
 }
 
@@ -88,11 +93,11 @@ func TestTenantInheritsClusterDefaults(t *testing.T) {
 			Bucket:   "platform-bundles",
 			Region:   "ch-gva-2",
 		},
-		Schedule:  "0 3 * * *",
-		Retention: &gentianov1alpha1.BackupRetention{KeepLast: 7},
 	})
-	// States only the schedule: the destination must still be the cluster's.
-	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "30 1 * * *"})
+	// States only its key: the destination must still be the cluster's.
+	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+		Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}},
+	})
 
 	eff, err := ResolveEffective(policyTenant(), cluster, override)
 	if err != nil {
@@ -107,14 +112,11 @@ func TestTenantInheritsClusterDefaults(t *testing.T) {
 	if eff.CredentialName != "backup-destination" {
 		t.Errorf("credential = %q, want the cluster's requirement", eff.CredentialName)
 	}
-	if eff.Schedule != "30 1 * * *" {
-		t.Errorf("schedule = %q, want the tenant's", eff.Schedule)
-	}
-	if eff.Retention.KeepLast != 7 {
-		t.Errorf("keepLast = %d, want the inherited 7", eff.Retention.KeepLast)
+	if len(eff.Recipients) != 1 || eff.Recipients[0] != tenantKey {
+		t.Errorf("recipients = %v, want the tenant's key", eff.Recipients)
 	}
 	if eff.Overridden {
-		t.Error("stating only a schedule must not mark the destination overridden")
+		t.Error("stating only a key must not mark the destination overridden")
 	}
 }
 
@@ -186,21 +188,6 @@ func TestForbiddenOverrideIsRefusedNotIgnored(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "allowTenantOverride") {
 		t.Errorf("error does not name the setting that refused it: %v", err)
-	}
-}
-
-// Suspending is distinct from inheriting: without it a tenant could not opt
-// out of a cluster-wide schedule, because "" already means "not stated".
-func TestSuspendScheduleOptsOutOfTheClusterDefault(t *testing.T) {
-	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *"})
-	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{SuspendSchedule: true})
-
-	eff, err := ResolveEffective(policyTenant(), cluster, override)
-	if err != nil {
-		t.Fatalf("ResolveEffective: %v", err)
-	}
-	if eff.Schedule != "" {
-		t.Errorf("schedule = %q, want none after suspending", eff.Schedule)
 	}
 }
 
@@ -301,7 +288,6 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 // alongside would grant exactly the access that was refused — while every
 // screen still said the tenant's key was in force.
 func TestResolveEffectiveTenantKeyReplacesTheClusters(t *testing.T) {
-	const tenantKey = "age17lr9cmnutfg66r92rwc20umdz82sgx3wq86c5lmht8d7sm8dlqpqr3d4zw"
 	const platformKey = "age1rvkgylm0264jym5vpu7lmczsxerc8wwzfv8sv34h2yqlhgaqs56qk80dp8"
 
 	t.Run("unset inherits, and inheriting to the top means the cluster's key", func(t *testing.T) {

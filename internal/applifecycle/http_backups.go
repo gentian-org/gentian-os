@@ -27,8 +27,8 @@ import (
 // a policy is declared state and reaches the cluster as a commit the director
 // makes to git, so there is no write here to call. What the console needs
 // that git cannot answer is the state — which exports exist, what each one
-// did, what a policy resolves to once inheritance is applied, and when the
-// next scheduled run is — and that is what this serves.
+// did, and what a policy resolves to once inheritance is applied — and that
+// is what this serves.
 func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// Reads of state.
 	mux.Read("GET /v1/tenants/{tenant}/backups", h.handleBackups)
@@ -38,9 +38,7 @@ func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// the reader's identity lists backups and does not fetch one.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}/download", h.handleBundleDownload)
 	mux.Read("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
-	mux.Read("GET /v1/tenants/{tenant}/backup-schedules", h.handleBackupSchedules)
 	mux.Read("GET /v1/backup-policy", h.handleClusterBackupPolicy)
-	mux.Read("GET /v1/backup-schedules", h.handleAllBackupSchedules)
 
 	// Actions. Under /actions/ and always POST, because they are neither a
 	// read nor a change to what the cluster should be: they make something
@@ -142,25 +140,6 @@ func (h *HTTPServer) handleClusterBackupPolicy(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)
-}
-
-func (h *HTTPServer) handleBackupSchedules(w http.ResponseWriter, r *http.Request) {
-	schedules, err := h.Service.BackupSchedules(r.Context(), r.PathValue("tenant"), false)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": r.PathValue("tenant"), "schedules": schedules})
-}
-
-// handleAllBackupSchedules answers for every tenant, for the cluster's view.
-func (h *HTTPServer) handleAllBackupSchedules(w http.ResponseWriter, r *http.Request) {
-	schedules, err := h.Service.BackupSchedules(r.Context(), "", true)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"schedules": schedules})
 }
 
 // registerPlatformRoutes serves the reads behind the console's remaining

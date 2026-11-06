@@ -14,7 +14,7 @@ The custom resource definitions of the `gentianos.io` API group, with every fiel
 | [App](#1-app) | Namespaced |  |
 | [AppGrant](#2-appgrant) | Namespaced | AppGrant is a tenant-scoped authorization grant — a subset of what the ComponentProfile declares. |
 | [AppPackage](#3-apppackage) | Cluster | AppPackage is a named addon preset for a family. |
-| [BackupPolicy](#4-backuppolicy) | Cluster | BackupPolicy is where a tenant's bundles go, how often, and how long they are kept. |
+| [BackupPolicy](#4-backuppolicy) | Cluster | BackupPolicy is where a tenant's bundles go and who can read them. |
 | [Branding](#5-branding) | Cluster | Branding is the brand every page on the cluster shows: the concierge, the identity provider's screens, the desktop and the consoles. |
 | [BundleSource](#6-bundlesource) | Cluster | BundleSource is a place outside the cluster that holds bundles: the cluster's, declared by its administrator and read to make a tenant; or a tenant's own… |
 | [Component](#7-component) | Namespaced | Component is an installed instance of a ComponentProfile. |
@@ -29,12 +29,10 @@ The custom resource definitions of the `gentianos.io` API group, with every fiel
 | [ProfileBuild](#16-profilebuild) | Cluster | ProfileBuild is one build of a profile, as a catalog published it: the bundle at one digest, kept on the cluster for as long as a tenant runs it. |
 | [ResourcePlan](#17-resourceplan) | Cluster | ResourcePlan is a named preset of tenant resource limits. |
 | [Tenant](#18-tenant) | Cluster | Tenant is the Schema for the tenants API. |
-| [TenantBackupPolicy](#19-tenantbackuppolicy) | Namespaced | TenantBackupPolicy overrides the cluster backup policy for one tenant. |
-| [TenantDomain](#20-tenantdomain) | Cluster | TenantDomain moves the tenant it is named after to spec.domain. |
-| [TenantExport](#21-tenantexport) | Namespaced | TenantExport captures one tenant's data into an encrypted bundle. |
-| [TenantExportSchedule](#22-tenantexportschedule) | Namespaced | TenantExportSchedule creates TenantExports on a cron schedule. |
-| [TenantRestore](#23-tenantrestore) | Namespaced | TenantRestore restores a tenant's data from a bundle. |
-| [XTenant](#24-xtenant) | Cluster |  |
+| [TenantDomain](#19-tenantdomain) | Cluster | TenantDomain moves the tenant it is named after to spec.domain. |
+| [TenantExport](#20-tenantexport) | Namespaced | TenantExport captures one tenant's data into an encrypted bundle. |
+| [TenantRestore](#21-tenantrestore) | Namespaced | TenantRestore restores a tenant's data from a bundle. |
+| [XTenant](#22-xtenant) | Cluster |  |
 
 ## 1. App
 
@@ -120,7 +118,7 @@ AppPackage is a named addon preset for a family. Presentation only — see the t
 | Plural | `backuppolicies` |
 | Short names | `bkpol` |
 
-BackupPolicy is where a tenant's bundles go, how often, and how long they are kept. Cluster-scoped for both scopes, as CredentialRequirement is: the console mediates access by spec.tenant, and the credential itself is governed by the OpenBao policy its scope selects. The name is not free. Every reader of a policy fetches it by name — the cluster's as "default", a tenant's as the tenant's own name — so a policy whose name does not match its scope is never read by anything. That failed silently: the policy reported Accepted, published an effective destination, and bundles went to the platform's own storage as though it had never been written. The two rules below make that object unadmittable rather than merely ineffective.
+BackupPolicy is where a tenant's bundles go and who can read them. Cluster-scoped for both scopes, as CredentialRequirement is: the console mediates access by spec.tenant, and the credential itself is governed by the OpenBao policy its scope selects. The name is not free. Every reader of a policy fetches it by name — the cluster's as "default", a tenant's as the tenant's own name — so a policy whose name does not match its scope is never read by anything. That failed silently: the policy reported Accepted, published an effective destination, and bundles went to the platform's own storage as though it had never been written. The two rules below make that object unadmittable rather than merely ineffective.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -133,15 +131,7 @@ BackupPolicy is where a tenant's bundles go, how often, and how long they are ke
 | `spec.destination.region` | string |  | `Region`, for providers that require one — Exoscale SOS and AWS do, the platform's own store does not. |
 | `spec.encryption` | object |  | `Encryption` names the keys bundles are encrypted to. |
 | `spec.encryption.recipients` | []string |  | `Recipients` are age public keys (age1…) to encrypt to. |
-| `spec.retention` | object |  | `Retention` decides which bundles survive. |
-| `spec.retention.keepDaily` | integer (int32) |  | `KeepDaily`, KeepWeekly, KeepMonthly and KeepYearly each retain the most recent export within that many distinct periods. |
-| `spec.retention.keepLast` | integer (int32) |  | `KeepLast` retains this many most recent finished exports regardless of age. |
-| `spec.retention.keepMonthly` | integer (int32) |  |  |
-| `spec.retention.keepWeekly` | integer (int32) |  |  |
-| `spec.retention.keepYearly` | integer (int32) |  |  |
-| `spec.schedule` | string |  | `Schedule` is a five-field cron expression, in UTC. |
 | `spec.scope` | string | yes | `Scope` decides whether this is the cluster default or one tenant's override, and with it who may edit the policy and which OpenBao path its credential lives at. |
-| `spec.suspendSchedule` | boolean |  | `SuspendSchedule` turns scheduled backups off, distinctly from inheriting. |
 | `spec.tenant` | string |  | `Tenant` names the tenant a tenant-scoped policy belongs to. |
 | `status` | object |  | BackupPolicyStatus reports what this policy resolved to and whether it can actually be used. |
 | `status.conditions` | []object |  | `Conditions` carries Accepted: whether this policy is permitted and usable. |
@@ -154,9 +144,8 @@ BackupPolicy is where a tenant's bundles go, how often, and how long they are ke
 | `status.credentialRequirement` | string |  | `CredentialRequirement` names the requirement carrying this destination's keys, and CredentialSatisfied reports whether it has been filled. |
 | `status.credentialSatisfied` | boolean |  |  |
 | `status.effectiveBucket` | string |  |  |
-| `status.effectiveEndpoint` | string |  | `EffectiveEndpoint`, EffectiveBucket and EffectiveSchedule are the values in force after inheritance, published so an admin reads what applies rather than… |
+| `status.effectiveEndpoint` | string |  | `EffectiveEndpoint` and EffectiveBucket are the values in force after inheritance, published so an admin reads what applies rather than recomputing the merge. |
 | `status.effectiveRecipients` | []string |  | `EffectiveRecipients` are the age public keys in force, empty when the cluster's own key is used. |
-| `status.effectiveSchedule` | string |  |  |
 | `status.observedGeneration` | integer (int64) |  |  |
 
 ## 5. Branding
@@ -1812,45 +1801,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `status.readyApps` | integer |  | `ReadyApps` is the number of apps that have been successfully provisioned. |
 | `status.resourcePlan` | string |  | `ResourcePlan` is the plan whose selection was last recorded in the tenant's usage history: the value of the resource-plan annotation at the time the plan event… |
 
-## 19. TenantBackupPolicy
-
-| Attribute | Value |
-|---|---|
-| Group | `gentianos.io` |
-| Version | `v1alpha1` |
-| Scope | Namespaced |
-| Plural | `tenantbackuppolicies` |
-| Short names | `tbkpol` |
-
-TenantBackupPolicy overrides the cluster backup policy for one tenant. Namespaced and singleton by convention (`default`) in the tenant's own namespace, which is also what keeps a tenant's credential reference inside the namespace it controls.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `spec` | object |  | TenantBackupPolicySpec overrides the cluster default for one tenant. |
-| `spec.destination` | object |  | `Destination` overrides where this tenant's bundles are written. |
-| `spec.destination.bucket` | string |  | `Bucket` holds the bundles. |
-| `spec.destination.credentialsSecretRef` | object |  | `CredentialsSecretRef` holds accessKey and secretKey for the endpoint. |
-| `spec.destination.credentialsSecretRef.key` | string |  | `Key` defaults to "passphrase". |
-| `spec.destination.credentialsSecretRef.name` | string | yes |  |
-| `spec.destination.endpoint` | string |  | `Endpoint` is the S3 API URL, e.g. https://s3.eu-central-1.amazonaws.com or https://minio.example.org:9000. |
-| `spec.destination.region` | string |  | `Region`, for providers that require one. |
-| `spec.keepLast` | integer (int32) |  | `KeepLast` overrides retention. |
-| `spec.schedule` | string |  | `Schedule` overrides the cluster's cron expression, in UTC. |
-| `spec.suspendSchedule` | boolean |  | `SuspendSchedule` turns scheduled backups off for this tenant, distinctly from inheriting. |
-| `status` | object |  | TenantBackupPolicyStatus reports what this tenant's backups resolved to. |
-| `status.conditions` | []object |  | `Conditions` carries Accepted: whether the override is permitted and its destination usable. |
-| `status.conditions[].lastTransitionTime` | string (date-time) | yes | `lastTransitionTime` is the last time the condition transitioned from one status to another. |
-| `status.conditions[].message` | string | yes | `message` is a human readable message indicating details about the transition. |
-| `status.conditions[].observedGeneration` | integer (int64) |  | `observedGeneration` represents the .metadata.generation that the condition was set based upon. |
-| `status.conditions[].reason` | string | yes | `reason` contains a programmatic identifier indicating the reason for the condition's last transition. |
-| `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
-| `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.effectiveBucket` | string |  |  |
-| `status.effectiveEndpoint` | string |  | `EffectiveEndpoint`, EffectiveBucket and EffectiveSchedule are the values actually in force after inheritance, published so an admin can see what applies… |
-| `status.effectiveSchedule` | string |  |  |
-| `status.observedGeneration` | integer (int64) |  |  |
-
-## 20. TenantDomain
+## 19. TenantDomain
 
 | Attribute | Value |
 |---|---|
@@ -1867,7 +1818,7 @@ TenantDomain moves the tenant it is named after to spec.domain. It is not a fiel
 | `spec` | object |  | TenantDomainSpec binds a tenant to a custom domain. |
 | `spec.domain` | string | yes | `Domain` is where the tenant is served instead of \<tenant>.\<kernelDomain>: its zone, its hosts, its mail and its people's logins all move to it. |
 
-## 21. TenantExport
+## 20. TenantExport
 
 | Attribute | Value |
 |---|---|
@@ -1968,52 +1919,7 @@ TenantExport captures one tenant's data into an encrypted bundle.
 | `status.quiesced` | []string |  | `Quiesced` names the apps currently paused for writes. |
 | `status.startedAt` | string (date-time) |  | `StartedAt` is when the first app began capturing. |
 
-## 22. TenantExportSchedule
-
-| Attribute | Value |
-|---|---|
-| Group | `gentianos.io` |
-| Version | `v1alpha1` |
-| Scope | Namespaced |
-| Plural | `tenantexportschedules` |
-| Short names | `texs` |
-
-TenantExportSchedule creates TenantExports on a cron schedule.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `spec` | object |  | TenantExportScheduleSpec takes exports on a schedule and expires old ones. |
-| `spec.apps` | []string |  | `Apps` limits each export to these profiles. |
-| `spec.encryption` | object |  | `Encryption` for the exports this schedule creates. |
-| `spec.encryption.mode` | string |  | `Mode` selects the protection. |
-| `spec.encryption.passphraseSecretRef` | object |  | `PassphraseSecretRef` names a Secret in this tenant's namespace holding the passphrase, used with mode: passphrase. |
-| `spec.encryption.passphraseSecretRef.key` | string |  | `Key` defaults to "passphrase". |
-| `spec.encryption.passphraseSecretRef.name` | string | yes |  |
-| `spec.encryption.recipients` | []string |  | `Recipients` are age public keys (age1…) to encrypt to, used with mode: recipient. |
-| `spec.keepLast` | integer (int32) |  | `KeepLast` retains this many finished exports and deletes the rest. |
-| `spec.retention` | object |  | `Retention` spreads what survives across widening intervals — daily, weekly, monthly, yearly — so history reaches back months without keeping a bundle a night. |
-| `spec.retention.keepDaily` | integer (int32) |  | `KeepDaily`, KeepWeekly, KeepMonthly and KeepYearly each retain the most recent export within that many distinct periods. |
-| `spec.retention.keepLast` | integer (int32) |  | `KeepLast` retains this many most recent finished exports regardless of age. |
-| `spec.retention.keepMonthly` | integer (int32) |  |  |
-| `spec.retention.keepWeekly` | integer (int32) |  |  |
-| `spec.retention.keepYearly` | integer (int32) |  |  |
-| `spec.schedule` | string | yes | `Schedule` is a five-field cron expression, interpreted in UTC. |
-| `spec.suspend` | boolean |  | `Suspend` stops new exports without deleting the schedule or its history. |
-| `status` | object |  | TenantExportScheduleStatus reports what the schedule has done. |
-| `status.conditions` | []object |  | `Conditions` carry Ready, which is False when the schedule is unusable (an invalid expression) rather than merely idle. |
-| `status.conditions[].lastTransitionTime` | string (date-time) | yes | `lastTransitionTime` is the last time the condition transitioned from one status to another. |
-| `status.conditions[].message` | string | yes | `message` is a human readable message indicating details about the transition. |
-| `status.conditions[].observedGeneration` | integer (int64) |  | `observedGeneration` represents the .metadata.generation that the condition was set based upon. |
-| `status.conditions[].reason` | string | yes | `reason` contains a programmatic identifier indicating the reason for the condition's last transition. |
-| `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
-| `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.lastExportName` | string |  | `LastExportName` is the export created then, so the outcome is one lookup away rather than a search through the namespace. |
-| `status.lastScheduleTime` | string (date-time) |  | `LastScheduleTime` is when an export was last created. |
-| `status.lastSuccessfulTime` | string (date-time) |  | `LastSuccessfulTime` is when an export from this schedule last reached Ready. |
-| `status.nextScheduleTime` | string (date-time) |  | `NextScheduleTime` is when the next export is due. |
-| `status.observedGeneration` | integer (int64) |  |  |
-
-## 23. TenantRestore
+## 21. TenantRestore
 
 | Attribute | Value |
 |---|---|
@@ -2144,7 +2050,7 @@ TenantRestore restores a tenant's data from a bundle.
 | `status.sourceTenant` | string |  | `SourceTenant` is the tenant the bundle was taken of, as its manifest records it: the tenant restored into, as a bundle of any other is refused. |
 | `status.startedAt` | string (date-time) |  |  |
 
-## 24. XTenant
+## 22. XTenant
 
 | Attribute | Value |
 |---|---|

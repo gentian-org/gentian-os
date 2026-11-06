@@ -852,7 +852,7 @@ func TestTheOperatorMayDeleteTheResidueKindsAndWritesNoComposition(t *testing.T)
 		// gone and the record has been readable for a while, and with a
 		// tenant that is deleted with its data.
 		"customizations", "integrationbindings", "mailboxremovals", "oidcpackcatalogs", "platformsecuritypolicies", "tenantexports",
-		"tenantexportschedules", "tenantrestores", "tenants", "xtenants",
+		"tenantrestores", "tenants", "xtenants",
 	}
 	if !reflect.DeepEqual(deletable, want) {
 		t.Errorf("the operator may delete %v of gentianos.io, want %v", deletable, want)

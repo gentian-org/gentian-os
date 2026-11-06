@@ -29,9 +29,6 @@ spec:
     - jsonPath: .status.effectiveBucket
       name: Bucket
       type: string
-    - jsonPath: .status.effectiveSchedule
-      name: Schedule
-      type: string
     - jsonPath: .status.credentialSatisfied
       name: Credential
       priority: 1
@@ -43,8 +40,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          BackupPolicy is where a tenant's bundles go, how often, and how long they
-          are kept.
+          BackupPolicy is where a tenant's bundles go and who can read them.
 
           Cluster-scoped for both scopes, as CredentialRequirement is: the console
           mediates access by spec.tenant, and the credential itself is governed by the
@@ -162,45 +158,6 @@ spec:
                     maxItems: 8
                     type: array
                 type: object
-              retention:
-                description: Retention decides which bundles survive. Unset inherits.
-                properties:
-                  keepDaily:
-                    description: |-
-                      KeepDaily, KeepWeekly, KeepMonthly and KeepYearly each retain the most
-                      recent export within that many distinct periods. A bundle kept by any
-                      tier survives; the tiers are a union, not a sequence.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepLast:
-                    description: |-
-                      KeepLast retains this many most recent finished exports regardless of
-                      age. Zero relies entirely on the tiers below; with no tiers either,
-                      nothing is deleted — a decision rather than a default, and the right one
-                      only when something else prunes.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepMonthly:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepWeekly:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepYearly:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                type: object
-              schedule:
-                description: |-
-                  Schedule is a five-field cron expression, in UTC. Empty inherits; use
-                  SuspendSchedule to mean none.
-                maxLength: 128
-                type: string
               scope:
                 description: |-
                   Scope decides whether this is the cluster default or one tenant's
@@ -210,12 +167,6 @@ spec:
                 - cluster
                 - tenant
                 type: string
-              suspendSchedule:
-                description: |-
-                  SuspendSchedule turns scheduled backups off, distinctly from inheriting.
-                  Without it "no schedule" and "not stated" would be the same value, and a
-                  tenant could not opt out of a cluster-wide schedule.
-                type: boolean
               tenant:
                 description: |-
                   Tenant names the tenant a tenant-scoped policy belongs to. Empty for
@@ -302,8 +253,8 @@ spec:
                 description: |-
                   CredentialRequirement names the requirement carrying this destination's
                   keys, and CredentialSatisfied reports whether it has been filled. A
-                  destination whose credential is unsatisfied is a policy that will fail
-                  at 03:00; surfaced here it is a red field in the console instead.
+                  destination whose credential is unsatisfied is a policy whose next
+                  export will fail; surfaced here it is a red field in the console instead.
                 type: string
               credentialSatisfied:
                 type: boolean
@@ -311,9 +262,9 @@ spec:
                 type: string
               effectiveEndpoint:
                 description: |-
-                  EffectiveEndpoint, EffectiveBucket and EffectiveSchedule are the values
-                  in force after inheritance, published so an admin reads what applies
-                  rather than recomputing the merge.
+                  EffectiveEndpoint and EffectiveBucket are the values in force after
+                  inheritance, published so an admin reads what applies rather than
+                  recomputing the merge.
                 type: string
               effectiveRecipients:
                 description: |-
@@ -325,8 +276,6 @@ spec:
                 items:
                   type: string
                 type: array
-              effectiveSchedule:
-                type: string
               observedGeneration:
                 format: int64
                 type: integer

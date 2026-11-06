@@ -337,7 +337,7 @@ which app is calling ([app-customization.md §2.3](../guides/app-customization.m
 domain, tenancy mode, mail, models, catalogs), `Customization`
 ([app-customization.md §5](../guides/app-customization.md)), `AppPackage`, `AppGrant`,
 `Branding`, `ResourcePlan`, `TenantDomain`, `BackupPolicy`, `TenantExport`,
-`TenantExportSchedule`, `TenantRestore`, `MailboxRemoval`,
+`TenantRestore`, `MailboxRemoval`,
 `CredentialRequirement`, `OIDCPackCatalog`, `PlatformSecurityPolicy`,
 `BundleSource`, `ProfileBuild`. Profile
 fields, tiers and contracts are in
@@ -573,9 +573,10 @@ profile or as an addon of it. See
 
 A tenant is backed up as a whole. A `TenantExport` captures one tenant's
 data — its apps' databases, buckets, volumes and vault paths, and its
-realm — into an encrypted bundle; a `TenantExportSchedule` repeats it and
-expires old bundles; a `BackupPolicy` names object storage other than the
-platform's own to write them to; a `TenantRestore` or `kubectl gentian tenants import` brings one back, on the
+realm — into an encrypted bundle; a `BackupPolicy` names object storage
+other than the platform's own to write them to and the keys they are
+encrypted to; backups on a schedule are an add-on's, which creates the
+exports; a `TenantRestore` or `kubectl gentian tenants import` brings one back, on the
 same cluster or another. A profile's `spec.backup` says how its app is
 quiesced and what of it is captured. The cluster itself is rebuilt from git
 and its recovery kit.

@@ -30,6 +30,20 @@ import (
 // later and wants to know who took it.
 const RequestedByAnnotation = "gentianos.io/requested-by"
 
+// TenantExportScheduleLabel names, on an export, the schedule that took it.
+// An export without it was started by a person. Schedules are not the
+// platform's: an add-on that takes exports on one sets this, and the
+// platform reads it only to tell scheduled exports from the others.
+const TenantExportScheduleLabel = "gentianos.io/tenant-export-schedule"
+
+// TenantExportReasonLabel says why the platform took an export nobody asked
+// for; TenantExportReasonMove is one taken before an app moved to another
+// build, kept for going back.
+const (
+	TenantExportReasonLabel = "gentianos.io/export-reason"
+	TenantExportReasonMove  = "move"
+)
+
 // TenantExportSpec requests a point-in-time capture of one tenant's data.
 //
 // The resource lives in the tenant's own namespace, so a tenant's exports stay

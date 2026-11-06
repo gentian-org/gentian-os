@@ -249,12 +249,12 @@ func TestAPolicyIsCommittedAndABackupIsStarted(t *testing.T) {
 	// Declared state: a commit, and the file a reviewer reads.
 	before := h.tip(t)
 	code, body := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", tom,
-		`{"schedule":"0 3 * * *","retention":{"keepDaily":7},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`)
+		`{"destination":{"bucket":"demo-bundles"},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
 		t.Fatalf("policy write: %d %v", code, body)
 	}
 	policy := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/backup-policy.yaml")
-	for _, want := range []string{"kind: BackupPolicy", "scope: tenant", "tenant: demo", `schedule: "0 3 * * *"`, "keepDaily: 7", "recipients:"} {
+	for _, want := range []string{"kind: BackupPolicy", "scope: tenant", "tenant: demo", "demo-bundles", "recipients:"} {
 		if !strings.Contains(policy, want) {
 			t.Errorf("policy is missing %q:\n%s", want, policy)
 		}
@@ -265,7 +265,7 @@ func TestAPolicyIsCommittedAndABackupIsStarted(t *testing.T) {
 	}
 	// Writing the same thing again changes nothing.
 	if code, body = h.do(t, "PUT", "/v1/tenants/demo/backup-policy", tom,
-		`{"schedule":"0 3 * * *","retention":{"keepDaily":7},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`); code != http.StatusOK || body["status"] != "unchanged" {
+		`{"destination":{"bucket":"demo-bundles"},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`); code != http.StatusOK || body["status"] != "unchanged" {
 		t.Fatalf("rewriting the same policy: %d %v", code, body)
 	}
 
@@ -300,7 +300,7 @@ func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
 
 	// A member may read backups and change nothing.
 	mia := h.token(t, "tenant-demo", "mia")
-	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", mia, `{"schedule":"0 4 * * *"}`); code != http.StatusForbidden {
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", mia, `{"destination":{"bucket":"elsewhere"}}`); code != http.StatusForbidden {
 		t.Fatalf("a member set the policy: %d", code)
 	}
 	if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/backup", mia, `{}`); code != http.StatusForbidden {
@@ -312,7 +312,7 @@ func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
 		t.Fatalf("a stranger took a backup: %d", code)
 	}
 	// The cluster's own policy is the cluster's to set.
-	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, `{"schedule":"0 4 * * *"}`); code != http.StatusForbidden {
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, `{"destination":{"bucket":"elsewhere"}}`); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin set the cluster's policy: %d", code)
 	}
 	if h.tip(t) != before {
@@ -321,13 +321,21 @@ func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
 
 	alice := h.token(t, "gentian", "alice") // platform administrator
 	code, body := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
-		`{"schedule":"0 1 * * *","allowTenantOverride":false}`)
+		`{"allowTenantOverride":false}`)
 	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
 		t.Fatalf("cluster policy: %d %v", code, body)
 	}
 	claim := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/backup-policy.yaml")
 	if !strings.Contains(claim, "scope: cluster") || !strings.Contains(claim, "allowTenantOverride: false") {
 		t.Fatalf("cluster policy:\n%s", claim)
+	}
+	// A schedule is not a policy's to state: scheduled backups are an
+	// add-on's. Refused rather than dropped, so a caller that still sends
+	// one learns it is not kept.
+	tip := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"schedule":"0 1 * * *"}`); code != http.StatusBadRequest || h.tip(t) != tip {
+		t.Fatalf("a policy with a schedule: %d, want 400 and nothing committed", code)
 	}
 
 	// A destination's addressing style is committed as stated, and one the

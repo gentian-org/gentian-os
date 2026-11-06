@@ -16,9 +16,10 @@ Backup is **per tenant**. A `TenantExport` captures one tenant into one
 encrypted bundle in object storage: each app's databases (PostgreSQL and
 MariaDB dumps), buckets and volume claims, the tenant's realm, its mailboxes
 where the cluster runs its own mail server, and the rights that follow from
-nothing else. A `BackupPolicy` says where bundles go, when they are taken and
-how long they are kept; the operator turns it into a `TenantExportSchedule`
-per tenant. What a bundle carries per kind is in
+nothing else. A `BackupPolicy` says where bundles go and which keys they are
+encrypted to. The platform takes a backup when it is asked for one; taking
+them on a schedule and expiring old ones is an add-on's, which creates the
+`TenantExport`s. What a bundle carries per kind is in
 [data-lifecycle.md](data-lifecycle.md); the reference is §9.
 
 The vault, and the transit seal that unseals it, are the kernel stores the

@@ -36,9 +36,8 @@ func TestBackupPolicyNameMustMatchItsScope(t *testing.T) {
 		return &gentianov1alpha1.BackupPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec: gentianov1alpha1.BackupPolicySpec{
-				Scope:    scope,
-				Tenant:   tenant,
-				Schedule: "0 3 * * *",
+				Scope:  scope,
+				Tenant: tenant,
 			},
 		}
 	}

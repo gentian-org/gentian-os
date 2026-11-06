@@ -26,8 +26,8 @@ import (
 
 // A backup policy, as a commit.
 //
-// A policy is declared state: where bundles go, how often, how long they are
-// kept and whose key they are readable with. So it is written the way every
+// A policy is declared state: where bundles go and whose key they are
+// readable with. So it is written the way every
 // other piece of declared state is — a file in the deployments repository,
 // committed by the person who asked, synced by Argo CD, turned into a
 // BackupPolicy the reconciler resolves. Taking a backup is not this: that is
@@ -46,11 +46,8 @@ const BackupPolicyFile = "backup-policy.yaml"
 // CRD's spec and not a shape of its own: the director does not interpret a
 // policy, it commits one, and the reconciler is what resolves inheritance.
 type BackupPolicy struct {
-	Destination     *BackupDestination `json:"destination,omitempty"`
-	Schedule        string             `json:"schedule,omitempty"`
-	SuspendSchedule bool               `json:"suspendSchedule,omitempty"`
-	Retention       *BackupRetention   `json:"retention,omitempty"`
-	Encryption      *BackupEncryption  `json:"encryption,omitempty"`
+	Destination *BackupDestination `json:"destination,omitempty"`
+	Encryption  *BackupEncryption  `json:"encryption,omitempty"`
 	// AllowTenantOverride is read from the cluster's policy only. A tenant
 	// cannot grant itself the right to state one.
 	AllowTenantOverride *bool `json:"allowTenantOverride,omitempty"`
@@ -82,15 +79,6 @@ func (p BackupPolicy) validate() error {
 		}
 	}
 	return nil
-}
-
-// BackupRetention is which bundles survive.
-type BackupRetention struct {
-	KeepLast    int32 `json:"keepLast,omitempty"`
-	KeepDaily   int32 `json:"keepDaily,omitempty"`
-	KeepWeekly  int32 `json:"keepWeekly,omitempty"`
-	KeepMonthly int32 `json:"keepMonthly,omitempty"`
-	KeepYearly  int32 `json:"keepYearly,omitempty"`
 }
 
 // BackupEncryption names the age recipients bundles are encrypted to. Empty
@@ -375,18 +363,6 @@ func renderBackupPolicy(scope, tenant string, p BackupPolicy) string {
 		writeScalar(&b, "    bucket", d.Bucket)
 		writeScalar(&b, "    region", d.Region)
 		writeScalar(&b, "    addressingStyle", d.AddressingStyle)
-	}
-	writeScalar(&b, "  schedule", p.Schedule)
-	if p.SuspendSchedule {
-		b.WriteString("  suspendSchedule: true\n")
-	}
-	if r := p.Retention; r != nil {
-		b.WriteString("  retention:\n")
-		writeCount(&b, "    keepLast", r.KeepLast)
-		writeCount(&b, "    keepDaily", r.KeepDaily)
-		writeCount(&b, "    keepWeekly", r.KeepWeekly)
-		writeCount(&b, "    keepMonthly", r.KeepMonthly)
-		writeCount(&b, "    keepYearly", r.KeepYearly)
 	}
 	if e := p.Encryption; e != nil && len(e.Recipients) > 0 {
 		b.WriteString("  encryption:\n")

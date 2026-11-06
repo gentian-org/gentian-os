@@ -82,12 +82,6 @@ func TestConditionSettersTranscript(t *testing.T) {
 		name string
 		set  conditionSetter
 	}{
-		{"schedule", func(_ *testing.T, conds []metav1.Condition, _ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
-			o := &gentianov1alpha1.TenantExportSchedule{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
-			o.Status.Conditions = conds
-			setStatusCondition(&o.Status.Conditions, o.Generation, conditionScheduleReady, st, reason, message)
-			return o.Status.Conditions
-		}},
 		{"export", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.TenantExport{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds

@@ -132,10 +132,8 @@ rules:
     - profilebuilds.gentianos.io
     - repositories.gentianos.io
     - resourceplans.gentianos.io
-    - tenantbackuppolicies.gentianos.io
     - tenantdomains.gentianos.io
     - tenantexports.gentianos.io
-    - tenantexportschedules.gentianos.io
     - tenantrestores.gentianos.io
     - tenants.gentianos.io
     - xapps.gentianos.io
@@ -336,7 +334,6 @@ rules:
     - integrationbindings
     - platformsecuritypolicies
     - tenantexports
-    - tenantexportschedules
     - tenantrestores
     - tenants
     - xtenants
@@ -362,7 +359,6 @@ rules:
     - platformsecuritypolicies/status
     - profilebuilds/status
     - tenantexports/status
-    - tenantexportschedules/status
     - tenantrestores/status
     - tenants/status
     - xclusters/status

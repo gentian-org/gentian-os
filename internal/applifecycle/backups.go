@@ -86,18 +86,14 @@ type BackupPolicyResult struct {
 	// Configured is false when this scope states nothing and inherits
 	// everything. An empty policy and an absent one are the same answer here,
 	// and the screen renders "inherited" rather than a form full of blanks.
-	Configured      bool                    `json:"configured"`
-	Destination     BackupDestinationResult `json:"destination"`
-	Schedule        string                  `json:"schedule,omitempty"`
-	SuspendSchedule bool                    `json:"suspendSchedule"`
-	Retention       BackupRetentionResult   `json:"retention"`
-	Encryption      BackupEncryptionResult  `json:"encryption"`
+	Configured  bool                    `json:"configured"`
+	Destination BackupDestinationResult `json:"destination"`
+	Encryption  BackupEncryptionResult  `json:"encryption"`
 	// AllowTenantOverride is read from the cluster policy only.
 	AllowTenantOverride bool `json:"allowTenantOverride"`
 	// The effective values, as the reconciler resolved them.
 	EffectiveEndpoint   string   `json:"effectiveEndpoint,omitempty"`
 	EffectiveBucket     string   `json:"effectiveBucket,omitempty"`
-	EffectiveSchedule   string   `json:"effectiveSchedule,omitempty"`
 	EffectiveRecipients []string `json:"effectiveRecipients"`
 	// CredentialRequirement names what has to be supplied before bundles can
 	// be written to this destination, and whether it has been.
@@ -114,39 +110,12 @@ type BackupDestinationResult struct {
 	AddressingStyle string `json:"addressingStyle,omitempty"`
 }
 
-// BackupRetentionResult is which bundles survive.
-type BackupRetentionResult struct {
-	KeepLast    int32 `json:"keepLast"`
-	KeepDaily   int32 `json:"keepDaily"`
-	KeepWeekly  int32 `json:"keepWeekly"`
-	KeepMonthly int32 `json:"keepMonthly"`
-	KeepYearly  int32 `json:"keepYearly"`
-}
-
 // BackupEncryptionResult names the keys bundles are encrypted to. An empty
 // recipient list means the platform's own key, which is what makes a restore
 // something the platform can help with.
 type BackupEncryptionResult struct {
 	Mode       string   `json:"mode"`
 	Recipients []string `json:"recipients"`
-}
-
-// BackupScheduleResult is one schedule as the API presents it.
-type BackupScheduleResult struct {
-	Name      string `json:"name"`
-	Tenant    string `json:"tenant"`
-	Schedule  string `json:"schedule"`
-	Suspended bool   `json:"suspended"`
-	// Managed is true for the schedule the BackupPolicy reconciler owns.
-	// Editing that one is reverted on the next reconcile, so the screen shows
-	// it as derived rather than offering a form that will not hold.
-	Managed            bool                   `json:"managed"`
-	Retention          BackupRetentionResult  `json:"retention"`
-	Encryption         BackupEncryptionResult `json:"encryption"`
-	LastScheduleTime   string                 `json:"lastScheduleTime,omitempty"`
-	LastSuccessfulTime string                 `json:"lastSuccessfulTime,omitempty"`
-	NextScheduleTime   string                 `json:"nextScheduleTime,omitempty"`
-	Message            string                 `json:"message,omitempty"`
 }
 
 // Backups lists a tenant's exports, newest first.
@@ -213,18 +182,14 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 			break
 		}
 		result.Configured = true
-		result.Schedule = policy.Spec.Schedule
-		result.SuspendSchedule = policy.Spec.SuspendSchedule
 		result.AllowTenantOverride = policy.Spec.OverrideAllowed()
 		if d := policy.Spec.Destination; d != nil {
 			result.Destination = BackupDestinationResult{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region,
 				AddressingStyle: string(d.AddressingStyle)}
 		}
-		result.Retention = retentionResult(policy.Spec.Retention)
 		result.Encryption = encryptionResult(policy.Spec.Encryption)
 		result.EffectiveEndpoint = policy.Status.EffectiveEndpoint
 		result.EffectiveBucket = policy.Status.EffectiveBucket
-		result.EffectiveSchedule = policy.Status.EffectiveSchedule
 		if policy.Status.EffectiveRecipients != nil {
 			result.EffectiveRecipients = policy.Status.EffectiveRecipients
 		}
@@ -241,7 +206,6 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 		if err := s.client.Get(ctx, types.NamespacedName{Name: backup.ClusterPolicyName}, &cluster); err == nil {
 			result.EffectiveEndpoint = cluster.Status.EffectiveEndpoint
 			result.EffectiveBucket = cluster.Status.EffectiveBucket
-			result.EffectiveSchedule = cluster.Status.EffectiveSchedule
 			if cluster.Status.EffectiveRecipients != nil {
 				result.EffectiveRecipients = cluster.Status.EffectiveRecipients
 			}
@@ -251,32 +215,6 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 		}
 	}
 	return result, nil
-}
-
-// BackupSchedules lists the schedules for one tenant, or for every tenant.
-func (s *Service) BackupSchedules(ctx context.Context, tenantName string, allTenants bool) ([]BackupScheduleResult, error) {
-	opts := []client.ListOption{}
-	if !allTenants {
-		if _, err := s.getTenant(ctx, tenantName); err != nil {
-			return nil, err
-		}
-		opts = append(opts, client.InNamespace(layout.Tenant(tenantName)))
-	}
-	var list gentianov1alpha1.TenantExportScheduleList
-	if err := s.client.List(ctx, &list, opts...); err != nil {
-		return nil, fmt.Errorf("list schedules: %w", err)
-	}
-	out := make([]BackupScheduleResult, 0, len(list.Items))
-	for i := range list.Items {
-		out = append(out, scheduleResult(&list.Items[i]))
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Tenant != out[j].Tenant {
-			return out[i].Tenant < out[j].Tenant
-		}
-		return out[i].Name < out[j].Name
-	})
-	return out, nil
 }
 
 func backupSummary(e *gentianov1alpha1.TenantExport, tenantName string) BackupSummary {
@@ -329,61 +267,12 @@ func backupSummary(e *gentianov1alpha1.TenantExport, tenantName string) BackupSu
 	return out
 }
 
-func scheduleResult(s *gentianov1alpha1.TenantExportSchedule) BackupScheduleResult {
-	out := BackupScheduleResult{
-		Name: s.Name,
-		// A schedule names no tenant: it is in the tenant's namespace, which
-		// is what says whose it is.
-		Tenant:    tenantFromNamespace(s.Namespace),
-		Schedule:  s.Spec.Schedule,
-		Suspended: s.Spec.Suspend,
-		// The reconciler owns exactly one schedule per tenant and restates it
-		// from the policy on every pass.
-		Managed:    s.Name == backup.ManagedScheduleName,
-		Retention:  retentionResult(s.Spec.Retention),
-		Encryption: exportEncryptionResult(s.Spec.Encryption),
-		Message:    conditionMessage(s.Status.Conditions),
-	}
-	if t := s.Status.LastScheduleTime; t != nil {
-		out.LastScheduleTime = t.UTC().Format(metav1.RFC3339Micro)
-	}
-	if t := s.Status.LastSuccessfulTime; t != nil {
-		out.LastSuccessfulTime = t.UTC().Format(metav1.RFC3339Micro)
-	}
-	if t := s.Status.NextScheduleTime; t != nil {
-		out.NextScheduleTime = t.UTC().Format(metav1.RFC3339Micro)
-	}
-	return out
-}
-
-func retentionResult(r *gentianov1alpha1.BackupRetention) BackupRetentionResult {
-	if r == nil {
-		return BackupRetentionResult{}
-	}
-	return BackupRetentionResult{
-		KeepLast: r.KeepLast, KeepDaily: r.KeepDaily, KeepWeekly: r.KeepWeekly,
-		KeepMonthly: r.KeepMonthly, KeepYearly: r.KeepYearly,
-	}
-}
-
 // encryptionResult reads a policy's encryption. No recipients of its own
 // means the platform's key, which is what makes a restore something the
 // platform can help with; recipients mean a key only the tenant holds.
 func encryptionResult(e *gentianov1alpha1.BackupEncryption) BackupEncryptionResult {
 	out := BackupEncryptionResult{Mode: "platform", Recipients: []string{}}
 	if e.IsSet() {
-		out.Mode = "own"
-		out.Recipients = e.Recipients
-	}
-	return out
-}
-
-// exportEncryptionResult reads a schedule's, which is the export type rather
-// than the policy type — the same question, asked of the object that carries
-// what each run will do.
-func exportEncryptionResult(e *gentianov1alpha1.ExportEncryption) BackupEncryptionResult {
-	out := BackupEncryptionResult{Mode: "platform", Recipients: []string{}}
-	if e != nil && len(e.Recipients) > 0 {
 		out.Mode = "own"
 		out.Recipients = e.Recipients
 	}
@@ -402,14 +291,6 @@ func conditionMessage(conditions []metav1.Condition) string {
 		if conditions[i].Type == "Ready" {
 			return conditions[i].Message
 		}
-	}
-	return ""
-}
-
-func tenantFromNamespace(ns string) string {
-	const prefix = "tenant-"
-	if len(ns) > len(prefix) && ns[:len(prefix)] == prefix {
-		return ns[len(prefix):]
 	}
 	return ""
 }
