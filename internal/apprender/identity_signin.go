@@ -15,6 +15,8 @@ import (
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // signInSidecar is the sign-in sidecar's registration at the realm
@@ -107,7 +109,7 @@ func (id *identityScope) signInSidecar() []*unstructured.Unstructured {
 	// removes a client's roles, their grants and its mappers with the
 	// client.
 	roleName := id.name("sign-in-admin-role")
-	adminsGroup := identityGroupName(fmt.Sprintf("gentian:tenant:%s:app-admins", id.tenant))
+	adminsGroup := identityGroupName(keycloak.TenantAppAdminsGroup(id.tenant))
 	objs = append(objs,
 		identityObject("role.keycloak.crossplane.io/v1alpha1", "Role", roleName, map[string]interface{}{
 			"deletionPolicy": "Orphan",

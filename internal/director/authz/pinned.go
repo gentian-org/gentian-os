@@ -15,8 +15,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 )
 
@@ -111,3 +113,35 @@ func (c *OpenFGA) pinnedOnce(ctx context.Context, o Options, want map[string]any
 	}
 	return "", fmt.Errorf("authz: store %s does not hold the model this service was built with yet; the operator writes it", o.StoreID)
 }
+
+// pinWait is how long OpenPinned waits for the operator's model.
+const pinWait = 5 * time.Minute
+
+// OpenPinned opens the store the operator established and recorded, for a
+// process that only reads the graph: the store and the model in
+// OPENFGA_STORE_ID and OPENFGA_MODEL_ID, at baseURL with OPENFGA_API_TOKEN,
+// as Pinned finds them within five minutes. Without the record it refuses,
+// rather than find a store by its name.
+func OpenPinned(baseURL string, log *slog.Logger) (*OpenFGA, error) {
+	o := Options{
+		BaseURL:  baseURL,
+		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
+		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
+		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
+		Logger:   log,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pinWait)
+	defer cancel()
+	storeID, modelID, err := Pinned(ctx, o)
+	if err != nil {
+		return nil, fmt.Errorf("authorization store: %w", err)
+	}
+	o.StoreID, o.ModelID = storeID, modelID
+	return NewOpenFGA(o)
+}
+
+// StoreID is the store every question is asked of.
+func (c *OpenFGA) StoreID() string { return c.storeID }
+
+// ModelID is the model every question is decided against.
+func (c *OpenFGA) ModelID() string { return c.modelID }
