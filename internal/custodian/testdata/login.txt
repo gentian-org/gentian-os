@@ -1,10 +1,10 @@
-no CA, self-signed: timeout=15s verify=system roots; token="" upstream=true login=false err="openbao unreachable: Post \"https://<vault>/v1/auth/kubernetes/login\": <tls failure>"
-its CA: timeout=15s verify=configured roots (1); token="s.tok" ok
-CA not PEM: timeout=15s verify=system roots; token="" upstream=true login=false err="openbao unreachable: Post \"https://<vault>/v1/auth/kubernetes/login\": <tls failure>"
-CA empty: timeout=15s verify=system roots; token="" upstream=true login=false err="openbao unreachable: Post \"https://<vault>/v1/auth/kubernetes/login\": <tls failure>"
-skip verify: timeout=15s verify=no verification; token="s.tok" ok
-login refused: timeout=15s verify=configured roots (1); token="" upstream=false login=true err="the custodian could not log in to OpenBao: role \"gentian-os-custodian\" answered HTTP 400"
-no token in the answer: timeout=15s verify=configured roots (1); token="" upstream=false login=true err="the custodian could not log in to OpenBao: the login answer carried no token"
-unreachable: upstream=true login=false err="openbao unreachable: Post \"https://<vault>/v1/auth/kubernetes/login\": <dial failure>"
-no ServiceAccount token: upstream=false login=true err="the custodian could not log in to OpenBao: reading the ServiceAccount token: <no such file>"
+no CA, self-signed: timeout=10s verify=system roots (default transport); token="" upstream=true login=false err="openbao kubernetes login: Post \"https://<vault>/v1/auth/kubernetes/login\": <tls failure>"
+its CA: timeout=10s verify=configured roots (1); token="s.tok" ok
+CA not PEM: timeout=10s verify=configured roots (0); token="" upstream=true login=false err="openbao kubernetes login: Post \"https://<vault>/v1/auth/kubernetes/login\": <tls failure>"
+CA empty: timeout=10s verify=configured roots (0); token="" upstream=true login=false err="openbao kubernetes login: Post \"https://<vault>/v1/auth/kubernetes/login\": <tls failure>"
+skip verify: timeout=10s verify=no verification; token="s.tok" ok
+login refused: timeout=10s verify=configured roots (1); token="" upstream=false login=true err="the custodian could not log in to OpenBao: OpenBao refused role \"gentian-os-custodian\""
+no token in the answer: timeout=10s verify=configured roots (1); token="" upstream=false login=true err="the custodian could not log in to OpenBao: OpenBao refused role \"gentian-os-custodian\""
+unreachable: upstream=true login=false err="openbao kubernetes login: Post \"https://<vault>/v1/auth/kubernetes/login\": <dial failure>"
+no ServiceAccount token: upstream=false login=true err="the custodian could not log in to OpenBao: read SA token <path>: <no such file>"
 static token: token="static" err=<nil> forgotten=false

@@ -58,7 +58,7 @@ func asCustodian(t *testing.T, b *OpenBao) *OpenBao {
 	if err := os.WriteFile(path, []byte("sa.jwt.token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	b.ServiceAccountTokenPath = path
+	b.SATokenPath = path
 	return b
 }
 
@@ -105,7 +105,7 @@ func TestLogin_SelfSignedWithCA_SucceedsAndIsKept(t *testing.T) {
 		t.Fatalf("logged in %d times for three requests", logins)
 	}
 	// Told its token is no good, it logs in again.
-	b.forget("s.tok")
+	b.Forget("s.tok")
 	if _, err := b.Token(context.Background()); err != nil || logins != 2 {
 		t.Fatalf("after forgetting: logins = %d, err = %v", logins, err)
 	}
@@ -121,8 +121,8 @@ func TestLogin_SkipVerify_Succeeds(t *testing.T) {
 	}
 }
 
-// Garbage in the CA Secret must not silently disable TLS. Falling back to the
-// system roots fails closed; falling back to InsecureSkipVerify would not.
+// Garbage in the CA Secret verifies nothing: neither the system roots nor
+// InsecureSkipVerify take its place.
 func TestLogin_InvalidCAPEM_StillVerifies(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
 	b := asCustodian(t, NewOpenBao(srv.URL, "secret", "gentian-os-custodian", []byte("not a certificate"), false))

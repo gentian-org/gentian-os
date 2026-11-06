@@ -33,6 +33,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/handover"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -189,7 +190,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 			// ServiceAccount by the cluster's Composition.
 			envOr("CUSTODIAN_BAO_ROLE", "gentian-os-custodian"),
 			loadBaoCA(mgr),
-			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
+			secrets.SkipVerifyFromEnv(),
 		),
 		Validator: validator,
 		Authz:     authorizer,
@@ -258,14 +259,17 @@ func clusterRelayResolver(mgr manager.Manager) RelayResolver {
 //
 // Returns nil when it cannot be found, which keeps the system roots: a cluster
 // that gave OpenBao a publicly trusted certificate needs no CA here, and
-// failing startup over a missing one would break it.
+// failing startup over a missing one would break it. A CA file that cannot be
+// read, or a Secret that holds no certificate, is a CA that verifies nothing.
 func loadBaoCA(mgr manager.Manager) []byte {
 	log := ctrl.Log.WithName("custodian")
 	if path := os.Getenv("BAO_CACERT"); path != "" {
 		pem, err := os.ReadFile(path)
 		if err != nil {
+			// A CA that cannot be read verifies nothing: every request to
+			// the vault fails rather than trusting the system roots.
 			log.Error(err, "reading BAO_CACERT", "path", path)
-			return nil
+			return []byte{}
 		}
 		return pem
 	}
@@ -305,8 +309,10 @@ func loadBaoCA(mgr manager.Manager) []byte {
 			return pem
 		}
 	}
-	log.Info("OpenBao CA Secret has neither ca.crt nor tls.crt", "secret", namespace+"/"+name)
-	return nil
+	// A CA Secret without a certificate verifies nothing: every request to
+	// the vault fails rather than trusting the system roots.
+	log.Error(nil, "OpenBao CA Secret has neither ca.crt nor tls.crt", "secret", namespace+"/"+name)
+	return []byte{}
 }
 
 func envOr(key, def string) string {

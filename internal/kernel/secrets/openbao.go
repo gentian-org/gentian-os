@@ -13,167 +13,28 @@ package secrets
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
-	"time"
 )
-
-// Default location of the projected ServiceAccount token inside any pod.
-const defaultSATokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 // KVClient is the minimal OpenBao KV v2 client used by the Seeder.
 //
-// Authentication mirrors the rest of the platform: it logs in via
-// auth/kubernetes/login using the projected ServiceAccount token of the pod
-// it runs in. The resulting client_token is cached and refreshed before its
-// TTL expires. No static long-lived token is needed anywhere in the cluster.
+// It logs in as the pod it runs in (Login); no static long-lived token is
+// needed anywhere in the cluster.
 type KVClient struct {
-	addr        string
-	mount       string
-	authPath    string // "kubernetes" by default
-	role        string // K8s auth role (e.g. "gentian-os-operator")
-	saTokenPath string // path to the projected SA JWT
-	http        *http.Client
-
-	mu       sync.Mutex
-	token    string
-	tokenExp time.Time
-	static   bool // the token was set by SetStaticToken and is never dropped
+	*Login
+	mount string
 }
 
-// NewKVClient constructs a KVClient that authenticates to OpenBao via the
-// Kubernetes auth method using role and the projected ServiceAccount token
-// at saTokenPath ("" → default /var/run/...).
+// NewKVClient constructs a KVClient that logs in to OpenBao at addr as role
+// with the projected ServiceAccount token at saTokenPath ("" → default
+// /var/run/...), verifying the vault as TransportFromEnv does.
 func NewKVClient(addr, role, saTokenPath string) *KVClient {
-	if saTokenPath == "" {
-		saTokenPath = defaultSATokenPath
-	}
-	return &KVClient{
-		addr:        strings.TrimRight(addr, "/"),
-		mount:       Mount,
-		authPath:    "kubernetes",
-		role:        role,
-		saTokenPath: saTokenPath,
-		http:        &http.Client{Timeout: 10 * time.Second, Transport: vaultTransport()},
-	}
-}
-
-// vaultTransport is how the client verifies the vault. BAO_CACERT (or
-// VAULT_CACERT) names the vault's CA certificate, openbao-ca, which the
-// installer copies into the operator's namespace; the vault is verified
-// against it alone. A CA file that cannot be read or holds no certificate
-// verifies nothing, so every request fails rather than trusting the system
-// roots in its place. Without one, the system roots are used, which is right
-// for a vault with a publicly trusted certificate. BAO_SKIP_VERIFY (or
-// VAULT_SKIP_VERIFY) turns verification off, for development only.
-func vaultTransport() http.RoundTripper {
-	if os.Getenv("BAO_SKIP_VERIFY") == "true" || os.Getenv("VAULT_SKIP_VERIFY") == "true" {
-		return &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	}
-	path := os.Getenv("BAO_CACERT")
-	if path == "" {
-		path = os.Getenv("VAULT_CACERT")
-	}
-	if path == "" {
-		return nil
-	}
-	pool := x509.NewCertPool()
-	if pem, err := os.ReadFile(path); err == nil {
-		pool.AppendCertsFromPEM(pem)
-	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	return tr
-}
-
-// authToken returns a valid OpenBao token, refreshing via Kubernetes auth
-// when no token is cached or the cached one is within 60s of expiry.
-func (c *KVClient) authToken(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.token != "" && time.Until(c.tokenExp) > 60*time.Second {
-		return c.token, nil
-	}
-
-	jwt, err := os.ReadFile(c.saTokenPath)
-	if err != nil {
-		return "", fmt.Errorf("read SA token %s: %w", c.saTokenPath, err)
-	}
-	body, _ := json.Marshal(map[string]string{
-		"role": c.role,
-		"jwt":  strings.TrimSpace(string(jwt)),
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("%s/v1/auth/%s/login", c.addr, c.authPath),
-		bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("openbao kubernetes login: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openbao kubernetes login: HTTP %d: %s", resp.StatusCode, string(raw))
-	}
-	var out struct {
-		Auth struct {
-			ClientToken   string `json:"client_token"`
-			LeaseDuration int    `json:"lease_duration"`
-		} `json:"auth"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("openbao kubernetes login: decode: %w", err)
-	}
-	if out.Auth.ClientToken == "" {
-		return "", fmt.Errorf("openbao kubernetes login: empty client_token")
-	}
-	c.token = out.Auth.ClientToken
-	if out.Auth.LeaseDuration > 0 {
-		c.tokenExp = time.Now().Add(time.Duration(out.Auth.LeaseDuration) * time.Second)
-	} else {
-		c.tokenExp = time.Now().Add(time.Hour)
-	}
-	return c.token, nil
-}
-
-// SetStaticToken bypasses Kubernetes auth and uses tok for every request.
-// Intended for unit tests against a fake OpenBao; production code paths
-// should always rely on the role-based login flow.
-func (c *KVClient) SetStaticToken(tok string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.token = tok
-	c.tokenExp = time.Now().Add(24 * time.Hour)
-	c.static = true
-}
-
-// forget drops tok if it is still the cached token, so the next request logs
-// in again, and reports whether a request is worth making again. A static
-// token is kept: there is nothing to log in with in its place.
-func (c *KVClient) forget(tok string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.static {
-		return false
-	}
-	if c.token == tok {
-		c.token, c.tokenExp = "", time.Time{}
-	}
-	return true
+	return &KVClient{Login: NewLogin(addr, role, saTokenPath, TransportFromEnv()), mount: Mount}
 }
 
 // refused reports an answer that refuses the token itself. OpenBao answers
@@ -190,7 +51,7 @@ func refused(status int) bool {
 // response's body.
 func (c *KVClient) send(ctx context.Context, method, url string, body []byte, contentType string) (*http.Response, error) {
 	for retried := false; ; retried = true {
-		tok, err := c.authToken(ctx)
+		tok, err := c.Token(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -206,11 +67,11 @@ func (c *KVClient) send(ctx context.Context, method, url string, body []byte, co
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
-		resp, err := c.http.Do(req)
+		resp, err := c.HTTP.Do(req)
 		if err != nil {
 			return nil, err
 		}
-		if retried || !refused(resp.StatusCode) || !c.forget(tok) {
+		if retried || !refused(resp.StatusCode) || !c.Forget(tok) {
 			return resp, nil
 		}
 		_ = resp.Body.Close()
@@ -220,7 +81,7 @@ func (c *KVClient) send(ctx context.Context, method, url string, body []byte, co
 // Exists reports whether a secret already exists at the given KV v2 logical
 // path (without the "data/" prefix — e.g. "gentian-os/tenants/t/apps/a/oidc").
 func (c *KVClient) Exists(ctx context.Context, logicalPath string) (bool, error) {
-	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), nil, "")
+	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/data/%s", c.Addr, c.mount, logicalPath), nil, "")
 	if err != nil {
 		return false, err
 	}
@@ -257,7 +118,7 @@ func (c *KVClient) put(ctx context.Context, logicalPath string, data map[string]
 	if err != nil {
 		return err
 	}
-	resp, err := c.send(ctx, http.MethodPost, fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), raw, "application/json")
+	resp, err := c.send(ctx, http.MethodPost, fmt.Sprintf("%s/v1/%s/data/%s", c.Addr, c.mount, logicalPath), raw, "application/json")
 	if err != nil {
 		return err
 	}
@@ -290,7 +151,7 @@ func (c *KVClient) Request(ctx context.Context, method, path string, body any) (
 	if method == http.MethodPatch {
 		contentType = "application/merge-patch+json"
 	}
-	resp, err := c.send(ctx, method, fmt.Sprintf("%s/v1/%s", c.addr, path), raw, contentType)
+	resp, err := c.send(ctx, method, fmt.Sprintf("%s/v1/%s", c.Addr, path), raw, contentType)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -342,7 +203,7 @@ var ErrNotFound = errors.New("not found")
 // Get reads the secret data at logicalPath. A path that holds nothing is
 // ErrNotFound.
 func (c *KVClient) Get(ctx context.Context, logicalPath string) (map[string]string, error) {
-	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/data/%s", c.addr, c.mount, logicalPath), nil, "")
+	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/data/%s", c.Addr, c.mount, logicalPath), nil, "")
 	if err != nil {
 		return nil, err
 	}

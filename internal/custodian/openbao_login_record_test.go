@@ -73,14 +73,14 @@ func TestLoginRecord(t *testing.T) {
 	add("unreachable: %s", describeLoginErr(err))
 
 	noJWT := NewOpenBao(ok.URL, "secret", "gentian-os-custodian", serverCAPEM(t, ok), false)
-	noJWT.ServiceAccountTokenPath = filepath.Join(t.TempDir(), "absent")
+	noJWT.SATokenPath = filepath.Join(t.TempDir(), "absent")
 	_, err = noJWT.Token(context.Background())
 	add("no ServiceAccount token: %s", describeLoginErr(err))
 
 	static := NewOpenBao(ok.URL, "secret", "gentian-os-custodian", nil, false)
 	static.SetStaticToken("static")
 	tok, err := static.Token(context.Background())
-	add("static token: token=%q err=%v forgotten=%v", tok, err, static.forget("static"))
+	add("static token: token=%q err=%v forgotten=%v", tok, err, static.Forget("static"))
 
 	got := strings.Join(lines, "\n") + "\n"
 	path := filepath.Join("testdata", "login.txt")
@@ -100,7 +100,7 @@ func TestLoginRecord(t *testing.T) {
 }
 
 func describeClient(c *http.Client) string {
-	roots := "default transport"
+	roots := "system roots (default transport)"
 	if tr, ok := c.Transport.(*http.Transport); ok && tr != nil {
 		roots = "system roots"
 		if conf := tr.TLSClientConfig; conf != nil {
@@ -121,6 +121,8 @@ func describeClient(c *http.Client) string {
 
 var vaultURL = regexp.MustCompile(`https://127\.0\.0\.1:\d+`)
 
+var tempPath = regexp.MustCompile(`/\S*/absent`)
+
 func describeLoginErr(err error) string {
 	if err == nil {
 		return "ok"
@@ -132,6 +134,7 @@ func describeLoginErr(err error) string {
 	if i := strings.Index(msg, "dial tcp"); i >= 0 {
 		msg = msg[:i] + "<dial failure>"
 	}
+	msg = tempPath.ReplaceAllString(msg, "<path>")
 	if i := strings.Index(msg, "open "); i >= 0 {
 		msg = msg[:i] + "<no such file>"
 	}
