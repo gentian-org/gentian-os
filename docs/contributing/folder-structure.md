@@ -34,7 +34,7 @@ cross into it, which is why the Makefile and CI name `./api/...` as well.
 The **syscall API**. One `*_types.go` per kind — `Tenant`, `TenantDomain`,
 `ComponentProfile`, `Component`, `AppPackage`, `AppGrant`, `Customization`,
 `IntegrationBinding`, `Branding`, `ResourcePlan`, `BackupPolicy`,
-`TenantExport`, `TenantExportSchedule`, `TenantRestore`, `MailboxRemoval`,
+`TenantExport`, `TenantRestore`, `MailboxRemoval`,
 `CredentialRequirement`, `OIDCPackCatalog`, `PlatformSecurityPolicy`,
 `BundleSource`, `ProfileBuild` — plus
 shared types (`types.go`, `profile_parts.go`, `catalogue_types.go`,

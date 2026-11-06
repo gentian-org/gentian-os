@@ -69,15 +69,13 @@ func (s *Server) stateRoutes() {
 	s.guarded("GET /v1/tenants/{t}/perimeter/traffic", "can_expose", tenantObject, s.relay("/perimeter/traffic", "from", "to", "stepSeconds"))
 	s.guarded("GET /v1/tenants/{t}/resources/report", "can_view", tenantObject, s.relay("/resources/report", "from", "to"))
 
-	// A tenant's backups: what exists, what each run did, the policy in
-	// force once inheritance is resolved, and when the next scheduled run
-	// is. Whoever may see a tenant may see whether its data is being kept.
+	// A tenant's backups: what exists, what each run did, and the policy in
+	// force once inheritance is resolved. Whoever may see a tenant may see whether its data is being kept.
 	// The bundle itself is not served here: the usher's identity does not
 	// fetch one.
 	s.guarded("GET /v1/tenants/{t}/backups", "can_view", tenantObject, s.relay("/backups"))
 	s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
 	s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.relay("/backup-policy"))
-	s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.relay("/backup-schedules"))
 	// Where one restore stands. The director starts it and answers with its
 	// name; what it did is read here, like a backup's.
 	s.guarded("GET /v1/tenants/{t}/restores/{name}", "can_view", tenantObject, s.tenantRestore)
@@ -103,7 +101,6 @@ func (s *Server) stateRoutes() {
 		// backend invoices the cluster's tenants from.
 		s.guarded("GET /v1/clusters/{c}/resources/report", "can_audit", clusterObject, s.clusterResourceReport)
 		s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", clusterObject, s.relayCluster("/v1/backup-policy"))
-		s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", clusterObject, s.relayCluster("/v1/backup-schedules"))
 		// The cluster's objects of one add-on's type: the platform tenant's,
 		// where the director writes them under can_configure.
 		s.guarded("GET /v1/clusters/{c}/extensions/{group}/{resource}", "can_audit", clusterObject, s.clusterExtensionObjects)

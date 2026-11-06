@@ -1,9 +1,3 @@
-# schedule
-new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
-the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=2}
-another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=kept generation=2}
-another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=kept generation=2}
-another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=2}
 # export
 new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
 the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=2}

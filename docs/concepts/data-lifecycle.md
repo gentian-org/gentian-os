@@ -504,5 +504,5 @@ Further technical limits (bundle format, MariaDB naming, cache keys) are in
 - Reference detail per kind, how retained data is found, the restore rules:
   [operations.md](operations.md) §9.
 - Commands: [commands.md](../reference/commands.md) §4 (retire, delete), §6 (install,
-  uninstall, purge), §11 to §15 (backup, restore, import, policy, schedules).
+  uninstall, purge), §11 to §13 (backup, restore, import, restore drill).
 - What a purge answers: [store-contract.md](store-contract.md) §8.

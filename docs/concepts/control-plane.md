@@ -608,7 +608,7 @@ corrects the difference. The operator runs these:
 | Platform security policy | The list of permitted exceptions to the default security rules, in the form the admission rules read. |
 | App grant | Records that a grant between two apps was taken in. |
 | Integration binding | The credentials and network rule that let one app use a service another app provides. |
-| Backup policy, export schedule, tenant export, tenant restore | Where backups go and the credential for it; backups on a schedule and their expiry; one backup bundle; one restore from a bundle. |
+| Backup policy, tenant export, tenant restore | Where backups go and the credential for it; one backup bundle; one restore from a bundle. |
 | Customization | The report of customizations that are overdue for review or have drifted. |
 | DNS publication check, usage sampler | Whether published DNS records are really served; how much each tenant consumes. |
 
@@ -663,10 +663,10 @@ two kinds of route ([internal/applifecycle](../../internal/applifecycle/)).
 - per tenant: the state of its apps; which uninstalled apps still hold data;
   what newer builds of one of its apps left behind; its resource ceiling, the
   plans it may move to, its usage and usage report; its backups and one
-  backup; its backup policy and schedules; its integrations; its notices; the
+  backup; its backup policy; its integrations; its notices; the
   traffic its published entries receive;
-- for the cluster: every tenant's resources; the backup policy and schedules;
-  the platform security rules in force; the customization report; the usage
+- for the cluster: every tenant's resources; the backup policy; the platform
+  security rules in force; the customization report; the usage
   statistics report; the result of the definitions check; what the catalog
   left behind; what awaits an approver.
 
@@ -916,9 +916,9 @@ and asks OpenFGA before it answers.
 | A tenant's tiles: the things this person may open, and whether the App Store is offered on this cluster | `can_enter` on the tenant; each tile is then checked separately |
 | The state of a tenant's apps; which uninstalled apps still hold data; what newer builds of one of its apps left behind | `can_view` on the tenant |
 | A tenant's resources, the plans it may move to, its usage and usage report | `can_view` on the tenant |
-| A tenant's backups and one backup, its backup policy and schedules, a restore's progress | `can_view` on the tenant |
+| A tenant's backups and one backup, its backup policy, a restore's progress | `can_view` on the tenant |
 | A tenant's integrations and notices; the traffic its published entries receive | `can_view` on the tenant |
-| Every tenant's resources; the cluster's backup policy and schedules | `can_audit` on the cluster |
+| Every tenant's resources; the cluster's backup policy | `can_audit` on the cluster |
 | What awaits an approver | `can_approve`, `can_approve_perimeter` or `can_configure` on the cluster |
 | The platform security rules in force; the customization report; the usage statistics report | `can_audit` on the cluster |
 | What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |

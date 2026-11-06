@@ -32,10 +32,6 @@ import (
 // any one app — the realm, the shell database, the manifest.
 const backupTenantComponent = "gentian-tenant"
 
-// scheduleLabel ties an export back to the schedule that created it, which is
-// how retention finds its own exports without touching a hand-made one.
-const scheduleLabel = gentianov1alpha1.TenantExportScheduleLabel
-
 // tenantNameFromNamespace recovers the tenant from its namespace, and returns
 // "" for a namespace that is not a tenant's.
 func tenantNameFromNamespace(namespace string) string {

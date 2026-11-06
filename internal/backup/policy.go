@@ -38,13 +38,6 @@ const (
 	// same object, and a console that looked under a different name would
 	// report a cluster with no policy while one was in force.
 	ClusterPolicyName = "default"
-
-	// ManagedScheduleName is the one TenantExportSchedule the policy
-	// reconciler owns per tenant. Named distinctly so a schedule an admin
-	// wrote by hand is never mistaken for one derived from policy, and never
-	// deleted by it — and so the console can say which of the two it is
-	// showing, because editing the derived one does not hold.
-	ManagedScheduleName = "policy"
 )
 
 // DestinationCredentialName is the CredentialRequirement carrying an
@@ -102,10 +95,6 @@ type Effective struct {
 	// empty for the platform's own storage, which needs no requirement.
 	CredentialName   string
 	CredentialSecret string
-
-	// Schedule is a cron expression in UTC; empty means no scheduled backups.
-	Schedule  string
-	Retention gentianov1alpha1.BackupRetention
 
 	// Recipients are the age public keys bundles are encrypted to. Empty means
 	// the cluster's own key, which the export controller resolves for itself;
@@ -218,15 +207,6 @@ func ResolveEffective(
 				eff.Bucket = d.Bucket
 			}
 		}
-		switch {
-		case p.Spec.SuspendSchedule:
-			eff.Schedule = ""
-		case p.Spec.Schedule != "":
-			eff.Schedule = p.Spec.Schedule
-		}
-		if p.Spec.Retention.IsSet() {
-			eff.Retention = *p.Spec.Retention
-		}
 		if p.Spec.Encryption.IsSet() {
 			// Replace, never append. A tenant that names its own key is asking
 			// for bundles nobody else can read; quietly adding the cluster's
@@ -249,9 +229,7 @@ func ResolveEffective(
 	if cluster != nil {
 		overrideAllowed = cluster.Spec.OverrideAllowed()
 	}
-	states := override.Spec.Destination.IsSet() ||
-		override.Spec.Schedule != "" || override.Spec.SuspendSchedule ||
-		override.Spec.Retention.IsSet() || override.Spec.Encryption.IsSet()
+	states := override.Spec.Destination.IsSet() || override.Spec.Encryption.IsSet()
 	if !overrideAllowed && states {
 		return eff, fmt.Errorf(
 			"this cluster does not permit tenants to set their own backup policy (allowTenantOverride is false)")
