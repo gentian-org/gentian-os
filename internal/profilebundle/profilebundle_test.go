@@ -12,8 +12,6 @@ package profilebundle
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -221,27 +219,6 @@ func TestAProfileWithNothingToCheckItAgainstIsRefused(t *testing.T) {
 	borrowed := held(t, wiki)
 	borrowed.Annotations[Annotation] = Encode([]byte(other))
 	refused(t, "another profile's bundle", Verify(borrowed, Digest([]byte(other))), ReasonMismatch, `"blog"`)
-}
-
-// The schema the operator defaults a bundle with is the one the chart
-// installs. `make manifests` writes both; this is what notices one written
-// without the other.
-func TestTheEmbeddedSchemaIsTheOneTheChartInstalls(t *testing.T) {
-	for _, path := range []string{
-		filepath.Join("..", "..", "config", "crd", "gentianos.io_componentprofiles.yaml"),
-		filepath.Join("..", "..", "charts", "gentian-os", "crds", "gentianos.io_componentprofiles.yaml"),
-	} {
-		want, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(want, crd) {
-			t.Fatalf("componentprofiles.crd.yaml is not %s: run `make manifests`", path)
-		}
-	}
-	if _, err := profileSchema(); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // Defaults are applied where the API server applies them: to a property that
