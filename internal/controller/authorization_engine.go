@@ -22,7 +22,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -167,18 +166,15 @@ func (r *AuthorizationEngineReconciler) ensureCredentials(ctx context.Context) (
 	}
 	dbPath := secrets.KernelPath("database", openfgaAppsCategory)
 	keyPath := secrets.KernelPath("authz", openfgaAppsCategory)
-	ref := func(key, path, property string) any {
-		return map[string]any{"secretKey": key, "remoteRef": map[string]any{"key": path, "property": property}}
-	}
 	if err := r.applyExternalSecret(ctx, arbiter.DatastoreSecret,
 		map[string]any{"uri": "postgres://{{ .user }}:{{ .password }}@{{ .host }}:{{ .port }}/{{ .name }}?sslmode=require"},
-		[]any{ref("user", dbPath, "user"), ref("password", dbPath, "password"), ref("host", dbPath, "host"),
-			ref("port", dbPath, "port"), ref("name", dbPath, "name")}); err != nil {
+		[]any{secrets.RemoteRef("user", dbPath, "user"), secrets.RemoteRef("password", dbPath, "password"), secrets.RemoteRef("host", dbPath, "host"),
+			secrets.RemoteRef("port", dbPath, "port"), secrets.RemoteRef("name", dbPath, "name")}); err != nil {
 		return "", err
 	}
 	if err := r.applyExternalSecret(ctx, arbiter.KeySecret,
 		map[string]any{"keys": "{{ .preshared_key }}"},
-		[]any{ref(instanceKeyProperty, keyPath, instanceKeyProperty)}); err != nil {
+		[]any{secrets.RemoteRef(instanceKeyProperty, keyPath, instanceKeyProperty)}); err != nil {
 		return "", err
 	}
 	return creds.Password, nil
@@ -187,41 +183,13 @@ func (r *AuthorizationEngineReconciler) ensureCredentials(ctx context.Context) (
 // applyExternalSecret keeps one ExternalSecret of the namespace, reading the
 // kernel's store, with the Secret it makes templated as given.
 func (r *AuthorizationEngineReconciler) applyExternalSecret(ctx context.Context, name string, template map[string]any, data []any) error {
-	spec := map[string]any{
-		"refreshInterval": "1h",
-		"secretStoreRef":  secrets.StoreRef(secrets.KernelStore),
-		"target": map[string]any{
-			"name":           name,
-			"creationPolicy": "Owner",
-			"template":       map[string]any{"engineVersion": "v2", "data": template},
-		},
-		"data": data,
-	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(externalSecretGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: arbiter.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		desired := &unstructured.Unstructured{}
-		desired.SetGroupVersionKind(externalSecretGVK)
-		desired.SetName(name)
-		desired.SetNamespace(arbiter.Namespace)
-		desired.SetLabels(map[string]string{managedByLabel: managedByValue})
-		if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], spec) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-		return err
-	}
-	return r.Patch(ctx, existing, patch)
+	desired := secrets.ExternalSecret(name, arbiter.Namespace, secrets.KernelStore, map[string]any{
+		"name":           name,
+		"creationPolicy": "Owner",
+		"template":       map[string]any{"engineVersion": "v2", "data": template},
+	}, data)
+	desired.SetLabels(map[string]string{managedByLabel: managedByValue})
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 // passwordFingerprint tells one password from another without saying
@@ -241,7 +209,7 @@ func passwordFingerprint(password string) string {
 // person would show as a hash that is not the record's.
 func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password string) (bool, error) {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: arbiter.DatastoreSecret, Namespace: arbiter.Namespace}, es); err != nil {
 		return false, err
 	}

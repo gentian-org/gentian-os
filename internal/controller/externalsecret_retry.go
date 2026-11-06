@@ -19,6 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // externalSecretRetryAfter is how long an ExternalSecret stays failed before
@@ -65,7 +67,7 @@ func (r *ExternalSecretRetryReconciler) now() time.Time {
 
 func (r *ExternalSecretRetryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := r.Get(ctx, req.NamespacedName, es); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -128,7 +130,7 @@ func externalSecretFailedSince(es *unstructured.Unstructured) (time.Time, bool) 
 
 func (r *ExternalSecretRetryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(es).
 		Named("externalsecret-retry").

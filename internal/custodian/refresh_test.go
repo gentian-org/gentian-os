@@ -22,13 +22,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // consumer is an ExternalSecret reading one property of one vault path, which
 // is the shape this platform writes.
 func consumer(namespace, name, vaultPath string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(externalSecretGVK)
+	u.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	u.SetNamespace(namespace)
 	u.SetName(name)
 	_ = unstructured.SetNestedSlice(u.Object, []any{
@@ -43,7 +45,7 @@ func consumer(namespace, name, vaultPath string) *unstructured.Unstructured {
 // bulkConsumer reads a whole path with dataFrom, the shape a chart may use.
 func bulkConsumer(namespace, name, vaultPath string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(externalSecretGVK)
+	u.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	u.SetNamespace(namespace)
 	u.SetName(name)
 	_ = unstructured.SetNestedSlice(u.Object, []any{
@@ -55,7 +57,7 @@ func bulkConsumer(namespace, name, vaultPath string) *unstructured.Unstructured 
 func annotationOf(t *testing.T, s *Server, namespace, name string) string {
 	t.Helper()
 	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(externalSecretGVK)
+	got.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := s.Client.Get(context.Background(),
 		types.NamespacedName{Namespace: namespace, Name: name}, got); err != nil {
 		t.Fatalf("get %s/%s: %v", namespace, name, err)

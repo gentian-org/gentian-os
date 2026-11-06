@@ -70,7 +70,7 @@ func TestTheAuthorizationEngineIsMadeWhileWanted(t *testing.T) {
 		arbiter.KeySecret:       "gentian-os/kernel/authz/openfga-apps",
 	} {
 		es := &unstructured.Unstructured{}
-		es.SetGroupVersionKind(externalSecretGVK)
+		es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: arbiter.Namespace}, es); err != nil {
 			t.Fatal(err)
 		}

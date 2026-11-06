@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
@@ -223,34 +224,9 @@ var identityManaged = []interface{}{"Observe", "Create", "Update", "Delete"}
 // confidential client's secret from, at the OpenBao path the app's own
 // ExternalSecret reads it from too.
 func (id *identityScope) clientCreds(name, openbaoPath string) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "external-secrets.io/v1",
-		"kind":       "ExternalSecret",
-		"metadata": map[string]interface{}{
-			"name":      name,
-			"namespace": id.provNs,
-		},
-		"spec": map[string]interface{}{
-			"refreshInterval": "1h",
-			"secretStoreRef": map[string]interface{}{
-				"kind": "ClusterSecretStore",
-				"name": "openbao",
-			},
-			"target": map[string]interface{}{
-				"name":           name,
-				"creationPolicy": "Owner",
-			},
-			"data": []interface{}{
-				map[string]interface{}{
-					"secretKey": "client-secret",
-					"remoteRef": map[string]interface{}{
-						"key":      openbaoPath,
-						"property": "client-secret",
-					},
-				},
-			},
-		},
-	}}
+	return secrets.ExternalSecret(name, id.provNs, secrets.KernelStore,
+		map[string]interface{}{"name": name, "creationPolicy": "Owner"},
+		[]interface{}{secrets.RemoteRef("client-secret", openbaoPath, "client-secret")})
 }
 
 // audienceMapper puts one name in the aud of a client's access tokens. A

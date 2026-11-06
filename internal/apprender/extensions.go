@@ -53,10 +53,7 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 	esData := []interface{}{}
 	set := []interface{}{}
 	add := func(secretKey, remoteKey, property, valuePath string) {
-		esData = append(esData, map[string]interface{}{
-			"secretKey": secretKey,
-			"remoteRef": map[string]interface{}{"key": remoteKey, "property": property},
-		})
+		esData = append(esData, secrets.RemoteRef(secretKey, remoteKey, property))
 		set = append(set, map[string]interface{}{
 			"name": valuePath,
 			"valueFrom": map[string]interface{}{"secretKeyRef": map[string]interface{}{
@@ -93,24 +90,11 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 
 	var objs []*unstructured.Unstructured
 	if len(esData) > 0 {
-		objs = append(objs, &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "external-secrets.io/v1",
-			"kind":       "ExternalSecret",
-			"metadata":   map[string]interface{}{"name": secretName, "namespace": ns},
-			"spec": map[string]interface{}{
-				"refreshInterval": "1h",
-				"secretStoreRef": map[string]interface{}{
-					"kind": "ClusterSecretStore",
-					"name": "openbao-tenant-" + tenant,
-				},
-				"target": map[string]interface{}{
-					"name":           secretName,
-					"creationPolicy": "Owner",
-					"deletionPolicy": "Retain",
-				},
-				"data": esData,
-			},
-		}})
+		objs = append(objs, secrets.ExternalSecret(secretName, ns, secrets.TenantStore(tenant), map[string]interface{}{
+			"name":           secretName,
+			"creationPolicy": "Owner",
+			"deletionPolicy": "Retain",
+		}, esData))
 	}
 
 	values, err := extensionValues(in, ext)

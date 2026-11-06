@@ -37,12 +37,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-var externalSecretGVK = schema.GroupVersionKind{
-	Group:   "external-secrets.io",
-	Version: "v1",
-	Kind:    "ExternalSecret",
-}
-
 // Server exposes the custodian API.
 //
 // It has no token field. The custodian's identity at the vault lives in the

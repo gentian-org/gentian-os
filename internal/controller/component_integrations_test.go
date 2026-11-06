@@ -40,7 +40,7 @@ func mappingProfile(m map[string]gentianov1alpha1.IntegrationValueMapping) *gent
 func getSensitiveValues(t *testing.T, c client.Client, comp *gentianov1alpha1.Component) (*unstructured.Unstructured, bool) {
 	t.Helper()
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	err := c.Get(context.Background(), types.NamespacedName{Name: sensitiveValuesName(comp), Namespace: comp.Namespace}, es)
 	if apierrors.IsNotFound(err) {
 		return nil, false
@@ -255,7 +255,7 @@ func TestTheSensitiveValuesAreRemovedWhenUnmappedAndForeignOnesLeftAlone(t *test
 		t.Run(name, func(t *testing.T) {
 			h := mappedWikiHarness(t)
 			foreign := &unstructured.Unstructured{}
-			foreign.SetGroupVersionKind(externalSecretGVK)
+			foreign.SetGroupVersionKind(secrets.ExternalSecretGVK)
 			foreign.SetName(sensitiveValuesName(h.comp))
 			foreign.SetNamespace(h.comp.Namespace)
 			foreign.SetOwnerReferences(owners)

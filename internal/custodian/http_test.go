@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianv1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // theSecretValue is a sentinel. Every test writes it and then asserts it never
@@ -79,7 +80,7 @@ func probe(name string, ready bool) *unstructured.Unstructured {
 		status = "True"
 	}
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(externalSecretGVK)
+	u.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	u.SetNamespace("kernel-control")
 	u.SetName("credreq-" + name)
 	_ = unstructured.SetNestedSlice(u.Object, []any{
@@ -107,7 +108,7 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 	t.Helper()
 	scheme := testScheme(t)
 	u := &unstructured.UnstructuredList{}
-	u.SetGroupVersionKind(externalSecretGVK)
+	u.SetGroupVersionKind(secrets.ExternalSecretGVK)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).
 		WithRuntimeObjects(objs...).Build()

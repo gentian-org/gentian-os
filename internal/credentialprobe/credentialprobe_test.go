@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -29,7 +30,7 @@ import (
 // once every field is in the vault.
 func probe(requirement string, ready bool) client.Object {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	es.SetNamespace(meta.OperatorNamespace)
 	es.SetName("credreq-" + requirement)
 	status := "False"

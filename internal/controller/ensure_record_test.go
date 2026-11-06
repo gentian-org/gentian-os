@@ -32,6 +32,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/componentkeys"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
@@ -41,7 +42,7 @@ func ensureScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := SchemeForTest(t)
 	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK,
-		certManagerCertGVK, backendTLSPolicyGVK, kyvernoPolicyGVK, dnsEndpointGVK, externalSecretGVK} {
+		certManagerCertGVK, backendTLSPolicyGVK, kyvernoPolicyGVK, dnsEndpointGVK, secrets.ExternalSecretGVK} {
 		s.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		s.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
 	}
@@ -480,7 +481,7 @@ func TestEnsureTranscript(t *testing.T) {
 					map[string]interface{}{"url": "{{ .password }}"}, []interface{}{map[string]interface{}{"secretKey": "password"}})
 				return fmt.Errorf("answered ready=%v reason=%q message=%q, error %v", ready, reason, message, err)
 			},
-			written: unstructuredOf(externalSecretGVK, "tenant-demo", testComponent().Name+componentDatabaseSecretSuffix),
+			written: unstructuredOf(secrets.ExternalSecretGVK, "tenant-demo", testComponent().Name+componentDatabaseSecretSuffix),
 			drift:   driftSpec,
 		},
 		{

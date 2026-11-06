@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -330,7 +331,7 @@ func TestSuppliedCredentialsNoLongerDeclaredAreRemovedAndOthersKept(t *testing.T
 func getProbe(t *testing.T, c client.Client, name string) (*unstructured.Unstructured, bool) {
 	t.Helper()
 	probe := &unstructured.Unstructured{}
-	probe.SetGroupVersionKind(externalSecretGVK)
+	probe.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	err := c.Get(context.Background(), types.NamespacedName{Name: "credreq-" + name, Namespace: meta.OperatorNamespace}, probe)
 	if apierrors.IsNotFound(err) {
 		return nil, false

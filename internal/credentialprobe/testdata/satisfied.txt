@@ -1,0 +1,10 @@
+absent: false
+malformed: false
+no conditions: false
+no status: false
+not ready, message: false
+not ready, silent: false
+other condition: false
+ready second: true
+ready: true
+unknown: false

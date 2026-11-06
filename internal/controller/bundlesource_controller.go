@@ -32,6 +32,8 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	gentianmeta "github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
@@ -147,7 +149,7 @@ func (r *BundleSourceReconciler) ensureCredential(ctx context.Context, source *g
 	}
 
 	owners := []metav1.OwnerReference{*owner}
-	if err := applyExternalSecret(ctx, r.Client, credentialProbePrefix+name, gentianmeta.OperatorNamespace, vaultPath, "None", owners,
+	if err := applyExternalSecret(ctx, r.Client, credentialprobe.Prefix+name, gentianmeta.OperatorNamespace, vaultPath, "None", owners,
 		map[string]string{
 			"gentianos.io/credential-requirement": name,
 			"gentianos.io/credential-phase":       "runtime",
@@ -177,7 +179,7 @@ func (r *BundleSourceReconciler) report(ctx context.Context, source *gentianov1a
 
 // sourceForProbe maps a satisfaction probe back to the source it reports on.
 func sourceForProbe(_ context.Context, obj client.Object) []reconcile.Request {
-	name := strings.TrimPrefix(obj.GetName(), credentialProbePrefix+backup.SourceCredentialName(""))
+	name := strings.TrimPrefix(obj.GetName(), credentialprobe.Prefix+backup.SourceCredentialName(""))
 	if name == "" || name == obj.GetName() {
 		return nil
 	}
@@ -189,14 +191,14 @@ func sourceForProbe(_ context.Context, obj client.Object) []reconcile.Request {
 // must wake the source that waits for them.
 func (r *BundleSourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	probe := &unstructured.Unstructured{}
-	probe.SetGroupVersionKind(externalSecretGVK)
+	probe.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.BundleSource{}).
 		Watches(probe,
 			handler.EnqueueRequestsFromMapFunc(sourceForProbe),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				return isCredentialProbe(obj) &&
-					strings.HasPrefix(obj.GetName(), credentialProbePrefix+backup.SourceCredentialName(""))
+					strings.HasPrefix(obj.GetName(), credentialprobe.Prefix+backup.SourceCredentialName(""))
 			})),
 		).
 		Named("bundlesource").

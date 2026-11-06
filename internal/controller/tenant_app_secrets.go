@@ -572,7 +572,7 @@ type secretReader struct {
 // one of the paths.
 func (r *TenantRestoreReconciler) secretReaders(ctx context.Context, ns string, paths map[string]bool) ([]secretReader, []unstructured.Unstructured, error) {
 	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(externalSecretGVK.GroupVersion().WithKind(externalSecretGVK.Kind + "List"))
+	list.SetGroupVersionKind(secrets.ExternalSecretGVK.GroupVersion().WithKind(secrets.ExternalSecretGVK.Kind + "List"))
 	if err := r.List(ctx, list, client.InNamespace(ns)); err != nil {
 		return nil, nil, fmt.Errorf("list the ExternalSecrets in %s: %w", ns, err)
 	}

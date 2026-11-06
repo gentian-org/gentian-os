@@ -306,10 +306,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			target["DATABASE_URL"] = "mysql://{{ .user }}:{{ .password }}@{{ .host }}:{{ .port }}/{{ .name }}"
 		}
 		for _, p := range []string{"host", "port", "name", "user", "password"} {
-			data = append(data, map[string]interface{}{
-				"secretKey": p,
-				"remoteRef": map[string]interface{}{"key": own, "property": p},
-			})
+			data = append(data, secrets.RemoteRef(p, own, p))
 		}
 		return r.ensureDatabaseSecret(ctx, comp, tenant.Name, store, target, data)
 	}
@@ -320,12 +317,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 		// at this path, which the kernel's chart sets the role to.
 		target = databaseSecretTemplate(backup.KernelPostgresHost(), backup.KernelPostgresPort,
 			backup.KernelDesktopDatabase, backup.KernelDesktopRole, "{{ .password }}")
-		data = []interface{}{
-			map[string]interface{}{
-				"secretKey": "password",
-				"remoteRef": map[string]interface{}{"key": path, "property": "password"},
-			},
-		}
+		data = []interface{}{secrets.RemoteRef("password", path, "password")}
 	} else {
 		ready, reason, message, err := r.ensureTenantDatabase(ctx, tenant)
 		if err != nil || !ready {
@@ -333,10 +325,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 		}
 		target = databaseSecretTemplate("{{ .host }}", "{{ .port }}", "{{ .name }}", "{{ .user }}", "{{ .password }}")
 		for _, p := range []string{"host", "port", "name", "user", "password"} {
-			data = append(data, map[string]interface{}{
-				"secretKey": p,
-				"remoteRef": map[string]interface{}{"key": path, "property": p},
-			})
+			data = append(data, secrets.RemoteRef(p, path, p))
 		}
 	}
 	return r.ensureDatabaseSecret(ctx, comp, tenant.Name, store, target, data)
@@ -485,27 +474,12 @@ func roleJobHash(job *batchv1.Job) string {
 // namespace and reports whether it has arrived.
 func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *gentianov1alpha1.Component, tenantName, store string, template map[string]interface{}, data []interface{}) (ready bool, reason, message string, err error) {
 	name := comp.Name + componentDatabaseSecretSuffix
-	spec := map[string]interface{}{
-		"refreshInterval": "1h",
-		"secretStoreRef":  secrets.StoreRef(store),
-		"target": map[string]interface{}{
-			"name":           name,
-			"creationPolicy": "Owner",
-			"template": map[string]interface{}{
-				"engineVersion": "v2",
-				"data":          template,
-			},
-		},
-		"data": data,
-	}
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(externalSecretGVK)
-	desired.SetName(name)
-	desired.SetNamespace(comp.Namespace)
+	desired := secrets.ExternalSecret(name, comp.Namespace, store, map[string]any{
+		"name":           name,
+		"creationPolicy": "Owner",
+		"template":       map[string]any{"engineVersion": "v2", "data": template},
+	}, data)
 	desired.SetLabels(componentLabels(comp, tenantName))
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return false, "", "", err
-	}
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return false, "", "", err
 	}

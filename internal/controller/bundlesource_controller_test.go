@@ -23,6 +23,8 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -55,11 +57,11 @@ func TestASourceIsGivenItsCredentialPathAsADestinationIs(t *testing.T) {
 		t.Errorf("requirement %+v", req)
 	}
 	for _, es := range []types.NamespacedName{
-		{Name: credentialProbePrefix + "bundle-source-old", Namespace: meta.OperatorNamespace},
+		{Name: credentialprobe.Prefix + "bundle-source-old", Namespace: meta.OperatorNamespace},
 		{Name: backup.SourceCredentialName("old"), Namespace: s3Namespace},
 	} {
 		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(externalSecretGVK)
+		obj.SetGroupVersionKind(secrets.ExternalSecretGVK)
 		if err := c.Get(ctx, es, obj); err != nil {
 			t.Fatalf("%s: %v", es, err)
 		}
@@ -77,7 +79,7 @@ func TestASourceIsGivenItsCredentialPathAsADestinationIs(t *testing.T) {
 	}
 
 	if reqs := sourceForProbe(ctx, &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": credentialProbePrefix + "bundle-source-old"}}}); len(reqs) != 1 || reqs[0].Name != "old" {
+		"metadata": map[string]any{"name": credentialprobe.Prefix + "bundle-source-old"}}}); len(reqs) != 1 || reqs[0].Name != "old" {
 		t.Errorf("the probe wakes %v", reqs)
 	}
 }

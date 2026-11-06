@@ -22,6 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianv1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // ProviderLabel names who issues a requirement's credential; the catalog
@@ -232,13 +234,13 @@ func (c *Catalogue) Get(ctx context.Context, name string, v Viewer) (*Status, er
 // version, which has already moved once (v1beta1 stopped being served).
 func (c *Catalogue) probeStatus(ctx context.Context, name string) (satisfied, pending bool, reason string) {
 	var es unstructured.Unstructured
-	es.SetGroupVersionKind(externalSecretGVK)
-	key := client.ObjectKey{Namespace: c.ProbeNamespace, Name: "credreq-" + name}
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
+	key := client.ObjectKey{Namespace: c.ProbeNamespace, Name: credentialprobe.Prefix + name}
 
 	if err := c.Client.Get(ctx, key, &es); err != nil {
 		return false, false, "no satisfaction probe found — is the credential catalog applied?"
 	}
-	satisfied, since, reason := readyCondition(&es)
+	satisfied, since, reason := credentialprobe.Ready(&es)
 	if satisfied {
 		return true, false, ""
 	}
@@ -246,33 +248,6 @@ func (c *Catalogue) probeStatus(ctx context.Context, name string) (satisfied, pe
 		return false, true, "saved, being checked"
 	}
 	return false, false, reason
-}
-
-// readyCondition is ESO's Ready condition: whether it is True, when it last
-// changed (zero when unknown), and its message.
-func readyCondition(es *unstructured.Unstructured) (bool, time.Time, string) {
-	conds, found, err := unstructured.NestedSlice(es.Object, "status", "conditions")
-	if err != nil || !found {
-		return false, time.Time{}, "probe has not reported yet"
-	}
-	for _, raw := range conds {
-		cond, ok := raw.(map[string]any)
-		if !ok || cond["type"] != "Ready" {
-			continue
-		}
-		var since time.Time
-		if at, ok := cond["lastTransitionTime"].(string); ok {
-			since, _ = time.Parse(time.RFC3339, at)
-		}
-		if cond["status"] == "True" {
-			return true, since, ""
-		}
-		if msg, ok := cond["message"].(string); ok && msg != "" {
-			return false, since, msg
-		}
-		return false, since, "not ready"
-	}
-	return false, time.Time{}, "probe has not reported a Ready condition"
 }
 
 // awaitingProbe reports whether the probe was nudged within pendingWindow and

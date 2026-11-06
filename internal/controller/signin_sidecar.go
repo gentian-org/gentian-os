@@ -660,62 +660,36 @@ func (r *ComponentReconciler) ensureSignInSidecar(
 func (r *ComponentReconciler) ensureSignInSecret(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, s *signInSidecar, labels map[string]string,
 ) (bool, error) {
-	var data []interface{}
-	add := func(key, path, property string) {
-		data = append(data, map[string]interface{}{
-			"secretKey": key,
-			"remoteRef": map[string]interface{}{"key": path, "property": property},
-		})
-	}
+	var data []any
 	if s.database {
 		path := secrets.CategoryPath(tenant.Name, comp.Name, "database")
 		for _, property := range []string{"host", "port", "name", "user", "password"} {
-			add("DB_"+strings.ToUpper(property), path, property)
+			data = append(data, secrets.RemoteRef("DB_"+strings.ToUpper(property), path, property))
 		}
 	}
 	for _, name := range s.secrets {
-		add("SECRET_"+strings.ToUpper(name), secrets.InternalPath(tenant.Name, comp.Name, name), "value")
+		data = append(data, secrets.RemoteRef("SECRET_"+strings.ToUpper(name), secrets.InternalPath(tenant.Name, comp.Name, name), "value"))
 	}
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(externalSecretGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: s.service, Namespace: comp.Namespace}, existing)
 	if len(data) == 0 {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(secrets.ExternalSecretGVK)
+		err := r.Get(ctx, types.NamespacedName{Name: s.service, Namespace: comp.Namespace}, existing)
 		if err == nil {
 			return false, client.IgnoreNotFound(r.Delete(ctx, existing))
 		}
 		return false, client.IgnoreNotFound(err)
 	}
-	desired := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": externalSecretGVK.GroupVersion().String(),
-		"kind":       externalSecretGVK.Kind,
-		"metadata":   map[string]interface{}{"name": s.service, "namespace": comp.Namespace},
-		"spec": map[string]interface{}{
-			"refreshInterval": "1h",
-			"secretStoreRef":  secrets.StoreRef(secrets.TenantStore(tenant.Name)),
-			// The Secret is this object's and goes with it.
-			"target": map[string]interface{}{"name": s.service, "creationPolicy": "Owner", "deletionPolicy": "Delete"},
-			"data":   data,
-		},
-	}}
+	// The Secret is this object's and goes with it.
+	desired := secrets.ExternalSecret(s.service, comp.Namespace, secrets.TenantStore(tenant.Name),
+		map[string]any{"name": s.service, "creationPolicy": "Owner", "deletionPolicy": "Delete"}, data)
 	desired.SetLabels(labels)
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return false, err
 	}
-	switch {
-	case apierrors.IsNotFound(err):
-		return true, r.Create(ctx, desired)
-	case err != nil:
-		return false, err
-	}
-	// Only on a real difference: the secrets operator writes this object's
-	// status, and an unconditional update would race it.
-	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
-		equality.Semantic.DeepEqual(existing.GetLabels(), desired.GetLabels()) && ownedBy(existing, comp) {
-		return true, nil
-	}
-	desired.SetResourceVersion(existing.GetResourceVersion())
-	return true, r.Update(ctx, desired)
+	return true, ensureExternalSecret(ctx, r.Client, desired, func(existing *unstructured.Unstructured) bool {
+		return ownedBy(existing, comp)
+	})
 }
 
 // signInDeployment is the sidecar's pod: one container, read-only, no
@@ -936,7 +910,7 @@ func (r *ComponentReconciler) removeSignInSidecar(ctx context.Context, comp *gen
 	}
 	secretsList := &unstructured.UnstructuredList{}
 	secretsList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: externalSecretGVK.Group, Version: externalSecretGVK.Version, Kind: externalSecretGVK.Kind + "List",
+		Group: secrets.ExternalSecretGVK.Group, Version: secrets.ExternalSecretGVK.Version, Kind: secrets.ExternalSecretGVK.Kind + "List",
 	})
 	lists := []client.ObjectList{
 		secretsList, &appsv1.DeploymentList{}, &corev1.ServiceList{}, &corev1.ConfigMapList{}, &networkingv1.NetworkPolicyList{},
