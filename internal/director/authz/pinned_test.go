@@ -195,3 +195,29 @@ func TestPinnedGivesUpWhenTheModelNeverArrives(t *testing.T) {
 		t.Fatalf("unclear error: %v", err)
 	}
 }
+
+// A reader opens the store and the model the environment records, and
+// refuses to start without them.
+func TestOpenPinnedOpensTheRecordedStore(t *testing.T) {
+	f := &fakeModels{}
+	f.add(embeddedModel(t, "mine"))
+	o := pinnedOptions(t, f, "mine")
+	t.Setenv("OPENFGA_STORE_ID", "store-1")
+	t.Setenv("OPENFGA_MODEL_ID", "mine")
+	t.Setenv("OPENFGA_API_TOKEN", "token")
+	c, err := OpenPinned(o.BaseURL, o.Logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.storeID != "store-1" || c.ModelID() != "mine" {
+		t.Fatalf("store=%q model=%q, want store-1 mine", c.storeID, c.ModelID())
+	}
+
+	t.Setenv("OPENFGA_MODEL_ID", "")
+	if _, err := OpenPinned(o.BaseURL, o.Logger); !errors.Is(err, ErrNotPinned) || !strings.HasPrefix(err.Error(), "authorization store: ") {
+		t.Fatalf("err = %v, want the authorization store's ErrNotPinned", err)
+	}
+	if f.listings != 0 {
+		t.Fatalf("the stores were listed %d times", f.listings)
+	}
+}

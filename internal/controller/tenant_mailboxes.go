@@ -24,6 +24,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 // Whose mailboxes are a tenant's, and where they are.
@@ -65,7 +66,7 @@ type tenantMailboxes struct {
 // after the stage; mailVolumeClaim is the claim of its volume, named after
 // the server.
 func mailServerName() string {
-	return fmt.Sprintf("dovecot-%s", envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev")))
+	return fmt.Sprintf("dovecot-%s", envvar.Or("GENTIAN_STAGE", envvar.Or("ENV", "dev")))
 }
 
 func mailVolumeClaim() string { return mailServerName() + "-mail" }
