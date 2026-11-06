@@ -105,11 +105,18 @@ spec:
 ---
 # No recipient is pinned in this cluster's values, so the one the recovery
 # kit wrote to the vault. Public: the private half is never read here.
+#
+# The kit is written last (E-02), so on a fresh install this fails until then.
+# Its health is left out of the Application's: the CronJob mounts the Secret
+# optionally and refuses to write an unencrypted snapshot without it, and an
+# expected wait must not hold the operator Degraded (D-01 waits for Healthy).
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: {{ $name }}-recipients
   namespace: {{ $i.namespace }}
+  annotations:
+    argocd.argoproj.io/ignore-healthcheck: "true"
   labels:
     {{- include "gentian-os.labels" $ | nindent 4 }}
     app.kubernetes.io/component: openbao-snapshot
