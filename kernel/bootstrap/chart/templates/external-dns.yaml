@@ -109,7 +109,7 @@ spec:
   # then sits in ImagePullBackOff on docker.io/bitnami/external-dns: a
   # controller that never starts and publishes nothing, while the Application
   # reports Synced.
-  - repoURL: https://kubernetes-sigs.github.io/external-dns/
+  - repoURL: {{ index .Values.versions "external-dns" "repo" }}
     chart: external-dns
     # 1.22.0 (external-dns v0.22.0) at the earliest, for two reasons.
     #
@@ -133,7 +133,7 @@ spec:
     # and platform.<domain> and the bare domain, the mail domains that are
     # also hosts, never got their A record while the log said every record
     # was up to date (the refusal is logged at debug level only).
-    targetRevision: "1.22.0"
+    targetRevision: {{ index .Values.versions "external-dns" "chart" | quote }}
     helm:
       valueFiles:
       - $values/kernel/values/external-dns.yaml

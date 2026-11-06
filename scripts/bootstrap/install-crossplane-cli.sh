@@ -7,7 +7,8 @@
 # upstream main and has broken v2.2.1 installs when it pointed at cli.crossplane.io.
 #
 # Usage:
-#   XP_VERSION=v2.2.1 ./scripts/bootstrap/install-crossplane-cli.sh
+#   ./scripts/bootstrap/install-crossplane-cli.sh    # versions.yaml's crossplane cli pin
+#   XP_VERSION=<version> ./scripts/bootstrap/install-crossplane-cli.sh
 #   sudo mv crossplane /usr/local/bin/crossplane
 
 set -euo pipefail

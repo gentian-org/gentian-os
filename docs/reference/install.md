@@ -949,9 +949,13 @@ hand. (Step 0's own default profile is fetched from a public https catalog
 too, and is skipped with a warning when that cannot be reached — §4.)
 
 `versions.yaml` is the inventory of everything else the install pulls —
-Crossplane, cert-manager, External Secrets Operator, ArgoCD, Envoy Gateway and
-the OpenBao CLI, each with its pinned version and source. That file is what to
-mirror.
+Crossplane, cert-manager, External Secrets Operator, ArgoCD, Envoy Gateway,
+the OpenBao CLI and the upstream charts of the bootstrap chart's Applications
+(OpenBao, Reloader, CloudNativePG, Kyverno, external-dns, Headlamp), each with
+its pinned version and source. That file is what to mirror; `make lint`
+(`lint-version-pins`) fails on a chart repository or version the bootstrap
+chart writes out itself, and on a literal `*_VERSION` in CI, the Makefile or
+the installer's scripts.
 
 ---
 

@@ -4,7 +4,7 @@
 # requires: A-06-argocd
 # provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
 # mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signaling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
-# pins: headlamp
+# pins: headlamp openbao reloader cnpg kyverno external-dns
 
 # The chart takes the namespace layout as a value and resolves every
 # destination from it; it refuses to render an Application whose function the
@@ -143,6 +143,9 @@ _v5_render() {
     local tmp
     tmp="$(mktemp -d)"
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
+    # The component pins the same way: every Application of the chart that
+    # installs an upstream chart reads its version and repository from here.
+    { echo "versions:"; sed 's/^/  /' "${GENTIAN_VERSIONS_FILE}"; } > "${tmp}/versions.yaml"
 
     # The keys the AppProject will accept commits from (AD-2), read out of the
     # deployments checkout rather than this host's keyring: the repository is
@@ -189,7 +192,7 @@ _v5_render() {
     } > "${dns_zones_values}"
 
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
-        -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
+        -f "${tmp}/namespaces.yaml" -f "${tmp}/versions.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
         -f "${signing_values}" -f "${installer_values}" -f "${dns_zones_values}" \
         --set-string "dnsProvider=$(gentian_dns_provider)" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
@@ -226,9 +229,7 @@ _v5_render() {
         --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
         --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-true}" \
         --set-string "usageStatistics.enabled=$(gentian_usage_statistics_enabled)" \
-        --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}" \
-        --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
-        --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
+        --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}"
     local rc=$?
     rm -rf "${tmp}"
     return ${rc}

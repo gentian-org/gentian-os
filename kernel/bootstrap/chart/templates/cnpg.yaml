@@ -9,9 +9,9 @@ metadata:
 spec:
   project: gentian
   sources:
-  - repoURL: ghcr.io/cloudnative-pg/charts
+  - repoURL: {{ .Values.versions.cnpg.repo }}
     chart: cloudnative-pg
-    targetRevision: "0.23.0"
+    targetRevision: {{ .Values.versions.cnpg.chart | quote }}
     helm:
       valueFiles:
       - $values/kernel/values/cnpg.yaml

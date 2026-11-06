@@ -32,9 +32,25 @@ networkMode: tunnel
 # Filled by the installer from kernel/namespaces.yaml. Never set by hand.
 namespaces: {}
 
-# Pins the installer copies in from versions.yaml (B-01). Never set by hand.
+# versions.yaml, which B-01 passes in whole. Never set by hand; the empty
+# entries are the components the templates read.
 versions:
   headlamp:
+    chart: ""
+    repo: ""
+  openbao:
+    chart: ""
+    repo: ""
+  reloader:
+    chart: ""
+    repo: ""
+  cnpg:
+    chart: ""
+    repo: ""
+  kyverno:
+    chart: ""
+    repo: ""
+  external-dns:
     chart: ""
     repo: ""
 

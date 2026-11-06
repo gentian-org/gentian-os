@@ -19,7 +19,11 @@ Every external component the installer pulls, pinned once for the release, with 
 | `metrics-server` | `3.13.0` |  | `https://kubernetes-sigs.github.io/metrics-server/` |  |  |
 | `envoy-gateway` | `v1.9.3` |  | `oci://docker.io/envoyproxy/gateway-helm` |  |  |
 | `argocd` |  |  | `https://argoproj.github.io/argo-helm` | `v3.5.0` | `1.3.2` |
-| `openbao` |  | `v2.5.0` |  |  |  |
+| `openbao` | `0.25.5` | `v2.5.0` | `https://openbao.github.io/openbao-helm` |  |  |
 | `headlamp` | `0.45.0` |  | `https://kubernetes-sigs.github.io/headlamp/` |  |  |
+| `reloader` | `2.2.9` |  | `ghcr.io/stakater/charts` |  |  |
+| `cnpg` | `0.23.0` |  | `ghcr.io/cloudnative-pg/charts` |  |  |
+| `kyverno` | `3.3.7` |  | `https://kyverno.github.io/kyverno/` |  |  |
+| `external-dns` | `1.22.0` |  | `https://kubernetes-sigs.github.io/external-dns/` |  |  |
 | `monitoring` | `92.3.0` |  | `https://prometheus-community.github.io/helm-charts` |  |  |
 | `logForwarding` | `0.59.0` |  | `https://helm.vector.dev` |  |  |

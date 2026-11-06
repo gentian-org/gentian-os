@@ -10,9 +10,9 @@ metadata:
 spec:
   project: gentian
   sources:
-  - repoURL: ghcr.io/stakater/charts
+  - repoURL: {{ .Values.versions.reloader.repo }}
     chart: reloader
-    targetRevision: "2.2.9"
+    targetRevision: {{ .Values.versions.reloader.chart | quote }}
     helm:
       valueFiles:
       - $values/kernel/values/reloader.yaml

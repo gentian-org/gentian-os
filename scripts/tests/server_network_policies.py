@@ -35,8 +35,8 @@ import tempfile
 import yaml
 
 from store_network_policies import (
-    CLIENTS, CNPG_APPLICATION, CNPG_CHART_VERSION, CNPG_INSTANCE_PORTS, CNPG_OPERATOR_LABELS, FUNCTION, NAME_LABEL,
-    ROOT, Failure, appsets, cnpg_instance_labels, cnpg_job_labels, helm, layout, match_labels, matches,
+    CLIENTS, CNPG_CHART_VERSION, CNPG_INSTANCE_PORTS, CNPG_OPERATOR_LABELS, FUNCTION, NAME_LABEL,
+    ROOT, Failure, appsets, cnpg_chart_pin, cnpg_instance_labels, cnpg_job_labels, helm, layout, match_labels, matches,
     namespace_of, policies_of,
 )
 
@@ -565,8 +565,7 @@ def wiring_kernel_postgres(apps, wanted, fn):
 
     # CloudNativePG: the pin the instance labels and ports were read at, and
     # its operator beside the cluster -- the status rule names no namespace.
-    application = CNPG_APPLICATION.read_text()
-    if f'targetRevision: "{CNPG_CHART_VERSION}"' not in application:
+    if cnpg_chart_pin() != CNPG_CHART_VERSION:
         raise Failure(f"the cnpg Application no longer installs chart {CNPG_CHART_VERSION}")
     if bootstrap_application("cnpg")["spec"]["destination"]["namespace"] != kp["namespace"]:
         raise Failure("CloudNativePG's operator no longer runs beside kernel-postgres; the status rule admits its own namespace only")
