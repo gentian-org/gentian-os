@@ -19,8 +19,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// TestLoadBaoCA covers where the custodian takes OpenBao's CA from: nil keeps
-// the system roots, an empty CA verifies nothing.
+// TestLoadBaoCA covers where the custodian takes OpenBao's CA from. A CA
+// Secret without a certificate, or none at all, is an empty CA, which
+// verifies nothing.
 func TestLoadBaoCA(t *testing.T) {
 	t.Setenv("BAO_CACERT", "")
 	t.Setenv("BAO_CA_SECRET", "openbao-tls")
@@ -37,7 +38,7 @@ func TestLoadBaoCA(t *testing.T) {
 		{"ca.crt", []client.Object{secret(map[string][]byte{"ca.crt": []byte("CA"), "tls.crt": []byte("LEAF")})}, []byte("CA")},
 		{"tls.crt only", []client.Object{secret(map[string][]byte{"tls.crt": []byte("LEAF")})}, []byte("LEAF")},
 		{"no certificate in the Secret", []client.Object{secret(nil)}, []byte{}},
-		{"no Secret", nil, nil},
+		{"no Secret", nil, []byte{}},
 	} {
 		reader := fake.NewClientBuilder().WithObjects(c.objects...).Build()
 		got := loadBaoCA(reader)

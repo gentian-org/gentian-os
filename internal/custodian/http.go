@@ -258,10 +258,9 @@ func clusterRelayResolver(mgr manager.Manager) RelayResolver {
 // cache — the cache is not running yet, and caching every Secret in the
 // cluster to fetch one certificate is not a trade worth making.
 //
-// Returns nil when it cannot be found, which keeps the system roots: a cluster
-// that gave OpenBao a publicly trusted certificate needs no CA here, and
-// failing startup over a missing one would break it. A CA file that cannot be
-// read, or a Secret that holds no certificate, is a CA that verifies nothing.
+// A CA file that cannot be read, a Secret that cannot be read, and a Secret
+// that holds no certificate are each a CA that verifies nothing: every
+// request to the vault fails rather than trusting the system roots.
 func loadBaoCA(reader client.Reader) []byte {
 	log := ctrl.Log.WithName("custodian")
 	if path := os.Getenv("BAO_CACERT"); path != "" {
@@ -281,25 +280,13 @@ func loadBaoCA(reader client.Reader) []byte {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := reader.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
-		// An in-cluster address over https is a certificate no public root
-		// signs, so this is not the conditional warning it used to be: the
-		// custodian's login WILL fail, and saying it at Info under an "if" is
-		// how it scrolled past on a cluster where the Secret was simply
-		// being looked for in the wrong namespace.
-		if addr := os.Getenv("BAO_ADDR"); strings.HasPrefix(addr, "https://") &&
-			strings.Contains(addr, ".svc") {
-			log.Error(err, "OpenBao's CA was not found, so the custodian cannot log in to it: "+
-				"nothing in the cluster can verify an in-cluster certificate against the public roots. "+
-				"Set custodian.caSecretNamespace to the namespace the vault runs in "+
-				"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
-				"secret", namespace+"/"+name, "address", addr)
-			return nil
-		}
-		log.Info("no OpenBao CA available; verifying against the system roots instead. "+
-			"That is correct for a vault with a publicly trusted certificate, and fatal to "+
-			"the custodian's login for one without.",
-			"secret", namespace+"/"+name, "reason", err.Error())
-		return nil
+		// A CA Secret that cannot be read verifies nothing: every request to
+		// the vault fails rather than trusting the system roots.
+		log.Error(err, "OpenBao's CA Secret cannot be read, so the custodian cannot log in to OpenBao. "+
+			"Set custodian.caSecretNamespace to the namespace the vault runs in "+
+			"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
+			"secret", namespace+"/"+name)
+		return []byte{}
 	}
 	// ca.crt first: on a cert-manager-issued Secret it is the issuer, while
 	// tls.crt is the leaf. A leaf works only while it is the one being served,
