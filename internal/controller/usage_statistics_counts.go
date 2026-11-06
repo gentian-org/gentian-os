@@ -41,7 +41,7 @@ type UsageStatisticsCounts struct {
 // tenant asks for one token and not one per count. It is rebuilt when the
 // credential it was built from has changed.
 func (c *UsageStatisticsCounts) keycloak(ctx context.Context) (*authz.KeycloakAdminClient, error) {
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, c.Client)
+	kcURL, kcUser, kcPass, err := authz.LoadKeycloakAdmin(ctx, c.Client)
 	if err != nil {
 		return nil, fmt.Errorf("load keycloak-admin: %w", err)
 	}

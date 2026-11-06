@@ -74,11 +74,10 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("apply app privilege reconcile request: %w", err)
 	}
 
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("load keycloak admin: %w", err)
 	}
-	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	members, err := kc.ListGroupMembers(ctx, tenant.Name, gentianTenantAppAdminsGroup(tenant.Name))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list app-admins members: %w", err)

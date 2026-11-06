@@ -36,7 +36,7 @@ import (
 
 const (
 	conditionIdentityReady = "IdentityReady"
-	keycloakAdminSecret    = "keycloak-admin"
+	keycloakAdminSecret    = authz.KeycloakAdminSecret
 	appLabel               = "gentianos.io/app"
 	identityRequeueAfter   = 2 * time.Second
 )
@@ -749,22 +749,6 @@ func realmDisableJobName(tenantName string) string {
 
 func oidcClientID(tenantName, appName string) string {
 	return fmt.Sprintf("%s-%s", tenantName, appName)
-}
-
-// loadKeycloakAdmin reads Keycloak's admin endpoint and credential from the
-// authentication namespace, for the Jobs and calls that configure a realm.
-func loadKeycloakAdmin(ctx context.Context, c client.Reader) (url, user, pass string, err error) {
-	secret := &corev1.Secret{}
-	if err := c.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: identityNamespace}, secret); err != nil {
-		return "", "", "", err
-	}
-	url = string(secret.Data["url"])
-	user = string(secret.Data["client_id"])
-	pass = string(secret.Data["client_secret"])
-	if url == "" || user == "" || pass == "" {
-		return "", "", "", fmt.Errorf("keycloak-admin secret missing url, client_id or client_secret")
-	}
-	return url, user, pass, nil
 }
 
 // adoptsKernelRealm reports whether a tenant's identity lives in the kernel

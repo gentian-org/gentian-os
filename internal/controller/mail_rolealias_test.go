@@ -13,6 +13,8 @@ package controller
 import (
 	"strings"
 	"testing"
+
+	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
 // The rule this exists for: an alias into a domain the cluster hosts is refused
@@ -216,33 +218,33 @@ func TestKeycloakRealmUserMailAddress(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		u    keycloakRealmUser
+		u    authz.KeycloakUser
 		want string
 	}{
 		{
 			name: "tenant realm: the username is the address",
-			u:    keycloakRealmUser{Username: "sibylle@finnor.example", Email: "sibylle@finnor.example", Enabled: true},
+			u:    authz.KeycloakUser{Username: "sibylle@finnor.example", Email: "sibylle@finnor.example", Enabled: true},
 			want: "sibylle@finnor.example",
 		},
 		{
 			name: "kernel realm: the login has no domain, the email does",
-			u:    keycloakRealmUser{Username: "administrator", Email: "administrator@gentian.cloud", Enabled: true},
+			u:    authz.KeycloakUser{Username: "administrator", Email: "administrator@gentian.cloud", Enabled: true},
 			want: "administrator@gentian.cloud",
 		},
 		{
 			name: "the username wins when both are addresses",
-			u:    keycloakRealmUser{Username: "a@x.example", Email: "b@y.example", Enabled: true},
+			u:    authz.KeycloakUser{Username: "a@x.example", Email: "b@y.example", Enabled: true},
 			want: "a@x.example",
 		},
 		{
 			name: "a service account with neither is not a recipient",
-			u:    keycloakRealmUser{Username: "service-account-odoo-cb", Enabled: true},
+			u:    authz.KeycloakUser{Username: "service-account-odoo-cb", Enabled: true},
 			want: "",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.u.mailAddress(); got != tc.want {
+			if got := mailAddress(tc.u); got != tc.want {
 				t.Errorf("mailAddress() = %q, want %q", got, tc.want)
 			}
 		})
