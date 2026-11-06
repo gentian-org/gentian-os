@@ -15,6 +15,7 @@ import (
 	"slices"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // The keys an S3 destination needs, and the name they are stored under.
@@ -63,9 +64,9 @@ func DestinationCredentialName(scope, tenant string) string {
 // gentian-os/tenants/<their tenant>/… and nothing above it.
 func DestinationVaultPath(scope, tenant string) string {
 	if scope == "tenant" && tenant != "" {
-		return fmt.Sprintf("gentian-os/tenants/%s/backup/destination", tenant)
+		return secrets.TenantPath(tenant) + "/backup/destination"
 	}
-	return "gentian-os/kernel/backup/destination"
+	return secrets.KernelPath("backup", "destination")
 }
 
 // DestinationSecretName is the Secret ESO materializes for capture Jobs.

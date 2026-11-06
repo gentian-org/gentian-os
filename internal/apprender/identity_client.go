@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // appClient is the app's own OIDC client (requires.services.identity.oidc)
@@ -59,7 +60,7 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 	var objs []*unstructured.Unstructured
 	if accessType == "CONFIDENTIAL" {
 		objs = append(objs, id.clientCreds(credsName,
-			fmt.Sprintf("gentian-os/tenants/%s/apps/%s/oidc", id.tenant, id.in.App)))
+			secrets.CategoryPath(id.tenant, id.in.App, "oidc")))
 	}
 
 	// The platform's mark: a realm import makes no client carrying it from a
