@@ -819,6 +819,11 @@ namespaces:
           - port: 8000
             what: metrics
             closed: nothing the platform runs scrapes it
+      - name: node-apparmor
+        installedBy: bootstrap-application:node-apparmor
+        readAt: kernel/security/node-apparmor
+        podLabels: {app.kubernetes.io/name: node-apparmor}
+        ports: []
 
   - name: kernel-observability
     sameNamespace: true
