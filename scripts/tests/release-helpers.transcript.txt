@@ -1,0 +1,300 @@
+== _helm_retry: success with a warning
+rc=0
+  out: out of helm version --short
+  call: helm version --short
+== _helm_retry: not transient
+rc=1
+  out: out of helm version --short
+  err: Error: chart not found
+  call: helm version --short
+== _helm_retry: transient, then success
+rc=0
+  out: out of helm version --short
+  out: [1;33m[WARN][0m  helm failed (attempt 1/3): transient network error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of helm version --short
+  err: dial tcp 10.0.0.1:443: connection refused
+  call: helm version --short
+  call: helm version --short
+== _helm_retry: transient every time
+rc=1
+  out: out of helm version --short
+  out: [1;33m[WARN][0m  helm failed (attempt 1/3): transient network error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of helm version --short
+  out: [1;33m[WARN][0m  helm failed (attempt 2/3): transient network error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of helm version --short
+  err: dial tcp: i/o timeout
+  err: dial tcp: i/o timeout
+  err: dial tcp: i/o timeout
+  call: helm version --short
+  call: helm version --short
+  call: helm version --short
+== _kubectl_retry: success with a warning
+rc=0
+  out: out of kubectl version --short
+  call: kubectl version --short
+== _kubectl_retry: not transient
+rc=1
+  out: out of kubectl version --short
+  err: Error: chart not found
+  call: kubectl version --short
+== _kubectl_retry: transient, then success
+rc=0
+  out: out of kubectl version --short
+  out: [1;33m[WARN][0m  kubectl failed (attempt 1/3): transient API error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of kubectl version --short
+  err: dial tcp 10.0.0.1:443: connection refused
+  call: kubectl version --short
+  call: kubectl version --short
+== _kubectl_retry: transient every time
+rc=1
+  out: out of kubectl version --short
+  out: [1;33m[WARN][0m  kubectl failed (attempt 1/3): transient API error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of kubectl version --short
+  out: [1;33m[WARN][0m  kubectl failed (attempt 2/3): transient API error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of kubectl version --short
+  err: dial tcp: i/o timeout
+  err: dial tcp: i/o timeout
+  err: dial tcp: i/o timeout
+  call: kubectl version --short
+  call: kubectl version --short
+  call: kubectl version --short
+== _bao_retry: success with a warning
+rc=0
+  out: out of bao version --short
+  err: Warning: something
+  call: bao version --short
+== _bao_retry: not transient
+rc=1
+  out: out of bao version --short
+  err: Error: chart not found
+  call: bao version --short
+== _bao_retry: transient, then success
+rc=0
+  out: out of bao version --short
+  out: out of bao version --short
+  err: dial tcp 10.0.0.1:443: connection refused
+  err: [1;33m[WARN][0m  bao failed (attempt 1/3): transient connection error
+  err: [1;33m[WARN][0m    Retrying in 1s...
+  call: bao version --short
+  call: bao version --short
+== _bao_retry: transient every time
+rc=1
+  out: out of bao version --short
+  out: out of bao version --short
+  out: out of bao version --short
+  err: dial tcp: i/o timeout
+  err: [1;33m[WARN][0m  bao failed (attempt 1/3): transient connection error
+  err: [1;33m[WARN][0m    Retrying in 1s...
+  err: dial tcp: i/o timeout
+  err: [1;33m[WARN][0m  bao failed (attempt 2/3): transient connection error
+  err: [1;33m[WARN][0m    Retrying in 1s...
+  err: dial tcp: i/o timeout
+  call: bao version --short
+  call: bao version --short
+  call: bao version --short
+== _bao_retry: body from _BAO_RETRY_STDIN, read again on the retry
+rc=0
+  out: out of bao policy write p -
+  out: out of bao policy write p -
+  err: connection refused
+  err: [1;33m[WARN][0m  bao failed (attempt 1/6): transient connection error
+  err: [1;33m[WARN][0m    Retrying in 1s...
+  call: bao policy write p - <<< path "x" {}
+  call: bao policy write p - <<< path "x" {}
+== A-03 external secrets, STUCK=0
+rc=0
+  call: kubectl get externalsecrets.external-secrets.io -A -o jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}
+  call: kubectl get pushsecrets.external-secrets.io -A -o jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}
+  call: kubectl get externalsecrets.external-secrets.io,pushsecrets.external-secrets.io -A -o name
+== A-03 external secrets, STUCK=1
+rc=0
+  call: kubectl get externalsecrets.external-secrets.io -A -o jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}
+  call: kubectl delete externalsecrets.external-secrets.io obj1 -n ns1 --wait=false
+  call: kubectl get pushsecrets.external-secrets.io -A -o jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}
+  call: kubectl delete pushsecrets.external-secrets.io obj1 -n ns1 --wait=false
+  call: kubectl get externalsecrets.external-secrets.io,pushsecrets.external-secrets.io -A -o name
+  call: kubectl get externalsecrets.external-secrets.io -A -o jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}
+  call: kubectl patch externalsecrets.external-secrets.io obj1 -n ns1 --type=merge -p {"metadata":{"finalizers":null}}
+  call: kubectl get pushsecrets.external-secrets.io -A -o jsonpath={range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}
+  call: kubectl patch pushsecrets.external-secrets.io obj1 -n ns1 --type=merge -p {"metadata":{"finalizers":null}}
+== A-06 applications, STUCK=0
+rc=0
+  call: kubectl get applicationsets.argoproj.io -n argocd -o name
+  call: kubectl get applications.argoproj.io -n argocd -o name
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
+== A-06 applications, STUCK=1
+rc=0
+  out: [1;33m[WARN][0m    thing.example/obj1 kept its finalizers; removing them.
+  call: kubectl get applicationsets.argoproj.io -n argocd -o name
+  call: kubectl delete -n argocd --wait=false thing.example/obj1
+  call: kubectl get applications.argoproj.io -n argocd -o name
+  call: kubectl delete -n argocd --wait=false thing.example/obj1
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
+  call: kubectl patch thing.example/obj1 -n argocd --type=merge -p {"metadata":{"finalizers":null}}
+== B-05 managed resources, STUCK=0
+rc=0
+  call: kubectl get managed -o name
+  call: kubectl get managed -o name
+== B-05 managed resources, STUCK=1
+rc=0
+  out: [1;33m[WARN][0m    thing.example/obj1 was not released by its provider; removing its finalizer.
+  call: kubectl get managed -o name
+  call: kubectl delete --wait=false thing.example/obj1
+  call: kubectl get managed -o name
+  call: kubectl get managed -o name
+  call: kubectl get thing.example/obj1 -o jsonpath={.spec.forProvider.namespace}
+  call: kubectl patch thing.example/obj1 --type=merge -p {"metadata":{"finalizers":null}}
+  call: kubectl delete namespace obj1.example --ignore-not-found --wait=false
+== B-05 provider configs, STUCK=0
+rc=0
+  call: kubectl get crd -o name
+== B-05 provider configs, STUCK=1
+rc=0
+  out: [1;33m[WARN][0m    thing.example/obj1 kept its in-use finalizer; removing it.
+  call: kubectl get crd -o name
+  call: kubectl get providerconfigs.example -A -o name
+  call: kubectl delete --wait=false thing.example/obj1
+  call: kubectl get providerconfigs.example -A -o name
+  call: kubectl get providerconfigs.example -o name
+  call: kubectl patch thing.example/obj1 --type=merge -p {"metadata":{"finalizers":null}}
+== B-05 terminating CRDs, STUCK=0
+rc=0
+  call: kubectl get crd -o json
+== B-05 terminating CRDs, STUCK=1
+rc=0
+  out: [1;33m[WARN][0m    obj1 was left Terminating; released what held it.
+  call: kubectl get crd -o json
+  call: kubectl get obj1 -A -o name
+  call: kubectl patch thing.example/obj1 --type=merge -p {"metadata":{"finalizers":null}}
+== E-01 tenants, STUCK=0
+rc=0
+  out: [0;36m[INFO][0m  Removing gentian-os-tenant-validator webhook before tenant teardown...
+  call: kubectl get validatingwebhookconfiguration gentian-os-tenant-validator
+  call: kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator --ignore-not-found=true
+  call: kubectl get crd components.gentianos.io
+  call: kubectl get components.gentianos.io -A --no-headers
+  call: kubectl get components.gentianos.io -A --no-headers
+  call: kubectl get crd apps.gentianos.io
+  call: kubectl get tenants.gentianos.io --no-headers -o custom-columns=NAME:.metadata.name
+  call: kubectl get apps.gentianos.io -A --no-headers
+  call: kubectl get apps.gentianos.io -A --no-headers
+  call: kubectl get tenants.gentianos.io --no-headers -o custom-columns=NAME:.metadata.name
+  call: kubectl get rolebindings.rbac.authorization.k8s.io -A --no-headers --field-selector metadata.name=gentian-tenant-apps-helm -o custom-columns=NS:.metadata.namespace
+== E-01 tenants, STUCK=1
+rc=0
+  out: [0;36m[INFO][0m  Removing gentian-os-tenant-validator webhook before tenant teardown...
+  out: [1;33m[WARN][0m  Component finalizers did not clear; stripping them.
+  out: [0;36m[INFO][0m  Deleting App CRs for tenant tenant1...
+  out: [1;33m[WARN][0m  App CR finalizers did not clear; stripping them.
+  out:      + kubectl delete tenants.gentianos.io tenant1 --ignore-not-found=true --wait=false
+  out: [1;33m[WARN][0m  Tenant tenant1 finalizer did not clear; stripping it.
+  call: kubectl get validatingwebhookconfiguration gentian-os-tenant-validator
+  call: kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator --ignore-not-found=true
+  call: kubectl get crd components.gentianos.io
+  call: kubectl get components.gentianos.io -A --no-headers
+  call: kubectl delete components.gentianos.io obj1 -n ns1 --ignore-not-found=true --wait=false
+  call: kubectl get components.gentianos.io -A --no-headers
+  call: kubectl get components.gentianos.io -A --no-headers
+  call: kubectl get components.gentianos.io -A --no-headers
+  call: kubectl patch components.gentianos.io obj1 -n ns1 --type=merge -p {"metadata":{"finalizers":null}}
+  call: kubectl get crd apps.gentianos.io
+  call: kubectl get tenants.gentianos.io --no-headers -o custom-columns=NAME:.metadata.name
+  call: kubectl delete apps.gentianos.io --all -n tenant1 --ignore-not-found=true --wait=false
+  call: kubectl get apps.gentianos.io -A --no-headers
+  call: kubectl delete apps.gentianos.io obj1 -n ns1 --ignore-not-found=true --wait=false
+  call: kubectl get apps.gentianos.io -A --no-headers
+  call: kubectl get apps.gentianos.io -A --no-headers
+  call: kubectl get apps.gentianos.io -A --no-headers
+  call: kubectl patch apps.gentianos.io obj1 -n ns1 --type=merge -p {"metadata":{"finalizers":null}}
+  call: kubectl get tenants.gentianos.io --no-headers -o custom-columns=NAME:.metadata.name
+  call: kubectl delete tenants.gentianos.io tenant1 --ignore-not-found=true --wait=false
+  call: kubectl get tenants.gentianos.io tenant1
+  call: kubectl get tenants.gentianos.io tenant1
+  call: kubectl patch tenants.gentianos.io tenant1 --type=merge -p {"metadata":{"finalizers":null}}
+  call: kubectl get rolebindings.rbac.authorization.k8s.io -A --no-headers --field-selector metadata.name=gentian-tenant-apps-helm -o custom-columns=NS:.metadata.namespace
+  call: kubectl patch rolebinding gentian-tenant-apps-helm -n tenant1 --type=merge -p {"metadata":{"finalizers":null}}
+== teardown: namespace contents, STUCK=0
+rc=0
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+== teardown: namespace contents, STUCK=1
+rc=1
+  out: [0;36m[INFO][0m    Deleting 1 object(s) in ns1...
+  out: [1;33m[WARN][0m    ns1: 1 object(s) still present — stripping their finalizers...
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+  call: kubectl delete -n ns1 --ignore-not-found=true --wait=false configmap/obj1
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+  call: kubectl patch configmap/obj1 -n ns1 --type=merge -p={"metadata":{"finalizers":null}}
+  call: kubectl delete -n ns1 --ignore-not-found=true --wait=false configmap/obj1
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+  call: kubectl api-resources --verbs=list,delete --namespaced -o name --request-timeout=30s
+  call: kubectl get configmaps -n ns1 --ignore-not-found -o json --request-timeout=60s
+== teardown: PVCs, STUCK=0
+rc=0
+  call: kubectl get pvc -n ns1 -o name
+== teardown: PVCs, STUCK=1
+rc=0
+  out: [0;36m[INFO][0m    Draining PVCs in ns1 (terminating pods first)...
+  out: [0;36m[INFO][0m    Deleting PVCs in ns1...
+  call: kubectl get pvc -n ns1 -o name
+  call: kubectl delete pods --all -n ns1 --grace-period=0 --force
+  call: kubectl wait pod --all -n ns1 --for=delete --timeout=30s
+  call: kubectl delete pvc --all -n ns1 --wait=true --timeout=120s
+  call: kubectl get pvc -n ns1 -o name
+  call: kubectl patch thing.example/obj1 -n ns1 --type=merge -p={"metadata":{"finalizers":[]}}
+== teardown: CRDs matching, STUCK=0
+rc=0
+  out: [0;36m[INFO][0m  No CRDs matching example$; skipping.
+  call: kubectl get crd -o jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}
+== teardown: CRDs matching, STUCK=1
+rc=0
+  out: [0;36m[INFO][0m  Deleting CRDs matching example$...
+  out: [0;32m[OK][0m    CRDs matching example$ removal queued.
+  call: kubectl get crd -o jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}
+  call: kubectl get obj1.example -A -o jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}
+  call: kubectl patch obj1.example obj1 -n ns1 --type=merge -p={"metadata":{"finalizers":[]}}
+  call: kubectl delete obj1.example obj1 -n ns1 --ignore-not-found=true --wait=false
+  call: kubectl patch crd obj1.example --type=merge -p={"metadata":{"finalizers":[]}}
+  call: kubectl delete crd obj1.example --ignore-not-found=true --wait=false
+== teardown: Crossplane finalizers, STUCK=0
+rc=0
+  out: 
+  out: [0;36m── Purge — clearing Crossplane finalizers ───────────────────────────────────────────[0m
+  out: 
+  out: [0;36m[INFO][0m  No Crossplane managed resources; skipping.
+  out: [0;32m[OK][0m    Crossplane finalizers cleared.
+  call: kubectl get managed -o jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}
+  call: kubectl api-resources --api-group=gentianos.io -o name
+  call: kubectl get configmaps -A -o jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}
+  call: kubectl get compositeresourcedefinitions -o name
+== teardown: Crossplane finalizers, STUCK=1
+rc=0
+  out: 
+  out: [0;36m── Purge — clearing Crossplane finalizers ───────────────────────────────────────────[0m
+  out: 
+  out: [0;36m[INFO][0m  Clearing finalizers on 1 Crossplane managed resource(s)...
+  out: [0;32m[OK][0m    Managed resource finalizers cleared.
+  out: [0;32m[OK][0m    Crossplane finalizers cleared.
+  call: kubectl get managed -o jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}
+  call: kubectl get managed -o name
+  call: kubectl patch thing.example/obj1 --type=merge -p={"metadata":{"finalizers":[]}}
+  call: kubectl api-resources --api-group=gentianos.io -o name
+  call: kubectl get configmaps -A -o jsonpath={range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}
+  call: kubectl patch configmaps obj1 -n ns1 --type=merge -p={"metadata":{"finalizers":[]}}
+  call: kubectl delete configmaps obj1 -n ns1 --ignore-not-found=true --wait=false
+  call: kubectl get compositeresourcedefinitions -o name
+  call: kubectl patch thing.example/obj1 --type=merge -p={"metadata":{"finalizers":[]}}
