@@ -170,7 +170,7 @@ func keycloakForTest(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte("[]"))
 				return
 			}
-			_ = json.NewEncoder(w).Encode([]map[string]any{{"username": "ada", "email": "ada@example.test", "enabled": true}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "id-ada", "username": "ada", "email": "ada@example.test", "enabled": true}})
 		default:
 			_, _ = w.Write([]byte("[]"))
 		}
