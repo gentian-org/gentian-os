@@ -16,6 +16,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 // A tenant's mailboxes.
@@ -121,24 +123,14 @@ count() {
 `
 
 func mailContainer(name, script string, env ...corev1.EnvVar) corev1.Container {
-	user := MailUser
-	no := false
-	yes := true
 	return corev1.Container{
-		Name:    name,
-		Image:   DovecotImage,
-		Command: []string{"/bin/bash", "-c"},
-		Args:    []string{script},
-		Env:     env,
-		SecurityContext: &corev1.SecurityContext{
-			RunAsUser:                &user,
-			RunAsGroup:               &user,
-			RunAsNonRoot:             &yes,
-			AllowPrivilegeEscalation: &no,
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-		},
-		VolumeMounts: []corev1.VolumeMount{{Name: "mail", MountPath: MailRoot}},
+		Name:            name,
+		Image:           DovecotImage,
+		Command:         []string{"/bin/bash", "-c"},
+		Args:            []string{script},
+		Env:             env,
+		SecurityContext: meta.RestrictedContainerAs(MailUser),
+		VolumeMounts:    []corev1.VolumeMount{{Name: "mail", MountPath: MailRoot}},
 	}
 }
 

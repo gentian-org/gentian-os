@@ -35,6 +35,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 // The tenant's DMZ, and what stands in it (AD-6, AD-9).
@@ -365,6 +366,8 @@ func perimeterDeployment(name, dmz string, labels map[string]string, configHash 
 	replicas := int32(1)
 	no, yes := false, true
 	user := int64(101) // nginx-alpine's own unprivileged user
+	sc := meta.ReadOnlyContainer()
+	sc.RunAsNonRoot = &yes
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
@@ -380,25 +383,14 @@ func perimeterDeployment(name, dmz string, labels map[string]string, configHash 
 					// in a pod on the public internet is a credential waiting
 					// to be found.
 					AutomountServiceAccountToken: &no,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &yes,
-						RunAsUser:    &user,
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
+					SecurityContext:              meta.NonRootPod(user),
 					Containers: []corev1.Container{{
 						Name:  "proxy",
 						Image: kernel.PerimeterProxyImage(),
 						Ports: []corev1.ContainerPort{{
 							Name: "http", ContainerPort: perimeterProxyPort, Protocol: corev1.ProtocolTCP,
 						}},
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: &no,
-							ReadOnlyRootFilesystem:   &yes,
-							RunAsNonRoot:             &yes,
-							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-						},
+						SecurityContext: sc,
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "config", MountPath: "/etc/nginx/nginx.conf", SubPath: "nginx.conf", ReadOnly: true},
 							{Name: "tmp", MountPath: "/tmp"},
