@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // A bundle's manifest is signed by the cluster that wrote it, so that a
@@ -59,7 +60,7 @@ func SigningKeyFromSeed(seed string) (*SigningKey, error) {
 // SigningKeyPath is where the seed is in the vault, as the field
 // signing_seed. Only the operator reads it, with its own vault identity:
 // External Secrets is denied the path, so the key never becomes a Secret.
-const SigningKeyPath = "gentian-os/kernel/backup/signing"
+var SigningKeyPath = secrets.KernelPath("backup", "signing")
 
 // SigningKeyFromVault reads the seed with read, the operator's vault client.
 // A path that holds nothing (absent reports it) is a key that is absent,
