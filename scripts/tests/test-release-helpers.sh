@@ -142,7 +142,7 @@ transcript() {
     run '_BAO_RETRY_STDIN="path \"x\" {}" _bao_retry policy write p -' BAO_RETRY_DELAY_SECS=1
 
     release "A-03 external secrets" 'source scripts/steps/A-03-external-secrets.sh; _a03_release_external_secrets'
-    release "A-06 applications" 'source scripts/steps/A-06-argocd.sh; _a06_release_applications argocd'
+    release "A-06 applications" 'source scripts/steps/A-06-argocd.sh; _a06_release_applications ns1'
     release "B-05 managed resources" 'source scripts/steps/B-05-crossplane-providers.sh; _b05_sweep_managed'
     release "B-05 provider configs" 'source scripts/steps/B-05-crossplane-providers.sh; _b05_release_provider_configs'
     release "B-05 terminating CRDs" 'source scripts/steps/B-05-crossplane-providers.sh; _b05_release_terminating_provider_crds'

@@ -156,20 +156,20 @@ rc=0
   call: kubectl patch pushsecrets.external-secrets.io obj1 -n ns1 --type=merge -p {"metadata":{"finalizers":null}}
 == A-06 applications, STUCK=0
 rc=0
-  call: kubectl get applicationsets.argoproj.io -n argocd -o name
-  call: kubectl get applications.argoproj.io -n argocd -o name
-  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
+  call: kubectl get applicationsets.argoproj.io -n ns1 -o name
+  call: kubectl get applications.argoproj.io -n ns1 -o name
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n ns1 -o name
 == A-06 applications, STUCK=1
 rc=0
   out: [1;33m[WARN][0m    thing.example/obj1 kept its finalizers; removing them.
-  call: kubectl get applicationsets.argoproj.io -n argocd -o name
-  call: kubectl delete -n argocd --wait=false thing.example/obj1
-  call: kubectl get applications.argoproj.io -n argocd -o name
-  call: kubectl delete -n argocd --wait=false thing.example/obj1
-  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
-  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
-  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n argocd -o name
-  call: kubectl patch thing.example/obj1 -n argocd --type=merge -p {"metadata":{"finalizers":null}}
+  call: kubectl get applicationsets.argoproj.io -n ns1 -o name
+  call: kubectl delete -n ns1 --wait=false thing.example/obj1
+  call: kubectl get applications.argoproj.io -n ns1 -o name
+  call: kubectl delete -n ns1 --wait=false thing.example/obj1
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n ns1 -o name
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n ns1 -o name
+  call: kubectl get applications.argoproj.io,applicationsets.argoproj.io -n ns1 -o name
+  call: kubectl patch thing.example/obj1 -n ns1 --type=merge -p {"metadata":{"finalizers":null}}
 == B-05 managed resources, STUCK=0
 rc=0
   call: kubectl get managed -o name
