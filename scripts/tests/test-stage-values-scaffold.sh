@@ -20,8 +20,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -49,13 +49,12 @@ run() {
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; '"$1" 2>&1
 }
 
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${2:-}"; fail=$((fail + 1)); }
 check() { # <what> <condition, as a command>
     local what="$1"; shift
     if "$@"; then ok "${what}"; else bad "${what}"; fi
 }
 # empty_values <file> — a YAML document that is an empty map, comments aside.
+# shellcheck disable=SC2317,SC2329 # called by check, as its command
 empty_values() {
     [[ -f "$1" ]] || return 1
     [[ "$(grep -v -E '^[[:space:]]*(#|$)' "$1")" == "{}" ]]
@@ -119,9 +118,4 @@ PY
     then ok "both parse as an empty map"; else bad "both parse as an empty map"; fi
 fi
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sAll %d cases correct.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

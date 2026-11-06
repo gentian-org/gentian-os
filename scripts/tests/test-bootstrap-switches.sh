@@ -14,8 +14,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 render() {
     # The layout and the platform table, as B-01 passes them: the chart
@@ -41,11 +41,7 @@ NAMESPACES="${TMP}/namespaces.yaml"
 
 check() {
     local what="$1" ok="$2"
-    if [[ "${ok}" == 1 ]]; then
-        printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "${what}"; pass=$((pass + 1))
-    else
-        printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "${what}"; fail=$((fail + 1))
-    fi
+    if [[ "${ok}" == 1 ]]; then ok "${what}"; else bad "${what}"; fi
 }
 
 echo ""
@@ -225,9 +221,4 @@ check "operator: no image tag refuses to render" \
 check "operator: the tag the installer resolved is the image" \
     "$(has "$(render false true false)" 'tag: "develop-abc1234"' && echo 1 || echo 0)"
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sAll %d switches render as passed.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

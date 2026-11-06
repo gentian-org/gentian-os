@@ -23,11 +23,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "bootstrap drift: a value changed in an existing Application is drift"
@@ -126,9 +123,4 @@ check "a named Application is compared with its own live object" '[[ "${rc}" == 
 python3 scripts/lib/bootstrap-app-drift.py "${SB}/rendered.yaml" "${SB}/live/dns-records.json" >/dev/null 2>&1; rc=$?
 check "several rendered Applications and no name: cannot tell" '[[ "${rc}" == 2 ]]' "rc=${rc}"
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} checks passed.${NC}"
+finish

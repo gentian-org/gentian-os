@@ -48,11 +48,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "secretMode: a credential is made once, and derived values are what they were"
@@ -304,6 +301,7 @@ check "_derived stops when the salt is not set" \
 
 # settled <shell-master> <shell-salt|-> <stored-master> <stored-salt> — the
 # master password and salt gentian_settle_derivation leaves; "-" is unset.
+# shellcheck disable=SC2317,SC2329 # called from the strings check evaluates
 settled() {
     env -i PATH="${PATH}" M="$1" S="$2" bash -c 'set -u; source scripts/lib/derive.sh
         MASTER_PASSWORD="${M}"; [[ "${S}" == - ]] || DERIVATION_SALT="${S}"
@@ -368,9 +366,4 @@ printf 'in-the-vault' > "${SB}/vault/headlamp_client_secret"
 check "random: where the vault and the cluster both hold one, the vault's stands" \
     '[[ "$(lib random "_headlamp_derive_secret")" == "in-the-vault" ]]'
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}All ${pass} checks passed.${NC}"
+finish

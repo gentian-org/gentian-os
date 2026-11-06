@@ -545,23 +545,20 @@ func (r *TURNEdgeReconciler) ensureDNS(ctx context.Context) error {
 	if err := unstructured.SetNestedSlice(obj.Object, []interface{}{record}, "spec", "endpoints"); err != nil {
 		return err
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(dnsEndpointGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: turnEdgeName, Namespace: turnEdgeNamespace}, existing)
+	err := ensureObject(ctx, r.Client, obj, func(existing *unstructured.Unstructured) bool {
+		if equality.Semantic.DeepEqual(existing.Object["spec"], obj.Object["spec"]) {
+			return false
+		}
+		existing.Object["spec"] = obj.Object["spec"]
+		existing.SetLabels(obj.GetLabels())
+		existing.SetAnnotations(obj.GetAnnotations())
+		existing.SetOwnerReferences(obj.GetOwnerReferences())
+		return true
+	})
 	if runtimeMeta.IsNoMatchError(err) {
 		return nil
 	}
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, obj)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], obj.Object["spec"]) {
-		return nil
-	}
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	return r.Update(ctx, obj)
+	return err
 }
 
 // apply writes obj as desired, over what an earlier reconcile left.

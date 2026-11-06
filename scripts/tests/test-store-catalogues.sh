@@ -29,10 +29,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 is() { # <what> <got> <want>
     if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1" "    got:  $2
     want: $3"; fi
@@ -269,9 +267,4 @@ is "the Cluster schema allows addedBy: store on a source" \
 
 is "kubectl was not asked anything" "$(cat "${KUBECTL_LOG}")" ""
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%s%d passed%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

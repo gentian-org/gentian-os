@@ -12,12 +12,9 @@ package controller
 
 import (
 	"context"
-	"reflect"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Argo CD's server serves TLS, and the Gateway checks it. The internal CA
@@ -88,28 +85,11 @@ func buildArgoCDBackendTLSPolicy(namespace string) *unstructured.Unstructured {
 	return obj
 }
 
-func applySpecOf(ctx context.Context, c client.Client, desired *unstructured.Unstructured) error {
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(desired.GroupVersionKind())
-	err := c.Get(ctx, client.ObjectKeyFromObject(desired), existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if reflect.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		return nil
-	}
-	existing.Object["spec"] = desired.Object["spec"]
-	return c.Update(ctx, existing)
-}
-
 // ensureArgoCDBackendTLS writes the server's certificate and the Gateway's
 // check of it.
 func (r *GatewayPlatformReconciler) ensureArgoCDBackendTLS(ctx context.Context) error {
-	if err := applySpecOf(ctx, r.Client, buildArgoCDServerCertificate(argocdNamespace)); err != nil {
+	if err := ensureSpec(ctx, r.Client, buildArgoCDServerCertificate(argocdNamespace)); err != nil {
 		return err
 	}
-	return applySpecOf(ctx, r.Client, buildArgoCDBackendTLSPolicy(argocdNamespace))
+	return ensureSpec(ctx, r.Client, buildArgoCDBackendTLSPolicy(argocdNamespace))
 }

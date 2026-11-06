@@ -15,10 +15,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "claims kinds: step 0 commits a claim only of a kind this checkout defines"
@@ -39,9 +37,4 @@ if [[ "${out}" != *"cluster.yaml"* ]]; then ok "a Cluster claim (an XRD's kind) 
 if [[ "${out}" != *"platform-security-policy.yaml"* ]]; then ok "the seeded PlatformSecurityPolicy (an operator CRD's kind) passes"; else bad "the seeded PlatformSecurityPolicy (an operator CRD's kind) passes" "${out}"; fi
 if [[ "${out}" == *$'infra-data.yaml\tInfraData'* ]]; then ok "a kind neither defines is named"; else bad "a kind neither defines is named" "${out}"; fi
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} checks passed.${NC}"
+finish

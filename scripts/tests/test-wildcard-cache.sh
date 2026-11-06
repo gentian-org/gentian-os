@@ -18,8 +18,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -71,10 +71,6 @@ run() {
 }
 CACHE="${SANDBOX}/home/.gentian/certs/example.test.json"
 
-check() {
-    if eval "$2"; then printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1))
-    else printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${3:-}"; fail=$((fail + 1)); fi
-}
 
 echo ""
 echo "Kernel wildcard kept across purges"
@@ -117,8 +113,4 @@ out="$(run "" 'GENTIAN_PURGE_CLUSTER_INFRA=1 purge_local_state')"
 check "--purge --cluster-infra removes it and its directory" \
     '[[ ! -e "${CACHE}" && ! -e "$(dirname "${CACHE}")" ]]' "${out}"
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d of %d failed.%s\n' "${RED}" "${fail}" "$((pass + fail))" "${NC}"; exit 1
-fi
-printf '%sAll %d wildcard-cache cases pass.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

@@ -75,25 +75,17 @@ func jobSecret(job *batchv1.Job, data map[string][]byte) *corev1.Secret {
 // It is written again when the Job is a new one (a retired Job's Secret went
 // with it) or the credential changed, and left alone otherwise.
 func ensureJobSecret(ctx context.Context, c client.Client, job *batchv1.Job, desired *corev1.Secret) error {
-	existing := &corev1.Secret{}
-	err := c.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if apierrors.IsNotFound(err) {
-		if err := c.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("hand the credential to Job %s/%s: %w", job.Namespace, job.Name, err)
+	err := ensureObject(ctx, c, desired, func(existing *corev1.Secret) bool {
+		if reflect.DeepEqual(existing.OwnerReferences, desired.OwnerReferences) &&
+			reflect.DeepEqual(existing.Data, desired.Data) {
+			return false
 		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if reflect.DeepEqual(existing.OwnerReferences, desired.OwnerReferences) &&
-		reflect.DeepEqual(existing.Data, desired.Data) {
-		return nil
-	}
-	existing.OwnerReferences = desired.OwnerReferences
-	existing.Labels = desired.Labels
-	existing.Data = desired.Data
-	if err := c.Update(ctx, existing); err != nil {
+		existing.OwnerReferences = desired.OwnerReferences
+		existing.Labels = desired.Labels
+		existing.Data = desired.Data
+		return true
+	})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("hand the credential to Job %s/%s: %w", job.Namespace, job.Name, err)
 	}
 	return nil

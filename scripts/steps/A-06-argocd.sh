@@ -198,21 +198,16 @@ apply() {
 # it did not get to. The steps before this one have removed what those
 # Applications deployed, so there is nothing left for a finalizer to prune.
 _a06_release_applications() {
-    local ns="$1" kind left deadline
+    local ns="$1" kind obj
     for kind in applicationsets.argoproj.io applications.argoproj.io; do
         kubectl get "${kind}" -n "${ns}" -o name 2>/dev/null \
             | xargs_r kubectl delete -n "${ns}" --wait=false >/dev/null 2>&1 || true
     done
-    deadline=$((SECONDS + 90))
-    while (( SECONDS < deadline )); do
-        left="$(kubectl get applications.argoproj.io,applicationsets.argoproj.io -n "${ns}" -o name 2>/dev/null || true)"
-        [[ -n "${left}" ]] || return 0
-        sleep 5
-    done
+    wait_until_empty 90 5 kubectl get applications.argoproj.io,applicationsets.argoproj.io -n "${ns}" -o name && return 0
     while IFS= read -r obj; do
         [[ -n "${obj}" ]] || continue
         warn "  ${obj} kept its finalizers; removing them."
-        kubectl patch "${obj}" -n "${ns}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+        strip_finalizers "${obj}" -n "${ns}" >/dev/null
     done < <(kubectl get applications.argoproj.io,applicationsets.argoproj.io -n "${ns}" -o name 2>/dev/null || true)
 }
 

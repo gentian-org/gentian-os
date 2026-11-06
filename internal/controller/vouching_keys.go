@@ -14,9 +14,7 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/gentian-org/gentian-os/internal/componentkeys"
@@ -88,22 +86,15 @@ func ensureKeyList[E componentkeys.Entry](ctx context.Context, c client.Client, 
 		},
 		Data: map[string]string{key: document},
 	}
-	existing := &corev1.ConfigMap{}
-	err = c.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Data[key] == document && existing.Labels[managedByLabel] == managedByValue {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	if existing.Labels == nil {
-		existing.Labels = map[string]string{}
-	}
-	existing.Labels[managedByLabel] = managedByValue
-	return c.Patch(ctx, existing, patch)
+	return ensureObject(ctx, c, desired, func(existing *corev1.ConfigMap) bool {
+		if existing.Data[key] == document && existing.Labels[managedByLabel] == managedByValue {
+			return false
+		}
+		existing.Data = desired.Data
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		existing.Labels[managedByLabel] = managedByValue
+		return true
+	})
 }

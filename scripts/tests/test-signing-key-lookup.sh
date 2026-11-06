@@ -37,10 +37,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "The break-glass key is found by the id the repository records"
@@ -385,10 +383,4 @@ else
 fi
 is "the first keyring still holds the two keys it started with" "$(key_count)" "2"
 
-echo ""
-if [[ ${fail} -eq 0 ]]; then
-    echo "${GREEN}${pass} checks passed.${NC}"
-    exit 0
-fi
-echo "${RED}${fail} failed${NC}, ${pass} passed."
-exit 1
+finish

@@ -16,8 +16,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -51,9 +51,9 @@ sync() {
 expect() {
     local what="$1" out="$2" want_rc="$3" want_text="$4"
     if [[ "${out}" == *"rc=${want_rc}"* && "${out}" == *"${want_text}"* && "${out}" != *"unbound variable"* ]]; then
-        printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "${what}"; pass=$((pass + 1))
+        ok "${what}"
     else
-        printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "${what}" "${out}"; fail=$((fail + 1))
+        bad "${what}" "${out}"
     fi
 }
 
@@ -85,9 +85,4 @@ expect "behind with a local commit: refuses, names both ways out" "$(sync)" 1 "r
 rm -rf "${CHECKOUT}"
 expect "no checkout at all: leaves it to the scaffold to say so" "$(sync)" 0 ""
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sAll %d cases correct.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

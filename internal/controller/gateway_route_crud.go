@@ -15,11 +15,9 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -33,49 +31,42 @@ var backendTrafficPolicyGVK = schema.GroupVersionKind{
 }
 
 func ensureHTTPRouteResource(ctx context.Context, c client.Client, desired *gatewayv1.HTTPRoute) error {
-	existing := &gatewayv1.HTTPRoute{}
-	err := c.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	// Annotations too, not only the spec. A route's annotations are read:
-	// the edge's authorization table is built from them, so a route whose
-	// spec was right and whose annotations were an earlier build's kept
-	// that build's answer for good -- a new annotation never reached a
-	// route that already existed. Only the ones this asks for are set;
-	// what something else put on the route stays.
-	annotationsStale := false
-	for k, v := range desired.Annotations {
-		if existing.Annotations[k] != v {
-			annotationsStale = true
-			break
-		}
-	}
-	// Except the restore hold's, which goes when the desired route is not
-	// held (restore_hold.go).
-	_, heldNow := existing.Annotations[restoreHoldAnnotation]
-	_, heldDesired := desired.Annotations[restoreHoldAnnotation]
-	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsStale && heldNow == heldDesired {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	syncRestoreHoldAnnotation(existing, desired)
-	existing.Spec = desired.Spec
-	if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		existing.Labels = desired.Labels
-	}
-	if annotationsStale {
-		if existing.Annotations == nil {
-			existing.Annotations = map[string]string{}
-		}
+	return ensureObject(ctx, c, desired, func(existing *gatewayv1.HTTPRoute) bool {
+		// Annotations too, not only the spec. A route's annotations are
+		// read: the edge's authorization table is built from them, so a
+		// route whose spec was right and whose annotations were an earlier
+		// build's kept that build's answer for good -- a new annotation
+		// never reached a route that already existed. Only the ones this
+		// asks for are set; what something else put on the route stays.
+		annotationsStale := false
 		for k, v := range desired.Annotations {
-			existing.Annotations[k] = v
+			if existing.Annotations[k] != v {
+				annotationsStale = true
+				break
+			}
 		}
-	}
-	return c.Patch(ctx, existing, patch)
+		// Except the restore hold's, which goes when the desired route is
+		// not held (restore_hold.go).
+		_, heldNow := existing.Annotations[restoreHoldAnnotation]
+		_, heldDesired := desired.Annotations[restoreHoldAnnotation]
+		if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && !annotationsStale && heldNow == heldDesired {
+			return false
+		}
+		syncRestoreHoldAnnotation(existing, desired)
+		existing.Spec = desired.Spec
+		if !equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+			existing.Labels = desired.Labels
+		}
+		if annotationsStale {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			for k, v := range desired.Annotations {
+				existing.Annotations[k] = v
+			}
+		}
+		return true
+	})
 }
 
 func (r *TenantReconciler) deleteStaleHTTPRoutesForTenant(
