@@ -914,6 +914,18 @@ mailEgressHost: ""
 # nobody who does not answer.
 mailAdminContact: ""
 
+# Other addresses of a hosted domain delivered to an address off this cluster:
+# a role address such as hello@ while nobody on the cluster holds it. Each
+# entry names the address, in a domain this cluster accepts mail for, and
+# where it goes. The target is held to the same rule as mailAdminContact (off
+# this cluster, or the mail would land in a mailbox nobody can open); an
+# address whose domain the cluster does not host is logged and skipped. The
+# forwarded message is not rewritten (no SRS), so a strict sender's SPF check
+# fails at the target.
+mailAliases: []
+#  - address: hello@example.org
+#    to: someone@example.net
+
 # Whether an address nobody owns is accepted.
 #
 # The Postfix mailbox map has always been a catch-all — "@<domain> <domain>/" —
