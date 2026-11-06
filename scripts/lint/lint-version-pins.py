@@ -62,6 +62,8 @@ LITERAL_FIELD = re.compile(r"^\s*(?:-\s+)?(repoURL|targetRevision):\s*(.*?)\s*$"
 PIN_READ = re.compile(r"\.Values\.versions\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)"
                       r'|index\s+\.Values\.versions\s+"([^"]+)"\s+"([^"]+)"')
 PIN_PLACEHOLDER = re.compile(r"versions\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_]+)\.placeholder")
+PROVIDER_HELM_RELEASE = re.compile(r"^apiVersion:\s*helm\.crossplane\.io/", re.M)
+RELEASE_KIND = re.compile(r"^kind:\s*Release\s*$", re.M)
 RELEASE_FIELD = re.compile(r"^\s*(version|repository):\s*(.*?)\s*$")
 VERSION_ASSIGN = re.compile(r"\b([A-Z][A-Z0-9_]*_VERSION)\s*[?:]?=\s*['\"]?v?[0-9]+\.[0-9]+")
 
@@ -156,7 +158,7 @@ def main():
         for path in sorted((chart / "templates").glob("*.yaml")):
             rel = path.relative_to(ROOT)
             text = path.read_text(encoding="utf-8")
-            release = "kind: Release" in text and "helm.crossplane.io" in text
+            release = bool(PROVIDER_HELM_RELEASE.search(text)) and bool(RELEASE_KIND.search(text))
             for n, line in enumerate(text.splitlines(), start=1):
                 if line.lstrip().startswith("#"):
                     continue
