@@ -1061,7 +1061,7 @@ func componentReports(comp *gentianov1alpha1.Component, reason, message string) 
 }
 
 func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1.Component, st metav1.ConditionStatus, reason, message string, requeue time.Duration) (ctrl.Result, error) {
-	replaceChangedCondition(&comp.Status.Conditions, comp.Generation, conditionComponentReady, st, reason, message)
+	setStatusCondition(&comp.Status.Conditions, comp.Generation, conditionComponentReady, st, reason, message)
 	if comp.Status.Fulfilment == "" {
 		comp.Status.Fulfilment = "dedicated"
 	}
