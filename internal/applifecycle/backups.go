@@ -61,6 +61,10 @@ type BackupSummary struct {
 	// Schedule names the schedule that took this export, empty for one a
 	// person started.
 	Schedule string `json:"schedule,omitempty"`
+	// Reason says why the platform took an export nobody asked for: "move",
+	// one taken before an app moved to another build. A screen lists those
+	// apart from backups.
+	Reason string `json:"reason,omitempty"`
 }
 
 // BackupAppInfo is one app's part of an export.
@@ -285,6 +289,7 @@ func backupSummary(e *gentianov1alpha1.TenantExport, tenantName string) BackupSu
 		Apps:      []BackupAppInfo{},
 		Message:   conditionMessage(e.Status.Conditions),
 		Schedule:  e.Labels[gentianov1alpha1.TenantExportScheduleLabel],
+		Reason:    e.Labels[gentianov1alpha1.TenantExportReasonLabel],
 	}
 	if out.Quiesced == nil {
 		out.Quiesced = []string{}

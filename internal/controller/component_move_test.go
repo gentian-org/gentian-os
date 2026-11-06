@@ -21,8 +21,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -395,5 +397,57 @@ func TestAMoveWaitingPastTheDeadlineIsRolledBack(t *testing.T) {
 	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolledBack || ro.Reason != rolloutReasonNotReadyInTime ||
 		ro.Digest != oldDigest || !strings.Contains(ro.Message, "running pod") {
 		t.Fatalf("after the deadline: %+v", ro)
+	}
+}
+
+// Once a move has ended, the newest exports taken before the app's moves are
+// kept, with the one its last move made, and older finished ones go; another
+// app's, a backup somebody took, and an export still running are not touched.
+func TestOlderExportsTakenBeforeMovesAreRemoved(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	export := func(name, app, reason string, day int, phase gentianov1alpha1.TenantExportPhase) client.Object {
+		labels := map[string]string{componentLabel: app}
+		if reason != "" {
+			labels[gentianov1alpha1.TenantExportReasonLabel] = reason
+		}
+		return &gentianov1alpha1.TenantExport{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "tenant-demo", Labels: labels,
+				CreationTimestamp: metav1.Time{Time: time.Date(2026, 11, day, 3, 0, 0, 0, time.UTC)}},
+			Status: gentianov1alpha1.TenantExportStatus{Phase: phase},
+		}
+	}
+	ready, running := gentianov1alpha1.TenantExportPhaseReady, gentianov1alpha1.TenantExportPhaseRunning
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		export("move-wiki-1", "wiki", "move", 1, ready),
+		export("move-wiki-2", "wiki", "move", 2, gentianov1alpha1.TenantExportPhaseFailed),
+		export("move-wiki-3", "wiki", "move", 3, ready),
+		export("move-wiki-4", "wiki", "move", 4, ready),
+		export("move-wiki-5", "wiki", "move", 5, running),
+		export("move-shop-1", "shop", "move", 1, ready),
+		export("nightly", "wiki", "", 1, ready),
+	).Build()
+	r := &ComponentReconciler{Client: c, Scheme: s}
+	comp := &gentianov1alpha1.Component{
+		ObjectMeta: metav1.ObjectMeta{Name: "wiki", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.ComponentStatus{Rollout: &gentianov1alpha1.RolloutStatus{
+			Phase: gentianov1alpha1.RolloutDone, Export: "move-wiki-1"}},
+	}
+	if err := r.pruneMoveExports(context.Background(), comp); err != nil {
+		t.Fatal(err)
+	}
+	list := &gentianov1alpha1.TenantExportList{}
+	if err := c.List(context.Background(), list); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, e := range list.Items {
+		left = append(left, e.Name)
+	}
+	got := strings.Join(left, ",")
+	if got != "move-shop-1,move-wiki-1,move-wiki-3,move-wiki-4,move-wiki-5,nightly" {
+		t.Fatalf("left %s; want the two newest finished, the last move's, the running one, and the others' untouched", got)
 	}
 }

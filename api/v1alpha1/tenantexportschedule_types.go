@@ -26,6 +26,14 @@ import (
 // An export without it was started by a person.
 const TenantExportScheduleLabel = "gentianos.io/tenant-export-schedule"
 
+// TenantExportReasonLabel says why the platform took an export nobody asked
+// for; TenantExportReasonMove is one taken before an app moved to another
+// build, kept for going back.
+const (
+	TenantExportReasonLabel = "gentianos.io/export-reason"
+	TenantExportReasonMove  = "move"
+)
+
 // TenantExportScheduleSpec takes exports on a schedule and expires old ones.
 //
 // A CronJob applying TenantExports would have worked, but it would need an
