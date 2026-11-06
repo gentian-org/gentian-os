@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -325,35 +324,13 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 // the Secret of the Job's name, which the Job owns (jobSecret); it is in no
 // Job spec, no ConfigMap and no composed Object.
 func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, withSecret bool, entitlementGroup string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	jobName := clientJobName(tenant.Name, cfg.profileName)
 	container := keycloakContainer("provision-oidc-pack",
 		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, withSecret, entitlementGroup))
 	if withSecret {
 		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       cfg.profileName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, identityNamespace, tenant, cfg.profileName, container)
 }
 
 // samlAppConfig holds resolved SAML settings for one tenant app profile.

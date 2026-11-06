@@ -150,8 +150,6 @@ echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
 // makeTenantSMTPJob configures a tenant realm's mail. fromName is who its
 // mail says it is from: the cluster's brand.
 func makeTenantSMTPJob(tenantName, realmName, kernelMailHost, fromName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	// Older installs predate the mail_service_mode key in the SMTP secret.
 	optionalKey := true
 	c := keycloakContainer("tenant-smtp", buildTenantSMTPConfigureScript(fmt.Sprintf("%q", realmName)))
@@ -283,27 +281,11 @@ func makeTenantSMTPJob(tenantName, realmName, kernelMailHost, fromName string) *
 			},
 		},
 	)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tenantSMTPJobName(tenantName),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:                         tenantName,
-				managedByLabel:                      managedByValue,
-				"gentianos.io/keycloak-tenant-smtp": tenantSMTPVersion,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{c},
-				},
-			},
-		},
-	}
+	return meta.ProvisioningJob(tenantSMTPJobName(tenantName), identityNamespace, map[string]string{
+		tenantLabel:                         tenantName,
+		managedByLabel:                      managedByValue,
+		"gentianos.io/keycloak-tenant-smtp": tenantSMTPVersion,
+	}, c)
 }
 
 // clusterKeycloakSMTPCredentialsAvailable reports whether this cluster has SMTP

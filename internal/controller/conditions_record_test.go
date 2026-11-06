@@ -85,24 +85,24 @@ func TestConditionSettersTranscript(t *testing.T) {
 		{"schedule", func(_ *testing.T, conds []metav1.Condition, _ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.TenantExportSchedule{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			setScheduleCondition(o, st, reason, message)
+			setStatusCondition(&o.Status.Conditions, o.Generation, conditionScheduleReady, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"export", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.TenantExport{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			setExportCondition(o, typ, st, reason, message)
+			setStatusCondition(&o.Status.Conditions, o.Generation, typ, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"restore", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			setRestoreCondition(o, typ, st, reason, message)
+			setStatusCondition(&o.Status.Conditions, o.Generation, typ, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"customization record", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			s := &gentianov1alpha1.CustomizationStatus{Conditions: conds}
-			setRecordCondition(s, typ, st, reason, message)
+			setStatusCondition(&s.Conditions, 0, typ, st, reason, message)
 			return s.Conditions
 		}},
 		{"tenant", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
@@ -114,19 +114,19 @@ func TestConditionSettersTranscript(t *testing.T) {
 		{"backup policy", func(_ *testing.T, conds []metav1.Condition, _ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.BackupPolicy{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			setPolicyCondition(o, st, reason, message)
+			replaceChangedCondition(&o.Status.Conditions, o.Generation, conditionPolicyAccepted, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"app grant", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.AppGrant{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			setAppGrantCondition(o, typ, st, reason, message)
+			stampCondition(&o.Status.Conditions, typ, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"platform security policy", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.PlatformSecurityPolicy{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			setPSPCondition(o, typ, st, reason, message)
+			stampCondition(&o.Status.Conditions, typ, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"component", func(t *testing.T, conds []metav1.Condition, _ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {

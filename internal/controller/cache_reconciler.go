@@ -183,8 +183,6 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 // of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
 // no ConfigMap and no composed Object.
 func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword bool) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
 	jobName := redisACLJobName(tenant.Name, appName)
@@ -192,27 +190,7 @@ func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName string, withPasswo
 	if withPassword {
 		c.Env = append(c.Env, meta.SecretEnv("REDIS_USER_PASSWORD", jobName, jobSecretPasswordKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: cacheNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{c},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, cacheNamespace, tenant, appName, c)
 }
 
 // makeRedisACLDeleteJob removes an app's user from the shared cache: the Job

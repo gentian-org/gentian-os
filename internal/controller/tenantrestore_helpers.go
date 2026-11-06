@@ -13,39 +13,8 @@ package controller
 import (
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
-
-func setRestoreCondition(
-	restore *gentianov1alpha1.TenantRestore,
-	condType string,
-	status metav1.ConditionStatus,
-	reason, message string,
-) {
-	now := metav1.Now()
-	for i := range restore.Status.Conditions {
-		c := &restore.Status.Conditions[i]
-		if c.Type != condType {
-			continue
-		}
-		if c.Status != status {
-			c.LastTransitionTime = now
-		}
-		c.Status, c.Reason, c.Message = status, reason, message
-		c.ObservedGeneration = restore.Generation
-		return
-	}
-	restore.Status.Conditions = append(restore.Status.Conditions, metav1.Condition{
-		Type:               condType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-		ObservedGeneration: restore.Generation,
-	})
-}
 
 // quiesceModeFromMessage recovers how an app was actually paused.
 //

@@ -22,6 +22,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/meta/metatest"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
@@ -69,10 +70,10 @@ func TestProvisioningJobBuildersTranscript(t *testing.T) {
 // testdata/job-status.txt.
 func TestJobStatusTranscript(t *testing.T) {
 	holdToTranscript(t, *updateTranscripts, "job-status", metatest.Transcript(map[string]func(*batchv1.Job) string{
-		"complete":  func(j *batchv1.Job) string { return fmt.Sprint(jobIsComplete(j)) },
-		"failed":    func(j *batchv1.Job) string { return fmt.Sprint(jobIsFailed(j)) },
-		"failed2":   func(j *batchv1.Job) string { return fmt.Sprint(jobFailed(j)) },
-		"ended":     func(j *batchv1.Job) string { return fmt.Sprint(jobEnded(j)) },
-		"suspended": func(j *batchv1.Job) string { return fmt.Sprint(jobHasCondition(j, batchv1.JobSuspended)) },
+		"complete":  func(j *batchv1.Job) string { return fmt.Sprint(meta.JobComplete(j)) },
+		"failed":    func(j *batchv1.Job) string { return fmt.Sprint(meta.JobFailed(j)) },
+		"failed2":   func(j *batchv1.Job) string { return fmt.Sprint(meta.JobFailed(j)) },
+		"ended":     func(j *batchv1.Job) string { return fmt.Sprint(meta.JobEnded(j)) },
+		"suspended": func(j *batchv1.Job) string { return fmt.Sprint(meta.JobCondition(j, batchv1.JobSuspended) != nil) },
 	}))
 }

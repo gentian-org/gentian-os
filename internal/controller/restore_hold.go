@@ -282,7 +282,7 @@ func (r *ComponentReconciler) applyRestoreHold(ctx context.Context, comp *gentia
 // restoreHold applies the hold to the component's routes, in its namespace
 // and in its tenant's DMZ, and reports whether the app is held.
 func (r *ComponentReconciler) restoreHold(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
-	tenant, err := r.tenantOf(ctx, comp.Namespace)
+	tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 	if err != nil {
 		return false, err
 	}

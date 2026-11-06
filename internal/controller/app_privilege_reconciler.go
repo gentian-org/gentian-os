@@ -19,6 +19,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -61,8 +62,8 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		return ctrl.Result{}, nil
 	}
 
-	identityReady := tenantConditionTrue(tenant, conditionIdentityReady)
-	appsReady := tenantConditionTrue(tenant, conditionAppsReady)
+	identityReady := apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionIdentityReady)
+	appsReady := apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionAppsReady)
 	if !identityReady || !appsReady {
 		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
 			"WaitingForPrerequisites", "Waiting for identity and app deployment before privileged role sync")
@@ -382,13 +383,4 @@ func (r *TenantReconciler) persistAppPrivilegeFingerprint(ctx context.Context, t
 
 func appPrivilegeAnnotationKey(profileName string) string {
 	return appPrivilegeSyncAnnotationPrefix + profileName
-}
-
-func tenantConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bool {
-	for _, cond := range tenant.Status.Conditions {
-		if cond.Type == condType {
-			return cond.Status == metav1.ConditionTrue
-		}
-	}
-	return false
 }

@@ -202,7 +202,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// written before there was an inventory.
 			// A handoff begun and not finished is finished first, so that
 			// what was taken over from the composite is in the inventory.
-			tenant, err := r.tenantOf(ctx, comp.Namespace)
+			tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -410,7 +410,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// the pin re-runs this. A companion is looked for again.
 		return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
 	}
-	tenant, err := r.tenantOf(ctx, comp.Namespace)
+	tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1053,19 +1053,7 @@ func componentReports(comp *gentianov1alpha1.Component, reason, message string) 
 }
 
 func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1.Component, st metav1.ConditionStatus, reason, message string, requeue time.Duration) (ctrl.Result, error) {
-	now := metav1.Now()
-	updated := false
-	for i, c := range comp.Status.Conditions {
-		if c.Type == conditionComponentReady {
-			if c.Status != st || c.Reason != reason || c.Message != message {
-				comp.Status.Conditions[i] = metav1.Condition{Type: conditionComponentReady, Status: st, Reason: reason, Message: message, LastTransitionTime: now, ObservedGeneration: comp.Generation}
-			}
-			updated = true
-		}
-	}
-	if !updated {
-		comp.Status.Conditions = append(comp.Status.Conditions, metav1.Condition{Type: conditionComponentReady, Status: st, Reason: reason, Message: message, LastTransitionTime: now, ObservedGeneration: comp.Generation})
-	}
+	replaceChangedCondition(&comp.Status.Conditions, comp.Generation, conditionComponentReady, st, reason, message)
 	if comp.Status.Fulfilment == "" {
 		comp.Status.Fulfilment = "dedicated"
 	}
@@ -1076,11 +1064,6 @@ func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 	return ctrl.Result{}, nil
-}
-
-// tenantOf finds the Tenant whose namespace this is.
-func (r *ComponentReconciler) tenantOf(ctx context.Context, namespace string) (*gentianov1alpha1.Tenant, error) {
-	return tenantInNamespace(ctx, r.Client, namespace)
 }
 
 // tenantInNamespace finds the Tenant whose workloads run in a namespace, or

@@ -16,14 +16,15 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/meta/metatest"
 )
 
 // What a cleanup's wait reads of a Job's state.
 func TestJobStatusTranscript(t *testing.T) {
 	got := metatest.Transcript(map[string]func(*batchv1.Job) string{
-		"failed": func(j *batchv1.Job) string { return fmt.Sprint(jobFailed(j)) },
-		"reason": func(j *batchv1.Job) string { return fmt.Sprintf("%q", jobFailureReason(j)) },
+		"failed": func(j *batchv1.Job) string { return fmt.Sprint(meta.JobFailed(j)) },
+		"reason": func(j *batchv1.Job) string { return fmt.Sprintf("%q", meta.JobFailure(j)) },
 	})
 	want := `complete, false: failed=false reason=""
 complete: failed=false reason=""

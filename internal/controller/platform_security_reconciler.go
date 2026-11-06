@@ -65,7 +65,7 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	if err := security.SyncPlatformSecurityConfigMap(ctx, r.Client, psp.Spec.AllowedMacWaivers); err != nil {
-		setPSPCondition(psp, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
+		stampCondition(&psp.Status.Conditions, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
 		if updateErr := r.Status().Update(ctx, psp); updateErr != nil {
 			return ctrl.Result{}, errors.Join(err, fmt.Errorf("record the sync failure on the policy: %w", updateErr))
 		}
@@ -73,7 +73,7 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	psp.Status.AllowedMacWaiverCount = len(psp.Spec.AllowedMacWaivers)
-	setPSPCondition(psp, conditionPlatformSecurityReady, metav1.ConditionTrue, "Synced",
+	stampCondition(&psp.Status.Conditions, conditionPlatformSecurityReady, metav1.ConditionTrue, "Synced",
 		"Platform security ConfigMap updated")
 	if err := r.Status().Update(ctx, psp); err != nil {
 		return ctrl.Result{}, err
@@ -98,24 +98,4 @@ func (r *PlatformSecurityPolicyReconciler) SetupWithManager(mgr ctrl.Manager) er
 		For(&gentianov1alpha1.PlatformSecurityPolicy{}).
 		Owns(&corev1.ConfigMap{}).
 		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.PlatformSecurityPolicy{}, r))
-}
-
-func setPSPCondition(psp *gentianov1alpha1.PlatformSecurityPolicy, typ string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.Now()
-	for i := range psp.Status.Conditions {
-		if psp.Status.Conditions[i].Type == typ {
-			psp.Status.Conditions[i].Status = status
-			psp.Status.Conditions[i].Reason = reason
-			psp.Status.Conditions[i].Message = message
-			psp.Status.Conditions[i].LastTransitionTime = now
-			return
-		}
-	}
-	psp.Status.Conditions = append(psp.Status.Conditions, metav1.Condition{
-		Type:               typ,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-	})
 }

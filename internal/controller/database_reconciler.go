@@ -255,35 +255,13 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, dbName, appName string) *u
 // Job spec, no ConfigMap and no composed Object. Without it the Job
 // generates a random password locally (legacy behavior).
 func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string, withPassword bool, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	roleName := roleUserName(tenant.Name, appName)
 	jobName := roleJobName(tenant.Name, appName)
 	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB, connLimit))
 	if withPassword {
 		container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", jobName, jobSecretPasswordKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: postgresNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, postgresNamespace, tenant, appName, container)
 }
 
 // psqlContainer returns a Container that runs a psql script via the postgres provisioner image.
@@ -317,7 +295,6 @@ func provisioningSecurityContext() *corev1.SecurityContext {
 
 // --- Shell scripts -----------------------------------------------------------
 
-//
 // connLimit caps the connections the role may hold (CONNECTION LIMIT); 0 is
 // none, for the platform's own services, whose pools are known.
 func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) string {

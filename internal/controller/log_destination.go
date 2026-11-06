@@ -162,7 +162,7 @@ func (r *ComponentReconciler) ensureLogDestination(ctx context.Context, comp *ge
 		return err
 	}
 	if held != "" {
-		r.setLogDestinationCondition(comp, metav1.ConditionFalse, "AnotherDestination", fmt.Sprintf(
+		setStatusCondition(&comp.Status.Conditions, comp.Generation, ConditionLogDestination, metav1.ConditionFalse, "AnotherDestination", fmt.Sprintf(
 			"%s is this cluster's log destination, and a cluster has one: this component is given no certificate and the forwarder no way to it",
 			held))
 		return r.deleteLogDestinationOwn(ctx, comp)
@@ -178,21 +178,14 @@ func (r *ComponentReconciler) ensureLogDestination(ctx context.Context, comp *ge
 		return fmt.Errorf("certificate copy: %w", err)
 	}
 	if !copied {
-		r.setLogDestinationCondition(comp, metav1.ConditionFalse, "Issuing",
+		setStatusCondition(&comp.Status.Conditions, comp.Generation, ConditionLogDestination, metav1.ConditionFalse, "Issuing",
 			"the internal CA has not yet issued the certificate for "+ld.Service)
 		return nil
 	}
-	r.setLogDestinationCondition(comp, metav1.ConditionTrue, "Issued", fmt.Sprintf(
+	setStatusCondition(&comp.Status.Conditions, comp.Generation, ConditionLogDestination, metav1.ConditionTrue, "Issued", fmt.Sprintf(
 		"https://%s:%d receives the log forwarder; its certificate is in Secret %s",
 		logDestinationNames(ld.Service, comp.Namespace)[0], ld.Port, logDestinationSecretName(comp.Name)))
 	return nil
-}
-
-func (r *ComponentReconciler) setLogDestinationCondition(comp *gentianov1alpha1.Component, st metav1.ConditionStatus, reason, message string) {
-	apimeta.SetStatusCondition(&comp.Status.Conditions, metav1.Condition{
-		Type: ConditionLogDestination, Status: st, Reason: reason, Message: message,
-		ObservedGeneration: comp.Generation,
-	})
 }
 
 // logDestinationHeldElsewhere names the component the cluster's certificate

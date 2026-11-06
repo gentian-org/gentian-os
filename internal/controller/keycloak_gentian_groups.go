@@ -19,7 +19,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
@@ -31,8 +30,6 @@ func (r *TenantReconciler) ensureGentianGroupsJob(ctx context.Context, tenant *g
 }
 
 func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, groupsJSON string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	backoff := meta.ProvisioningJobBackoffLimit
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
@@ -40,27 +37,9 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 		// One protocol mapper per attribute the installed profiles actually declare.
 		corev1.EnvVar{Name: "GENTIAN_GROUP_ATTR_NAMES", Value: strings.Join(groupAttributeNames(groupsJSON), " ")},
 	)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      gentianGroupsJobName(tenant.Name),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            &backoff,
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	job := newKernelProvisioningJob(gentianGroupsJobName(tenant.Name), identityNamespace, tenant, "", container)
+	job.Spec.BackoffLimit = &backoff
+	return job
 }
 
 // groupAttributeNames returns the distinct group-attribute names present in the

@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -141,39 +140,6 @@ func MatchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 		profile.Services().Cache.Engine == gentianov1alpha1.CacheEngineMemcached
 }
 
-// NewKernelProvisioningJob builds a standard kernel-namespace provisioning Job.
-func NewKernelProvisioningJob(
-	name, kernelNamespace, tenantLabelKey, managedByLabelKey, managedByValue, appLabelKey, tenantName, appName string,
-	container corev1.Container,
-) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	labels := map[string]string{
-		tenantLabelKey:    tenantName,
-		managedByLabelKey: managedByValue,
-	}
-	if appName != "" {
-		labels[appLabelKey] = appName
-	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: kernelNamespace,
-			Labels:    labels,
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
-}
-
 // EnsureDeleteJobs creates delete Jobs for each app when missing and returns
 // ErrDeleteJobPending while any Job is incomplete.
 func EnsureDeleteJobs(
@@ -201,14 +167,14 @@ func EnsureDeleteJobs(
 			pending = true
 			continue
 		}
-		if jobFailed(existing) {
+		if meta.JobFailed(existing) {
 			// A cleanup Job that failed did not clean up. It used to count
 			// as "not complete yet", so a deletion waited on it for ever
 			// and said nothing, or went on once its TTL had removed it. It
 			// is reported, and removed so the next pass runs it again: the
 			// deletion resumes where it stopped and does not move past a
 			// store it could not destroy.
-			failures = append(failures, fmt.Sprintf("%s (%s)", name, jobFailureReason(existing)))
+			failures = append(failures, fmt.Sprintf("%s (%s)", name, meta.JobFailure(existing)))
 			prop := metav1.DeletePropagationBackground
 			if err := c.Delete(ctx, existing, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !errors.IsNotFound(err) {
 				return fmt.Errorf("remove the failed delete Job %s: %w", name, err)
@@ -230,21 +196,3 @@ func EnsureDeleteJobs(
 
 // ErrDeleteJobFailed is a cleanup Job that ended without doing its work.
 var ErrDeleteJobFailed = fmt.Errorf("cleanup job failed")
-
-func jobFailed(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
-func jobFailureReason(job *batchv1.Job) string {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return strings.TrimSpace(c.Reason + " " + c.Message)
-		}
-	}
-	return ""
-}

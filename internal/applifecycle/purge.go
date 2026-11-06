@@ -498,14 +498,12 @@ func (s *Service) runKernelJob(ctx context.Context, job *batchv1.Job) error {
 		if err != nil {
 			return fmt.Errorf("get Job %s/%s: %w", job.Namespace, job.Name, err)
 		}
-		for _, c := range j.Status.Conditions {
-			if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
-				return nil
-			}
-			if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-				return fmt.Errorf("the Job %s/%s failed (%s %s)%s", job.Namespace, job.Name,
-					c.Reason, c.Message, s.jobOutput(ctx, job))
-			}
+		if meta.JobComplete(j) {
+			return nil
+		}
+		if c := meta.JobCondition(j, batchv1.JobFailed); c != nil {
+			return fmt.Errorf("the Job %s/%s failed (%s %s)%s", job.Namespace, job.Name,
+				c.Reason, c.Message, s.jobOutput(ctx, job))
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("the Job %s/%s had not finished after %s%s", job.Namespace, job.Name,

@@ -26,15 +26,6 @@ import (
 
 const conditionCrossplaneReady = "CrossplaneReady"
 
-func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bool {
-	for _, c := range tenant.Status.Conditions {
-		if c.Type == condType && c.Status == metav1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
 // tenantFoundationConditions are the conditions a Tenant must carry, all True,
 // before it can be Ready: the identity and data-plane stages.
 //

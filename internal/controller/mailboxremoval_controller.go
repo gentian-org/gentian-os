@@ -30,6 +30,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
@@ -395,7 +396,7 @@ func (r *MailboxRemovalReconciler) run(ctx context.Context, record *gentianov1al
 		return ctrl.Result{}, fmt.Errorf("the Job %s/%s is not this record's", job.Namespace, job.Name)
 	}
 	switch {
-	case jobIsComplete(job):
+	case meta.JobComplete(job):
 		outcome, err := r.outcome(ctx, job)
 		if err != nil {
 			// A Job that ended well and left no word is run again: every
@@ -407,7 +408,7 @@ func (r *MailboxRemovalReconciler) run(ctx context.Context, record *gentianov1al
 		}
 		r.report(record, outcome)
 		return ctrl.Result{}, nil
-	case jobIsFailed(job):
+	case meta.JobFailed(job):
 		// A failed Job is counted once. It is deleted then, and can still be
 		// read for a moment afterwards.
 		if job.DeletionTimestamp != nil || (record.Status.LastFailureAt != nil && !job.CreationTimestamp.After(record.Status.LastFailureAt.Time)) {
@@ -416,12 +417,7 @@ func (r *MailboxRemovalReconciler) run(ctx context.Context, record *gentianov1al
 			}
 			return ctrl.Result{RequeueAfter: mailboxPoll}, nil
 		}
-		reason := "the Job did not succeed"
-		for _, c := range job.Status.Conditions {
-			if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-				reason = strings.TrimSpace(c.Reason + " " + c.Message)
-			}
-		}
+		reason := meta.JobFailure(job)
 		if said := r.lastWords(ctx, job); said != "" {
 			reason += ": " + said
 		}
