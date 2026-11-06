@@ -42,6 +42,13 @@ spec:
   - namespace: {{ .name | quote }}
     server: https://kubernetes.default.svc
   {{- end }}
+  # The tenants' namespaces, for what a tenant's directory declares there:
+  # an add-on's objects of the tenant (internal/director/gitops/
+  # extensions.go), which the director writes only of a type an add-on
+  # brought and break-glass granted, checked against its schema. Everything
+  # else a tenant's directory declares is cluster-scoped.
+  - namespace: "tenant-*"
+    server: https://kubernetes.default.svc
   {{- /* AD-2: this repository syncs only commits the director or the
        break-glass key signed. Scoped to the DEPLOYMENTS repository alone --
        gentian-os, gentian-apps and the upstream Helm repositories are not
