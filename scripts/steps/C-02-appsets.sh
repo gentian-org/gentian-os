@@ -4,6 +4,7 @@
 # requires: B-08-seed-secrets
 # provides: the kernel Postgres (kernel-postgres) Synced and Healthy, the gentian-appsets Application (kernel/appsets) Synced, and its children — the system tier's data plane, Keycloak and OpenFGA in their namespaces, the claims of the deployments repository — Synced and Healthy
 # mutates: the gentian-appsets Application and the ApplicationSets it creates in the gitops namespace; what they sync
+# pins: postfix
 
 # _v5_render and _v5_delivered are B-01's; a step file is a library of verbs
 # and sourcing another one is how they are shared.

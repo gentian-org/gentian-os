@@ -150,22 +150,8 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		if err := controllerutil.SetControllerReference(tenant, np, r.Scheme); err != nil {
 			return fmt.Errorf("set owner ref on NetworkPolicy %s: %w", np.Name, err)
 		}
-		existing := &networkingv1.NetworkPolicy{}
-		err := r.Get(ctx, types.NamespacedName{Name: np.Name, Namespace: np.Namespace}, existing)
-		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, np); err != nil {
-				return fmt.Errorf("create NetworkPolicy %s: %w", np.Name, err)
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("get NetworkPolicy %s: %w", np.Name, err)
-		}
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Labels = np.Labels
-		existing.Spec = np.Spec
-		if err := r.Patch(ctx, existing, patch); err != nil {
-			return fmt.Errorf("patch NetworkPolicy %s: %w", np.Name, err)
+		if err := r.applyTenantNetworkPolicy(ctx, np); err != nil {
+			return err
 		}
 	}
 
@@ -193,6 +179,19 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	// With the way between two apps goes the means to tell who is calling,
 	// and both come and go with the grant.
 	return r.ensureContractKeys(ctx, tenant, nsName, bindings, grants)
+}
+
+// applyTenantNetworkPolicy writes one of the tenant's NetworkPolicies: its
+// labels and spec, on every pass.
+func (r *TenantReconciler) applyTenantNetworkPolicy(ctx context.Context, np *networkingv1.NetworkPolicy) error {
+	if err := ensureObject(ctx, r.Client, np, func(existing *networkingv1.NetworkPolicy) bool {
+		existing.Labels = np.Labels
+		existing.Spec = np.Spec
+		return true
+	}); err != nil {
+		return fmt.Errorf("ensure NetworkPolicy %s: %w", np.Name, err)
+	}
+	return nil
 }
 
 func (r *TenantReconciler) loadAppGrantsByConsumer(ctx context.Context, nsName string) (map[string]*gentianov1alpha1.AppGrant, error) {
