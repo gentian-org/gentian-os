@@ -65,7 +65,7 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	if err := security.SyncPlatformSecurityConfigMap(ctx, r.Client, psp.Spec.AllowedMacWaivers); err != nil {
-		stampCondition(&psp.Status.Conditions, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
+		setStatusCondition(&psp.Status.Conditions, psp.Generation, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
 		if updateErr := r.Status().Update(ctx, psp); updateErr != nil {
 			return ctrl.Result{}, errors.Join(err, fmt.Errorf("record the sync failure on the policy: %w", updateErr))
 		}
@@ -73,7 +73,7 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	psp.Status.AllowedMacWaiverCount = len(psp.Spec.AllowedMacWaivers)
-	stampCondition(&psp.Status.Conditions, conditionPlatformSecurityReady, metav1.ConditionTrue, "Synced",
+	setStatusCondition(&psp.Status.Conditions, psp.Generation, conditionPlatformSecurityReady, metav1.ConditionTrue, "Synced",
 		"Platform security ConfigMap updated")
 	if err := r.Status().Update(ctx, psp); err != nil {
 		return ctrl.Result{}, err
