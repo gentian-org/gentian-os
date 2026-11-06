@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -61,6 +63,17 @@ const (
 	// is looked at.
 	moveRequeue = 30 * time.Second
 
+	// moveExportsKept is how many exports taken before a move are kept per
+	// app once its move has ended: the one before the build it runs now, to
+	// go back to, and the one before that. Older ones are removed with their
+	// bundles; without this, every release of a pinned app left one more.
+	moveExportsKept = 2
+
+	// An export taken before a move is marked so, beside the component's
+	// label, and told apart from a backup somebody took.
+	moveExportReasonLabel = gentianov1alpha1.TenantExportReasonLabel
+	moveExportReason      = gentianov1alpha1.TenantExportReasonMove
+
 	rolloutReasonExportFailed   = "ExportFailed"
 	rolloutReasonNotReadyInTime = "NotReadyInTime"
 	rolloutReasonVerifyFailed   = "VerifyFailed"
@@ -70,7 +83,7 @@ const (
 	conditionReasonMoveFailed = "MoveFailed"
 )
 
-// +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create;delete
 
 // moveExportName names the export taken before a move: the app, the build it
 // moves to and the request, short enough for an object's name. The request
@@ -94,6 +107,13 @@ func moveExportName(component, digest, movedAt string) string {
 func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alpha1.Component) (effective string, stop *ctrl.Result, err error) {
 	requested := comp.Spec.ProfileRef.Digest
 	ro := comp.Status.Rollout
+	if ro != nil && moveEnded(ro.Phase) {
+		// Not a reason to stop the pass: an export that could not be
+		// removed now is removed on a later one.
+		if err := r.pruneMoveExports(ctx, comp); err != nil {
+			log.FromContext(ctx).Error(err, "removing older exports taken before a move", "component", comp.Name, "namespace", comp.Namespace)
+		}
+	}
 	if requested == "" || ro == nil || ro.Digest == "" || ro.Digest == requested {
 		// Unpinned, not rolled out yet, or already on the pinned build.
 		return requested, nil, nil
@@ -286,7 +306,7 @@ func (r *ComponentReconciler) ensureMoveExport(ctx context.Context, comp *gentia
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      comp.Status.Rollout.Export,
 			Namespace: comp.Namespace,
-			Labels:    map[string]string{componentLabel: comp.Name, "gentianos.io/export-reason": "move"},
+			Labels:    map[string]string{componentLabel: comp.Name, moveExportReasonLabel: moveExportReason},
 		},
 		Spec: gentianov1alpha1.TenantExportSpec{
 			Apps: []string{comp.Name},
@@ -300,6 +320,47 @@ func (r *ComponentReconciler) ensureMoveExport(ctx context.Context, comp *gentia
 	}
 	if err := r.Create(ctx, export); err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("create the export before the move: %w", err)
+	}
+	return nil
+}
+
+// moveEnded reports whether no move is under way: done, rolled back or failed.
+func moveEnded(phase gentianov1alpha1.RolloutPhase) bool {
+	return phase == gentianov1alpha1.RolloutDone || phase == gentianov1alpha1.RolloutRolledBack ||
+		phase == gentianov1alpha1.RolloutFailed
+}
+
+// pruneMoveExports keeps the newest moveExportsKept finished exports taken
+// before this app's moves, and the one its last move made, and removes the
+// rest; their bundles go with them (the export's finalizer). An export not
+// finished is never removed: deleting it would abort a capture under way.
+func (r *ComponentReconciler) pruneMoveExports(ctx context.Context, comp *gentianov1alpha1.Component) error {
+	list := &gentianov1alpha1.TenantExportList{}
+	if err := r.List(ctx, list, client.InNamespace(comp.Namespace),
+		client.MatchingLabels{componentLabel: comp.Name, moveExportReasonLabel: moveExportReason}); err != nil {
+		return err
+	}
+	items := list.Items
+	sort.Slice(items, func(i, j int) bool {
+		return items[j].CreationTimestamp.Before(&items[i].CreationTimestamp)
+	})
+	last := ""
+	if comp.Status.Rollout != nil {
+		last = comp.Status.Rollout.Export
+	}
+	kept := 0
+	for i := range items {
+		e := &items[i]
+		if !e.IsTerminal() || e.DeletionTimestamp != nil {
+			continue
+		}
+		if kept < moveExportsKept || e.Name == last {
+			kept++
+			continue
+		}
+		if err := r.Delete(ctx, e); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("remove export %s: %w", e.Name, err)
+		}
 	}
 	return nil
 }
