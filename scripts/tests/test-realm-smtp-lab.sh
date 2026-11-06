@@ -23,10 +23,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 for tool in docker go curl jq openssl; do
     command -v "${tool}" >/dev/null 2>&1 || { echo "SKIP: ${tool} is not installed"; exit 0; }
@@ -176,9 +174,4 @@ set_smtp tenant-own "$(smtp_of tenant-own '.smtpServer | .user = "relay-user"')"
 if [[ -z "$(sends tenant-own)" ]]; then ok "the mask beside a changed login drops the password: nothing is sent"
 else bad "the mask beside a changed login still sends"; fi
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sall %d passed%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

@@ -16,8 +16,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "${STUB_DIR}"' EXIT
@@ -36,6 +36,7 @@ PATH="${STUB_DIR}:${PATH}"
 export CERT_MANAGER_NAMESPACE=kernel-edge
 
 # The real XRD default, not a copy of it.
+# shellcheck disable=SC2329 # called by the library under test
 xrd_default() {
     python3 - "$1" <<'PY'
 import sys, yaml
@@ -108,9 +109,4 @@ export DNS01_RECURSIVE_NAMESERVERS=10.0.0.53:53
 check "claim override reaches the flag" \
     "$(cert_manager_dns01_args | tail -1)" "--dns01-recursive-nameservers=10.0.0.53:53"
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sAll %d checks passed.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

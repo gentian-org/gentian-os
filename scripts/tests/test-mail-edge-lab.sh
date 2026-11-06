@@ -43,13 +43,15 @@ EDGE_OUT=172.31.0.10   # the proxy, as the internet reaches it
 EDGE_IN=172.30.0.10    # the proxy, as a pod reaches it
 SVC=system-mail.svc.cluster.local
 W="$(mktemp -d)"
-fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 lab_down() {
     docker rm -f mlab-dovecot mlab-postfix mlab-edge mlab-out mlab-in >/dev/null 2>&1 || true
     docker network rm mlab-pods mlab-inet >/dev/null 2>&1 || true
 }
 
+# shellcheck disable=SC2329 # called by the EXIT trap
 cleanup() {
     if [[ ${KEEP} -eq 0 ]]; then
         lab_down
@@ -159,12 +161,11 @@ edge_log() { docker logs mlab-edge 2>&1; }
 check() {
     local what="$1" text="$2" pattern="$3"
     if grep -Eq -- "${pattern}" <<<"${text}"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
+        bad "${what}"
         printf '        wanted: %s\n' "${pattern}"
         printf '%s\n' "${text}" | tail -6 | sed 's/^/        | /'
-        fail=$((fail + 1))
     fi
 }
 
@@ -172,11 +173,10 @@ check() {
 refuse() {
     local what="$1" text="$2" pattern="$3"
     if grep -Eq -- "${pattern}" <<<"${text}"; then
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
+        bad "${what}"
         grep -E -- "${pattern}" <<<"${text}" | sed 's/^/        | /' | tail -4
-        fail=$((fail + 1))
     else
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     fi
 }
 
@@ -290,9 +290,4 @@ sleep 6
 named="$(postfix_log | grep -Ec 'edge-smtp/smtpd\[[0-9]+\]: connect from [^ ]*\[203\.0\.113\.9\]' || true)"
 check "a header from anybody else is not believed: no second connection is logged from the address it names" "named=${named}" '^named=1$'
 
-echo ""
-if [[ ${fail} -ne 0 ]]; then
-    echo "${fail} check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+finish

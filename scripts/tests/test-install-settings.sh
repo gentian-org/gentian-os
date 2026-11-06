@@ -29,8 +29,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -48,8 +48,6 @@ run() {
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; '"$1" 2>&1
 }
 
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${2:-}"; fail=$((fail + 1)); }
 is() { # <what> <output> <exactly>
     if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1" "    got:  $2
     want: $3"; fi
@@ -182,10 +180,4 @@ out="$(run GENTIAN_NONINTERACTIVE=1 GENTIAN_DEPLOYMENTS_REPO=https://git.example
 is "with it, the run goes on with that address" "${out}" "https://git.example.test/d main"
 if ! grep -q 'git\.example\.domain' scripts/lib/common.sh; then ok "the example address is no longer in the installer"; else bad "the example address is no longer in the installer"; fi
 
-echo ""
-if [[ ${fail} -eq 0 ]]; then
-    echo "${GREEN}${pass} checks passed.${NC}"
-    exit 0
-fi
-echo "${RED}${fail} failed${NC}, ${pass} passed."
-exit 1
+finish

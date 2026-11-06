@@ -13,8 +13,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 { echo "namespaces:"; sed 's/^/  /' kernel/namespaces.yaml; } > "${TMP}/ns.yaml"
@@ -60,8 +60,4 @@ for provider in $(python3 -c "import yaml; print(' '.join(k for k,v in yaml.safe
     fi
 done
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d of %d failed.%s\n' "${RED}" "${fail}" "$((pass + fail))" "${NC}"; exit 1
-fi
-printf '%sAll %d DNS credential renders agree.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

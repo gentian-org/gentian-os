@@ -21,9 +21,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-fail=0
-ok()   { printf '  \033[0;32mok\033[0m    %s\n' "$1"; }
-bad()  { printf '  \033[0;31mFAIL\033[0m  %s\n' "$1"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 check() {
     local what="$1"
     shift
@@ -140,9 +139,4 @@ check "and the switch unset keeps them, as true does" test "$(stored)" = "$((wan
 check "the operator is told the switch: off unless the installer passes true" \
     python3 scripts/tests/kernel_network_policies.py switch
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${fail} check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+finish

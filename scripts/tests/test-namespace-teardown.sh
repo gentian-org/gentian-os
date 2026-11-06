@@ -32,10 +32,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
@@ -328,6 +326,4 @@ check_step A-03-external-secrets external-secrets external-secrets external-secr
 check_step A-04-crossplane crossplane crossplane crossplane crossplane-rbac-manager
 check_step A-05-envoy-gateway envoy-gateway envoy-gateway envoy-gateway
 
-echo ""
-echo "${pass} passed, ${fail} failed"
-[[ "${fail}" -eq 0 ]]
+finish

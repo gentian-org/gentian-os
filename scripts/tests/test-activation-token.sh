@@ -26,11 +26,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "activation: a token that ran out is said so, replaced, and the call made again"
@@ -135,9 +132,4 @@ check "nothing can be handed over: said so, and the install is told it failed" \
 check "what to run instead: sign in first, then the command with the address that was given" \
     'grep -q "kubectl gentian login" <<<"${out}" && grep -q "kubectl gentian tenants activate-admin user --recovery-email owner@example.org" <<<"${out}"' "${out}"
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} checks passed.${NC}"
+finish

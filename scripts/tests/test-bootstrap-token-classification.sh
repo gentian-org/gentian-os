@@ -15,8 +15,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 STUB_DIR="$(mktemp -d)"
 trap 'rm -rf "${STUB_DIR}"' EXIT
@@ -67,9 +67,4 @@ expect "token that does not authenticate" 'unauthenticated'          1
 # Neither answer. Guessing either way is what this step refuses to do.
 expect "policies not reported"           'silent'                    2
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sAll %d classifications correct.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

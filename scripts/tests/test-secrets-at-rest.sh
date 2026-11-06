@@ -26,11 +26,8 @@
 # shellcheck disable=SC2016
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "secrets at rest: pre-flight reads the API server where it can, the claim where it cannot"
@@ -99,6 +96,4 @@ check "and a visible server without the flag a refusal" '[[ "${out}" == *"[ERROR
 out="$(run check_secrets_at_rest GENTIAN_REQUIRE_SECRET_ENCRYPTION=true SECRETS_AT_REST=provider SECRETS_AT_REST_EVIDENCE=x)"
 check "but leaves an attested provider alone" '[[ "${out}" == *"[OK]"* && "${out}" == *"rc=0" ]]' "${out}"
 
-echo ""
-echo "  ${pass} passed, ${fail} failed"
-[[ ${fail} -eq 0 ]]
+finish

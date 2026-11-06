@@ -29,11 +29,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "mail egress: the install stops before it applies anything it cannot finish"
@@ -120,9 +117,4 @@ out="$(printf 'smtp.example.net\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SE
 check "a cluster that relays is not asked for an egress host" \
     'grep -q "host=<unset>" <<<"${out}" && ! grep -q "egressHost" <<<"${out}"' "${out}"
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} checks passed.${NC}"
+finish
