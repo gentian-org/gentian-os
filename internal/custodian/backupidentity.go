@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // A tenant's backup identity: the private half of the key its bundles are
@@ -57,7 +59,7 @@ const (
 // path — see the Cluster composition — so escrow means the tenant administrator
 // can read the key, not that the cluster can.
 func BackupIdentityPath(tenant string) string {
-	return fmt.Sprintf("gentian-os/tenants/%s/backup/identity", tenant)
+	return secrets.TenantPath(tenant) + "/backup/identity"
 }
 
 type backupIdentityRequest struct {

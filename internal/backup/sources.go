@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -40,9 +41,9 @@ func SourceCredentialName(source string) string { return "bundle-source-" + sour
 // other tenant's reach.
 func SourceVaultPath(source *gentianov1alpha1.BundleSource) string {
 	if t := source.Spec.Tenant; t != "" {
-		return "gentian-os/tenants/" + t + "/backup/sources/" + strings.TrimPrefix(source.Name, t+".")
+		return secrets.TenantPath(t) + "/backup/sources/" + strings.TrimPrefix(source.Name, t+".")
 	}
-	return "gentian-os/kernel/backup/sources/" + source.Name
+	return secrets.KernelPath("backup", "sources/"+source.Name)
 }
 
 // SourceBundle is the bundle at prefix below a source, as every reader of a
