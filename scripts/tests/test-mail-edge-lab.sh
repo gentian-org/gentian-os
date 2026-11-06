@@ -66,18 +66,20 @@ render() {
                   --set edge.namespace=system-mail-dmz --set mailNamespace=system-mail)
     mkdir -p "${W}/render"
     helm template postfix-dev kernel/services/postfix/manifests -n system-mail \
-        --set servicesNamespace=system-mail "${common[@]}" > "${W}/render/postfix.yaml"
+        --set servicesNamespace=system-mail "${common[@]}" \
+        --set-string "versions.postfix.chart=$(bash scripts/lib/versions.sh postfix chart)" \
+        --set-string "versions.postfix.repo=$(bash scripts/lib/versions.sh postfix repo)" > "${W}/render/postfix.yaml"
     helm template dovecot-dev kernel/services/dovecot/manifests -n system-mail \
         --set servicesNamespace=system-mail "${common[@]}" > "${W}/render/dovecot.yaml"
     helm template mail-edge-dev kernel/services/mail-edge/manifests -n system-mail-dmz \
         --set servicesNamespace=system-mail-dmz "${common[@]}" "$@" > "${W}/render/edge.yaml"
 }
 
-# The upstream chart at the version the Release pins, with the Release's values.
+# The upstream chart at the version versions.yaml pins, with the Release's values.
 render_upstream() {
     local version repo
-    version="$(sed -n 's/^ *version: "\(.*\)"$/\1/p' kernel/services/postfix/manifests/templates/release.yaml)"
-    repo="$(sed -n 's/^ *repository: \(https.*\)$/\1/p' kernel/services/postfix/manifests/templates/release.yaml)"
+    version="$(bash scripts/lib/versions.sh postfix chart)"
+    repo="$(bash scripts/lib/versions.sh postfix repo)"
     helm pull mail --repo "${repo}" --version "${version}" --untar --untardir "${W}/chart" >/dev/null
     python3 - "${W}/render" <<'PY'
 import sys, yaml

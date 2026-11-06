@@ -104,6 +104,14 @@ external-dns:
   chart: "1.22.0"
   repo: https://kubernetes-sigs.github.io/external-dns/
 
+# Postfix: the platform's own mail server (bokysan/mail, chart "mail"), where
+# mail.serviceMode is system. The mail ApplicationSet
+# (kernel/appsets/raw/09a-mail.yaml) hands the pin to the postfix chart, whose
+# provider-helm Release installs it.
+postfix:
+  chart: "5.1.0"
+  repo: https://bokysan.github.io/docker-postfix/
+
 # kube-prometheus-stack (Apache-2.0): the platform's metrics and alerts when
 # the Cluster claim's monitoring.enabled is true. The Cluster Composition
 # composes its Application and writes the version out

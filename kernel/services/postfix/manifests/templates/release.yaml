@@ -1,5 +1,6 @@
-# provider-helm Release for the public bokysan/mail chart.
-# Chart repo: https://bokysan.github.io/docker-postfix/  Image: docker.io/boky/postfix
+# provider-helm Release for the public bokysan/mail chart (image
+# docker.io/boky/postfix), at the version and from the repository versions.yaml
+# pins (versions.postfix), which the mail ApplicationSet passes in.
 apiVersion: helm.crossplane.io/v1beta1
 kind: Release
 metadata:
@@ -11,8 +12,8 @@ spec:
   forProvider:
     chart:
       name: mail
-      repository: https://bokysan.github.io/docker-postfix/
-      version: "5.1.0"
+      repository: {{ .Values.versions.postfix.repo }}
+      version: {{ .Values.versions.postfix.chart | quote }}
     namespace: {{ .Values.servicesNamespace }}
     wait: true
     waitTimeout: "5m"

@@ -108,9 +108,14 @@ def namespace_of(entry, namespaces):
 
 
 def appsets(*extra):
+    """The ApplicationSets, with the layout and the pins the bootstrap chart
+    hands the wrapper."""
     with tempfile.NamedTemporaryFile("w", suffix=".yaml") as f:
         f.write("namespaces:\n")
         for line in (ROOT / "kernel/namespaces.yaml").read_text().splitlines():
+            f.write("  " + line + "\n")
+        f.write("versions:\n")
+        for line in (ROOT / "versions.yaml").read_text().splitlines():
             f.write("  " + line + "\n")
         f.flush()
         return helm("appsets", "kernel/appsets", "-f", f.name, *extra)

@@ -2,8 +2,9 @@
   Pass raw/*.yaml through verbatim (.Files.Get never re-templates them: they
   carry ApplicationSet templating Argo evaluates at its own sync time). The
   wrapper swaps literals only: the stage, the git ref and origin of gentian-os,
-  the deployments placeholders, and the namespace placeholders, which are
-  resolved from the layout so that no raw file names a namespace by hand.
+  the deployments placeholders, the namespace placeholders, which are
+  resolved from the layout so that no raw file names a namespace by hand, and
+  versions.<component>.<field>.placeholder, from versions.yaml.
 */ -}}
 {{- $ns := dict -}}
 {{- range .Values.namespaces.kernel }}{{ $_ := set $ns .function .name }}{{ end -}}
@@ -53,6 +54,7 @@
      | replace "store.networkpolicies.placeholder" $storeNetworkPolicies }}
 {{- range $fn, $name := $ns }}{{ $text = replace (printf "ns.%s.placeholder" $fn) $name $text }}{{ end }}
 {{- range $fn, $name := $sys }}{{ $text = replace (printf "sys.%s.placeholder" $fn) $name $text }}{{ end }}
+{{- range $component, $fields := $.Values.versions }}{{ range $field, $pin := $fields }}{{ $text = replace (printf "versions.%s.%s.placeholder" $component $field) (toString $pin) $text }}{{ end }}{{ end }}
 {{- if contains ".placeholder" $text }}{{ fail (printf "%s: an unresolved placeholder remains" $path) }}{{ end }}
 {{ $text }}
 {{- end }}
