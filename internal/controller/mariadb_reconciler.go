@@ -107,7 +107,7 @@ func mariadbContainer(name, script string) corev1.Container {
 		Name:            name,
 		Image:           kernel.MariaDBProvisionerImage(),
 		Command:         []string{"/bin/bash", "-c", script},
-		SecurityContext: provisioningSecurityContext(),
+		SecurityContext: meta.RestrictedContainer(),
 		Env:             backup.MariaDBAdminEnv(),
 	}
 }
