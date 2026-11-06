@@ -31,11 +31,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-expect() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
@@ -124,6 +121,7 @@ run() {
 source "scripts/steps/${STEP}.sh"
 '"$2" 2>&1
 }
+# shellcheck disable=SC2317,SC2329 # called from the strings check evaluates
 asked() { grep -q "kubectl patch application $1 " "${STATE}/calls.log"; }
 
 # 1. Everything synced and there.
@@ -131,62 +129,62 @@ fresh
 app gentian-catalogue-dev gentian-catalogue Synced Succeeded ok
 app tenant-test gentian-tenants Synced Succeeded ok; touch "${STATE}/tenants/test"
 out="$(run E-05-operator-objects 'check; echo "rc=$?"' | tail -1)"
-expect "everything synced and every Tenant there: satisfied" '[[ "${out}" == "rc=0" ]]' "${out}"
+check "everything synced and every Tenant there: satisfied" '[[ "${out}" == "rc=0" ]]' "${out}"
 
 # 2. The catalog failed before its CRD existed.
 fresh
 app gentian-catalogue-dev gentian-catalogue OutOfSync Failed "${PROFILE_GONE}"
 out="$(run E-05-operator-objects 'check; echo "rc=$?"' | tail -1)"
-expect "a failed catalogue: not satisfied" '[[ "${out}" == "rc=1" ]]' "${out}"
+check "a failed catalogue: not satisfied" '[[ "${out}" == "rc=1" ]]' "${out}"
 touch "${STATE}/heal/gentian-catalogue-dev"
 out="$(run E-05-operator-objects 'apply; echo "rc=$?"')"
-expect "a failed catalogue is asked again, and the step succeeds once it syncs" \
+check "a failed catalogue is asked again, and the step succeeds once it syncs" \
     '[[ "${out}" == *"rc=0"* ]] && asked gentian-catalogue-dev' "${out}"
 
 # 3. A tenant Synced on paper with no Tenant: not satisfied.
 fresh; touch "${STATE}/handover"
 app tenant-test gentian-tenants Synced Succeeded ok
 out="$(run E-05-operator-objects 'check; echo "rc=$?"' | tail -1)"
-expect "a tenant's Application Synced but no Tenant: not satisfied" '[[ "${out}" == "rc=1" ]]' "${out}"
+check "a tenant's Application Synced but no Tenant: not satisfied" '[[ "${out}" == "rc=1" ]]' "${out}"
 
 # 4. After the handover, a tenant that stays failed fails the step loudly.
 fresh; touch "${STATE}/handover"
 app tenant-test gentian-tenants OutOfSync Failed "${CRD_GONE}"
 out="$(run E-05-operator-objects 'apply; echo "rc=$?"')"
-expect "a declared tenant that does not arrive fails the step" '[[ "${out}" == *"rc=1"* ]]' "${out}"
-expect "  naming the tenant and Argo CD's message" \
+check "a declared tenant that does not arrive fails the step" '[[ "${out}" == *"rc=1"* ]]' "${out}"
+check "  naming the tenant and Argo CD's message" \
     '[[ "${out}" == *"tenant-test"* && "${out}" == *"Tenant.gentianos.io \"\" not found"* && "${out}" == *"Tenant/test does not exist"* ]]' "${out}"
-expect "  having asked Argo CD to sync it again" 'asked tenant-test' "$(cat "${STATE}/calls.log")"
+check "  having asked Argo CD to sync it again" 'asked tenant-test' "$(cat "${STATE}/calls.log")"
 
 # 5. After the handover, a failed tenant is asked again and arrives.
 fresh; touch "${STATE}/handover"
 app tenant-test gentian-tenants OutOfSync Failed "${CRD_GONE}"; touch "${STATE}/heal/tenant-test"
 out="$(run E-05-operator-objects 'apply; echo "rc=$?"; check; echo "check=$?"')"
-expect "a failed tenant is asked again, arrives, and the step is satisfied" \
+check "a failed tenant is asked again, arrives, and the step is satisfied" \
     '[[ "${out}" == *"rc=0"* && "${out}" == *"check=0"* && -f "${STATE}/tenants/test" ]]' "${out}"
 
 # 6. Before the handover: held back, not asked, not satisfied.
 fresh
 app tenant-test gentian-tenants OutOfSync Failed "admission webhook denied the request"
 out="$(run E-05-operator-objects 'apply; echo "rc=$?"; check; echo "check=$?"')"
-expect "before the handover a tenant is reported held back, and the check stays not satisfied" \
+check "before the handover a tenant is reported held back, and the check stays not satisfied" \
     '[[ "${out}" == *"held back"* && "${out}" == *"Tenant/test"* && "${out}" == *"rc=0"* && "${out}" == *"check=1"* ]]' "${out}"
-expect "  and it is not asked for" '! asked tenant-test' "$(cat "${STATE}/calls.log")"
+check "  and it is not asked for" '! asked tenant-test' "$(cat "${STATE}/calls.log")"
 
 # 7. An ApplicationSet that cannot generate: not satisfied, and named on failure.
 fresh; touch "${STATE}/handover"
 echo '{"status":{"conditions":[{"type":"ErrorOccurred","status":"True","message":"repository not found"}]}}' > "${STATE}/appsets/gentian-tenants.json"
 out="$(run E-05-operator-objects 'check; echo "check=$?"; apply; echo "rc=$?"')"
-expect "an ApplicationSet in error: not satisfied, and the step fails naming it" \
+check "an ApplicationSet in error: not satisfied, and the step fails naming it" \
     '[[ "${out}" == *"check=1"* && "${out}" == *"rc=1"* && "${out}" == *"ApplicationSet gentian-tenants: repository not found"* ]]' "${out}"
 
 # 8. D-01 asks again for the catalog once the operator is up.
 fresh
 app gentian-catalogue-dev gentian-catalogue OutOfSync Failed "${PROFILE_GONE}"
 run D-01-operator 'resync_operator_kind_apps "$(ns_kernel gitops)"' >/dev/null
-expect "D-01's resync asks for the failed catalogue and leaves a synced tenant alone" \
+check "D-01's resync asks for the failed catalogue and leaves a synced tenant alone" \
     'asked gentian-catalogue-dev && ! asked tenant-platform' "$(cat "${STATE}/calls.log")"
-expect "D-01 calls that resync once the operator is running" \
+check "D-01 calls that resync once the operator is running" \
     'grep -q "^    resync_operator_kind_apps \"\${ns}\"" scripts/steps/D-01-operator.sh'
 
 # 9. Synced but for an object the catalog no longer declares.
@@ -203,22 +201,17 @@ fresh; touch "${STATE}/handover"
 app gentian-catalogue-dev gentian-catalogue OutOfSync Succeeded "successfully synced (all tasks run)"
 leftover gentian-catalogue-dev false
 out="$(run E-05-operator-objects 'check; echo "check=$?"; apply; echo "rc=$?"')"
-expect "a catalogue that differs only by an object it no longer declares: satisfied, and the step succeeds" \
+check "a catalogue that differs only by an object it no longer declares: satisfied, and the step succeeds" \
     '[[ "${out}" == *"check=0"* && "${out}" == *"rc=0"* ]]' "${out}"
-expect "  naming the object and where it is removed" \
+check "  naming the object and where it is removed" \
     '[[ "${out}" == *"ConfigMap kernel-provisioning/nextcloud-base-ce.portal-bridge-sso"* && "${out}" == *"kubectl gentian catalogues residue"* ]]' "${out}"
-expect "  without asking Argo CD for anything" '! grep -q "kubectl \(patch\|annotate\) application" "${STATE}/calls.log"' "$(cat "${STATE}/calls.log")"
+check "  without asking Argo CD for anything" '! grep -q "kubectl \(patch\|annotate\) application" "${STATE}/calls.log"' "$(cat "${STATE}/calls.log")"
 
 fresh; touch "${STATE}/handover"
 app gentian-catalogue-dev gentian-catalogue OutOfSync Succeeded "successfully synced (all tasks run)"
 leftover gentian-catalogue-dev true
 out="$(run E-05-operator-objects 'check; echo "check=$?"; apply; echo "rc=$?"')"
-expect "one that also differs in a declared object: not satisfied, and the step fails" \
+check "one that also differs in a declared object: not satisfied, and the step fails" \
     '[[ "${out}" == *"check=1"* && "${out}" == *"rc=1"* ]]' "${out}"
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} checks passed.${NC}"
+finish

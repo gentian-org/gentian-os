@@ -99,6 +99,15 @@ spec:
             # storeNetworkPolicies): one setting turns all of them off.
             - name: networkPolicy.enabled
               value: 'store.networkpolicies.placeholder'
+            # The upstream mail server chart's pin, from versions.yaml: the
+            # postfix chart's Release installs it. As strings, so that a
+            # version is never read as a number.
+            - name: versions.postfix.chart
+              value: 'versions.postfix.chart.placeholder'
+              forceString: true
+            - name: versions.postfix.repo
+              value: 'versions.postfix.repo.placeholder'
+              forceString: true
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'

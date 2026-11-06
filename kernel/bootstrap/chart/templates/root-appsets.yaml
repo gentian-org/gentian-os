@@ -55,6 +55,8 @@ spec:
         storeNetworkPolicies: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
         namespaces:
           {{- toYaml .Values.namespaces | nindent 10 }}
+        versions:
+          {{- toYaml .Values.versions | nindent 10 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ include "ns" (list . "gitops") }}

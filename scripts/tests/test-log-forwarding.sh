@@ -26,11 +26,8 @@
 # shellcheck disable=SC2016,SC2034
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "log forwarding: rendered where a destination is named, and nothing leaves a node that should not"
@@ -52,6 +49,7 @@ for d in yaml.safe_load_all(open(sys.argv[1])):
     m = d.get("spec", {}).get("forProvider", {}).get("manifest") if d.get("kind") == "Object" else None
     print(json.dumps(m or d))' "$1"
 }
+# shellcheck disable=SC2317,SC2329 # called from the strings check evaluates
 has() { grep -q "\"kind\": \"$1\".*\"name\": \"$2\"" <<<"$3" || grep -q "\"name\": \"$2\".*\"kind\": \"$1\"" <<<"$3"; }
 
 off="$(objects "${FIXTURES}/cluster-bootstrap/expected.yaml")"
@@ -147,6 +145,4 @@ else
     echo "  ${YELLOW}skipped${NC}: promtool's image is not here (docker pull prom/prometheus:v3.5.0)."
 fi
 
-echo ""
-echo "  ${pass} passed, ${fail} failed"
-[[ ${fail} -eq 0 ]]
+finish

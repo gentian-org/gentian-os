@@ -15,6 +15,9 @@ deploymentsRevision: main
 deploymentsCluster: ""
 # Filled by the installer from kernel/namespaces.yaml. Never set by hand.
 namespaces: {}
+# versions.yaml, from the bootstrap chart. Never set by hand; a raw file
+# reads a pin as versions.<component>.<field>.placeholder.
+versions: {}
 
 # Which conditional functions this cluster runs, and the values their charts
 # need. Filled by the bootstrap chart from the Cluster claim; a raw file whose

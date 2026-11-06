@@ -43,13 +43,15 @@ EDGE_OUT=172.31.0.10   # the proxy, as the internet reaches it
 EDGE_IN=172.30.0.10    # the proxy, as a pod reaches it
 SVC=system-mail.svc.cluster.local
 W="$(mktemp -d)"
-fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 lab_down() {
     docker rm -f mlab-dovecot mlab-postfix mlab-edge mlab-out mlab-in >/dev/null 2>&1 || true
     docker network rm mlab-pods mlab-inet >/dev/null 2>&1 || true
 }
 
+# shellcheck disable=SC2317,SC2329 # called by the EXIT trap
 cleanup() {
     if [[ ${KEEP} -eq 0 ]]; then
         lab_down
@@ -66,18 +68,20 @@ render() {
                   --set edge.namespace=system-mail-dmz --set mailNamespace=system-mail)
     mkdir -p "${W}/render"
     helm template postfix-dev kernel/services/postfix/manifests -n system-mail \
-        --set servicesNamespace=system-mail "${common[@]}" > "${W}/render/postfix.yaml"
+        --set servicesNamespace=system-mail "${common[@]}" \
+        --set-string "versions.postfix.chart=$(bash scripts/lib/versions.sh postfix chart)" \
+        --set-string "versions.postfix.repo=$(bash scripts/lib/versions.sh postfix repo)" > "${W}/render/postfix.yaml"
     helm template dovecot-dev kernel/services/dovecot/manifests -n system-mail \
         --set servicesNamespace=system-mail "${common[@]}" > "${W}/render/dovecot.yaml"
     helm template mail-edge-dev kernel/services/mail-edge/manifests -n system-mail-dmz \
         --set servicesNamespace=system-mail-dmz "${common[@]}" "$@" > "${W}/render/edge.yaml"
 }
 
-# The upstream chart at the version the Release pins, with the Release's values.
+# The upstream chart at the version versions.yaml pins, with the Release's values.
 render_upstream() {
     local version repo
-    version="$(sed -n 's/^ *version: "\(.*\)"$/\1/p' kernel/services/postfix/manifests/templates/release.yaml)"
-    repo="$(sed -n 's/^ *repository: \(https.*\)$/\1/p' kernel/services/postfix/manifests/templates/release.yaml)"
+    version="$(bash scripts/lib/versions.sh postfix chart)"
+    repo="$(bash scripts/lib/versions.sh postfix repo)"
     helm pull mail --repo "${repo}" --version "${version}" --untar --untardir "${W}/chart" >/dev/null
     python3 - "${W}/render" <<'PY'
 import sys, yaml
@@ -159,12 +163,11 @@ edge_log() { docker logs mlab-edge 2>&1; }
 check() {
     local what="$1" text="$2" pattern="$3"
     if grep -Eq -- "${pattern}" <<<"${text}"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
+        bad "${what}"
         printf '        wanted: %s\n' "${pattern}"
         printf '%s\n' "${text}" | tail -6 | sed 's/^/        | /'
-        fail=$((fail + 1))
     fi
 }
 
@@ -172,11 +175,10 @@ check() {
 refuse() {
     local what="$1" text="$2" pattern="$3"
     if grep -Eq -- "${pattern}" <<<"${text}"; then
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
+        bad "${what}"
         grep -E -- "${pattern}" <<<"${text}" | sed 's/^/        | /' | tail -4
-        fail=$((fail + 1))
     else
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     fi
 }
 
@@ -290,9 +292,4 @@ sleep 6
 named="$(postfix_log | grep -Ec 'edge-smtp/smtpd\[[0-9]+\]: connect from [^ ]*\[203\.0\.113\.9\]' || true)"
 check "a header from anybody else is not believed: no second connection is logged from the address it names" "named=${named}" '^named=1$'
 
-echo ""
-if [[ ${fail} -ne 0 ]]; then
-    echo "${fail} check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+finish

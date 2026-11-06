@@ -114,19 +114,19 @@ func TestConditionSettersTranscript(t *testing.T) {
 		{"backup policy", func(_ *testing.T, conds []metav1.Condition, _ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.BackupPolicy{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			replaceChangedCondition(&o.Status.Conditions, o.Generation, conditionPolicyAccepted, st, reason, message)
+			setStatusCondition(&o.Status.Conditions, o.Generation, conditionPolicyAccepted, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"app grant", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.AppGrant{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			stampCondition(&o.Status.Conditions, typ, st, reason, message)
+			setStatusCondition(&o.Status.Conditions, o.Generation, typ, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"platform security policy", func(_ *testing.T, conds []metav1.Condition, typ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {
 			o := &gentianov1alpha1.PlatformSecurityPolicy{ObjectMeta: metav1.ObjectMeta{Generation: 2}}
 			o.Status.Conditions = conds
-			stampCondition(&o.Status.Conditions, typ, st, reason, message)
+			setStatusCondition(&o.Status.Conditions, o.Generation, typ, st, reason, message)
 			return o.Status.Conditions
 		}},
 		{"component", func(t *testing.T, conds []metav1.Condition, _ string, st metav1.ConditionStatus, reason, message string) []metav1.Condition {

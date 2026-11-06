@@ -32,6 +32,9 @@ source scripts/lib/driver.sh >/dev/null 2>&1
 # Pulled in by steps at apply() time rather than by load.sh.
 # shellcheck source=scripts/lib/portal-login-bootstrap.sh
 source scripts/lib/portal-login-bootstrap.sh >/dev/null 2>&1 || true
+# What the tests under scripts/tests report with.
+# shellcheck source=scripts/tests/lib/harness.sh
+source scripts/tests/lib/harness.sh
 
 # load.sh installs an ERR trap for install runs. This is a lint: a grep that
 # matches nothing is a normal outcome, not an aborted install.

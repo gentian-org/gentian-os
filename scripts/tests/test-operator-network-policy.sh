@@ -17,6 +17,9 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
+
 render() {
     helm template gentian-os charts/gentian-os -n kernel-control "$@" 2>&1
 }
@@ -26,14 +29,12 @@ check() {
     local what="$1" manifests="$2"
     shift 2
     if python3 scripts/tests/operator_network_policy.py "$@" <<<"${manifests}"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
-        fail=$((fail + 1))
+        bad "${what}"
     fi
 }
 
-fail=0
 echo ""
 echo "Operator chart: the NetworkPolicy on the operator's pods"
 echo ""
@@ -53,9 +54,4 @@ check "a custom listener port follows into the policy" \
 check "networkPolicy.enabled=false: no NetworkPolicy is rendered" \
     "$(render --set director.enabled=true --set usher.enabled=true --set networkPolicy.enabled=false)" off
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${fail} check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+finish

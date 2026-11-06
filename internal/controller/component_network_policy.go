@@ -16,12 +16,9 @@ import (
 	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -212,35 +209,13 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	}
 	desired := buildComponentNetworkPolicy(comp, tenant.Name, componentPods(comp, profile), r.componentEgressNamespaces(profile, tenant),
 		append(rules, own...))
-	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
-	existing := &networkingv1.NetworkPolicy{}
-	err = r.Get(ctx, key, existing)
 	if len(desired.Spec.Egress) == 0 {
+		existing := &networkingv1.NetworkPolicy{}
+		err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
 		if err == nil {
 			return client.IgnoreNotFound(r.Delete(ctx, existing))
 		}
 		return client.IgnoreNotFound(err)
 	}
-	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
-		return err
-	}
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return fmt.Errorf("create NetworkPolicy %s: %w", desired.Name, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Spec = desired.Spec
-	existing.Labels = desired.Labels
-	if err := r.Patch(ctx, existing, patch); err != nil {
-		return fmt.Errorf("patch NetworkPolicy %s: %w", desired.Name, err)
-	}
-	return nil
+	return r.applyComponentPolicy(ctx, comp, desired)
 }

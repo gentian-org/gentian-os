@@ -25,5 +25,6 @@ Every external component the installer pulls, pinned once for the release, with 
 | `cnpg` | `0.23.0` |  | `ghcr.io/cloudnative-pg/charts` |  |  |
 | `kyverno` | `3.3.7` |  | `https://kyverno.github.io/kyverno/` |  |  |
 | `external-dns` | `1.22.0` |  | `https://kubernetes-sigs.github.io/external-dns/` |  |  |
+| `postfix` | `5.1.0` |  | `https://bokysan.github.io/docker-postfix/` |  |  |
 | `monitoring` | `92.3.0` |  | `https://prometheus-community.github.io/helm-charts` |  |  |
 | `logForwarding` | `0.59.0` |  | `https://helm.vector.dev` |  |  |
