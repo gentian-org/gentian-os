@@ -34,6 +34,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/handover"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -183,8 +184,8 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 			// credential paths, no reading of values. Bound to this pod's
 			// ServiceAccount by the cluster's Composition.
 			envvar.Or("CUSTODIAN_BAO_ROLE", "gentian-os-custodian"),
-			loadBaoCA(mgr),
-			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
+			loadBaoCA(mgr.GetAPIReader()),
+			secrets.SkipVerifyFromEnv(),
 		),
 		Validator: validator,
 		Authz:     authorizer,
@@ -251,16 +252,18 @@ func clusterRelayResolver(mgr manager.Manager) RelayResolver {
 // cache — the cache is not running yet, and caching every Secret in the
 // cluster to fetch one certificate is not a trade worth making.
 //
-// Returns nil when it cannot be found, which keeps the system roots: a cluster
-// that gave OpenBao a publicly trusted certificate needs no CA here, and
-// failing startup over a missing one would break it.
-func loadBaoCA(mgr manager.Manager) []byte {
+// A CA file that cannot be read, a Secret that cannot be read, and a Secret
+// that holds no certificate are each a CA that verifies nothing: every
+// request to the vault fails rather than trusting the system roots.
+func loadBaoCA(reader client.Reader) []byte {
 	log := ctrl.Log.WithName("custodian")
 	if path := os.Getenv("BAO_CACERT"); path != "" {
 		pem, err := os.ReadFile(path)
 		if err != nil {
+			// A CA that cannot be read verifies nothing: every request to
+			// the vault fails rather than trusting the system roots.
 			log.Error(err, "reading BAO_CACERT", "path", path)
-			return nil
+			return []byte{}
 		}
 		return pem
 	}
@@ -270,26 +273,14 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	sec := &corev1.Secret{}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
-		// An in-cluster address over https is a certificate no public root
-		// signs, so this is not the conditional warning it used to be: the
-		// custodian's login WILL fail, and saying it at Info under an "if" is
-		// how it scrolled past on a cluster where the Secret was simply
-		// being looked for in the wrong namespace.
-		if addr := os.Getenv("BAO_ADDR"); strings.HasPrefix(addr, "https://") &&
-			strings.Contains(addr, ".svc") {
-			log.Error(err, "OpenBao's CA was not found, so the custodian cannot log in to it: "+
-				"nothing in the cluster can verify an in-cluster certificate against the public roots. "+
-				"Set custodian.caSecretNamespace to the namespace the vault runs in "+
-				"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
-				"secret", namespace+"/"+name, "address", addr)
-			return nil
-		}
-		log.Info("no OpenBao CA available; verifying against the system roots instead. "+
-			"That is correct for a vault with a publicly trusted certificate, and fatal to "+
-			"the custodian's login for one without.",
-			"secret", namespace+"/"+name, "reason", err.Error())
-		return nil
+	if err := reader.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
+		// A CA Secret that cannot be read verifies nothing: every request to
+		// the vault fails rather than trusting the system roots.
+		log.Error(err, "OpenBao's CA Secret cannot be read, so the custodian cannot log in to OpenBao. "+
+			"Set custodian.caSecretNamespace to the namespace the vault runs in "+
+			"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
+			"secret", namespace+"/"+name)
+		return []byte{}
 	}
 	// ca.crt first: on a cert-manager-issued Secret it is the issuer, while
 	// tls.crt is the leaf. A leaf works only while it is the one being served,
@@ -300,8 +291,10 @@ func loadBaoCA(mgr manager.Manager) []byte {
 			return pem
 		}
 	}
-	log.Info("OpenBao CA Secret has neither ca.crt nor tls.crt", "secret", namespace+"/"+name)
-	return nil
+	// A CA Secret without a certificate verifies nothing: every request to
+	// the vault fails rather than trusting the system roots.
+	log.Error(nil, "OpenBao CA Secret has neither ca.crt nor tls.crt", "secret", namespace+"/"+name)
+	return []byte{}
 }
 
 // caller carries the authenticated identity for one request.

@@ -432,7 +432,6 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	// The tenants' stores, in the system namespaces.
 	"internal/controller/tenant_data_plane_manifests.go": {},
 	// Recognizes an in-cluster address; dials none.
-	"internal/custodian/http.go":             {},
 	"internal/director/catalogue/address.go": {},
 	// The model gateway, in a system namespace.
 	"internal/modelgateway/modelgateway.go": {},

@@ -281,7 +281,7 @@ spec:
             - name: BAO_CA_SECRET_NAMESPACE
               value: {{ $vaultNamespace | quote }}
             {{- if (.Values.custodian).tlsSkipVerify }}
-            - name: BAO_TLS_SKIP_VERIFY
+            - name: BAO_SKIP_VERIFY
               value: "true"
             {{- end }}
           readinessProbe:

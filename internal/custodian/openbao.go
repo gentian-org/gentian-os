@@ -52,43 +52,30 @@ package custodian
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // OpenBao is a minimal client. It deliberately implements only the calls this
 // service needs; a fuller client would make it easy to add a read path that
 // the design forbids.
+//
+// It logs in as the custodian, by its ServiceAccount, to Role (the embedded
+// Login), whose policy is what bounds the custodian: write and metadata on
+// credential paths, and no reading of values.
 type OpenBao struct {
-	Addr    string
+	*secrets.Login
 	KVMount string
-
-	// KubernetesMount is where the Kubernetes auth backend is enabled, and
-	// Role the role the custodian logs in to with its ServiceAccount token.
-	// The role's policy is what bounds the custodian: write and metadata on
-	// credential paths, and no reading of values.
-	KubernetesMount string
-	Role            string
-	// ServiceAccountTokenPath is the projected token this pod presents.
-	ServiceAccountTokenPath string
-
-	HTTP *http.Client
-
-	mu       sync.Mutex
-	token    string
-	tokenExp time.Time
-	static   bool // the token was set by SetStaticToken and is never dropped
 }
 
 // ErrUpstream marks a failure to REACH OpenBao, as opposed to OpenBao
@@ -101,44 +88,28 @@ type OpenBao struct {
 // at all. The advice was correct, actionable, and about the wrong thing, which
 // is worse than no advice: it sends someone to audit group membership that is
 // already right.
-var ErrUpstream = errors.New("openbao unreachable")
+var ErrUpstream = secrets.ErrUnreachable
 
-// NewOpenBao builds a client with a bounded HTTP timeout, so a hung OpenBao
-// surfaces as a failed request rather than a wedged handler.
+// NewOpenBao builds a client that verifies OpenBao as secrets.Transport does.
 //
-// caCert, when non-empty, is the PEM OpenBao's certificate is verified against.
-// It is not optional in practice: OpenBao serves a self-signed certificate on
-// this platform, so the default transport — which verifies against the system
-// roots — fails every exchange. ESO reaches the same endpoint by loading the
-// same CA out of the openbao-tls Secret, and this is that pattern in Go.
+// caCert, when non-nil, is the PEM OpenBao's certificate is verified against,
+// and the only one: a caCert that holds no certificate verifies nothing, so
+// every request fails. It is not optional in practice: OpenBao serves a
+// self-signed certificate on this platform, so the system roots fail every
+// exchange. ESO reaches the same endpoint by loading the same CA out of the
+// openbao-tls Secret, and this is that pattern in Go.
 //
-// An empty caCert keeps the system roots, which is right for a cluster that
-// gave OpenBao a publicly trusted certificate.
+// A nil caCert keeps the system roots, which is right for a cluster that gave
+// OpenBao a publicly trusted certificate. skipVerify turns verification off,
+// for development only.
 func NewOpenBao(addr, kvMount, role string, caCert []byte, skipVerify bool) *OpenBao {
-	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12}
-	if skipVerify {
-		// An escape hatch, not a mode. Named so it appears in the Deployment
-		// for anyone wondering why verification is not happening.
-		tlsConf.InsecureSkipVerify = true
-	} else if len(caCert) > 0 {
-		pool := x509.NewCertPool()
-		if pool.AppendCertsFromPEM(caCert) {
-			tlsConf.RootCAs = pool
-		} else {
-			ctrl.Log.WithName("custodian").Info(
-				"the configured OpenBao CA is not valid PEM; falling back to the system roots")
-		}
+	if caCert != nil && !skipVerify && !x509.NewCertPool().AppendCertsFromPEM(caCert) {
+		ctrl.Log.WithName("custodian").Error(nil,
+			"the configured OpenBao CA holds no certificate; every request to OpenBao will fail")
 	}
 	return &OpenBao{
-		Addr:                    strings.TrimSuffix(addr, "/"),
-		KVMount:                 kvMount,
-		KubernetesMount:         "kubernetes",
-		Role:                    role,
-		ServiceAccountTokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
-		HTTP: &http.Client{
-			Timeout:   15 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsConf},
-		},
+		Login:   secrets.NewLogin(addr, role, "", secrets.Transport(caCert, skipVerify)),
+		KVMount: kvMount,
 	}
 }
 
@@ -148,55 +119,26 @@ func NewOpenBao(addr, kvMount, role string, caCert []byte, skipVerify bool) *Ope
 var ErrVaultLogin = errors.New("the custodian could not log in to OpenBao")
 
 // Token returns the custodian's own token at the vault, logging in with its
-// ServiceAccount when it has none or the one it has is about to expire.
+// ServiceAccount when it has none or the one it has is about to expire. A
+// login that reached the vault and got no token is ErrVaultLogin; one that
+// never reached it is ErrUpstream.
 //
 // This is the only token the custodian ever presents to the vault. A caller's
 // token is verified here and goes no further.
 func (b *OpenBao) Token(ctx context.Context) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.token != "" && (b.tokenExp.IsZero() || time.Until(b.tokenExp) > 60*time.Second) {
-		return b.token, nil
-	}
-	jwt, err := os.ReadFile(b.ServiceAccountTokenPath)
-	if err != nil {
-		return "", fmt.Errorf("%w: reading the ServiceAccount token: %v", ErrVaultLogin, err)
-	}
-	body, _ := json.Marshal(map[string]string{"role": b.Role, "jwt": strings.TrimSpace(string(jwt))})
-	url := fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, b.KubernetesMount)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.HTTP.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUpstream, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		// OpenBao's own words go to the log and not to the caller: they can
+	tok, err := b.Login.Token(ctx)
+	switch {
+	case err == nil, errors.Is(err, ErrUpstream):
+		return tok, err
+	case errors.Is(err, secrets.ErrLoginRefused):
+		// OpenBao's own words go to the log and not into the error: they can
 		// name roles and policies, and the caller can do nothing about them.
-		detail := strings.TrimSpace(readCapped(resp.Body, 512))
 		ctrl.Log.WithName("custodian").Info("OpenBao refused the custodian's login",
-			"role", b.Role, "mount", b.KubernetesMount, "status", resp.StatusCode, "openbao", detail)
-		return "", fmt.Errorf("%w: role %q answered HTTP %d", ErrVaultLogin, b.Role, resp.StatusCode)
+			"role", b.Role, "mount", b.AuthPath, "openbao", err.Error())
+		return "", fmt.Errorf("%w: OpenBao refused role %q", ErrVaultLogin, b.Role)
+	default:
+		return "", fmt.Errorf("%w: %w", ErrVaultLogin, err)
 	}
-	var out struct {
-		Auth struct {
-			ClientToken   string `json:"client_token"`
-			LeaseDuration int    `json:"lease_duration"`
-		} `json:"auth"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Auth.ClientToken == "" {
-		return "", fmt.Errorf("%w: the login answer carried no token", ErrVaultLogin)
-	}
-	b.token = out.Auth.ClientToken
-	b.tokenExp = time.Now().Add(time.Hour)
-	if out.Auth.LeaseDuration > 0 {
-		b.tokenExp = time.Now().Add(time.Duration(out.Auth.LeaseDuration) * time.Second)
-	}
-	return b.token, nil
 }
 
 // ErrTokenRefused is the vault refusing the token a request was made with:
@@ -227,36 +169,13 @@ func (b *OpenBao) WithToken(ctx context.Context, fn func(token string) error) er
 	if err != nil {
 		return err
 	}
-	if err = fn(token); !errors.Is(err, ErrTokenRefused) || !b.forget(token) {
+	if err = fn(token); !errors.Is(err, ErrTokenRefused) || !b.Forget(token) {
 		return err
 	}
 	if token, err = b.Token(ctx); err != nil {
 		return err
 	}
 	return fn(token)
-}
-
-// forget drops tok if it is still the cached token, so the next call logs in
-// again, and reports whether a call is worth making again. A static token is
-// kept: there is nothing to log in with in its place.
-func (b *OpenBao) forget(tok string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.static {
-		return false
-	}
-	if b.token == tok {
-		b.token, b.tokenExp = "", time.Time{}
-	}
-	return true
-}
-
-// SetStaticToken makes Token return tok without logging in. For tests against
-// a stand-in vault.
-func (b *OpenBao) SetStaticToken(tok string) {
-	b.mu.Lock()
-	b.token, b.tokenExp, b.static = tok, time.Time{}, true
-	b.mu.Unlock()
 }
 
 // PathMetadata is what the API is allowed to say about a stored credential.
