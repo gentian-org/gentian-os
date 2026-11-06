@@ -42,7 +42,7 @@ func TestPlaceholderTranscript(t *testing.T) {
 		in.Profile.Package.ExtraValues = &runtime.RawExtension{Raw: raw}
 		in.Profile.Package.Chart = &gentianov1alpha1.ChartRef{}
 		r := &valuesRender{in: in, spec: in.Profile, tenant: in.Tenant(), ns: in.Namespace, vm: &gentianov1alpha1.ValueMapping{}}
-		out = append(out, label+" substitute: "+r.substitute(placeholderText))
+		out = append(out, label+" substitute: "+expand(placeholderText, in.placeholders()...))
 		vals, err := r.inlineValues()
 		out = append(out, fmt.Sprintf("%s inline values: %v %v", label, jsonOf(t, vals), err))
 

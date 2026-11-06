@@ -13,7 +13,6 @@ package apprender
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -214,23 +213,8 @@ func extensionValues(in *Input, ext *gentianov1alpha1.AppSidecarSpec) (map[strin
 			if err != nil {
 				return nil, err
 			}
-			pairs := []string{
-				"${TENANT_DOMAIN}", in.TenantDomain(),
-				"${TENANT_NAMESPACE}", in.Namespace,
-				"${TENANT_ID}", in.Tenant(),
-				"${APP_ID}", in.App,
-				"${SIDECAR_ID}", ext.Name,
-			}
-			if d := in.KernelServices["KERNEL_DOMAIN"]; d != "" {
-				pairs = append(pairs, "${KERNEL_DOMAIN}", d)
-			}
-			if ip := in.ClusterConfig["node.ip"]; ip != "" {
-				pairs = append(pairs, "${NODE_IP}", ip)
-			}
-			text := string(raw)
-			for i := 0; i < len(pairs); i += 2 {
-				text = strings.ReplaceAll(text, pairs[i], pairs[i+1])
-			}
+			pairs := append(in.placeholders(), "${SIDECAR_ID}", ext.Name)
+			text := expand(string(raw), append(pairs, in.clusterPlaceholders()...)...)
 			if err := json.Unmarshal([]byte(text), &values); err != nil {
 				return nil, fmt.Errorf("extraValues after substitution: %w", err)
 			}

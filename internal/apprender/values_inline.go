@@ -35,9 +35,6 @@ func (r *valuesRender) inlineValues() (map[string]interface{}, error) {
 	in := r.in
 	vals := map[string]interface{}{}
 
-	// Only facts about the app's own context are substituted -- its tenant,
-	// namespace and domain -- never an endpoint: one names nothing to
-	// connect to and carries nothing to authenticate with.
 	extra, err := valuesRaw(r.spec.Package.ExtraValues)
 	if err != nil {
 		return nil, fmt.Errorf("extraValues of %s: %w", in.ProfileName, err)
@@ -47,13 +44,7 @@ func (r *valuesRender) inlineValues() (map[string]interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		s := r.substitute(string(raw))
-		if kd := in.KernelServices["KERNEL_DOMAIN"]; kd != "" {
-			s = strings.ReplaceAll(s, "${KERNEL_DOMAIN}", kd)
-		}
-		if ip := in.ClusterConfig["node.ip"]; ip != "" {
-			s = strings.ReplaceAll(s, "${NODE_IP}", ip)
-		}
+		s := expand(string(raw), append(in.placeholders(), in.clusterPlaceholders()...)...)
 		if err := json.Unmarshal([]byte(s), &vals); err != nil {
 			return nil, fmt.Errorf("extraValues of %s after substitution: %w", in.ProfileName, err)
 		}
@@ -105,19 +96,6 @@ func (r *valuesRender) inlineValues() (map[string]interface{}, error) {
 	return canonical, nil
 }
 
-// substitute expands the app's identity placeholders.
-func (r *valuesRender) substitute(s string) string {
-	for _, sub := range [][2]string{
-		{"${TENANT_DOMAIN}", r.in.TenantDomain()},
-		{"${TENANT_NAMESPACE}", r.ns},
-		{"${TENANT_ID}", r.tenant},
-		{"${APP_ID}", r.in.App},
-	} {
-		s = strings.ReplaceAll(s, sub[0], sub[1])
-	}
-	return s
-}
-
 // addonValues overlays what a selected addon needs from the base's chart
 // and renders the base's activation recipe for the selection.
 func (r *valuesRender) addonValues(vals map[string]interface{}) error {
@@ -149,7 +127,7 @@ func (r *valuesRender) addonValues(vals map[string]interface{}) error {
 	script := strings.ReplaceAll(act.Script, "__GENTIAN_ADDON_IDS__", strings.Join(r.in.Addons, " "))
 	// The script never goes through the extraValues pass, and is as
 	// app-specific as an extraValues hook, so it gets the same placeholders.
-	script = r.substitute(script)
+	script = expand(script, r.in.placeholders()...)
 	parts := strings.Split(act.ValuesPath, ".")
 	// Appended to what the app already runs at this path: a chart's single
 	// lifecycle hook usually carries the app's own setup, which replacing it

@@ -132,29 +132,15 @@ func (r *ComponentReconciler) renderInput(
 		return nil, err
 	}
 	in.Addons = ids
-	values := map[string]interface{}{}
 	// A placed component's configuration is the platform's: it was never
 	// read from the Component, and is not now.
-	if cfg := comp.Spec.Config; cfg != nil && !operatorPlaced(profile) {
-		if cfg.Replicas != nil {
-			replicas := int64(*cfg.Replicas)
-			in.Replicas = &replicas
-		}
-		if cfg.ExtraValues != nil && len(cfg.ExtraValues.Raw) > 0 {
-			if err := decodeJSONObject(cfg.ExtraValues.Raw, &values); err != nil {
-				return nil, fmt.Errorf("config.extraValues is not an object: %w", err)
-			}
-		}
+	cfg := comp.Spec.Config
+	if operatorPlaced(profile) {
+		cfg = nil
 	}
-	// What the operator tells the chart lies over the component's own
-	// values, which cannot override the platform's facts.
-	mergeValues(values, operatorValues)
-	if len(values) > 0 {
-		normalized, err := jsonNormalized(values)
-		if err != nil {
-			return nil, fmt.Errorf("values: %w", err)
-		}
-		in.ExtraValues = normalized
+	in.Replicas, in.ExtraValues, err = componentValues(cfg, operatorValues)
+	if err != nil {
+		return nil, err
 	}
 
 	clusterConfig := &corev1.ConfigMap{}
@@ -216,6 +202,38 @@ var redirectPolicyGVK = schema.GroupVersionKind{
 // jsonNormalized passes values through JSON, so they hold only what the API
 // server would give back: an int read back as int64 would otherwise differ
 // from the int written, and the object be patched on every pass.
+// componentValues is what a component's config asks of its chart: its
+// replicas, nil when it names none, and its extraValues with what the operator
+// tells the chart laid over them, nil when there are none. The operator's
+// values lie over the component's own, which cannot override the platform's
+// facts. The values go through JSON, so they hold only what the API server
+// would give back: an int read back as int64 would otherwise differ from the
+// int written, and what holds them be patched on every pass.
+func componentValues(cfg *gentianov1alpha1.TenantAppConfig, operatorValues map[string]interface{}) (*int64, map[string]interface{}, error) {
+	var replicas *int64
+	values := map[string]interface{}{}
+	if cfg != nil {
+		if cfg.Replicas != nil {
+			n := int64(*cfg.Replicas)
+			replicas = &n
+		}
+		if cfg.ExtraValues != nil && len(cfg.ExtraValues.Raw) > 0 {
+			if err := decodeJSONObject(cfg.ExtraValues.Raw, &values); err != nil {
+				return nil, nil, fmt.Errorf("config.extraValues is not an object: %w", err)
+			}
+		}
+	}
+	mergeValues(values, operatorValues)
+	if len(values) == 0 {
+		return replicas, nil, nil
+	}
+	normalized, err := jsonNormalized(values)
+	if err != nil {
+		return nil, nil, fmt.Errorf("values: %w", err)
+	}
+	return replicas, normalized, nil
+}
+
 func jsonNormalized(values map[string]interface{}) (map[string]interface{}, error) {
 	raw, err := json.Marshal(values)
 	if err != nil {

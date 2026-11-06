@@ -102,8 +102,7 @@ func (id *identityScope) services() *gentianov1alpha1.ServiceRequirements {
 
 // place puts the tenant's and the kernel's domains into an address.
 func (id *identityScope) place(uri string) string {
-	uri = strings.ReplaceAll(uri, "${TENANT_DOMAIN}", id.domain)
-	return strings.ReplaceAll(uri, "${KERNEL_DOMAIN}", id.kernelDomain)
+	return expand(uri, "${TENANT_DOMAIN}", id.domain, "${KERNEL_DOMAIN}", id.kernelDomain)
 }
 
 func (id *identityScope) placeAll(uris []string) []string {
