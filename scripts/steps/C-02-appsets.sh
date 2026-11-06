@@ -18,7 +18,11 @@ source "${SCRIPT_DIR}/scripts/steps/B-01-bootstrap-apps.sh"
 # mean the data plane is serving.
 _v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "gentian-definitions-${s} tenant-postgres-${s} keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
 
-# The system-tier engines, as Crossplane names their Releases.
+# The system-tier engines, as Crossplane names their Releases: the object
+# store always, MariaDB and the cache (the redis Release, Valkey) only where
+# the Composition has created them -- it does so once a component declares
+# one, or at once for those systemServices.always names. A fresh cluster has
+# neither, and waiting for them would wait for nothing.
 #
 # Composed by the Cluster claim (C-01) but NOT gated there: their Helm values
 # are the ConfigMaps and Secret the 08-data-plane ApplicationSet syncs, and
@@ -28,7 +32,15 @@ _v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "gent
 #
 # Named by the external-name the composition sets rather than by the object
 # name, which carries the XR's prefix.
-_v5_engine_releases() { echo "mariadb redis seaweedfs"; }
+_v5_engine_releases() {
+    local composed e out="seaweedfs"
+    composed="$(kubectl get release.helm.crossplane.io \
+        -o jsonpath='{range .items[*]}{.metadata.annotations.crossplane\.io/external-name}{"\n"}{end}' 2>/dev/null || true)"
+    for e in mariadb redis; do
+        grep -qx "${e}" <<<"${composed}" && out="${out} ${e}"
+    done
+    echo "${out}"
+}
 
 # One engine's Ready and Synced, for a message worth reading. Synced=False is
 # the common failure and it means the Release could not be reconciled at all --
