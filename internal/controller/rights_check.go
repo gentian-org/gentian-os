@@ -73,10 +73,9 @@ func rightsCheckURL(bouncerService string) string {
 	return fmt.Sprintf("http://%s.%s.svc:%d/v1/check", bouncerService, servicesNamespace, rightsCheckPort)
 }
 
-// ensureRightsCheck keeps the Secret a component's key is delivered in.
-//
-// The key is made once and kept: a component reads it at start, and a key
-// that changed on every reconcile would be refused until its pods restarted.
+// ensureRightsCheck keeps the Secret a component's own key is delivered in
+// (ensureKeySecret), with the bouncer's address and, for a component that
+// commissions partners there, the director's.
 //
 // A component whose profile does not declare the requirement is not looked
 // at. If it declared it once, its Secret stays until the component goes, and
@@ -86,31 +85,45 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 	if !holdsComponentKey(profile) {
 		return nil
 	}
-	key := types.NamespacedName{Name: rightsCheckSecretName(comp.Name), Namespace: comp.Namespace}
+	// The director's address is absent for a component that does not
+	// commission partners.
+	director := ""
+	if wantsPartnerCommission(profile) {
+		director = r.directorURL()
+	}
+	return r.ensureKeySecret(ctx, comp, tenantName, rightsCheckKeys, map[string]string{
+		rightsCheckURLKey:       rightsCheckURL(r.bouncerService()),
+		componentDirectorURLKey: director,
+	})
+}
+
+// ensureKeySecret keeps a Secret of the kind keys describes for the
+// component: its key and the addresses it is presented at, each address by
+// the entry it is in, an empty one absent.
+//
+// The key is made once and kept: a component reads it at start, and a key
+// that changed on every reconcile would be refused until its pods restarted.
+func (r *ComponentReconciler) ensureKeySecret(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, keys keySecret, addresses map[string]string) error {
+	key := types.NamespacedName{Name: keys.name(comp.Name), Namespace: comp.Namespace}
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, key, existing)
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
 	found := err == nil
-	url := rightsCheckURL(r.bouncerService())
-	// The director's address, for a component that commissions
-	// partners there; absent for any other.
-	director := ""
-	if wantsPartnerCommission(profile) {
-		director = r.directorURL()
-	}
 	if found {
 		if !metav1.IsControlledBy(existing, comp) {
 			return fmt.Errorf("secret %s exists and is not this component's", key.Name)
 		}
-		if len(existing.Data[rightsCheckKeyKey]) > 0 && string(existing.Data[rightsCheckURLKey]) == url &&
-			string(existing.Data[componentDirectorURLKey]) == director &&
-			existing.Labels[rightsCheckerLabel] == "true" {
+		current := len(existing.Data[keys.key]) > 0 && existing.Labels[keys.label] == "true"
+		for entry, address := range addresses {
+			current = current && string(existing.Data[entry]) == address
+		}
+		if current {
 			return nil
 		}
 	}
-	secret := string(existing.Data[rightsCheckKeyKey])
+	secret := string(existing.Data[keys.key])
 	if secret == "" {
 		raw := make([]byte, 32)
 		if _, err := rand.Read(raw); err != nil {
@@ -119,17 +132,16 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 		secret = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	labels := componentLabels(comp, tenantName)
-	labels[rightsCheckerLabel] = "true"
+	labels[keys.label] = "true"
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: labels},
 		Type:       corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			rightsCheckURLKey: []byte(url),
-			rightsCheckKeyKey: []byte(secret),
-		},
+		Data:       map[string][]byte{keys.key: []byte(secret)},
 	}
-	if director != "" {
-		desired.Data[componentDirectorURLKey] = []byte(director)
+	for entry, address := range addresses {
+		if address != "" {
+			desired.Data[entry] = []byte(address)
+		}
 	}
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err

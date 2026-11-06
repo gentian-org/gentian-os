@@ -78,109 +78,48 @@ func ensureHTTPRouteResource(ctx context.Context, c client.Client, desired *gate
 	return c.Patch(ctx, existing, patch)
 }
 
-func (r *TenantReconciler) deleteStaleHTTPRoutesForTenant(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	expected map[string]struct{},
-) error {
-	list := &gatewayv1.HTTPRouteList{}
-	if err := r.List(ctx, list,
-		client.InNamespace(nsName),
-		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
-	); err != nil {
-		return fmt.Errorf("list tenant HTTPRoutes for stale cleanup: %w", err)
-	}
-	for i := range list.Items {
-		name := list.Items[i].Name
-		if expected != nil {
-			if _, wanted := expected[name]; wanted {
-				continue
-			}
-		}
-		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete stale HTTPRoute %s: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func (r *TenantReconciler) deleteStaleBackendTrafficPoliciesForTenant(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	expected map[string]struct{},
-) error {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   backendTrafficPolicyGVK.Group,
-		Version: backendTrafficPolicyGVK.Version,
-		Kind:    backendTrafficPolicyGVK.Kind + "List",
-	})
-	if err := r.List(ctx, list,
-		client.InNamespace(nsName),
-		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
-	); err != nil {
-		if meta.IsNoMatchError(err) {
-			return nil
-		}
-		return fmt.Errorf("list tenant BackendTrafficPolicies for stale cleanup: %w", err)
-	}
-	for i := range list.Items {
-		name := list.Items[i].GetName()
-		if expected != nil {
-			if _, wanted := expected[name]; wanted {
-				continue
-			}
-		}
-		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete stale BackendTrafficPolicy %s: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func (r *TenantReconciler) deleteStaleClientTrafficPoliciesForTenant(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	expected map[string]struct{},
-) error {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   clientTrafficPolicyGVK.Group,
-		Version: clientTrafficPolicyGVK.Version,
-		Kind:    clientTrafficPolicyGVK.Kind + "List",
-	})
-	if err := r.List(ctx, list,
-		client.InNamespace(nsName),
-		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
-	); err != nil {
-		if meta.IsNoMatchError(err) {
-			return nil
-		}
-		return fmt.Errorf("list tenant ClientTrafficPolicies for stale cleanup: %w", err)
-	}
-	for i := range list.Items {
-		name := list.Items[i].GetName()
-		if expected != nil {
-			if _, wanted := expected[name]; wanted {
-				continue
-			}
-		}
-		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("delete stale ClientTrafficPolicy %s: %w", name, err)
-		}
-	}
-	return nil
-}
-
+// deleteTenantHTTPRoutes deletes every route and traffic policy the operator
+// wrote for the tenant in its namespace. A traffic policy kind the cluster
+// does not serve has none to delete.
 func (r *TenantReconciler) deleteTenantHTTPRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, nil); err != nil {
+	selected := []client.ListOption{
+		client.InNamespace(nsName),
+		client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp},
+	}
+	if err := deleteUnlisted(ctx, r.Client, "HTTPRoute", &gatewayv1.HTTPRouteList{}, nil, selected...); err != nil {
 		return err
 	}
-	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, nil); err != nil {
+	for _, gvk := range []schema.GroupVersionKind{backendTrafficPolicyGVK, clientTrafficPolicyGVK} {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(gvk.GroupVersion().WithKind(gvk.Kind + "List"))
+		if err := deleteUnlisted(ctx, r.Client, gvk.Kind, list, nil, selected...); err != nil && !meta.IsNoMatchError(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteUnlisted deletes every object opts list into list whose name keep
+// does not hold; a nil keep holds none. kind names them in an error.
+func deleteUnlisted(ctx context.Context, c client.Client, kind string, list client.ObjectList, keep map[string]struct{}, opts ...client.ListOption) error {
+	if err := c.List(ctx, list, opts...); err != nil {
+		return fmt.Errorf("list %s for stale cleanup: %w", kind, err)
+	}
+	items, err := meta.ExtractList(list)
+	if err != nil {
 		return err
 	}
-	return r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, nil)
+	for _, item := range items {
+		obj, ok := item.(client.Object)
+		if !ok {
+			continue
+		}
+		if _, kept := keep[obj.GetName()]; kept {
+			continue
+		}
+		if err := c.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete stale %s %s: %w", kind, obj.GetName(), err)
+		}
+	}
+	return nil
 }

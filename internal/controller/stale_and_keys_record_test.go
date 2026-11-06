@@ -65,24 +65,27 @@ func TestStaleDeleteTranscript(t *testing.T) {
 	tenant.Name = "demo"
 	keep := map[string]struct{}{"tenant-keep": {}, "kernel-keep": {}, "other-tenant-keep": {}, "unmanaged-keep": {}}
 	type run func(ctx context.Context, c client.Client) error
+	// tenantKind is the tenant's stale delete of one kind: what
+	// deleteTenantHTTPRoutes does for each, with a list of names to keep.
+	tenantKind := func(kind string, list func() client.ObjectList, servedOptionally bool, keep map[string]struct{}) run {
+		return func(ctx context.Context, c client.Client) error {
+			err := deleteUnlisted(ctx, c, kind, list(), keep, client.InNamespace("tenant-demo"),
+				client.MatchingLabels{managedByLabel: managedByValue, tenantLabel: tenant.Name, gatewayComponentLabel: gatewayComponentApp})
+			if servedOptionally && apimeta.IsNoMatchError(err) {
+				return nil
+			}
+			return err
+		}
+	}
 	runs := map[string]run{
-		"tenant routes": func(ctx context.Context, c client.Client) error {
-			return (&TenantReconciler{Client: c}).deleteStaleHTTPRoutesForTenant(ctx, tenant, "tenant-demo", keep)
-		},
-		"tenant routes, all": func(ctx context.Context, c client.Client) error {
-			return (&TenantReconciler{Client: c}).deleteStaleHTTPRoutesForTenant(ctx, tenant, "tenant-demo", nil)
-		},
-		"tenant backend policies": func(ctx context.Context, c client.Client) error {
-			return (&TenantReconciler{Client: c}).deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, "tenant-demo", keep)
-		},
-		"tenant backend policies, all": func(ctx context.Context, c client.Client) error {
-			return (&TenantReconciler{Client: c}).deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, "tenant-demo", nil)
-		},
-		"tenant client policies": func(ctx context.Context, c client.Client) error {
-			return (&TenantReconciler{Client: c}).deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, "tenant-demo", keep)
-		},
-		"tenant client policies, all": func(ctx context.Context, c client.Client) error {
-			return (&TenantReconciler{Client: c}).deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, "tenant-demo", nil)
+		"tenant routes":                tenantKind("HTTPRoute", func() client.ObjectList { return &gatewayv1.HTTPRouteList{} }, false, keep),
+		"tenant routes, all":           tenantKind("HTTPRoute", func() client.ObjectList { return &gatewayv1.HTTPRouteList{} }, false, nil),
+		"tenant backend policies":      tenantKind(backendTrafficPolicyGVK.Kind, unstructuredListOf(backendTrafficPolicyGVK), true, keep),
+		"tenant backend policies, all": tenantKind(backendTrafficPolicyGVK.Kind, unstructuredListOf(backendTrafficPolicyGVK), true, nil),
+		"tenant client policies":       tenantKind(clientTrafficPolicyGVK.Kind, unstructuredListOf(clientTrafficPolicyGVK), true, keep),
+		"tenant client policies, all":  tenantKind(clientTrafficPolicyGVK.Kind, unstructuredListOf(clientTrafficPolicyGVK), true, nil),
+		"tenant, everything": func(ctx context.Context, c client.Client) error {
+			return (&TenantReconciler{Client: c}).deleteTenantHTTPRoutes(ctx, tenant, "tenant-demo")
 		},
 		"kernel routes and policies": func(ctx context.Context, c client.Client) error {
 			return (&GatewayPlatformReconciler{Client: c}).deleteStaleKernelRoutesAndPolicies(ctx, keep, keep)
@@ -127,6 +130,14 @@ func TestStaleDeleteTranscript(t *testing.T) {
 	}
 	sort.Strings(out)
 	holdToTranscript(t, *updateTranscripts, "stale-deletes", strings.Join(out, "\n")+"\n")
+}
+
+func unstructuredListOf(gvk schema.GroupVersionKind) func() client.ObjectList {
+	return func() client.ObjectList {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(gvk.GroupVersion().WithKind(gvk.Kind + "List"))
+		return list
+	}
 }
 
 // notFoundError is the API server's answer for an object already gone.
@@ -180,9 +191,12 @@ func TestKeySecretTranscript(t *testing.T) {
 		},
 	}
 	drifts := map[string]func(s *corev1.Secret){
-		"none":          func(*corev1.Secret) {},
-		"no key":        func(s *corev1.Secret) { delete(s.Data, authorizationKeyKey); delete(s.Data, rightsCheckKeyKey) },
-		"other url":     func(s *corev1.Secret) { s.Data[authorizationURLKey] = []byte("x"); s.Data[rightsCheckURLKey] = []byte("x") },
+		"none":   func(*corev1.Secret) {},
+		"no key": func(s *corev1.Secret) { delete(s.Data, authorizationKeyKey); delete(s.Data, rightsCheckKeyKey) },
+		"other url": func(s *corev1.Secret) {
+			s.Data[authorizationURLKey] = []byte("x")
+			s.Data[rightsCheckURLKey] = []byte("x")
+		},
 		"director":      func(s *corev1.Secret) { s.Data[componentDirectorURLKey] = []byte("http://elsewhere") },
 		"no label":      func(s *corev1.Secret) { s.Labels = map[string]string{"a": "b"} },
 		"extra data":    func(s *corev1.Secret) { s.Data["extra"] = []byte("y") },

@@ -68,17 +68,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	// declares, behind the zone's session and the bouncer's question. What
 	// this used to write -- a route per app with nothing asked at it -- is
 	// removed below wherever it is still found, with its traffic policies.
-	expectedRoutes := map[string]struct{}{}
-	expectedPolicies := map[string]struct{}{}
-	expectedClientPolicies := map[string]struct{}{}
-
-	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, expectedPolicies); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, expectedClientPolicies); err != nil {
+	if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 
