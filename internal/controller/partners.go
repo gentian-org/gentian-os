@@ -17,7 +17,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -29,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/issuerpattern"
 )
 
 // Partners (Tenant spec.partners, docs/guides/identity-brokering.md,
@@ -159,21 +159,6 @@ func claimPartners(u *unstructured.Unstructured) clusterPartners {
 	return out
 }
 
-// IssuerAllowed reports whether an issuer matches one of the patterns, where
-// "*" matches any run of characters and everything else itself.
-func IssuerAllowed(patterns []string, issuer string) bool {
-	for _, p := range patterns {
-		parts := strings.Split(p, "*")
-		for i := range parts {
-			parts[i] = regexp.QuoteMeta(parts[i])
-		}
-		if regexp.MustCompile("^" + strings.Join(parts, ".*") + "$").MatchString(issuer) {
-			return true
-		}
-	}
-	return false
-}
-
 // partnerSalt is the salt of a partner's pairwise subject: fixed for the
 // tenant and the partner, so the subject a partner stored at linking and the
 // one in every later assertion agree, and different for every tenant and
@@ -204,7 +189,7 @@ func tenantPartnerProjection(tenant *gentianov1alpha1.Tenant, claim clusterPartn
 	}
 	for _, p := range tenant.Spec.Partners {
 		entries[p.Name] = p
-		allowed[p.Name] = IssuerAllowed(claim.AllowedIssuers, strings.TrimSuffix(p.Issuer, "/")) ||
+		allowed[p.Name] = issuerpattern.Allowed(claim.AllowedIssuers, strings.TrimSuffix(p.Issuer, "/")) ||
 			isDefaultIssuer(claim, p.Issuer)
 	}
 	names := make([]string, 0, len(entries))
