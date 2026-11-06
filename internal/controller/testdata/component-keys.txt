@@ -1,0 +1,21 @@
+registrar, none: {"keys":[]}
+registrar: {"keys":[{"tenant":"demo","component":"notary","keyHash":"a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9"},{"tenant":"solo","component":"scribe","keyHash":"6017af7204bdfe2e2fbf5eae421859a0ee262b923856fbeb212c7c98988e3472"}]}
+director, none: {"keys":[]}
+director: {"keys":[{"tenant":"demo","component":"notary","keyHash":"a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9","tenants":["demo","solo"]}]}
+bouncer, none:
+routes: null
+
+bouncer:
+checkers:
+- component: notary
+  keyHash: a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9
+  tenant: demo
+- audit:
+    cluster: main
+    realm: kernel
+  component: evidence
+  keyHash: 6017af7204bdfe2e2fbf5eae421859a0ee262b923856fbeb212c7c98988e3472
+  tenant: platform
+routes: null
+
+arbiter: {"stores":[{"tenant":"demo","component":"notary","keyHash":"a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9","model":{"schema_version":"1.1"},"realm":"r","mirrorGroups":true,"tuples":[{"user":"user:a","relation":"r","object":"o:1"}]},{"tenant":"solo","component":"scribe","keyHash":"6017af7204bdfe2e2fbf5eae421859a0ee262b923856fbeb212c7c98988e3472","model":{}}]}
