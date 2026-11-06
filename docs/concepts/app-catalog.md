@@ -698,7 +698,9 @@ run without it; `status.pendingPrivileges` lists what is missing, and the
 console shows it as a request the tenant administrator can act on or
 escalate. That is why the request is an object rather than a field the
 operator silently drops. A pod-security waiver takes effect only where the
-cluster's allowlist names it *and* it was granted; either alone waives nothing
+cluster's allowlist names it *and* it was granted; either alone waives nothing.
+Both are the security officer's, and an approval of a waiver the allowlist
+lacks adds it in the same step
 ([security/design.md §3.0](../security/design.md)). One requirement block with one approval
 path means egress is held to the same standard as a waiver, by construction.
 

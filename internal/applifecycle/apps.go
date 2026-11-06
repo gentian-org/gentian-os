@@ -150,12 +150,29 @@ type PendingPrivilege struct {
 	DeclinedBy    string `json:"declinedBy,omitempty"`
 	DeclinedAt    string `json:"declinedAt,omitempty"`
 	DeclineReason string `json:"declineReason,omitempty"`
+	// Waiver is, for a pod-security request, the cluster allowlist entry it
+	// needs beside the grant, and whether the cluster permits it already.
+	// An approval of one that is not allowlisted names the entry, and the
+	// director adds both in one step. Absent when the profile is not on the
+	// cluster.
+	Waiver *PendingWaiver `json:"waiver,omitempty"`
+}
+
+// PendingWaiver is the allowlist entry (PlatformSecurityPolicy) a
+// pod-security request needs, and whether the cluster has it.
+type PendingWaiver struct {
+	Profile     string `json:"profile"`
+	Policy      string `json:"policy"`
+	Scope       string `json:"scope"`
+	Allowlisted bool   `json:"allowlisted"`
 }
 
 // pendingApprovals pairs each pending request with who answers it, what the
 // profile said it is for, and what has been asked of the approver so far.
-// profile is nil for one the cluster no longer has.
-func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, now time.Time) []PendingPrivilege {
+// profile is nil for one the cluster no longer has; allowed is the cluster's
+// waiver allowlist.
+func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+	allowed []gentianov1alpha1.AllowedMacWaiver, now time.Time) []PendingPrivilege {
 	pending := comp.Status.PendingPrivileges
 	if len(pending) == 0 {
 		return nil
@@ -169,6 +186,7 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 			Reason:     security.PrivilegeReason(profile, ref),
 			ExpiredAt:  expiredGrantAt(comp, ref, now),
 			Digest:     apiExtensionDigest(profile, ref),
+			Waiver:     pendingWaiver(profile, ref, allowed),
 		}
 		if req, ok := requests[ref]; ok {
 			if p.ApprovedBy != security.PrivilegeApproverPerimeter {
@@ -179,6 +197,28 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 		out = append(out, p)
 	}
 	return out
+}
+
+// pendingWaiver is the allowlist entry a pod-security request needs, or nil
+// for any other request.
+func pendingWaiver(profile *gentianov1alpha1.ComponentProfile, ref string, allowed []gentianov1alpha1.AllowedMacWaiver) *PendingWaiver {
+	kind, name := security.SplitPrivilegeRef(ref)
+	p := profile.Privileges()
+	if kind != security.PrivilegePodSecurity || p == nil {
+		return nil
+	}
+	for i := range p.PodSecurity {
+		w := &p.PodSecurity[i]
+		if w.Name != name {
+			continue
+		}
+		ask := []gentianov1alpha1.MacWaiverRequest{{Policy: w.Policy, Scope: w.Scope}}
+		return &PendingWaiver{
+			Profile: profile.Name, Policy: w.Policy, Scope: w.Scope,
+			Allowlisted: len(security.ApprovedMacWaivers(profile.Name, ask, allowed)) > 0,
+		}
+	}
+	return nil
 }
 
 // apiExtensionDigest is the digest an approval of ref must name, or "" for
@@ -250,6 +290,10 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 	if err := s.client.List(ctx, &list, client.InNamespace(ns)); err != nil {
 		return nil, fmt.Errorf("list components: %w", err)
 	}
+	allowed, err := security.LoadAllowedMacWaivers(ctx, s.client)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]AppState, 0, len(list.Items))
 	bases := make([]*gentianov1alpha1.Component, 0, len(list.Items))
 	addons := map[string]AddonState{}
@@ -264,7 +308,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err == nil {
 			found = true
 			if cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
-				addons[comp.Name] = addonState(comp, cp)
+				addons[comp.Name] = addonState(comp, cp, allowed)
 				continue
 			}
 		} else if !apierrors.IsNotFound(err) {
@@ -276,7 +320,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 			state.Origin = componentOriginDefault
 		}
 		if found {
-			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, time.Now())
+			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, allowed, time.Now())
 		}
 		pods, err := s.componentPods(ctx, comp)
 		if err != nil {
@@ -311,12 +355,12 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 
 // addonState is an add-on Component's account of itself, with its pending
 // privileges and who answers each.
-func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile) AddonState {
+func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile, allowed []gentianov1alpha1.AllowedMacWaiver) AddonState {
 	state := componentState(comp)
 	return AddonState{
 		Profile: state.Profile, Name: state.Name, Ready: state.Ready, Phase: state.Phase, Message: state.Message,
 		PendingPrivileges:         state.PendingPrivileges,
-		PendingPrivilegeApprovals: pendingApprovals(comp, cp, time.Now()),
+		PendingPrivilegeApprovals: pendingApprovals(comp, cp, allowed, time.Now()),
 	}
 }
 
@@ -328,7 +372,7 @@ func componentState(comp *gentianov1alpha1.Component) AppState {
 		Phase:                     AppPhaseInstalling,
 		Message:                   "Provisioning in progress",
 		PendingPrivileges:         comp.Status.PendingPrivileges,
-		PendingPrivilegeApprovals: pendingApprovals(comp, nil, time.Now()),
+		PendingPrivilegeApprovals: pendingApprovals(comp, nil, nil, time.Now()),
 	}
 	for _, c := range comp.Status.Conditions {
 		state.Conditions = append(state.Conditions, AppCondition{

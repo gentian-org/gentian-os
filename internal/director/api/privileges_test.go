@@ -124,6 +124,51 @@ func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
 	}
 }
 
+// A pod-security waiver the cluster does not permit yet is approved in one
+// step by the security officer: the allowlist entry the request names and the
+// grant on the install, both recorded with the officer's verb. An allowlist
+// entry belongs to a pod-security approval and to nothing else.
+func TestTheSecurityOfficerPermitsAndGrantsAWaiverInOneStep(t *testing.T) {
+	h := start(t)
+	sam := h.token(t, "gentian", "sam")
+	body := `{"reason":"the converter forks as root; reviewed 2026-11-06",` +
+		`"allowlist":{"profile":"nextcloud","policy":"gentian-require-non-root","scope":"collabora"}}`
+
+	if code, answer := h.do(t, "PUT", waiverPath, sam, body); code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, answer)
+	}
+	allowlist := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if !strings.Contains(allowlist, "profile: nextcloud") || !strings.Contains(allowlist, "scope: collabora") {
+		t.Fatalf("the waiver is not on the allowlist:\n%s", allowlist)
+	}
+	log := dt.Git(t, "", "--git-dir", h.remote, "log", "-2", "--format=%B", "main")
+	if strings.Count(log, "can_approve cluster:") != 2 {
+		t.Fatalf("both commits do not name the security officer's verb:\n%s", log)
+	}
+	code, answer := h.do(t, "GET", "/v1/tenants/demo/privileges", sam, "")
+	if list, _ := answer["privileges"].([]any); code != http.StatusOK || len(list) != 1 {
+		t.Fatalf("the grant is not declared: %d %v", code, answer)
+	}
+
+	// Approved again, the entry is not added twice.
+	if code, answer := h.do(t, "PUT", waiverPath, sam, body); code/100 != 2 {
+		t.Fatalf("PUT again = %d %v", code, answer)
+	}
+	allowlist = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if strings.Count(allowlist, "profile: nextcloud") != 1 {
+		t.Fatalf("the entry was added twice:\n%s", allowlist)
+	}
+
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", egressPath, h.token(t, "tenant-demo", "tom"),
+		`{"reason":"agreed in the security review","allowlist":{"profile":"nextcloud","policy":"p","scope":"s"}}`); code != http.StatusBadRequest {
+		t.Fatalf("an egress approval carried an allowlist entry: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused approval moved the repository")
+	}
+}
+
 // A role holder of a tenant's realm approves with a token of that realm, and
 // with no other: the same subject signed in by another realm is nobody here.
 func TestARoleHolderApprovesOnlyWithATokenOfItsOwnRealm(t *testing.T) {

@@ -1156,7 +1156,8 @@ becomes a relation.
 | Director | a tenant or the cluster | `can_approve_privilege`, `can_approve` | granting a privilege an app asked for; which of the two depends on the kind of privilege |
 | Director | a tenant | `can_administer` | backup, delete a backup, send a notice, read the change history, the tenant's own switches |
 | Director | the cluster | `can_configure` | settings, branding, tenants, domains, catalogs, the cluster's backup policy, import, role holders, update modes, removing what the catalog left behind |
-| Director | the cluster | `can_set_admission` | the list of security exceptions |
+| Director | the cluster | `can_approve` | which pod-security waivers the cluster permits |
+| Director | the cluster | `can_set_admission` | which of the platform's cluster roles the cluster permits |
 | Director | the cluster | `can_audit` | reading the cluster's settings, tenants, catalogs, changes, the update report |
 | Director, custodian | a tenant or the cluster | `can_write_credential` | declaring a repository (director); setting a secret (custodian) |
 | Custodian | a tenant or the cluster | `can_read_credential` | seeing that a secret is required and whether it is set |

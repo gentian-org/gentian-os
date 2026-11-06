@@ -623,18 +623,23 @@ func TestAGrantIsCommittedAndWithdrawn(t *testing.T) {
 	}
 }
 
-// The waiver allowlist is the cluster's own security configuration. It is
-// read under can_audit, joined with what the catalog asks of it, and
-// changed under can_set_admission -- which model v1 binds to break-glass and
-// nobody holds by standing membership. That is the model's decision and the
-// right one: letting an app out of the pod-security baseline should cost a
-// deliberate elevation, not an ordinary admin session.
-func TestTheWaiverAllowlistIsReadWidelyAndChangedOnlyByBreakGlass(t *testing.T) {
+// The waiver allowlist is read under can_audit and changed by the security
+// officer (cluster#can_approve), who also approves each install's grant: a
+// waiver takes effect without break-glass. Which of the platform's cluster
+// roles the cluster permits stays break-glass's (can_set_admission), and
+// that route cannot change the waivers. A platform administrator holds
+// neither.
+func TestTheWaiverAllowlistIsTheSecurityOfficers(t *testing.T) {
 	h, _ := startWithOperator(t)
 	audrey := h.token(t, "gentian", "audrey") // may audit the cluster
 	alice := h.token(t, "gentian", "alice")   // platform administrator
+	sam := h.token(t, "gentian", "sam")       // security officer
+	bea := h.token(t, "gentian", "bea")       // break-glass
+	waivers := "/v1/clusters/" + dt.Cluster + "/platform-security/waivers"
+	whole := "/v1/clusters/" + dt.Cluster + "/platform-security"
+	element := `{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}]}`
 
-	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/platform-security", audrey, "")
+	code, body := h.do(t, "GET", whole, audrey, "")
 	if code != http.StatusOK {
 		t.Fatalf("read: %d %v", code, body)
 	}
@@ -648,23 +653,49 @@ func TestTheWaiverAllowlistIsReadWidelyAndChangedOnlyByBreakGlass(t *testing.T) 
 		t.Fatalf("the permitted cluster roles are not answered as an empty list: %v", body)
 	}
 
-	// A platform administrator is refused, and nothing moves.
+	// Neither a platform administrator nor break-glass changes the waivers,
+	// on either route, and nothing moves.
 	before := h.tip(t)
-	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security", alice,
-		`{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}]}`); code != http.StatusForbidden {
-		t.Fatalf("a platform administrator changed the admission posture without break-glass: %d", code)
+	for who, token := range map[string]string{"a platform administrator": alice, "break-glass": bea} {
+		if code, _ := h.do(t, "PUT", waivers, token, element); code != http.StatusForbidden {
+			t.Errorf("%s changed the waiver allowlist: %d", who, code)
+		}
 	}
-	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security", alice,
-		`{"allowedClusterRoles":[{"profile":"dashboard","role":"read-nodes"}]}`); code != http.StatusForbidden {
-		t.Fatalf("a platform administrator permitted a cluster role without break-glass: %d", code)
+	if code, _ := h.do(t, "PUT", whole, alice, element); code != http.StatusForbidden {
+		t.Errorf("a platform administrator changed the admission posture without break-glass: %d", code)
+	}
+	code, body = h.do(t, "PUT", whole, bea, element)
+	if msg, _ := body["error"].(string); code != http.StatusForbidden || !strings.Contains(msg, "security officer") {
+		t.Errorf("break-glass changed the waivers through the whole object: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "PUT", whole, alice, `{"allowedClusterRoles":[{"profile":"dashboard","role":"read-nodes"}]}`); code != http.StatusForbidden {
+		t.Errorf("a platform administrator permitted a cluster role without break-glass: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", waivers, h.token(t, "tenant-solo", "tina"), `{"allowedMacWaivers":[]}`); code != http.StatusForbidden {
+		t.Errorf("a tenant admin changed the cluster's waivers: %d", code)
 	}
 	if h.tip(t) != before {
 		t.Fatal("a refused request moved the repository")
 	}
-	// A tenant administrator is refused too, for the ordinary reason.
-	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security",
-		h.token(t, "tenant-solo", "tina"), `{"allowedMacWaivers":[]}`); code != http.StatusForbidden {
-		t.Fatalf("a tenant admin changed the cluster's admission posture: %d", code)
+
+	// The security officer sets the waivers.
+	if code, body := h.do(t, "PUT", waivers, sam, element); code != http.StatusAccepted {
+		t.Fatalf("the security officer could not set the waivers: %d %v", code, body)
+	}
+	file := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if !strings.Contains(file, "profile: element") || !strings.Contains(file, "scope: synapse") {
+		t.Fatalf("the waiver is not declared:\n%s", file)
+	}
+	// Break-glass permits a cluster role, sending the waivers back as they
+	// are -- a screen that read the whole object -- and they stay.
+	if code, body := h.do(t, "PUT", whole, bea,
+		`{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}],`+
+			`"allowedClusterRoles":[{"profile":"dashboard","role":"read-nodes"}]}`); code != http.StatusAccepted {
+		t.Fatalf("break-glass could not permit a cluster role: %d %v", code, body)
+	}
+	file = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if !strings.Contains(file, "profile: element") || !strings.Contains(file, "role: read-nodes") {
+		t.Fatalf("the waivers or the role are lost:\n%s", file)
 	}
 }
 

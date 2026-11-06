@@ -153,6 +153,7 @@ type Repository interface {
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
+	AllowMacWaiver(ctx context.Context, waiver gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
 	SetPlatformClusterRoles(ctx context.Context, roles []gitops.ClusterRoleAllowance, meta gitops.Meta) (gitops.Result, error)
 	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
@@ -798,9 +799,14 @@ func (s *Server) routes() {
 			// profiles ask for a waiver, is the usher's answer on the same
 			// path.
 			s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", s.clusterObject, s.platformSecurity)
-			// Changing what may escape the default posture is the cluster's
-			// own security configuration: can_set_admission, which model v1
-			// defines as exactly this.
+			// Which pod-security waivers the cluster permits is the security
+			// officer's (cluster#can_approve, "waivers" in model v1): the
+			// same person approves the grant on each install, so a waiver
+			// takes effect without break-glass. The rest of the object --
+			// which of the platform's cluster roles the cluster permits --
+			// is the cluster's admission and stays can_set_admission; that
+			// route refuses a change to the waivers.
+			s.guarded("PUT /v1/clusters/{c}/platform-security/waivers", "can_approve", s.clusterObject, s.setMacWaivers)
 			s.guarded("PUT /v1/clusters/{c}/platform-security", "can_set_admission", s.clusterObject, s.setPlatformSecurity)
 		}
 
