@@ -28,7 +28,27 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-var updateConditions = flag.Bool("update-conditions", false, "rewrite the recorded condition transcript")
+var updateTranscripts = flag.Bool("update-transcripts", false, "rewrite the recorded transcripts in testdata")
+
+// holdToTranscript holds got to testdata/name.txt, or writes it there when
+// update is set.
+func holdToTranscript(t *testing.T, update bool, name, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", name+".txt")
+	if update {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil { //nolint:gosec // A test fixture.
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path) //nolint:gosec // A test fixture.
+	if err != nil {
+		t.Fatalf("%v (run with -update-transcripts to record)", err)
+	}
+	if string(want) != got {
+		t.Fatalf("the transcript differs from %s (run with -update-transcripts to record)\n--- got\n%s--- want\n%s", path, got, want)
+	}
+}
 
 // conditionSetter sets one condition on a fresh object holding conds at
 // generation 2, and returns the object's conditions after.
@@ -156,19 +176,5 @@ func TestConditionSettersTranscript(t *testing.T) {
 			out = append(out, step.name+": "+describeConditions(got))
 		}
 	}
-	path := filepath.Join("testdata", "conditions.txt")
-	got := strings.Join(out, "\n") + "\n"
-	if *updateConditions {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil { //nolint:gosec // A test fixture.
-			t.Fatal(err)
-		}
-		return
-	}
-	want, err := os.ReadFile(path) //nolint:gosec // A test fixture.
-	if err != nil {
-		t.Fatalf("%v (run with -update-conditions to record)", err)
-	}
-	if string(want) != got {
-		t.Fatalf("the transcript differs from %s (run with -update-conditions to record)\n--- got\n%s--- want\n%s", path, got, want)
-	}
+	holdToTranscript(t, *updateTranscripts, "conditions", strings.Join(out, "\n")+"\n")
 }
