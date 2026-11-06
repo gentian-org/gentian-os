@@ -7,7 +7,7 @@
 ## Overview
 
 - [Gentian OS — Platform Architecture](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/architecture.md): Gentian OS is a cloud-native operating system for open-source business applications.
-- [FAQ](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/faq.md): Yes. Gentian requires at least one default StorageClass in the cluster, and you can name another for kernel workloads on the Cluster claim, `clusters/<cluster>/kernel/claims/cluster.yaml` in the…
+- [FAQ](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/faq.md): A Kubernetes cluster, version 1.33 or newer: your own servers or any provider.
 - [Gentian OS in plain terms](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/introduction.md): For readers who know software and servers but not Kubernetes.
 - [Why a Cloud OS](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/why-a-cloud-os.md): Open-source business software is excellent — Nextcloud, OpenProject, Element/Matrix, OX App Suite, XWiki, Jitsi each rival or surpass their proprietary competitors in their own domain.
 
