@@ -830,25 +830,20 @@ func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm strin
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
-	sec := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Namespace: ns,
-				Labels: map[string]string{managedByLabel: managedByValue},
-			},
-			Data: data,
-		})
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: ns,
+			Labels: map[string]string{managedByLabel: managedByValue},
+		},
+		Data: data,
 	}
-	if err != nil {
-		return err
-	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
-	}
-	for k, v := range data {
-		sec.Data[k] = v
-	}
-	return r.Update(ctx, sec)
+	return ensureObject(ctx, r.Client, desired, func(sec *corev1.Secret) bool {
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+		for k, v := range data {
+			sec.Data[k] = v
+		}
+		return true
+	})
 }

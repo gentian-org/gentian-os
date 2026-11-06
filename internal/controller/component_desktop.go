@@ -509,30 +509,22 @@ func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *ge
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return false, "", "", err
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(externalSecretGVK)
-	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: comp.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return false, "", "", err
+	// existing is the ExternalSecret that was there, as written; nil when
+	// it was made now.
+	var existing *unstructured.Unstructured
+	if err := ensureObject(ctx, r.Client, desired, func(es *unstructured.Unstructured) bool {
+		existing = es
+		// Only what is written here is compared: the API server fills in
+		// the schema's defaults, which would read as drift on every pass.
+		if covers(es.Object["spec"], desired.Object["spec"]) {
+			return false
 		}
-		return false, "DatabaseProvisioning", "the database credential is being delivered", nil
+		es.Object["spec"] = desired.Object["spec"]
+		return true
+	}); err != nil {
+		return false, "", "", fmt.Errorf("ensure ExternalSecret %s: %w", name, err)
 	}
-	if err != nil {
-		return false, "", "", err
-	}
-	// Only what is written here is compared: the API server fills in the
-	// schema's defaults, which would read as drift on every pass.
-	if !covers(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return false, "", "", err
-		}
-		if err := r.Patch(ctx, existing, patch); err != nil {
-			return false, "", "", err
-		}
-	}
-	if !crossplaneObjectReady(existing) {
+	if existing == nil || !crossplaneObjectReady(existing) {
 		return false, "DatabaseProvisioning", "the database credential is being delivered", nil
 	}
 	return true, "", "", nil

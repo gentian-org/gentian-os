@@ -184,22 +184,12 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 // applyTenantNetworkPolicy writes one of the tenant's NetworkPolicies: its
 // labels and spec, on every pass.
 func (r *TenantReconciler) applyTenantNetworkPolicy(ctx context.Context, np *networkingv1.NetworkPolicy) error {
-	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, types.NamespacedName{Name: np.Name, Namespace: np.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, np); err != nil {
-			return fmt.Errorf("create NetworkPolicy %s: %w", np.Name, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("get NetworkPolicy %s: %w", np.Name, err)
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Labels = np.Labels
-	existing.Spec = np.Spec
-	if err := r.Patch(ctx, existing, patch); err != nil {
-		return fmt.Errorf("patch NetworkPolicy %s: %w", np.Name, err)
+	if err := ensureObject(ctx, r.Client, np, func(existing *networkingv1.NetworkPolicy) bool {
+		existing.Labels = np.Labels
+		existing.Spec = np.Spec
+		return true
+	}); err != nil {
+		return fmt.Errorf("ensure NetworkPolicy %s: %w", np.Name, err)
 	}
 	return nil
 }

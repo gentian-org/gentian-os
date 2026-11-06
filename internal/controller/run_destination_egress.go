@@ -21,7 +21,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -76,22 +75,16 @@ func ensureRunDestinationEgress(
 	if err := controllerutil.SetControllerReference(run, desired, scheme); err != nil {
 		return fmt.Errorf("own the destination's NetworkPolicy %s: %w", name, err)
 	}
-	existing := &networkingv1.NetworkPolicy{}
-	err = c.Get(ctx, types.NamespacedName{Name: name, Namespace: desired.Namespace}, existing)
-	if apierrors.IsNotFound(err) {
-		if err := c.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("open the way to the bundle's destination: %w", err)
-		}
-		return nil
+	err = ensureObject(ctx, c, desired, func(existing *networkingv1.NetworkPolicy) bool {
+		existing.Labels = desired.Labels
+		existing.OwnerReferences = desired.OwnerReferences
+		existing.Spec = desired.Spec
+		return true
+	})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("ensure NetworkPolicy %s: %w", name, err)
 	}
-	if err != nil {
-		return err
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Labels = desired.Labels
-	existing.OwnerReferences = desired.OwnerReferences
-	existing.Spec = desired.Spec
-	return c.Patch(ctx, existing, patch)
+	return nil
 }
 
 // discardRunDestinationEgress closes a run's way out: on every path a run
