@@ -25,6 +25,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/arbiter"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -172,7 +173,7 @@ func (r *TenantRestoreReconciler) restoreAppAuthorization(
 
 // engineNamespace is where the engine set is: the control namespace.
 func (r *TenantRestoreReconciler) engineNamespace() string {
-	return envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control))
+	return envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control))
 }
 
 // deleteAuthorizationStores deletes every authorization store of a tenant

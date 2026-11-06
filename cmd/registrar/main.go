@@ -26,11 +26,9 @@ SPDX-License-Identifier: MPL-2.0
 package main
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -99,21 +97,7 @@ func store(log *slog.Logger) (authz.Checker, error) {
 	if url == "" {
 		return nil, fmt.Errorf("OPENFGA_API_URL is required: the authorization store decides who may manage people")
 	}
-	opts := authz.Options{
-		BaseURL:  url,
-		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
-		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
-		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
-		Logger:   log,
-	}
 	// The ids the operator recorded, and no others: without them this
 	// service does not start rather than find a store by its name.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	storeID, modelID, err := authz.Pinned(ctx, opts)
-	if err != nil {
-		return nil, fmt.Errorf("authorization store: %w", err)
-	}
-	opts.StoreID, opts.ModelID = storeID, modelID
-	return authz.NewOpenFGA(opts)
+	return authz.OpenPinned(url, log)
 }

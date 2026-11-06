@@ -46,6 +46,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
@@ -119,7 +120,7 @@ func authorizationGraph(log logr.Logger) *authz.OpenFGA {
 	if url == "" {
 		return nil
 	}
-	control := envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control))
+	control := envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control))
 	opts := authz.Options{
 		BaseURL:  url,
 		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
@@ -392,9 +393,9 @@ func main() {
 		TenancyMode:       tenancyMode,
 		MainAddressTenant: mainAddressTenant,
 		Ingress:           buildEdgeIngress(),
-		Cluster:           envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		Cluster:           envvar.Or("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
 		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		BouncerService:    envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
+		BouncerService:    envvar.Or("BOUNCER_SERVICE", "gentian-os-bouncer"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
@@ -413,8 +414,8 @@ func main() {
 		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		TenancyMode:       tenancyMode,
 		MainAddressTenant: mainAddressTenant,
-		Cluster:           envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		BouncerService:    envOrDefault("BOUNCER_SERVICE", "gentian-os-bouncer"),
+		Cluster:           envvar.Or("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		BouncerService:    envvar.Or("BOUNCER_SERVICE", "gentian-os-bouncer"),
 		DirectorURL:       os.Getenv("DIRECTOR_URL"),
 		UsherURL:          os.Getenv("USHER_URL"),
 		Seeder:            buildSeeder(),
@@ -485,7 +486,7 @@ func main() {
 	if err := (&controller.SystemEnginesReconciler{
 		Definitions: held,
 		Client:      mgr.GetClient(),
-		Namespace:   envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Namespace:   envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		Recorder:    mgr.GetEventRecorderFor("system-engines"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SystemEngines")
@@ -498,10 +499,10 @@ func main() {
 		Client: mgr.GetClient(),
 		// The instance's credentials, in the vault the tenants' are kept in.
 		Seeder:    tenantReconciler.Seeder,
-		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		Image:     os.Getenv("GENTIAN_IMAGE"),
 		PlatformCaller: applifecycle.ServiceAccountUsername(
-			envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)), os.Getenv("OPERATOR_SA")),
+			envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)), os.Getenv("OPERATOR_SA")),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationEngine")
 		os.Exit(1)
@@ -518,7 +519,7 @@ func main() {
 		Client: mgr.GetClient(),
 		// The shared secret, in the vault the tenants' credentials are kept in.
 		Seeder:        tenantReconciler.Seeder,
-		Namespace:     envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Namespace:     envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
 		ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 	}).SetupWithManager(mgr); err != nil {
@@ -674,7 +675,7 @@ func main() {
 		// the director's token a writing token.
 		mirror := &controller.AppStoreMirror{
 			Client:    mgr.GetClient(),
-			Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+			Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 			Arbiter:   arbiterPlatform,
 		}
 		listener, err := controller.NewMembershipListener(graph, mirror, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
@@ -699,7 +700,7 @@ func main() {
 	// installed app could add itself to without a director release.
 	if err := (&controller.TileProjectionReconciler{
 		Client:      mgr.GetClient(),
-		Cluster:     envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		Cluster:     envvar.Or("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
 		KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		// What a tenant's own domain is derived from: a link tile names the
 		// tenant to the service it leads to.
@@ -724,7 +725,7 @@ func main() {
 			// expensive — so the safe default is the one that keeps the exit open.
 			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
 			KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
+			HandoverNamespace: envvar.Or("HANDOVER_NAMESPACE", envvar.Or("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 		}).SetupWithManager(mgr)
 
 	}
@@ -759,7 +760,7 @@ func main() {
 	if err := mgr.Add(&usagestatistics.Reporter{
 		Client:    mgr.GetClient(),
 		Reader:    mgr.GetAPIReader(),
-		Namespace: envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		Settings:  usagestatistics.SettingsFromEnv(),
 		Identity: usagestatistics.Identity{
 			ClusterID:    os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
@@ -768,7 +769,7 @@ func main() {
 		},
 		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient()},
 		Key: func() (*usagestatistics.Key, error) {
-			return usagestatistics.KeyFromFile(envOrDefault("USAGE_STATISTICS_KEY_FILE", "/etc/gentian/usage-statistics/signing_seed"))
+			return usagestatistics.KeyFromFile(envvar.Or("USAGE_STATISTICS_KEY_FILE", "/etc/gentian/usage-statistics/signing_seed"))
 		},
 	}); err != nil {
 		setupLog.Error(err, "unable to add the usage statistics reporter to manager")
@@ -779,7 +780,7 @@ func main() {
 	// one is on the Cluster claim (status.openbaoSnapshots). The snapshot is
 	// taken by the CronJob the chart puts in the vault's namespace.
 	if controller.EnvBool("OPENBAO_SNAPSHOTS") {
-		staleAfter, err := time.ParseDuration(envOrDefault("OPENBAO_SNAPSHOT_STALE_AFTER", "30h"))
+		staleAfter, err := time.ParseDuration(envvar.Or("OPENBAO_SNAPSHOT_STALE_AFTER", "30h"))
 		if err != nil {
 			setupLog.Error(err, "OPENBAO_SNAPSHOT_STALE_AFTER is not a duration")
 			os.Exit(1)
@@ -788,10 +789,10 @@ func main() {
 			Client:     mgr.GetClient(),
 			Reader:     mgr.GetAPIReader(),
 			Seeder:     tenantReconciler.Seeder,
-			Bucket:     envOrDefault("OPENBAO_SNAPSHOT_BUCKET", "gentian-openbao-snapshots"),
+			Bucket:     envvar.Or("OPENBAO_SNAPSHOT_BUCKET", "gentian-openbao-snapshots"),
 			StaleAfter: staleAfter,
 			// The chart says false when it takes no snapshot of the seal.
-			TransitDisabled: envOrDefault("OPENBAO_TRANSIT_SNAPSHOTS", "true") == "false",
+			TransitDisabled: envvar.Or("OPENBAO_TRANSIT_SNAPSHOTS", "true") == "false",
 		}); err != nil {
 			setupLog.Error(err, "unable to add the vault snapshot report to manager")
 			os.Exit(1)
@@ -827,7 +828,7 @@ func main() {
 // GENTIAN_RELEASE_FEED_URL, the GitHub releases API of gentian-os by
 // default, or nothing for "none".
 func releaseFeed() string {
-	feed := envOrDefault("GENTIAN_RELEASE_FEED_URL", "https://api.github.com/repos/gentian-org/gentian-os/releases/latest")
+	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", "https://api.github.com/repos/gentian-org/gentian-os/releases/latest")
 	if feed == "none" {
 		return ""
 	}
@@ -947,7 +948,7 @@ func bundleSigningKey() func() (*backup.SigningKey, error) {
 	if baoAddr == "" {
 		return func() (*backup.SigningKey, error) { return nil, backup.ErrNoSigningKey }
 	}
-	kv := secrets.NewKVClient(baoAddr, envOrDefault("BAO_ROLE", "gentian-os-operator"), "")
+	kv := secrets.NewKVClient(baoAddr, envvar.Or("BAO_ROLE", "gentian-os-operator"), "")
 	absent := func(err error) bool { return errors.Is(err, secrets.ErrNotFound) }
 	var (
 		mu   sync.Mutex
@@ -1041,17 +1042,6 @@ func buildEdgeIngress() controller.EdgeIngress {
 		"separate_token", separate,
 		"account_id_supplied", os.Getenv("CLOUDFLARE_ACCOUNT_ID") != "")
 	return ing
-}
-
-// envOrDefault reads an environment variable, falling back when it is unset or
-// empty. Empty and unset are treated alike deliberately: a Helm value rendered
-// to "" is how an unset chart value reaches a container, and treating that as a
-// deliberate empty string means a default that silently stops applying.
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 // envDuration reads a Go duration from the environment, falling back when it is

@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/issuerpattern"
 )
 
 // Sign-up passes through the same four places as a realm policy: the Tenant,
@@ -129,9 +130,9 @@ func TestPartnersReachTheXTenantWithinTheClaimsBounds(t *testing.T) {
 	if tenantPartnerProjection(&gentianov1alpha1.Tenant{Spec: named.Spec}, claim) != nil {
 		t.Fatal("a tenant without a uid projects partners")
 	}
-	if !IssuerAllowed([]string{"https://*"}, "https://id.x.example/auth/realms/y") ||
-		IssuerAllowed([]string{"https://id.a.example/auth/realms/b"}, "https://id.a.example/auth/realms/bc") {
-		t.Fatal("IssuerAllowed matches wrongly")
+	if !issuerpattern.Allowed([]string{"https://*"}, "https://id.x.example/auth/realms/y") ||
+		issuerpattern.Allowed([]string{"https://id.a.example/auth/realms/b"}, "https://id.a.example/auth/realms/bc") {
+		t.Fatal("issuerpattern.Allowed matches wrongly")
 	}
 	composition, err := os.ReadFile("../../crossplane/compositions/tenant-default.yaml")
 	if err != nil {
