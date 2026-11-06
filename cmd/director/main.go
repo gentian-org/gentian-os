@@ -318,7 +318,7 @@ func run(log *slog.Logger) error {
 	// lists them: a mounted ConfigMap, followed for as long as this runs.
 	commissionKeys := &api.CommissionKeys{}
 	go commissionKeys.Follow(context.Background(),
-		envOr("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log)
+		envOr("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		Catalogue:      entries,

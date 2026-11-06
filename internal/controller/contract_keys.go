@@ -13,9 +13,7 @@ package controller
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -27,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 )
 
@@ -108,14 +107,13 @@ func (r *TenantReconciler) ensureContractKeys(
 			contractKeyKey:      []byte(key),
 			contractProviderKey: []byte(provider),
 		})
-		sum := sha256.Sum256([]byte(key))
 		if callers[provider] == nil {
 			callers[provider] = map[string]map[string]string{}
 		}
 		if callers[provider][contract] == nil {
 			callers[provider][contract] = map[string]string{}
 		}
-		callers[provider][contract][hex.EncodeToString(sum[:])] = consumer
+		callers[provider][contract][componentkeys.Hash(key)] = consumer
 	}
 	for provider, contracts := range callers {
 		data := map[string][]byte{}

@@ -1,0 +1,112 @@
+parse not a list: refused: vouching keys: invalid character 'o' in literal null (expecting 'u'), 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no keys: ok, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an empty list: ok, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse one: ok, 1 entries
+  len 1
+  find "": none
+  find "notary-key": demo/notary
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse two: ok, 2 entries
+  len 2
+  find "": none
+  find "notary-key": demo/notary
+  find "scribe-key": solo/scribe
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no tenant: refused: vouching keys: entry 0 needs tenant and component, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a blank tenant: refused: vouching keys: entry 0 needs tenant and component, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no component: refused: vouching keys: entry 0 needs tenant and component, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse the key itself: refused: vouching keys: entry 0 (demo/notary) needs keyHash as 64 hex digits, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an upper-case hash: refused: vouching keys: entry 0 (demo/notary) needs keyHash as 64 hex digits, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a short hash: refused: vouching keys: entry 0 (demo/notary) needs keyHash as 64 hex digits, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a shared key: refused: vouching keys: entry 1 (solo/notary) shares its key with another, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a bad second entry: refused: vouching keys: entry 1 needs tenant and component, 0 entries
+  len 0
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+nil list: len 0, finds none
+unset list: len 0, finds none
+# no file
+holds len 0; none; none; none; none; none
+# a list
+log INFO "vouching keys loaded" path="<path>" components="2"
+holds len 2; none; demo/notary; solo/scribe; none; none
+# a file that cannot be read
+log WARN "vouching keys not reloaded" path="<path>" error="vouching keys: invalid character 'h' in literal true (expecting 'r')"
+holds len 2; none; demo/notary; solo/scribe; none; none
+# the list again
+log INFO "vouching keys loaded" path="<path>" components="2"
+holds len 2; none; demo/notary; solo/scribe; none; none
+# the file gone
+log INFO "the vouching keys are gone; no component is recognized by its key" path="<path>"
+holds len 0; none; none; none; none; none
+# still gone
+holds len 0; none; none; none; none; none
+# a list again
+log INFO "vouching keys loaded" path="<path>" components="1"
+holds len 1; none; demo/notary; none; none; none

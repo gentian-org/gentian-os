@@ -12,8 +12,6 @@ package registrar_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/registrar"
@@ -102,16 +101,11 @@ const (
 	notaryOfSolo = "key-of-the-notary-of-solo"
 )
 
-func hashOf(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
 func operatorsList() []registrar.VouchingKey {
 	return []registrar.VouchingKey{
-		{Tenant: "demo", Component: "notary", KeyHash: hashOf(notaryOfDemo)},
-		{Tenant: "demo", Component: "scribe", KeyHash: hashOf(scribeOfDemo)},
-		{Tenant: "solo", Component: "notary", KeyHash: hashOf(notaryOfSolo)},
+		{Tenant: "demo", Component: "notary", KeyHash: componentkeys.Hash(notaryOfDemo)},
+		{Tenant: "demo", Component: "scribe", KeyHash: componentkeys.Hash(scribeOfDemo)},
+		{Tenant: "solo", Component: "notary", KeyHash: componentkeys.Hash(notaryOfSolo)},
 	}
 }
 
@@ -311,7 +305,7 @@ func TestAKeyOpensItsOwnLinksOnly(t *testing.T) {
 		t.Errorf("an unknown key: %d, want 401", status)
 	}
 	// And the hash of a key is not the key.
-	if status, _ := h.do(t, http.MethodDelete, miaAtNotary, hashOf(notaryOfDemo), ""); status != http.StatusUnauthorized {
+	if status, _ := h.do(t, http.MethodDelete, miaAtNotary, componentkeys.Hash(notaryOfDemo), ""); status != http.StatusUnauthorized {
 		t.Errorf("the hash of a key: %d, want 401", status)
 	}
 	if got := f.linkedPeople(); len(got) != 1 {
@@ -397,7 +391,7 @@ func TestWithoutAListNoKeyIsRecognised(t *testing.T) {
 
 // The list is refused whole when an entry could not be decided by.
 func TestTheListIsReadStrictly(t *testing.T) {
-	good := `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + hashOf(notaryOfDemo) + `"}]}`
+	good := `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + componentkeys.Hash(notaryOfDemo) + `"}]}`
 	if keys, err := registrar.ParseVouchingKeys([]byte(good)); err != nil || len(keys) != 1 {
 		t.Fatalf("the operator's list: %v, %v", keys, err)
 	}
@@ -406,10 +400,10 @@ func TestTheListIsReadStrictly(t *testing.T) {
 	}
 	for name, bad := range map[string]string{
 		"not a list":   `nonsense`,
-		"no tenant":    `{"keys":[{"component":"notary","keyHash":"` + hashOf("a") + `"}]}`,
-		"no component": `{"keys":[{"tenant":"demo","keyHash":"` + hashOf("a") + `"}]}`,
+		"no tenant":    `{"keys":[{"component":"notary","keyHash":"` + componentkeys.Hash("a") + `"}]}`,
+		"no component": `{"keys":[{"tenant":"demo","keyHash":"` + componentkeys.Hash("a") + `"}]}`,
 		"a key":        `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + notaryOfDemo + `"}]}`,
-		"a shared key": `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + hashOf("a") + `"},{"tenant":"solo","component":"notary","keyHash":"` + hashOf("a") + `"}]}`,
+		"a shared key": `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + componentkeys.Hash("a") + `"},{"tenant":"solo","component":"notary","keyHash":"` + componentkeys.Hash("a") + `"}]}`,
 	} {
 		if _, err := registrar.ParseVouchingKeys([]byte(bad)); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -441,7 +435,7 @@ func TestTheListFollowsTheFile(t *testing.T) {
 	held := &registrar.VouchingKeys{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go held.Follow(ctx, path, 5*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	go held.Follow(ctx, path, 5*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)), registrar.VouchingKeysList)
 	becomes := func(what string, n int) {
 		t.Helper()
 		deadline := time.Now().Add(5 * time.Second)
@@ -453,9 +447,9 @@ func TestTheListFollowsTheFile(t *testing.T) {
 		}
 	}
 	becomes("with no file", 0)
-	one := `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + hashOf(notaryOfDemo) + `"}]}`
-	two := `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + hashOf(notaryOfDemo) +
-		`"},{"tenant":"demo","component":"scribe","keyHash":"` + hashOf(scribeOfDemo) + `"}]}`
+	one := `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + componentkeys.Hash(notaryOfDemo) + `"}]}`
+	two := `{"keys":[{"tenant":"demo","component":"notary","keyHash":"` + componentkeys.Hash(notaryOfDemo) +
+		`"},{"tenant":"demo","component":"scribe","keyHash":"` + componentkeys.Hash(scribeOfDemo) + `"}]}`
 	write(two)
 	becomes("after the operator wrote two", 2)
 	write(`{"keys": this is not a list}`)
