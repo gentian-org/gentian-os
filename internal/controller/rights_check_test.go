@@ -27,6 +27,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/bouncer"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 )
 
 func rightsScheme(t *testing.T) *runtime.Scheme {
@@ -170,12 +171,12 @@ func TestBouncerTableHoldsOnlyCheckersTheOperatorMade(t *testing.T) {
 		}
 	}
 
-	checkers, err := rightsCheckers(ctx, c, bouncerCheckerAudit{})
+	checkers, err := rightsCheckers(ctx, c, bouncer.CheckerAudit{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256([]byte(key))
-	if len(checkers) != 1 || checkers[0] != (bouncerChecker{Tenant: "acme", Component: "notary", KeyHash: hex.EncodeToString(sum[:])}) {
+	if len(checkers) != 1 || checkers[0] != (bouncer.Checker{Key: componentkeys.Key{Tenant: "acme", Component: "notary", KeyHash: hex.EncodeToString(sum[:])}}) {
 		t.Fatalf("checkers = %+v, want the notary of acme alone", checkers)
 	}
 
@@ -190,7 +191,7 @@ func TestBouncerTableHoldsOnlyCheckersTheOperatorMade(t *testing.T) {
 	if err := c.Update(ctx, current); err != nil {
 		t.Fatal(err)
 	}
-	if after, err := rightsCheckers(ctx, c, bouncerCheckerAudit{}); err != nil || len(after) != 0 {
+	if after, err := rightsCheckers(ctx, c, bouncer.CheckerAudit{}); err != nil || len(after) != 0 {
 		t.Fatalf("after the profile stopped declaring it: %+v, %v", after, err)
 	}
 
@@ -241,7 +242,7 @@ func TestOnlyThePlatformTenantsKeyAsksTheAuditQuestions(t *testing.T) {
 		}
 	}
 
-	audit := bouncerCheckerAudit{Cluster: "main", Realm: "kernel"}
+	audit := bouncer.CheckerAudit{Cluster: "main", Realm: "kernel"}
 	checkers, err := rightsCheckers(ctx, c, audit)
 	if err != nil {
 		t.Fatal(err)

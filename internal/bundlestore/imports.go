@@ -69,6 +69,12 @@ type Record struct {
 	// again until they have -- a transfer that stopped part-way continues
 	// from the files already stored -- and nothing restores from it before.
 	Incomplete bool `json:"incomplete,omitempty"`
+	// Refused is why the last fill of an upload was refused, and RefusedAt
+	// when; a fill that completes clears both. A sender whose transfer broke
+	// off reads them with the upload's files, since the answer that carried
+	// the reason may not have reached it.
+	Refused   string     `json:"refused,omitempty"`
+	RefusedAt *time.Time `json:"refusedAt,omitempty"`
 }
 
 // RecordKey is where a prefix's record is.

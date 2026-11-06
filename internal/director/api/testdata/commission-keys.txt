@@ -1,0 +1,99 @@
+parse not a list: refused: commission keys: invalid character 'o' in literal null (expecting 'u'), 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no keys: ok, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an empty list: ok, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse one: ok, 1 entries
+  find "": none
+  find "notary-key": demo/notary may demo=true other=false
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse two: ok, 2 entries
+  find "": none
+  find "notary-key": demo/notary may demo=true other=false
+  find "scribe-key": solo/scribe may demo=true other=false
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no tenant: refused: commission keys: entry 0 needs tenant and component, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a blank tenant: refused: commission keys: entry 0 needs tenant and component, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no component: refused: commission keys: entry 0 needs tenant and component, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse the key itself: refused: commission keys: entry 0 (demo/notary) needs keyHash as 64 hex digits, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an upper-case hash: refused: commission keys: entry 0 (demo/notary) needs keyHash as 64 hex digits, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a short hash: refused: commission keys: entry 0 (demo/notary) needs keyHash as 64 hex digits, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a shared key: refused: commission keys: entry 1 (solo/notary) shares its key with another, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a bad second entry: refused: commission keys: entry 1 needs tenant and component, 0 entries
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+nil list finds: none
+unset list finds: none
+# no file
+holds none; none; none; none; none
+# a list
+log INFO "commission keys loaded" path="<path>" components="2"
+holds none; demo/notary may demo=true other=false; solo/scribe may demo=true other=false; none; none
+# a file that cannot be read
+log WARN "commission keys not reloaded" path="<path>" error="commission keys: invalid character 'h' in literal true (expecting 'r')"
+holds none; demo/notary may demo=true other=false; solo/scribe may demo=true other=false; none; none
+# the list again
+log INFO "commission keys loaded" path="<path>" components="2"
+holds none; demo/notary may demo=true other=false; solo/scribe may demo=true other=false; none; none
+# the file gone
+log INFO "the commission keys are gone; no component is recognized by its key" path="<path>"
+holds none; none; none; none; none
+# still gone
+holds none; none; none; none; none
+# a list again
+log INFO "commission keys loaded" path="<path>" components="1"
+holds none; demo/notary may demo=true other=false; none; none; none

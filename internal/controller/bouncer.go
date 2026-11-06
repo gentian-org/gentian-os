@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // The kernel zone at the edge (networking.md §4): one confidential client,
@@ -377,7 +378,7 @@ func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute) (strin
 // bouncerTable is the whole table: the routes, and the components that hold
 // a key for the one question the bouncer answers apart from the edge
 // (rights_check.go). A table with no checker says nothing about them.
-func bouncerTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, checkers []bouncerChecker) (string, error) {
+func bouncerTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, checkers []bouncer.Checker) (string, error) {
 	var routes []bouncerRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
@@ -436,7 +437,7 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 			extra[i].DeniedRedirect = denied[extra[i].Host]
 		}
 	}
-	checkers, err := rightsCheckers(ctx, r.Client, bouncerCheckerAudit{Cluster: r.Cluster, Realm: r.kernelRealm()})
+	checkers, err := rightsCheckers(ctx, r.Client, bouncer.CheckerAudit{Cluster: r.Cluster, Realm: r.kernelRealm()})
 	if err != nil {
 		return err
 	}

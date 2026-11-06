@@ -417,9 +417,14 @@ func TestAnUploadThatStoppedIsContinued(t *testing.T) {
 	if _, err := s.FillUpload(ctx, &cut{r: bytes.NewReader(first), n: 512 + 4096 + 512 + 1000}, "corp", ref.Prefix); err == nil {
 		t.Fatal("a stopped transfer completed the upload")
 	}
-	files, complete, err := s.UploadedFiles(ctx, "corp", ref.Prefix)
-	if err != nil || complete || len(files) != 1 || files["manifest.json.age"] != 4096 {
-		t.Fatalf("stored after the stop: %v, complete %v, %v", files, complete, err)
+	state, err := s.UploadedFiles(ctx, "corp", ref.Prefix)
+	if err != nil || state.Complete || len(state.Files) != 1 || state.Files["manifest.json.age"] != 4096 {
+		t.Fatalf("stored after the stop: %+v, %v", state, err)
+	}
+	// Why it stopped is recorded on the upload, for a sender whose answer
+	// was lost with its connection.
+	if !strings.Contains(state.Refused, "sending it again continues") || state.RefusedAt == nil {
+		t.Errorf("the stop is recorded as %q at %v", state.Refused, state.RefusedAt)
 	}
 	if err := s.uploadComplete(ctx, ref); err == nil {
 		t.Error("an incomplete upload is restored from")
@@ -438,8 +443,8 @@ func TestAnUploadThatStoppedIsContinued(t *testing.T) {
 	if err := s.uploadComplete(ctx, ref); err != nil {
 		t.Errorf("the complete upload is refused: %v", err)
 	}
-	if _, complete, err := s.UploadedFiles(ctx, "corp", ref.Prefix); err != nil || !complete {
-		t.Errorf("the complete upload is listed as complete %v, %v", complete, err)
+	if state, err := s.UploadedFiles(ctx, "corp", ref.Prefix); err != nil || !state.Complete || state.Refused != "" || state.RefusedAt != nil {
+		t.Errorf("the complete upload is listed as %+v, %v", state, err)
 	}
 
 	if _, err := s.FillUpload(ctx, bytes.NewReader(first), "corp", ref.Prefix); !errors.Is(err, errNoUpload) {
@@ -452,7 +457,7 @@ func TestAnUploadThatStoppedIsContinued(t *testing.T) {
 	if _, err := s.FillUpload(ctx, bytes.NewReader(first), "solo", other.Prefix); !errors.Is(err, errNoUpload) {
 		t.Errorf("another tenant filled corp's upload: %v", err)
 	}
-	if _, _, err := s.UploadedFiles(ctx, "", other.Prefix); !errors.Is(err, errNoUpload) {
+	if _, err := s.UploadedFiles(ctx, "", other.Prefix); !errors.Is(err, errNoUpload) {
 		t.Errorf("the cluster's route read a tenant's upload: %v", err)
 	}
 }

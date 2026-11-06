@@ -568,6 +568,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		mergeValues(operatorValues, databaseValues(profile, comp.Name+componentDatabaseSecretSuffix))
 	}
+	// The secrets the profile has the platform generate, for a component the
+	// platform placed: the tenant's loop seeds them only for what a tenant
+	// installed, and the chart's sensitive values read them before it runs.
+	if operatorPlaced(profile) {
+		if err := seedGeneratedSecrets(ctx, r.Seeder, tenant.Name, comp.Name, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("generated secrets: %w", err)
+		}
+	}
 	// The model gateway, for a component that declares it: nothing is
 	// installed while the cluster has none, or before the component's key is
 	// registered there and delivered. Asked for every delivery, because the

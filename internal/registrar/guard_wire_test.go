@@ -11,13 +11,12 @@ SPDX-License-Identifier: MPL-2.0
 package registrar
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/guard/guardtest"
 )
 
@@ -46,7 +45,7 @@ func TestTheRegistrarsGuardOnTheWire(t *testing.T) {
 		"user:ada can_manage_users tenant:demo":   true,
 	}
 	keys := &VouchingKeys{}
-	keys.Set([]VouchingKey{{Tenant: "demo", Component: "shop", KeyHash: keyHash("the-key")}})
+	keys.Set([]VouchingKey{{Tenant: "demo", Component: "shop", KeyHash: componentkeys.Hash("the-key")}})
 	build := func(checks *guardtest.Checks, logs *guardtest.Logs, handled *string) http.Handler {
 		s := &Server{cfg: Config{Authn: ids, Authz: checks, Log: logs.Logger(), Cluster: "c1", VouchingKeys: keys}, mux: http.NewServeMux()}
 		probe := func(w http.ResponseWriter, _ *http.Request, c call) {
@@ -108,9 +107,4 @@ func TestTheRegistrarsGuardOnTheWire(t *testing.T) {
 		got = append(got, guardtest.Case{Name: c.name, Exchange: guardtest.Do(t, h, c.req, checks, logs, &handled)})
 	}
 	guardtest.Golden(t, "guard", got)
-}
-
-func keyHash(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
 }

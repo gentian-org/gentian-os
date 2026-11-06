@@ -11,9 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package bouncer
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,6 +20,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 
 	"github.com/gentian-org/gentian-os/internal/audit"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 )
 
 // Checker is one component the operator lets ask a single question of the
@@ -36,13 +34,9 @@ import (
 // about one tenant, and for nothing else: it cannot write, cannot list, and
 // cannot name another tenant's app.
 type Checker struct {
-	// Tenant is the tenant whose apps the component may ask about.
-	Tenant string `json:"tenant"`
+	// Tenant is the tenant whose apps the component may ask about;
 	// Component names who is asking, for the log.
-	Component string `json:"component"`
-	// KeyHash is the SHA-256 of the key the component was given, in hex. The
-	// key itself is in the component's Secret and nowhere else.
-	KeyHash string `json:"keyHash"`
+	componentkeys.Key
 	// Audit, when set, lets the key ask two questions more about a person of
 	// the platform tenant: may they audit the cluster, and may they read one
 	// tenant's evidence. Nil for every key but the evidence service's and its
@@ -68,52 +62,29 @@ const (
 	relationCanConfigure    = "can_configure"
 )
 
-var keyHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // appNamePattern is a profile name: a DNS label. Holding the name to it is
 // what keeps the question inside the checker's tenant, since the object is
 // app:<tenant>/<name> and a name with a slash in it would be another's.
 var appNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
 func validateCheckers(checkers []Checker) error {
-	seen := map[string]bool{}
-	for i, c := range checkers {
-		if strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.Component) == "" {
-			return fmt.Errorf("route table: checker %d needs tenant and component", i)
-		}
-		if !keyHashPattern.MatchString(c.KeyHash) {
-			return fmt.Errorf("route table: checker %d (%s/%s) needs keyHash as 64 hex digits", i, c.Tenant, c.Component)
-		}
+	return componentkeys.Check(checkers, "route table", "checker", func(i int, c Checker) error {
 		if c.Audit != nil {
 			if _, err := authz.HolderUser(c.Audit.Realm, "x"); err != nil || strings.TrimSpace(c.Audit.Cluster) == "" ||
 				strings.ContainsAny(c.Audit.Cluster, ":#/ ") {
 				return fmt.Errorf("route table: checker %d (%s/%s) asks the audit questions and needs a cluster and a realm", i, c.Tenant, c.Component)
 			}
 		}
-		if seen[c.KeyHash] {
-			return fmt.Errorf("route table: checker %d (%s/%s) shares its key with another", i, c.Tenant, c.Component)
-		}
-		seen[c.KeyHash] = true
-	}
-	return nil
+		return nil
+	})
 }
 
 // checker returns the checker a key belongs to, or nil.
 func (t *Table) checker(key string) *Checker {
-	if t == nil || key == "" {
+	if t == nil {
 		return nil
 	}
-	sum := sha256.Sum256([]byte(key))
-	got := []byte(hex.EncodeToString(sum[:]))
-	var found *Checker
-	// Every entry is compared, so the time taken says nothing about which
-	// one matched or whether one did.
-	for i := range t.Checkers {
-		if subtle.ConstantTimeCompare(got, []byte(t.Checkers[i].KeyHash)) == 1 {
-			found = &t.Checkers[i]
-		}
-	}
-	return found
+	return componentkeys.Find(t.Checkers, key)
 }
 
 type checkRequest struct {

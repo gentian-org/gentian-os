@@ -127,7 +127,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	// installed long after this starts, and one that stops declaring the
 	// requirement must stop being recognized without a restart.
 	vouchingKeys := &VouchingKeys{}
-	go vouchingKeys.Follow(ctx, envOr("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log)
+	go vouchingKeys.Follow(ctx, envOr("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log, VouchingKeysList)
 
 	// The Tenants, and -- for one that is not there -- its Argo CD
 	// Application, which says whether its creation failed.
