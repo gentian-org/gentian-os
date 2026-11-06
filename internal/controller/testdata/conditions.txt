@@ -1,0 +1,54 @@
+# schedule
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=2}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=kept generation=2}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=kept generation=2}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=2}
+# export
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=2}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=kept generation=2}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=kept generation=2}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=2}
+# restore
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=2}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=kept generation=2}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=kept generation=2}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=2}
+# customization record
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=0}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=0}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=kept generation=0}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=kept generation=0}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=0}
+# tenant
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=2}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=kept generation=2}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=kept generation=2}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=2}
+# backup policy
+new: {Other True R "m" transition=kept generation=1} {Accepted True A "one" transition=now generation=2}
+the same: {Other True R "m" transition=kept generation=1} {Accepted True A "one" transition=kept generation=1}
+another reason: {Other True R "m" transition=kept generation=1} {Accepted True B "one" transition=now generation=2}
+another message: {Other True R "m" transition=kept generation=1} {Accepted True A "two" transition=now generation=2}
+another status: {Other True R "m" transition=kept generation=1} {Accepted False A "one" transition=now generation=2}
+# app grant
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=0}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=1}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=now generation=1}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=now generation=1}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=1}
+# platform security policy
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=0}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=1}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=now generation=1}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=now generation=1}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=1}
+# component
+new: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=now generation=2}
+the same: {Other True R "m" transition=kept generation=1} {Ready True A "one" transition=kept generation=1}
+another reason: {Other True R "m" transition=kept generation=1} {Ready True B "one" transition=now generation=2}
+another message: {Other True R "m" transition=kept generation=1} {Ready True A "two" transition=now generation=2}
+another status: {Other True R "m" transition=kept generation=1} {Ready False A "one" transition=now generation=2}

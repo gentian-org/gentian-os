@@ -272,7 +272,7 @@ func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password
 		annotations[roleProvisionedAnnotation] = done
 		es.SetAnnotations(annotations)
 		return true, r.Patch(ctx, es, patch)
-	case jobFailed(job):
+	case meta.JobFailed(job):
 		// Run again, from a new Job: the script is idempotent.
 		prop := metav1.DeletePropagationBackground
 		return false, client.IgnoreNotFound(r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}))
@@ -280,36 +280,14 @@ func (r *AuthorizationEngineReconciler) ensureRole(ctx context.Context, password
 	return false, nil
 }
 
-func jobFailed(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
 // makeAppInstanceRoleJob is the role Job every database on the tenants'
 // PostgreSQL is made with, for the instance's role and database.
 func makeAppInstanceRoleJob() *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := psqlContainer("provision-role",
 		buildRoleScript(openfgaAppsDatabase, openfgaAppsDatabase, gentianov1alpha1.SchemaPreferencePublic, false, 0))
 	container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", arbiterRoleJob, jobSecretPasswordKey))
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: arbiterRoleJob, Namespace: postgresNamespace,
-			Labels: map[string]string{managedByLabel: managedByValue, "app.kubernetes.io/part-of": arbiter.ServiceName},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyOnFailure, Containers: []corev1.Container{container}},
-			},
-		},
-	}
+	return meta.ProvisioningJob(arbiterRoleJob, postgresNamespace,
+		map[string]string{managedByLabel: managedByValue, "app.kubernetes.io/part-of": arbiter.ServiceName}, container)
 }
 
 // arbiterObjects are the arbiter's workload and the namespace's policies.

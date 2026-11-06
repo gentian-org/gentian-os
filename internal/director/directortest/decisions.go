@@ -136,10 +136,12 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	// tests issue tokens for -- the fixture's own name realms kernel and
 	// demo: the platform tenant's people of realm gentian, on this cluster
 	// and on the fixture's, which its tenants hang off; ines of tenant-demo
-	// as a security officer; and each tenant's perimeter approver.
+	// as a security officer; bea of gentian holding break-glass for the
+	// occasion; and each tenant's perimeter approver.
 	for _, c := range []string{"cluster:" + Cluster, "cluster:main"} {
 		for _, h := range [][2]string{{"gentian/sam", "security_officer"}, {"gentian/audrey", "auditor"}, {"gentian/serge", "service_admin"},
-			{"gentian/shari", "shared_apps_admin"}, {"gentian/petra", "perimeter_approver"}, {"tenant-demo/ines", "security_officer"}} {
+			{"gentian/shari", "shared_apps_admin"}, {"gentian/petra", "perimeter_approver"}, {"tenant-demo/ines", "security_officer"},
+			{"gentian/bea", "break_glass"}} {
 			tuples = append(tuples, map[string]any{"user": "user:" + h[0], "relation": h[1], "object": c})
 		}
 	}

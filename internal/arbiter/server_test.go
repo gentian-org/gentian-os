@@ -13,8 +13,6 @@ package arbiter
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +23,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -283,18 +282,13 @@ func (m *memoryRecorder) Forget(_ context.Context, key string) error {
 	return nil
 }
 
-func hashOf(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
 func entry(t *testing.T, tenant, component, key, dsl string) Entry {
 	t.Helper()
 	model, err := Compile(dsl)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Entry{Tenant: tenant, Component: component, KeyHash: hashOf(key), Model: model}
+	return Entry{Tenant: tenant, Component: component, KeyHash: componentkeys.Hash(key), Model: model}
 }
 
 const docModel = `model
@@ -347,7 +341,7 @@ func (h *harness) call(t *testing.T, method, path, key string, body any) (int, m
 // OpenFGA is never asked.
 func TestAKeyTheTableDoesNotNameIs401(t *testing.T) {
 	h := newHarness(t, entry(t, "acme", "ledger", "key-a", docModel))
-	for _, key := range []string{"", "not-a-key", hashOf("key-a")} {
+	for _, key := range []string{"", "not-a-key", componentkeys.Hash("key-a")} {
 		code, body := h.call(t, http.MethodPost, "/v1/check", key, CheckRequest{User: "user:1", Relation: "viewer", Object: "doc:1"})
 		if code != http.StatusUnauthorized || body["code"] != "unauthenticated" {
 			t.Fatalf("key %q: %d %v", key, code, body)

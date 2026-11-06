@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gentian-org/gentian-os/internal/meta"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -299,13 +300,13 @@ func (r *TenantRestoreReconciler) ensureRetainedMariaDB(ctx context.Context, ten
 		return false, nil
 	case err != nil:
 		return false, err
-	case jobIsFailed(job):
+	case meta.JobFailed(job):
 		prop := metav1.DeletePropagationBackground
 		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil && !apierrors.IsNotFound(err) {
 			return false, err
 		}
 		return false, fmt.Errorf("the MariaDB setup Job %s failed", job.Name)
-	case jobIsComplete(job):
+	case meta.JobComplete(job):
 		return true, nil
 	}
 	if job.DeletionTimestamp == nil {

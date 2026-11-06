@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -493,18 +492,13 @@ func fetchStatus(job *batchv1.Job) *FetchStatus {
 		RequestedBy: a["gentianos.io/requested-by"],
 		StartedAt:   job.CreationTimestamp.UTC().Format(time.RFC3339),
 	}
-	for _, c := range job.Status.Conditions {
-		if c.Status != corev1.ConditionTrue {
-			continue
-		}
-		switch c.Type {
-		case batchv1.JobComplete:
-			st.Phase, st.Message = "ready", "the bundle is in the cluster's storage"
-		case batchv1.JobFailed:
-			st.Phase = "failed"
-			st.Message = "the bundle could not be copied: " + strings.TrimSpace(c.Reason+" "+c.Message) +
-				". The fetch's log says what the source answered"
-		}
+	switch {
+	case meta.JobFailed(job):
+		st.Phase = "failed"
+		st.Message = "the bundle could not be copied: " + meta.JobFailure(job) +
+			". The fetch's log says what the source answered"
+	case meta.JobComplete(job):
+		st.Phase, st.Message = "ready", "the bundle is in the cluster's storage"
 	}
 	return st
 }

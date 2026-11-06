@@ -13,12 +13,9 @@ package controller
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -166,75 +163,34 @@ func authorizationEgress() networkingv1.NetworkPolicyEgressRule {
 	}
 }
 
+// authorizationKeys are the keys for the arbiter.
+var authorizationKeys = keySecret{label: authorizationHolderLabel, key: authorizationKeyKey, name: authorizationSecretName}
+
 // authorizationStores are the entries the arbiter's table must hold: one
-// per component that declares the requirement now and holds its key.
-//
-// The label finds the candidates and decides nothing, as for the rights
-// check's keys (componentKeys). An entry is written only for a Secret in a
-// tenant's namespace that a Component of that namespace controls, and whose
-// profile declares the requirement now, with a model that compiles. The
-// tenant is the namespace's, never something the Secret says about itself.
+// per component that declares the requirement now and holds its key
+// (componentKeys), with a model that compiles.
 func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry, error) {
-	list := &corev1.SecretList{}
-	if err := c.List(ctx, list, client.MatchingLabels{authorizationHolderLabel: "true"}); err != nil {
-		return nil, err
-	}
-	tenants := &gentianov1alpha1.TenantList{}
-	if err := c.List(ctx, tenants); err != nil {
+	keys, err := componentKeys(ctx, c, authorizationKeys, wantsAuthorization)
+	if err != nil {
 		return nil, err
 	}
 	var out []arbiter.Entry
-	for i := range list.Items {
-		secret := &list.Items[i]
-		holder := gentianov1alpha1.TenantInNamespace(tenants.Items, secret.Namespace)
-		owner := metav1.GetControllerOf(secret)
-		key := secret.Data[authorizationKeyKey]
-		if holder == nil || secret.DeletionTimestamp != nil || len(key) == 0 ||
-			owner == nil || owner.Kind != "Component" || secret.Name != authorizationSecretName(owner.Name) {
-			continue
-		}
-		comp := &gentianov1alpha1.Component{}
-		if err := c.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: secret.Namespace}, comp); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, err
-		}
-		if comp.UID != owner.UID || comp.DeletionTimestamp != nil {
-			continue
-		}
-		profile, err := getProfileFor(ctx, c, comp.Spec.ProfileRef.Name, comp.Spec.ProfileRef.Digest)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return nil, err
-		}
-		if !wantsAuthorization(profile) {
-			continue
-		}
-		requirement := profile.Services().Authorization
+	for _, k := range keys {
+		requirement := k.profile.Services().Authorization
 		model, tuples, err := arbiter.Requirement(requirement)
 		if err != nil {
 			// The Component is held for it (authorizationModelRefusal); the
 			// store keeps the model it was last handed until one compiles.
 			logf.FromContext(ctx).Info("an authorization model does not compile; its store is left out of the table",
-				"component", comp.Name, "namespace", comp.Namespace, "error", err.Error())
+				"component", k.Component, "namespace", k.namespace, "error", err.Error())
 			continue
 		}
 		// The realm is the one whose memberships reach the tenant's stores.
-		sum := sha256.Sum256(key)
 		out = append(out, arbiter.Entry{
-			Tenant: holder.Name, Component: comp.Name, KeyHash: hex.EncodeToString(sum[:]), Model: model,
-			Realm: tenantRealmName(holder), MirrorGroups: requirement.MirrorsGroups(), Tuples: tuples,
+			Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash, Model: model,
+			Realm: tenantRealmName(k.holder), MirrorGroups: requirement.MirrorsGroups(), Tuples: tuples,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Tenant != out[j].Tenant {
-			return out[i].Tenant < out[j].Tenant
-		}
-		return out[i].Component < out[j].Component
-	})
 	return out, nil
 }
 

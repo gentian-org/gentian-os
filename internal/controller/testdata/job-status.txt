@@ -1,0 +1,10 @@
+complete, false: complete=false ended=false failed=false failed2=false suspended=false
+complete: complete=true ended=true failed=false failed2=false suspended=false
+failed after another: complete=false ended=true failed=true failed2=true suspended=true
+failed, no message: complete=false ended=true failed=true failed2=true suspended=false
+failed, unknown: complete=false ended=false failed=false failed2=false suspended=false
+failed: complete=false ended=true failed=true failed2=true suspended=false
+new: complete=false ended=false failed=false failed2=false suspended=false
+running, one failure: complete=false ended=false failed=false failed2=false suspended=false
+succeeded, no condition yet: complete=false ended=false failed=false failed2=false suspended=false
+suspended: complete=false ended=false failed=false failed2=false suspended=true

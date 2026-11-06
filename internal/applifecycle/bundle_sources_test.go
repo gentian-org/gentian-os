@@ -417,9 +417,14 @@ func TestAnUploadThatStoppedIsContinued(t *testing.T) {
 	if _, err := s.FillUpload(ctx, &cut{r: bytes.NewReader(first), n: 512 + 4096 + 512 + 1000}, "corp", ref.Prefix); err == nil {
 		t.Fatal("a stopped transfer completed the upload")
 	}
-	files, complete, err := s.UploadedFiles(ctx, "corp", ref.Prefix)
-	if err != nil || complete || len(files) != 1 || files["manifest.json.age"] != 4096 {
-		t.Fatalf("stored after the stop: %v, complete %v, %v", files, complete, err)
+	state, err := s.UploadedFiles(ctx, "corp", ref.Prefix)
+	if err != nil || state.Complete || len(state.Files) != 1 || state.Files["manifest.json.age"] != 4096 {
+		t.Fatalf("stored after the stop: %+v, %v", state, err)
+	}
+	// Why it stopped is recorded on the upload, for a sender whose answer
+	// was lost with its connection.
+	if !strings.Contains(state.Refused, "sending it again continues") || state.RefusedAt == nil {
+		t.Errorf("the stop is recorded as %q at %v", state.Refused, state.RefusedAt)
 	}
 	if err := s.uploadComplete(ctx, ref); err == nil {
 		t.Error("an incomplete upload is restored from")
@@ -438,8 +443,8 @@ func TestAnUploadThatStoppedIsContinued(t *testing.T) {
 	if err := s.uploadComplete(ctx, ref); err != nil {
 		t.Errorf("the complete upload is refused: %v", err)
 	}
-	if _, complete, err := s.UploadedFiles(ctx, "corp", ref.Prefix); err != nil || !complete {
-		t.Errorf("the complete upload is listed as complete %v, %v", complete, err)
+	if state, err := s.UploadedFiles(ctx, "corp", ref.Prefix); err != nil || !state.Complete || state.Refused != "" || state.RefusedAt != nil {
+		t.Errorf("the complete upload is listed as %+v, %v", state, err)
 	}
 
 	if _, err := s.FillUpload(ctx, bytes.NewReader(first), "corp", ref.Prefix); !errors.Is(err, errNoUpload) {
@@ -452,7 +457,63 @@ func TestAnUploadThatStoppedIsContinued(t *testing.T) {
 	if _, err := s.FillUpload(ctx, bytes.NewReader(first), "solo", other.Prefix); !errors.Is(err, errNoUpload) {
 		t.Errorf("another tenant filled corp's upload: %v", err)
 	}
-	if _, _, err := s.UploadedFiles(ctx, "", other.Prefix); !errors.Is(err, errNoUpload) {
+	if _, err := s.UploadedFiles(ctx, "", other.Prefix); !errors.Is(err, errNoUpload) {
 		t.Errorf("the cluster's route read a tenant's upload: %v", err)
+	}
+}
+
+// An import deleted in a console takes its bundle out of the import bucket:
+// a tenant's administrator removes only the tenant's own, the cluster's any;
+// one a restore that has not ended reads is refused, and once it has ended
+// it goes; a prefix that is not there is not found.
+func TestAnImportedBundleIsRemovedByWhoeverPutItThere(t *testing.T) {
+	ctx := context.Background()
+	s3, secret := clusterStorage(t)
+	reading := &gentianov1alpha1.TenantRestore{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "tenant-corp"},
+		Spec: gentianov1alpha1.TenantRestoreSpec{
+			Bundle: &gentianov1alpha1.BundleRef{Bucket: bundlestore.ImportBucket, Prefix: "20261101-000000-aaaaaaaa"},
+		},
+	}
+	s, c := sourcesService(t, secret, reading)
+	put := func(prefix, tenant string) {
+		s3.Put(bundlestore.ImportBucket, prefix+"/manifest.json.age", []byte("x"), time.Now())
+		s3.Put(bundlestore.ImportBucket, bundlestore.RecordKey(prefix),
+			[]byte(`{"tenant":"`+tenant+`","kind":"upload","at":"2026-11-01T00:00:00Z"}`), time.Now())
+	}
+	gone := func(prefix string) bool {
+		for _, k := range s3.Keys(bundlestore.ImportBucket) {
+			if strings.HasPrefix(k, prefix+"/") || k == bundlestore.RecordKey(prefix) {
+				return false
+			}
+		}
+		return true
+	}
+	corps, inUse := "20261101-000000-bbbbbbbb", "20261101-000000-aaaaaaaa"
+	put(corps, "corp")
+	put(inUse, "")
+
+	if err := s.RemoveImported(ctx, corps, "solo"); !errors.Is(err, errNoImported) || gone(corps) {
+		t.Errorf("another tenant removed corp's bundle: %v", err)
+	}
+	if err := s.RemoveImported(ctx, corps, "corp"); err != nil || !gone(corps) {
+		t.Errorf("corp could not remove its own bundle: %v", err)
+	}
+	if err := s.RemoveImported(ctx, corps, "corp"); !errors.Is(err, errNoImported) {
+		t.Errorf("a bundle already removed: %v, want not found", err)
+	}
+	if err := s.RemoveImported(ctx, "../etc", ""); !errors.Is(err, errNoImported) {
+		t.Errorf("a prefix that is not one: %v", err)
+	}
+
+	if err := s.RemoveImported(ctx, inUse, ""); !errors.Is(err, errImportInUse) || gone(inUse) {
+		t.Errorf("a bundle a running restore reads was removed: %v", err)
+	}
+	reading.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
+	if err := c.Update(ctx, reading); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveImported(ctx, inUse, ""); err != nil || !gone(inUse) {
+		t.Errorf("the bundle of a restore that ended stays: %v", err)
 	}
 }

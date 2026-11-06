@@ -75,7 +75,9 @@ export-2026-09-04-04-54   Ready  2026-09-04T06:49:13Z  passphrase  platform/corp
 The mode column tells you which key you will need: `recipient` wants
 `--from-vault`, `--key-file` or `--qr`; `passphrase` wants `--passphrase`. With
 no cluster left to ask, `--s3-bucket` lists the prefixes in storage instead —
-less than the cluster knows, and still enough to restore from.
+less than the cluster knows, and still enough to restore from. A bucket that
+tenants share, such as a cluster policy's destination, keeps each tenant's
+bundles under its name: add `--tenant` to list those.
 
 Then pick **one** of these three ways to name it:
 
@@ -117,7 +119,7 @@ scripts/recovery.sh inspect --tenant corp
 # same question, from a laptop, with nothing but the bucket and the paper key
 read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
 AWS_ACCESS_KEY_ID=... scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
-    --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
+    --s3-bucket bigbucket --s3-prefix corp/policy-20260904-0300 \
     --qr backup-key.png
 
 # put a workspace back from a specific backup
@@ -211,8 +213,8 @@ A bundle that is still in a bucket the cluster can reach needs no file:
 ```bash
 kubectl gentian tenants import --bucket <tenant>-gentian-backup --prefix <export> \
   --identity-file <key>                      # the platform's own storage
-kubectl gentian tenants import --bucket bigbucket --prefix policy-20260904-0300 \
-  --endpoint https://sos-ch-dk-2.exo.io --identity-file <key>   # a destination
+kubectl gentian tenants import --bucket bigbucket --prefix corp/policy-20260904-0300 \
+  --endpoint https://sos-ch-dk-2.exo.io --identity-file <key>   # a destination, under the tenant's name
 ```
 
 A destination's credentials are the policy's, already in the cluster once
@@ -229,7 +231,7 @@ laptop:
 read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
 AWS_ACCESS_KEY_ID=... scripts/recovery.sh inspect \
   --s3-endpoint https://sos-ch-dk-2.exo.io \
-  --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
+  --s3-bucket bigbucket --s3-prefix corp/policy-20260904-0300 \
   --qr backup-key.png
 ```
 

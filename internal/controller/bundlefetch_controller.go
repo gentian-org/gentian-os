@@ -14,7 +14,6 @@ import (
 	"context"
 
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +43,7 @@ func (r *BundleFetchReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if !jobEnded(job) {
+	if !meta.JobEnded(job) {
 		return ctrl.Result{}, nil
 	}
 	np := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
@@ -54,16 +53,6 @@ func (r *BundleFetchReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
-}
-
-// jobEnded reports whether a Job completed or failed for good.
-func jobEnded(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if (c.Type == batchv1.JobComplete || c.Type == batchv1.JobFailed) && c.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
 }
 
 // SetupWithManager registers the reconciler for fetch Jobs alone.

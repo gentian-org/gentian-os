@@ -290,6 +290,25 @@ func (g *GitOps) SetPlatformSecurity(ctx context.Context, waivers []MacWaiver, m
 	})
 }
 
+// AllowMacWaiver adds one waiver to the cluster's allowlist and commits it,
+// or answers unchanged when the list holds it already: the half of a
+// pod-security approval that the cluster permits, written beside the grant
+// on the install.
+func (g *GitOps) AllowMacWaiver(ctx context.Context, waiver MacWaiver, meta Meta) (Result, error) {
+	if strings.TrimSpace(waiver.Profile) == "" || strings.TrimSpace(waiver.Policy) == "" || strings.TrimSpace(waiver.Scope) == "" {
+		return Result{}, fmt.Errorf("%w: a waiver needs a profile, a policy and a scope", ErrInvalidName)
+	}
+	return g.updatePlatformSecurity(ctx, "Permit the MAC waiver "+waiver.Profile+"/"+waiver.Policy+"/"+waiver.Scope+" on this cluster", meta,
+		func(doc *platformSecurityDoc) {
+			for _, w := range doc.Spec.AllowedMacWaivers {
+				if w == waiver {
+					return
+				}
+			}
+			doc.Spec.AllowedMacWaivers = append(doc.Spec.AllowedMacWaivers, waiver)
+		})
+}
+
 // SetPlatformClusterRoles writes which of the platform's cluster roles this
 // cluster permits, per profile, and commits it.
 //

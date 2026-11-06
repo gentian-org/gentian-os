@@ -176,7 +176,7 @@ func (r *CustomizationReconciler) evaluate(
 	// maintained for an app nobody installs.
 	if !profileFound {
 		status.Phase = gentianov1alpha1.CustomizationPhaseInvalid
-		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationValid, metav1.ConditionFalse,
 			"TargetNotFound",
 			fmt.Sprintf("ComponentProfile %q does not exist", record.Spec.Target.Profile))
 		return status
@@ -190,10 +190,10 @@ func (r *CustomizationReconciler) evaluate(
 
 	if len(policyErrs) > 0 {
 		status.Phase = gentianov1alpha1.CustomizationPhaseInvalid
-		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationValid, metav1.ConditionFalse,
 			"PolicyViolation", joinErrors(policyErrs))
 	} else {
-		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionTrue,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationValid, metav1.ConditionTrue,
 			"PolicySatisfied", "Record satisfies the customization ladder policy")
 	}
 
@@ -206,7 +206,7 @@ func (r *CustomizationReconciler) evaluate(
 	// produce — surface it as its own phase so it stands out in the debt report.
 	if record.Spec.UpstreamFirst != nil && record.Spec.UpstreamFirst.AppliedUpstream {
 		status.Phase = gentianov1alpha1.CustomizationPhaseSuperseded
-		setRecordCondition(&status, conditionCustomizationCurrent, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationCurrent, metav1.ConditionFalse,
 			"AppliedUpstream", "Upstream has accepted this change — schedule removal of the local delta")
 		return status
 	}
@@ -216,7 +216,7 @@ func (r *CustomizationReconciler) evaluate(
 		if status.Phase == "" {
 			status.Phase = gentianov1alpha1.CustomizationPhaseNeedsReview
 		}
-		setRecordCondition(&status, conditionCustomizationCurrent, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationCurrent, metav1.ConditionFalse,
 			"NeedsReview", strings.Join(reasons, "; "))
 		return status
 	}
@@ -224,7 +224,7 @@ func (r *CustomizationReconciler) evaluate(
 	if status.Phase == "" {
 		status.Phase = gentianov1alpha1.CustomizationPhaseActive
 	}
-	setRecordCondition(&status, conditionCustomizationCurrent, metav1.ConditionTrue,
+	setStatusCondition(&status.Conditions, 0, conditionCustomizationCurrent, metav1.ConditionTrue,
 		"Current", "Within review window and matching the target as pinned")
 	return status
 }
@@ -353,32 +353,6 @@ func currentReasons(status gentianov1alpha1.CustomizationStatus) []string {
 		reasons = append(reasons, "target now supports a cheaper rung")
 	}
 	return reasons
-}
-
-func setRecordCondition(
-	status *gentianov1alpha1.CustomizationStatus,
-	condType string,
-	state metav1.ConditionStatus,
-	reason, message string,
-) {
-	condition := metav1.Condition{
-		Type:               condType,
-		Status:             state,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
-	}
-	for i := range status.Conditions {
-		if status.Conditions[i].Type != condType {
-			continue
-		}
-		if status.Conditions[i].Status == state {
-			condition.LastTransitionTime = status.Conditions[i].LastTransitionTime
-		}
-		status.Conditions[i] = condition
-		return
-	}
-	status.Conditions = append(status.Conditions, condition)
 }
 
 // statusUnchanged compares the fields that matter, ignoring condition timestamps so

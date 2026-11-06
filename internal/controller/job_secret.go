@@ -16,6 +16,7 @@ import (
 	"maps"
 	"reflect"
 
+	"github.com/gentian-org/gentian-os/internal/meta"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -128,7 +129,7 @@ func (r *TenantReconciler) ensureProvisioningJobSecrets(ctx context.Context, han
 		if job.DeletionTimestamp != nil {
 			continue
 		}
-		if jobIsComplete(job) {
+		if meta.JobComplete(job) {
 			if err := deleteJobSecret(ctx, r.Client, job); err != nil {
 				return err
 			}

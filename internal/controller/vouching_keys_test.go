@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/registrar"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
@@ -85,7 +86,7 @@ func TestRegistrarListHoldsOnlyComponentsThatVouch(t *testing.T) {
 	checkerKey, _ := hashOf(checker)
 
 	// The bouncer still hears of all three that hold a key.
-	if checkers, err := rightsCheckers(ctx, c, bouncerCheckerAudit{}); err != nil || len(checkers) != 3 {
+	if checkers, err := rightsCheckers(ctx, c, bouncer.CheckerAudit{}); err != nil || len(checkers) != 3 {
 		t.Fatalf("the bouncer's checkers: %+v, %v", checkers, err)
 	}
 
@@ -133,7 +134,7 @@ func TestRegistrarListHoldsOnlyComponentsThatVouch(t *testing.T) {
 	if after, keys := registrarsList(t, c); len(keys) != 0 || strings.Contains(after, notaryHash) {
 		t.Fatalf("after the profile stopped declaring vouching: %s", after)
 	}
-	if checkers, err := rightsCheckers(ctx, c, bouncerCheckerAudit{}); err != nil || len(checkers) != 3 {
+	if checkers, err := rightsCheckers(ctx, c, bouncer.CheckerAudit{}); err != nil || len(checkers) != 3 {
 		t.Fatalf("the bouncer's checkers afterwards: %+v, %v", checkers, err)
 	}
 }

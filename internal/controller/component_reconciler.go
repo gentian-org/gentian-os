@@ -202,7 +202,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// written before there was an inventory.
 			// A handoff begun and not finished is finished first, so that
 			// what was taken over from the composite is in the inventory.
-			tenant, err := r.tenantOf(ctx, comp.Namespace)
+			tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
@@ -410,7 +410,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// the pin re-runs this. A companion is looked for again.
 		return r.status(ctx, comp, metav1.ConditionFalse, refusal.Reason, message, heldRequeue(refusal))
 	}
-	tenant, err := r.tenantOf(ctx, comp.Namespace)
+	tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -567,6 +567,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return r.status(ctx, comp, metav1.ConditionFalse, reason, message, componentRequeue)
 		}
 		mergeValues(operatorValues, databaseValues(profile, comp.Name+componentDatabaseSecretSuffix))
+	}
+	// The secrets the profile has the platform generate, for a component the
+	// platform placed: the tenant's loop seeds them only for what a tenant
+	// installed, and the chart's sensitive values read them before it runs.
+	if operatorPlaced(profile) {
+		if err := seedGeneratedSecrets(ctx, r.Seeder, tenant.Name, comp.Name, profile); err != nil {
+			return ctrl.Result{}, fmt.Errorf("generated secrets: %w", err)
+		}
 	}
 	// The model gateway, for a component that declares it: nothing is
 	// installed while the cluster has none, or before the component's key is
@@ -1053,19 +1061,7 @@ func componentReports(comp *gentianov1alpha1.Component, reason, message string) 
 }
 
 func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1.Component, st metav1.ConditionStatus, reason, message string, requeue time.Duration) (ctrl.Result, error) {
-	now := metav1.Now()
-	updated := false
-	for i, c := range comp.Status.Conditions {
-		if c.Type == conditionComponentReady {
-			if c.Status != st || c.Reason != reason || c.Message != message {
-				comp.Status.Conditions[i] = metav1.Condition{Type: conditionComponentReady, Status: st, Reason: reason, Message: message, LastTransitionTime: now, ObservedGeneration: comp.Generation}
-			}
-			updated = true
-		}
-	}
-	if !updated {
-		comp.Status.Conditions = append(comp.Status.Conditions, metav1.Condition{Type: conditionComponentReady, Status: st, Reason: reason, Message: message, LastTransitionTime: now, ObservedGeneration: comp.Generation})
-	}
+	replaceChangedCondition(&comp.Status.Conditions, comp.Generation, conditionComponentReady, st, reason, message)
 	if comp.Status.Fulfilment == "" {
 		comp.Status.Fulfilment = "dedicated"
 	}
@@ -1076,11 +1072,6 @@ func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 	return ctrl.Result{}, nil
-}
-
-// tenantOf finds the Tenant whose namespace this is.
-func (r *ComponentReconciler) tenantOf(ctx context.Context, namespace string) (*gentianov1alpha1.Tenant, error) {
-	return tenantInNamespace(ctx, r.Client, namespace)
 }
 
 // tenantInNamespace finds the Tenant whose workloads run in a namespace, or
@@ -1500,23 +1491,7 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 			return err
 		}
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(securityPolicyGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: policy.GetName(), Namespace: comp.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, policy)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], policy.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, policy)
 }
 
 // ConditionClientAuthorization is the Component condition that says whether
@@ -1868,23 +1843,7 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 		managedByLabel: managedByValue,
 		tenantLabel:    tenantName,
 	})
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 // ensureZoneSecret keeps a copy of the zone's edge client secret in the
@@ -1908,21 +1867,13 @@ func (r *ComponentReconciler) ensureZoneSecret(ctx context.Context, comp *gentia
 		Type: source.Type,
 		Data: source.Data,
 	}
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.Secret) bool {
+		if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+			return false
+		}
+		existing.Data, existing.Labels = desired.Data, desired.Labels
+		return true
+	})
 }
 
 func (r *ComponentReconciler) deleteZoneGrant(ctx context.Context, comp *gentianov1alpha1.Component) error {

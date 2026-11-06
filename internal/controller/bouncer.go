@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // The kernel zone at the edge (networking.md §4): one confidential client,
@@ -306,23 +307,7 @@ func (r *GatewayPlatformReconciler) ensureKernelSecurityPolicy(ctx context.Conte
 	if err := unstructured.SetNestedField(desired.Object, policySpec, "spec"); err != nil {
 		return err
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(securityPolicyGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, policySpec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 func (r *GatewayPlatformReconciler) deleteStaleKernelSecurityPolicies(ctx context.Context, expected map[string]struct{}) error {
@@ -393,7 +378,7 @@ func bouncerRouteTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute) (strin
 // bouncerTable is the whole table: the routes, and the components that hold
 // a key for the one question the bouncer answers apart from the edge
 // (rights_check.go). A table with no checker says nothing about them.
-func bouncerTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, checkers []bouncerChecker) (string, error) {
+func bouncerTable(specs []kernelHTTPRouteSpec, extra []bouncerRoute, checkers []bouncer.Checker) (string, error) {
 	var routes []bouncerRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
@@ -452,7 +437,7 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 			extra[i].DeniedRedirect = denied[extra[i].Host]
 		}
 	}
-	checkers, err := rightsCheckers(ctx, r.Client, bouncerCheckerAudit{Cluster: r.Cluster, Realm: r.kernelRealm()})
+	checkers, err := rightsCheckers(ctx, r.Client, bouncer.CheckerAudit{Cluster: r.Cluster, Realm: r.kernelRealm()})
 	if err != nil {
 		return err
 	}
@@ -471,21 +456,13 @@ func (r *GatewayPlatformReconciler) ensureBouncerRouteTable(ctx context.Context,
 		},
 		Data: map[string]string{bouncerRoutesKey: table},
 	}
-	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Data[bouncerRoutesKey] == table {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
+		if existing.Data[bouncerRoutesKey] == table {
+			return false
+		}
+		existing.Data, existing.Labels = desired.Data, desired.Labels
+		return true
+	})
 }
 
 func (r *GatewayPlatformReconciler) kernelRealm() string {

@@ -259,23 +259,16 @@ func (r *GatewayPlatformReconciler) ensureGatewayClass(ctx context.Context) erro
 		},
 	}
 
-	existing := &gatewayv1.GatewayClass{}
-	if err := r.Get(ctx, types.NamespacedName{Name: GentianGatewayClassName}, existing); err != nil {
-		if errors.IsNotFound(err) {
-			return r.Create(ctx, desired)
+	return ensureObject(ctx, r.Client, desired, func(existing *gatewayv1.GatewayClass) bool {
+		if existing.Spec.ControllerName == desired.Spec.ControllerName {
+			return false
 		}
-		return err
-	}
-
-	if existing.Spec.ControllerName != desired.Spec.ControllerName {
-		patch := client.MergeFrom(existing.DeepCopy())
 		existing.Spec.ControllerName = desired.Spec.ControllerName
 		if existing.Spec.Description == nil {
 			existing.Spec.Description = desired.Spec.Description
 		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+		return true
+	})
 }
 
 func isEdgeGateway(gw *gatewayv1.Gateway) bool {

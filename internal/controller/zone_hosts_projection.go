@@ -21,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -296,20 +295,11 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 		},
 	}
 
-	existing := &corev1.ConfigMap{}
-	err := r.Get(ctx, key, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Data, desired.Data) &&
-		equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
+		if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+			return false
+		}
+		existing.Data, existing.Labels = desired.Data, desired.Labels
+		return true
+	})
 }

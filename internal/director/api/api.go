@@ -153,6 +153,7 @@ type Repository interface {
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
+	AllowMacWaiver(ctx context.Context, waiver gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
 	SetPlatformClusterRoles(ctx context.Context, roles []gitops.ClusterRoleAllowance, meta gitops.Meta) (gitops.Result, error)
 	DeclareRepository(ctx context.Context, tenant, name string, d gitops.RepositoryDeclaration, meta gitops.Meta) (gitops.RepositoryResult, error)
@@ -183,6 +184,9 @@ type Lifecycle interface {
 	// Do asks the cluster to do something once, as the person named. Only
 	// the action routes call it.
 	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
+	// Delete asks the cluster to remove one thing, as the person named: a
+	// bundle of the import storage.
+	Delete(ctx context.Context, path, actor string, query url.Values) (int, []byte, error)
 }
 
 // Config assembles a Server.
@@ -592,6 +596,7 @@ func (s *Server) routes() {
 			// continues: started, then filled with ?into=, its files listed.
 			s.guarded("POST /v1/clusters/{c}/bundles/uploads", "can_configure", s.clusterObject, s.startUpload)
 			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/files", "can_configure", s.clusterObject, s.uploadedFiles)
+			s.guarded("DELETE /v1/clusters/{c}/bundles/{prefix}", "can_configure", s.clusterObject, s.removeImportedBundle)
 			s.guarded("POST /v1/clusters/{c}/bundles/inspect", "can_configure", s.clusterObject, s.inspectBundle)
 			// Removing one thing the catalog left behind: an object no
 			// bundle owns any more, or a profile nobody uses. The list is
@@ -794,9 +799,14 @@ func (s *Server) routes() {
 			// profiles ask for a waiver, is the usher's answer on the same
 			// path.
 			s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", s.clusterObject, s.platformSecurity)
-			// Changing what may escape the default posture is the cluster's
-			// own security configuration: can_set_admission, which model v1
-			// defines as exactly this.
+			// Which pod-security waivers the cluster permits is the security
+			// officer's (cluster#can_approve, "waivers" in model v1): the
+			// same person approves the grant on each install, so a waiver
+			// takes effect without break-glass. The rest of the object --
+			// which of the platform's cluster roles the cluster permits --
+			// is the cluster's admission and stays can_set_admission; that
+			// route refuses a change to the waivers.
+			s.guarded("PUT /v1/clusters/{c}/platform-security/waivers", "can_approve", s.clusterObject, s.setMacWaivers)
 			s.guarded("PUT /v1/clusters/{c}/platform-security", "can_set_admission", s.clusterObject, s.setPlatformSecurity)
 		}
 
@@ -880,6 +890,7 @@ func (s *Server) routes() {
 		s.guarded("POST /v1/tenants/{t}/bundles", "can_set_policy", tenantObject, s.uploadBundle)
 		s.guarded("POST /v1/tenants/{t}/bundles/uploads", "can_set_policy", tenantObject, s.startUpload)
 		s.guarded("GET /v1/tenants/{t}/bundles/{prefix}/files", "can_set_policy", tenantObject, s.uploadedFiles)
+		s.guarded("DELETE /v1/tenants/{t}/bundles/{prefix}", "can_set_policy", tenantObject, s.removeImportedBundle)
 		s.guarded("POST /v1/tenants/{t}/bundles/inspect", "can_set_policy", tenantObject, s.inspectTenantBundle)
 		s.action("POST /v1/tenants/{t}/actions/restore", "can_set_policy", tenantObject, s.restoreTenant)
 		// Where the tenant's bundles are: its bucket in the cluster's storage

@@ -164,7 +164,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if busy, holder, err := r.tenantBusy(ctx, restore); err != nil {
 		return ctrl.Result{}, err
 	} else if busy {
-		setRestoreCondition(restore, conditionExportAccepted, metav1.ConditionFalse, "Busy",
+		setStatusCondition(&restore.Status.Conditions, restore.Generation, conditionExportAccepted, metav1.ConditionFalse, "Busy",
 			fmt.Sprintf("waiting for %s to finish", holder))
 		restore.Status.Phase = gentianov1alpha1.TenantExportPhasePending
 		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore))
@@ -202,7 +202,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if len(plan.notRestored) > 0 {
 			accepted += "; not restoring " + omissionsText(plan.notRestored)
 		}
-		setRestoreCondition(restore, conditionExportAccepted, metav1.ConditionTrue, "Accepted", accepted)
+		setStatusCondition(&restore.Status.Conditions, restore.Generation, conditionExportAccepted, metav1.ConditionTrue, "Accepted", accepted)
 		if err := r.persist(ctx, restore); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -260,7 +260,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		message = fmt.Sprintf("%d app(s) restored and %d not: %s. Members have no credentials until they are sent a password reset",
 			len(apps), len(restore.Status.NotRestored), omissionsText(restore.Status.NotRestored))
 	}
-	setRestoreCondition(restore, conditionExportComplete, metav1.ConditionTrue, reason, message)
+	setStatusCondition(&restore.Status.Conditions, restore.Generation, conditionExportComplete, metav1.ConditionTrue, reason, message)
 	return ctrl.Result{}, r.persist(ctx, restore)
 }
 
@@ -1014,7 +1014,7 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 		return false, nil
 	}
 
-	if jobIsComplete(existing) {
+	if meta.JobComplete(existing) {
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		r.recordOwnedNames(ctx, entry, unit, existing)
 		return true, nil
@@ -1041,7 +1041,7 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 			return false, nil
 		}
 	}
-	if jobIsFailed(existing) {
+	if meta.JobFailed(existing) {
 		entry.Attempts++
 		if err := r.Delete(ctx, existing,
 			client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
@@ -1339,7 +1339,7 @@ func recordPlan(restore *gentianov1alpha1.TenantRestore, plan *restorePlan) {
 	// condition, so that it is read before the notes, and the same sentence
 	// among them.
 	if reason, message, ok := outsideGuaranteeCondition(plan.outside); ok {
-		setRestoreCondition(restore, conditionOutsideGuarantee, metav1.ConditionTrue, reason, message)
+		setStatusCondition(&restore.Status.Conditions, restore.Generation, conditionOutsideGuarantee, metav1.ConditionTrue, reason, message)
 		restore.Status.Notes = append(restore.Status.Notes, message)
 	}
 }
@@ -1613,7 +1613,7 @@ func (r *TenantRestoreReconciler) fail(
 		incomplete := false
 		restore.Status.Complete = &incomplete
 	}
-	setRestoreCondition(restore, conditionExportComplete, metav1.ConditionFalse, reason, message)
+	setStatusCondition(&restore.Status.Conditions, restore.Generation, conditionExportComplete, metav1.ConditionFalse, reason, message)
 	return ctrl.Result{}, r.persist(ctx, restore)
 }
 

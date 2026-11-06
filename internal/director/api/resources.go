@@ -469,38 +469,81 @@ func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call
 	s.json(w, http.StatusOK, map[string]any{"allowedMacWaivers": declared, "allowedClusterRoles": roles})
 }
 
-// setPlatformSecurity commits the allowlist.
+// setPlatformSecurity commits which of the platform's cluster roles the
+// cluster permits, under can_set_admission.
 //
-// Two lists in one object. The list a body does not name is left as it is, so
-// a screen that edits waivers cannot empty the permitted cluster roles; a
-// body that names neither states the waivers as empty, as it always did.
+// The waivers in the same object are the security officer's (setMacWaivers).
+// A body may still carry them -- a screen that read the whole object sends it
+// back -- but only as they are: a change to them is refused here and named
+// to the route that makes it, so break-glass is never what edits the
+// waivers by accident, and nothing it sends empties them.
 func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
 		AllowedMacWaivers   *[]gitops.MacWaiver            `json:"allowedMacWaivers"`
 		AllowedClusterRoles *[]gitops.ClusterRoleAllowance `json:"allowedClusterRoles"`
 	}
-	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}], "allowedClusterRoles": [{"profile":…,"role":…}]}, either or both`)
+	if err := decode(r, &body); err != nil || body.AllowedClusterRoles == nil && body.AllowedMacWaivers == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedClusterRoles": [{"profile":…,"role":…}]}`)
 		return
 	}
-	var res gitops.Result
-	var err error
-	if body.AllowedMacWaivers != nil || body.AllowedClusterRoles == nil {
-		var waivers []gitops.MacWaiver
-		if body.AllowedMacWaivers != nil {
-			waivers = *body.AllowedMacWaivers
+	if body.AllowedMacWaivers != nil {
+		declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
+		if err != nil {
+			s.repoError(w, r, err)
+			return
 		}
-		res, err = s.cfg.Repo.SetPlatformSecurity(r.Context(), waivers, c.meta)
+		if !sameWaivers(declared, *body.AllowedMacWaivers) {
+			s.fail(w, r, http.StatusForbidden, "which waivers the cluster permits is the security officer's (can_approve): "+
+				"PUT /v1/clusters/"+r.PathValue("c")+"/platform-security/waivers, or approve the waiver under Approvals")
+			return
+		}
 	}
-	if err == nil && body.AllowedClusterRoles != nil {
-		res, err = s.cfg.Repo.SetPlatformClusterRoles(r.Context(), *body.AllowedClusterRoles, c.meta)
+	if body.AllowedClusterRoles == nil {
+		s.written(w, r, gitops.Result{Status: "unchanged"}, nil)
+		return
 	}
+	res, err := s.cfg.Repo.SetPlatformClusterRoles(r.Context(), *body.AllowedClusterRoles, c.meta)
 	if errors.Is(err, gitops.ErrInvalidName) {
 		s.fail(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.written(w, r, res, err)
+}
+
+// setMacWaivers commits which pod-security waivers the cluster permits, under
+// can_approve: the security officer's, who also approves each install's
+// grant. The list replaces the one git declares.
+func (s *Server) setMacWaivers(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		AllowedMacWaivers *[]gitops.MacWaiver `json:"allowedMacWaivers"`
+	}
+	if err := decode(r, &body); err != nil || body.AllowedMacWaivers == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetPlatformSecurity(r.Context(), *body.AllowedMacWaivers, c.meta)
+	if errors.Is(err, gitops.ErrInvalidName) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// sameWaivers is whether two allowlists permit the same waivers, in any order.
+func sameWaivers(a, b []gitops.MacWaiver) bool {
+	set := map[gitops.MacWaiver]int{}
+	for _, w := range a {
+		set[w]++
+	}
+	for _, w := range b {
+		set[w]--
+	}
+	for _, n := range set {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // publishNotification says something to a tenant's people. An action: it happens once,

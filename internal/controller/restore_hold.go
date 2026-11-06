@@ -19,8 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -107,22 +105,7 @@ func buildRestoreHoldFilter(namespace string) *unstructured.Unstructured {
 // there once made: it does nothing unless a route points at it, and goes with
 // the namespace.
 func ensureRestoreHoldFilter(ctx context.Context, c client.Client, namespace string) error {
-	desired := buildRestoreHoldFilter(namespace)
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(httpRouteFilterGVK)
-	err := c.Get(ctx, client.ObjectKey{Name: restoreHoldFilterName, Namespace: namespace}, existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Object["spec"] = desired.Object["spec"]
-	return c.Patch(ctx, existing, patch)
+	return ensureSpec(ctx, c, buildRestoreHoldFilter(namespace))
 }
 
 // heldRules are a route's rules as the hold has them: the same matches, each
@@ -282,7 +265,7 @@ func (r *ComponentReconciler) applyRestoreHold(ctx context.Context, comp *gentia
 // restoreHold applies the hold to the component's routes, in its namespace
 // and in its tenant's DMZ, and reports whether the app is held.
 func (r *ComponentReconciler) restoreHold(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
-	tenant, err := r.tenantOf(ctx, comp.Namespace)
+	tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 	if err != nil {
 		return false, err
 	}

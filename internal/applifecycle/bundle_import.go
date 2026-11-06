@@ -31,10 +31,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/bundlestore"
+	"github.com/gentian-org/gentian-os/internal/httpbody"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -135,6 +137,10 @@ func (s *Service) StartUpload(ctx context.Context, tenant string) (*gentianov1al
 // upload is refused past its limits (bundlestore.MaxTenantUpload,
 // MaxTenantImports), by the sizes the tar's own headers give before each file
 // is stored, and what was stored of a refused one is removed.
+//
+// A refusal is recorded on the upload (Record.Refused), where UploadedFiles
+// finds it: the answer that carries it may never reach a sender whose
+// connection broke.
 func (s *Service) FillUpload(ctx context.Context, body io.Reader, tenant, prefix string) (*gentianov1alpha1.BundleRef, error) {
 	mc, imports, rec, err := s.uploadOf(ctx, tenant, prefix)
 	if err != nil {
@@ -143,6 +149,21 @@ func (s *Service) FillUpload(ctx context.Context, body io.Reader, tenant, prefix
 	if !rec.Incomplete {
 		return nil, fmt.Errorf("%w: upload %s is complete", errNoUpload, prefix)
 	}
+	ref, err := s.fillUpload(ctx, mc, imports, rec, body, tenant, prefix)
+	if err != nil {
+		at := time.Now().UTC()
+		refused := *rec
+		refused.Refused, refused.RefusedAt = err.Error(), &at
+		if perr := imports.PutRecord(context.WithoutCancel(ctx), prefix, refused); perr != nil {
+			return nil, fmt.Errorf("%w (and the refusal could not be recorded on the upload: %v)", err, perr)
+		}
+	}
+	return ref, err
+}
+
+func (s *Service) fillUpload(ctx context.Context, mc *minio.Client, imports *bundlestore.Imports, rec *bundlestore.Record,
+	body io.Reader, tenant, prefix string) (*gentianov1alpha1.BundleRef, error) {
+	var err error
 	allowance := int64(-1)
 	if tenant != "" {
 		if allowance, err = imports.TenantAllowanceFor(ctx, tenant, prefix); err != nil {
@@ -188,7 +209,7 @@ func (s *Service) FillUpload(ctx context.Context, body io.Reader, tenant, prefix
 	if len(stored) == 0 {
 		return nil, errors.New("the upload holds no files")
 	}
-	rec.Incomplete = false
+	rec.Incomplete, rec.Refused, rec.RefusedAt = false, "", nil
 	if err := imports.PutRecord(ctx, prefix, *rec); err != nil {
 		return nil, err
 	}
@@ -198,13 +219,26 @@ func (s *Service) FillUpload(ctx context.Context, body io.Reader, tenant, prefix
 // UploadedFiles is what an upload holds -- each file's size, by its name in
 // the bundle -- and whether it is complete: a sender whose last fill's answer
 // was lost learns here that it arrived.
-func (s *Service) UploadedFiles(ctx context.Context, tenant, prefix string) (map[string]int64, bool, error) {
+func (s *Service) UploadedFiles(ctx context.Context, tenant, prefix string) (*UploadState, error) {
 	_, imports, rec, err := s.uploadOf(ctx, tenant, prefix)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	files, err := imports.Stored(ctx, prefix)
-	return files, !rec.Incomplete, err
+	if err != nil {
+		return nil, err
+	}
+	return &UploadState{Files: files, Complete: !rec.Incomplete, Refused: rec.Refused, RefusedAt: rec.RefusedAt}, nil
+}
+
+// UploadState is what UploadedFiles answers: each stored file's size by its
+// name in the bundle, whether the upload is complete, and why its last fill
+// was refused, if it was.
+type UploadState struct {
+	Files     map[string]int64 `json:"files"`
+	Complete  bool             `json:"complete"`
+	Refused   string           `json:"refused,omitempty"`
+	RefusedAt *time.Time       `json:"refusedAt,omitempty"`
 }
 
 // uploadOf is the upload at prefix, when it is one of tenant's (the
@@ -226,6 +260,51 @@ func (s *Service) uploadOf(ctx context.Context, tenant, prefix string) (*minio.C
 		return nil, nil, nil, fmt.Errorf("%w: %q", errNoUpload, prefix)
 	}
 	return mc, imports, rec, nil
+}
+
+// errImportInUse is a bundle a restore that has not ended still reads.
+var errImportInUse = errors.New("a restore that has not ended reads this bundle")
+
+// RemoveImported deletes an upload or a fetch from the import bucket, with
+// its record, when the person who put it there is done with it: an import
+// deleted in a console, rather than left for the sweep (ImportMaxAge). A
+// tenant's administrator removes only the tenant's own (tenant set); the
+// cluster's removes any. A bundle a restore that has not ended reads is
+// refused, as the sweep leaves it.
+func (s *Service) RemoveImported(ctx context.Context, prefix, tenant string) error {
+	if !importPrefix.MatchString(prefix) {
+		return errNoImported
+	}
+	mc, err := s.bundleClient(ctx, &gentianov1alpha1.BundleRef{Bucket: bundlestore.ImportBucket, Prefix: prefix})
+	if err != nil {
+		return err
+	}
+	imports := bundlestore.ImportsOf(mc)
+	rec, err := imports.Record(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	if tenant != "" && (rec == nil || rec.Tenant != tenant) {
+		return errNoImported
+	}
+	if rec == nil {
+		// Without a record only what is stored says it is there.
+		stored, err := imports.Stored(ctx, prefix)
+		if err != nil {
+			return err
+		}
+		if len(stored) == 0 {
+			return errNoImported
+		}
+	}
+	inUse, err := bundlestore.ImportsInUse(ctx, s.client)
+	if err != nil {
+		return err
+	}
+	if inUse[prefix] {
+		return errImportInUse
+	}
+	return imports.Remove(ctx, prefix)
 }
 
 // removeUpload deletes an upload and its record.
@@ -497,6 +576,7 @@ func (h *HTTPServer) registerImportRoutes(mux router) {
 	mux.HandleFunc("POST /v1/bundles", h.handleBundleUpload)
 	mux.HandleFunc("POST /v1/bundles/uploads", h.handleStartUpload)
 	mux.HandleFunc("GET /v1/bundles/{prefix}/files", h.handleUploadedFiles)
+	mux.HandleFunc("DELETE /v1/bundles/{prefix}", h.handleBundleRemove)
 	mux.HandleFunc("POST /v1/bundles/inspect", h.handleBundleInspect)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/restore", h.handleRestore)
 	// Where a restore stands is state, and the usher's to answer as well.
@@ -518,6 +598,14 @@ func (h *HTTPServer) handleBundleUpload(w http.ResponseWriter, r *http.Request) 
 		ref, err = h.Service.FillUpload(r.Context(), r.Body, q.Get("tenant"), into)
 	} else {
 		ref, err = h.Service.UploadBundle(r.Context(), r.Body, q.Get("tenant"))
+	}
+	if err != nil {
+		// Refused part-way, the sender is still sending; what is left is read
+		// before the answer, or the sender sees only a reset (httpbody.Drain).
+		drained, ended := httpbody.Drain(w, r, httpbody.DrainWindow)
+		ctrllog.FromContext(r.Context()).Info("refused a bundle upload", "reason", err.Error(),
+			"into", q.Get("into"), "tenant", q.Get("tenant"),
+			"discarded", drained, "bodyEnded", ended)
 	}
 	switch {
 	case errors.Is(err, bundlestore.ErrImportLimit):
@@ -549,8 +637,26 @@ func (h *HTTPServer) handleStartUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"bundle": ref})
 }
 
+func (h *HTTPServer) handleBundleRemove(w http.ResponseWriter, r *http.Request) {
+	prefix := r.PathValue("prefix")
+	err := h.Service.RemoveImported(r.Context(), prefix, r.URL.Query().Get("tenant"))
+	switch {
+	case errors.Is(err, errNoImported):
+		writeErr(w, http.StatusNotFound, fmt.Errorf("%w: %q", err, prefix))
+		return
+	case errors.Is(err, errImportInUse):
+		writeErr(w, http.StatusConflict, fmt.Errorf("%w: %q", err, prefix))
+		return
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	ctrllog.FromContext(r.Context()).Info("removed a bundle from the import bucket", "prefix", prefix, "tenant", r.URL.Query().Get("tenant"), "actor", r.Header.Get("X-Gentian-Actor"))
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *HTTPServer) handleUploadedFiles(w http.ResponseWriter, r *http.Request) {
-	files, complete, err := h.Service.UploadedFiles(r.Context(), r.URL.Query().Get("tenant"), r.PathValue("prefix"))
+	state, err := h.Service.UploadedFiles(r.Context(), r.URL.Query().Get("tenant"), r.PathValue("prefix"))
 	switch {
 	case errors.Is(err, errNoUpload):
 		writeErr(w, http.StatusNotFound, err)
@@ -559,7 +665,7 @@ func (h *HTTPServer) handleUploadedFiles(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadGateway, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files, "complete": complete})
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (h *HTTPServer) handleBundleInspect(w http.ResponseWriter, r *http.Request) {

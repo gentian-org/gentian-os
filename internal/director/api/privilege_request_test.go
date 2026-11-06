@@ -246,3 +246,7 @@ func TestADeclineNeedsAReasonAndAPendingRequest(t *testing.T) {
 		t.Fatalf("the operator's refusal: %d %v", code, out)
 	}
 }
+
+func (o *requestingOperator) Delete(context.Context, string, string, url.Values) (int, []byte, error) {
+	return http.StatusNoContent, nil, nil
+}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -196,7 +197,7 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 				// on any reconcile that reaches it, and the XTenant watch wakes
 				// one. The direction that hangs an install is False going True,
 				// and that is the direction this keeps checking.
-				if !tenantHasConditionTrue(state.tenant, conditionCrossplaneReady) {
+				if !apimeta.IsStatusConditionTrue(state.tenant.Status.Conditions, conditionCrossplaneReady) {
 					_ = r.aggregateCrossplaneStatus(ctx, state.tenant)
 				}
 				if updErr := r.persistTenantStageProgress(ctx, state); updErr != nil {
@@ -242,7 +243,7 @@ func (r *TenantReconciler) persistTenantStageProgress(ctx context.Context, state
 		state.cacheResult.RequeueAfter > 0 ||
 		state.mailResult.RequeueAfter > 0 ||
 		state.appsResult.RequeueAfter > 0
-	if provisioning || !tenantHasConditionTrue(tenant, conditionCrossplaneReady) {
+	if provisioning || !apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionCrossplaneReady) {
 		if tenant.Status.Phase != gentianov1alpha1.TenantPhaseDegraded {
 			tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 		}
@@ -517,7 +518,7 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 		state.mariadbResult.RequeueAfter > 0 ||
 		state.storageResult.RequeueAfter > 0 ||
 		state.cacheResult.RequeueAfter > 0
-	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
+	crossplaneReady := apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionCrossplaneReady)
 	// The identity and data-plane conditions must be present and True, whatever
 	// the stages asked for. See tenantFoundationNotReady: requeues answer "did a
 	// stage want to run again", which is not the same question as "is this tenant

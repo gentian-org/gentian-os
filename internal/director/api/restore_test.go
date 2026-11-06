@@ -224,3 +224,7 @@ func TestARestoreNamesABundleAtTheTenantsOwnSource(t *testing.T) {
 		}
 	}
 }
+
+func (o *restoringOperator) Delete(context.Context, string, string, url.Values) (int, []byte, error) {
+	return http.StatusNoContent, nil, nil
+}

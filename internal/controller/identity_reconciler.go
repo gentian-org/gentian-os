@@ -243,7 +243,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 		rj := &batchv1.Job{}
 		switch err := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: identityNamespace}, rj); {
 		case err == nil:
-			if !jobIsComplete(rj) {
+			if !meta.JobComplete(rj) {
 				// Manifest exists but Crossplane never finished provisioning the realm.
 				return nil
 			}
@@ -260,7 +260,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: identityNamespace}, existing)
 	if err == nil {
-		if jobIsComplete(existing) {
+		if meta.JobComplete(existing) {
 			// Delete provisioning jobs so they are re-created on the next deploy.
 			provNames := []string{
 				realmJobName(tenant.Name), gentianGroupsJobName(tenant.Name), adminJobName(tenant.Name),
@@ -283,7 +283,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			}
 			return r.deleteProvisioningJobs(ctx, provNames...)
 		}
-		if jobIsFailed(existing) {
+		if meta.JobFailed(existing) {
 			// The realm was not deleted, or not disabled. Said, and the
 			// Job removed so the next pass runs it again; it used to count
 			// as still running, and the deletion waited on it in silence.
@@ -307,32 +307,11 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 // --- Job constructors --------------------------------------------------------
 
 func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript())
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
 		corev1.EnvVar{Name: "BROWSER_SECURITY_HEADERS", Value: authz.BrowserSecurityHeadersJSON()})
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      realmJobName(tenant.Name),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{c},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(realmJobName(tenant.Name), identityNamespace, tenant, "", c)
 }
 
 // makeClientJob creates a Job that makes or updates an app's OIDC client in
@@ -344,62 +323,18 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 // ConfigMap and no composed Object. Without it Keycloak keeps or generates
 // the client's secret.
 func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, withSecret bool) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	redirectURI := redirectURIs[0]
 	jobName := clientJobName(tenant.Name, appName)
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if withSecret {
 		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, identityNamespace, tenant, appName, container)
 }
 
 func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, entityID, acsURL string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := keycloakContainer("provision-saml-client", buildSAMLClientScript(realmName, entityID, acsURL))
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      clientJobName(tenant.Name, appName),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(clientJobName(tenant.Name, appName), identityNamespace, tenant, appName, container)
 }
 
 // makeAdminJob builds the tenant-admin provisioning Job.
@@ -411,8 +346,6 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 // address when one is given then, otherwise shown once to whoever asked. The
 // platform never knows the password, the same as for every member it invites.
 func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	requireMFA := "false"
 	if tenant.AdminRequiresMFA() {
 		requireMFA = "true"
@@ -425,80 +358,17 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *
 		corev1.EnvVar{Name: "TENANT_SIGN_UP", Value: strconv.FormatBool(tenant.SignUpEnabled())},
 		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      adminJobName(tenant.Name),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(adminJobName(tenant.Name), identityNamespace, tenant, "", container)
 }
 
 func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      realmDisableJobName(tenant.Name),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("disable-realm", buildRealmDisableScript(realmName)),
-					},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(realmDisableJobName(tenant.Name), identityNamespace, tenant, "",
+		keycloakContainer("disable-realm", buildRealmDisableScript(realmName)))
 }
 
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      realmDeleteJobName(tenant.Name),
-			Namespace: identityNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("delete-realm", buildRealmDeleteScript(realmName, kernelRealm)),
-					},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(realmDeleteJobName(tenant.Name), identityNamespace, tenant, "",
+		keycloakContainer("delete-realm", buildRealmDeleteScript(realmName, kernelRealm)))
 }
 
 // keycloakContainer returns a Container spec that runs a shell script in the
@@ -879,26 +749,6 @@ func realmDisableJobName(tenantName string) string {
 
 func oidcClientID(tenantName, appName string) string {
 	return fmt.Sprintf("%s-%s", tenantName, appName)
-}
-
-// --- Job status helpers ------------------------------------------------------
-
-// jobHasCondition reports whether the Job carries condType as True.
-func jobHasCondition(job *batchv1.Job, condType batchv1.JobConditionType) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == condType && c.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
-func jobIsComplete(job *batchv1.Job) bool {
-	return jobHasCondition(job, batchv1.JobComplete)
-}
-
-func jobIsFailed(job *batchv1.Job) bool {
-	return jobHasCondition(job, batchv1.JobFailed)
 }
 
 // loadKeycloakAdmin reads Keycloak's admin endpoint and credential from the

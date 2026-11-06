@@ -96,27 +96,20 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 		},
 	}
 
-	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: provisioningNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Data != nil &&
-		existing.Data[tenantProvisioningJobsDataKey] == jobsPayload &&
-		existing.Data[tenantProvisioningObjectsDataKey] == objectsPayload {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	if existing.Data == nil {
-		existing.Data = map[string]string{}
-	}
-	existing.Data[tenantProvisioningJobsDataKey] = jobsPayload
-	existing.Data[tenantProvisioningObjectsDataKey] = objectsPayload
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
+		if existing.Data != nil &&
+			existing.Data[tenantProvisioningJobsDataKey] == jobsPayload &&
+			existing.Data[tenantProvisioningObjectsDataKey] == objectsPayload {
+			return false
+		}
+		if existing.Data == nil {
+			existing.Data = map[string]string{}
+		}
+		existing.Data[tenantProvisioningJobsDataKey] = jobsPayload
+		existing.Data[tenantProvisioningObjectsDataKey] = objectsPayload
+		existing.Labels = desired.Labels
+		return true
+	})
 }
 
 func (r *TenantReconciler) buildTenantProvisioningObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {

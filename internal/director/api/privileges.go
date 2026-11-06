@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package api
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -47,6 +48,12 @@ type grantPrivilegeRequest struct {
 	// for apiExtensions, and the approval answers that request and no later
 	// version of it.
 	Digest string `json:"digest,omitempty"`
+	// Allowlist is, for a pod-security waiver the cluster does not permit
+	// yet, the allowlist entry that permits it (profile, policy, scope, as
+	// the pending request reports it): added to the cluster's allowlist in
+	// the same approval, by the same approver, so the waiver takes effect.
+	// Both halves are the security officer's (cluster#can_approve).
+	Allowlist *gitops.MacWaiver `json:"allowlist,omitempty"`
 }
 
 // tenantPrivileges answers what has been granted for this tenant, from git.
@@ -229,6 +236,23 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 	case kind != security.PrivilegeAPIExtensions && body.Digest != "":
 		s.fail(w, r, http.StatusBadRequest, "digest belongs to an apiExtensions approval")
 		return
+	}
+	if body.Allowlist != nil {
+		if kind != security.PrivilegePodSecurity {
+			s.fail(w, r, http.StatusBadRequest, "allowlist belongs to a podSecurity approval")
+			return
+		}
+		// The cluster's half first: a grant without it waives nothing, and an
+		// allowlist entry without a grant permits nothing on any install.
+		res, err := s.cfg.Repo.AllowMacWaiver(r.Context(), *body.Allowlist, c.meta)
+		if errors.Is(err, gitops.ErrInvalidName) {
+			s.fail(w, r, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err != nil {
+			s.written(w, r, res, err)
+			return
+		}
 	}
 	res, err := s.cfg.Repo.GrantPrivilege(r.Context(), r.PathValue("t"), gitops.PrivilegeGrant{
 		Install:    install,

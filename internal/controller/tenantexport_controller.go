@@ -228,12 +228,12 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if holder, blocked, err := r.blockedByAnotherExport(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	} else if blocked {
-		setExportCondition(export, conditionExportAccepted, metav1.ConditionFalse, "Busy",
+		setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportAccepted, metav1.ConditionFalse, "Busy",
 			fmt.Sprintf("waiting for export %q to finish", holder))
 		export.Status.Phase = gentianov1alpha1.TenantExportPhasePending
 		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, export))
 	}
-	setExportCondition(export, conditionExportAccepted, metav1.ConditionTrue, "Accepted",
+	setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportAccepted, metav1.ConditionTrue, "Accepted",
 		"this export holds the tenant")
 
 	if export.Status.Bundle == nil {
@@ -265,7 +265,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant, export.Name)
 			export.Status.Bundle = &gentianov1alpha1.BundleRef{
 				Bucket:           eff.Bucket,
-				Prefix:           export.Name,
+				Prefix:           backup.BundlePrefix(eff, tenant, export.Name),
 				Endpoint:         eff.Endpoint,
 				Region:           eff.Region,
 				AddressingStyle:  eff.AddressingStyle,
@@ -293,7 +293,9 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.stageDestinationCredential(ctx, export); err != nil {
 		return r.fail(ctx, export, "DestinationUnavailable", err.Error())
 	}
-	recordEncryption(export, encryption, r.clusterRecipients(ctx))
+	if export.Status.Encryption == nil {
+		recordEncryption(export, encryption, r.clusterRecipients(ctx))
+	}
 
 	apps, err := r.exportAppSet(ctx, tenant, export)
 	if err != nil {
@@ -745,7 +747,7 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 		return false, nil
 	}
 
-	if jobIsComplete(existing) {
+	if meta.JobComplete(existing) {
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		return true, nil
 	}
@@ -779,7 +781,7 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 		return false, nil
 	}
 
-	if jobIsFailed(existing) {
+	if meta.JobFailed(existing) {
 		// One last look, for the case where the pod outlived the Job's own
 		// cleanup and nothing above had seen it yet.
 		if entry.LastFailure == "" {
@@ -1116,7 +1118,7 @@ func (r *TenantExportReconciler) complete(
 		captured += "; the secrets " + strings.Join(unbound, ", ") +
 			" declare in spec.backup.boundSecrets are NOT in the bundle (of the vault a bundle holds the secrets the platform generated for an app, and no other): their data restores readable only where those secrets are the same"
 	}
-	setExportCondition(export, conditionExportComplete, metav1.ConditionTrue, "Captured", captured)
+	setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportComplete, metav1.ConditionTrue, "Captured", captured)
 	return ctrl.Result{}, r.persist(ctx, export)
 }
 
@@ -1546,8 +1548,8 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 	}
 
 	switch {
-	case jobIsComplete(existing):
-	case jobIsFailed(existing):
+	case meta.JobComplete(existing):
+	case meta.JobFailed(existing):
 		logger.Error(nil, "bundle cleanup failed; releasing the export anyway - remove the objects by hand",
 			"export", export.Name, "bucket", bundle.Bucket, "prefix", bundle.Prefix, "job", name)
 	default:
@@ -1603,7 +1605,7 @@ func (r *TenantExportReconciler) fail(
 		tenantNameFromNamespace(export.Namespace),
 		string(gentianov1alpha1.TenantExportPhaseFailed),
 	).Inc()
-	setExportCondition(export, conditionExportComplete, metav1.ConditionFalse, reason, message)
+	setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportComplete, metav1.ConditionFalse, reason, message)
 	return ctrl.Result{}, r.persist(ctx, export)
 }
 

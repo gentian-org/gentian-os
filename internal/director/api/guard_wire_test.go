@@ -11,13 +11,12 @@ SPDX-License-Identifier: MPL-2.0
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/guard/guardtest"
 )
 
@@ -44,7 +43,7 @@ func TestTheDirectorsGuardOnTheWire(t *testing.T) {
 		"user:demo/u1 can_install_app tenant:own": true,
 	}
 	keys := &CommissionKeys{}
-	keys.Set([]CommissionKey{{Tenant: "home", Component: "partners", KeyHash: keyHash("the-key"), Tenants: []string{"demo"}}})
+	keys.Set([]CommissionKey{{Key: componentkeys.Key{Tenant: "home", Component: "partners", KeyHash: componentkeys.Hash("the-key")}, Tenants: []string{"demo"}}})
 	build := func(checks *guardtest.Checks, logs *guardtest.Logs, handled *string) http.Handler {
 		s := &Server{cfg: Config{Authn: ids, Authz: checks, Log: logs.Logger(), Cluster: "c1", CommissionKeys: keys}, mux: http.NewServeMux()}
 		probe := func(w http.ResponseWriter, _ *http.Request, c call) {
@@ -121,9 +120,4 @@ func TestTheDirectorsGuardOnTheWire(t *testing.T) {
 		got = append(got, guardtest.Case{Name: c.name, Exchange: guardtest.Do(t, h, c.req, checks, logs, &handled)})
 	}
 	guardtest.Golden(t, "guard", got)
-}
-
-func keyHash(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
 }

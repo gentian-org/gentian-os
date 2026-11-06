@@ -1,0 +1,18 @@
+parse not a list: refused: the arbiter's table: invalid character 'o' in literal null (expecting 'u')
+parse no keys: ok
+  {"stores":null}
+parse an empty list: ok
+  {"stores":[]}
+parse one: ok
+  {"stores":[{"tenant":"demo","component":"notary","keyHash":"a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9","model":{"schema_version":"1.1"},"realm":"r"}]}
+parse two: ok
+  {"stores":[{"tenant":"demo","component":"notary","keyHash":"a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9","model":{"schema_version":"1.1"},"realm":"r"},{"tenant":"solo","component":"scribe","keyHash":"6017af7204bdfe2e2fbf5eae421859a0ee262b923856fbeb212c7c98988e3472","model":{"schema_version":"1.1"},"realm":"r"}]}
+parse no tenant: refused: the arbiter's table holds an entry that is not one: ""/"notary"
+parse a blank tenant: refused: the arbiter's table holds an entry that is not one: " "/"notary"
+parse no component: refused: the arbiter's table holds an entry that is not one: "demo"/""
+parse the key itself: refused: the arbiter's table holds an entry that is not one: "demo"/"notary"
+parse an upper-case hash: ok
+  {"stores":[{"tenant":"demo","component":"notary","keyHash":"CA978112CA1BBDCAFAC231B39A23DC4DA786EFF8147C4E72B9807785AFEE48BB","model":{"schema_version":"1.1"},"realm":"r"}]}
+parse a short hash: refused: the arbiter's table holds an entry that is not one: "demo"/"notary"
+parse a shared key: refused: the arbiter's table names solo/notary or its key twice
+parse a bad second entry: refused: the arbiter's table holds an entry that is not one: "solo"/""
