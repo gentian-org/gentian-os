@@ -126,9 +126,10 @@ spec:
                       maxItems: 64
                       description: >
                         The issuers a tenant may name as a partner; "*"
-                        matches any run of characters, so
+                        matches any run of characters except "/", so
                         "https://id.example.net/auth/realms/*" allows every
-                        realm there and "https://*" any issuer. Empty: none.
+                        realm there and "https://*.example.net/auth/realms/*"
+                        every realm on a host under example.net. Empty: none.
                         A partner outside these is refused by the director and
                         not composed by the operator.
                       items:

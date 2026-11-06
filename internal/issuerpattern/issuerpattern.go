@@ -24,8 +24,9 @@ import (
 var compiled sync.Map // pattern -> *regexp.Regexp
 
 // Allowed reports whether an issuer matches one of the patterns. A pattern
-// matches the whole issuer; "*" matches any run of characters other than a
-// newline, and every other character only itself, case included.
+// matches the whole issuer; "*" matches any run of characters other than "/"
+// and a newline, so it stands for part of the host or one path segment, and
+// every other character matches only itself, case included.
 func Allowed(patterns []string, issuer string) bool {
 	for _, p := range patterns {
 		if compile(p).MatchString(issuer) {
@@ -43,6 +44,6 @@ func compile(pattern string) *regexp.Regexp {
 	for i := range parts {
 		parts[i] = regexp.QuoteMeta(parts[i])
 	}
-	re, _ := compiled.LoadOrStore(pattern, regexp.MustCompile("^"+strings.Join(parts, ".*")+"$"))
+	re, _ := compiled.LoadOrStore(pattern, regexp.MustCompile("^"+strings.Join(parts, "[^/\n]*")+"$"))
 	return re.(*regexp.Regexp)
 }
