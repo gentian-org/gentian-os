@@ -833,6 +833,19 @@ func (r *TenantReconciler) ensureComponent(
 			return nil
 		}
 	}
+	// An approval given again for different terms -- definitions that
+	// changed, a new expiry -- replaces the stored one. The Component's API
+	// refuses a changed approval in place, so the old one is removed in a
+	// write of its own and the new one added by the write below.
+	if replaced := replacedGrants(existing.Spec.Privileges, desired.Spec.Privileges); len(replaced) > 0 {
+		before := client.MergeFrom(existing.DeepCopy())
+		existing.Spec.Privileges = slices.DeleteFunc(existing.Spec.Privileges, func(g gentianov1alpha1.PrivilegeGrant) bool {
+			return slices.Contains(replaced, g.Privilege)
+		})
+		if err := r.Patch(ctx, existing, before); err != nil {
+			return fmt.Errorf("remove the %s component's superseded approvals %v: %w", profileName, replaced, err)
+		}
+	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	changed := false
 	// What the Tenant says about this install reaches the Component here, and
@@ -924,6 +937,36 @@ func tenantPrivilegeGrants(tenant *gentianov1alpha1.Tenant, install string) []ge
 		}
 	}
 	return out
+}
+
+// replacedGrants are the privileges the Component carries an approval for
+// that the Tenant has approved again for other terms: another digest (the
+// definitions changed and were approved as they are now) or another expiry
+// (a renewal). Pressing the button again for the same terms is not one; that
+// approval stays as stored.
+func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string {
+	have := make(map[string]gentianov1alpha1.PrivilegeGrant, len(stored))
+	for _, g := range stored {
+		have[g.Privilege] = g
+	}
+	var out []string
+	for _, g := range desired {
+		kept, ok := have[g.Privilege]
+		if !ok {
+			continue
+		}
+		if kept.Digest != g.Digest || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
+			out = append(out, g.Privilege)
+		}
+	}
+	return out
+}
+
+func equalOptionalTime(a, b *metav1.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(b)
 }
 
 // keepStoredGrants is the Component's grant list for the Tenant's grants

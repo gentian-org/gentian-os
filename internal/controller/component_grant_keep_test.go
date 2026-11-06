@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,5 +114,78 @@ func TestAppMailRecordsAreSeededAlthoughAnAppFails(t *testing.T) {
 		if _, ok := vault[secrets.CategoryPath("quiet", "mailer", rec)]; !ok {
 			t.Errorf("no %s record for the mailing app after another app failed", rec)
 		}
+	}
+}
+
+// An approval given again for definitions that changed replaces the stored
+// one: removed in one write and the new one added in the next, because the
+// Component's API refuses a changed approval in place. Without this a type
+// whose definition changed could never be approved again.
+func TestAnApprovalForChangedDefinitionsReplacesTheStoredOne(t *testing.T) {
+	ctx := context.Background()
+	scheme := componentDatabaseScheme(t)
+	tenant := acmeTenantFixture()
+	first := metav1.NewTime(time.Date(2026, 11, 6, 0, 56, 48, 0, time.UTC))
+	again := metav1.NewTime(time.Date(2026, 11, 6, 9, 46, 15, 0, time.UTC))
+	oldDigest := "sha256:" + strings.Repeat("d", 64)
+	newDigest := "sha256:" + strings.Repeat("4", 64)
+	existing := &gentianov1alpha1.Component{
+		ObjectMeta: metav1.ObjectMeta{Name: "office", Namespace: tenantNamespaceName(tenant)},
+		Spec: gentianov1alpha1.ComponentSpec{
+			ProfileRef: gentianov1alpha1.ProfileRef{Name: "office"},
+			Class:      gentianov1alpha1.ComponentClassApp,
+			Privileges: []gentianov1alpha1.PrivilegeGrant{
+				{Privilege: "apiExtensions/schedules", Approver: "u-owner", ApprovedAt: first,
+					Reason: "the scheduled backups", Digest: oldDigest},
+				{Privilege: "clusterRoles/exports", Approver: "u-owner", ApprovedAt: first,
+					Reason: "starts the exports"},
+			},
+		},
+	}
+	tenant.Spec.Privileges = []gentianov1alpha1.TenantPrivilegeGrant{
+		{Install: "office", Privilege: "apiExtensions/schedules", Approver: "u-owner",
+			ApprovedAt: again, Reason: "the type gained a field", Digest: newDigest},
+		// Approved again for the same terms: stays as stored.
+		{Install: "office", Privilege: "clusterRoles/exports", Approver: "u-owner",
+			ApprovedAt: again, Reason: "pressed again"},
+	}
+	var writes [][]gentianov1alpha1.PrivilegeGrant
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), existing,
+		profileFixture("office", false, gentianov1alpha1.ComponentClassApp),
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
+			if comp, ok := obj.(*gentianov1alpha1.Component); ok {
+				writes = append(writes, append([]gentianov1alpha1.PrivilegeGrant(nil), comp.Spec.Privileges...))
+			}
+			return cl.Patch(ctx, obj, p, opts...)
+		},
+	}).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+
+	if err := r.ensureComponent(ctx, tenant, "office", "", "", nil, nil, nil, moveRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(writes) != 2 {
+		t.Fatalf("writes = %d, want the removal and then the addition", len(writes))
+	}
+	for _, g := range writes[0] {
+		if g.Privilege == "apiExtensions/schedules" {
+			t.Fatalf("the first write still carries the superseded approval: %+v", writes[0])
+		}
+	}
+	got := &gentianov1alpha1.Component{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "office", Namespace: tenantNamespaceName(tenant)}, got); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]gentianov1alpha1.PrivilegeGrant{}
+	for _, g := range got.Spec.Privileges {
+		byName[g.Privilege] = g
+	}
+	if g := byName["apiExtensions/schedules"]; g.Digest != newDigest || !g.ApprovedAt.Equal(&again) {
+		t.Errorf("the new approval = %+v", g)
+	}
+	if g := byName["clusterRoles/exports"]; !g.ApprovedAt.Equal(&first) || g.Reason != "starts the exports" {
+		t.Errorf("an approval for the same terms was rewritten: %+v", g)
 	}
 }
