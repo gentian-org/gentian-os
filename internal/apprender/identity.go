@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // renderIdentity registers the app at the tenant's realm: its entitlement
@@ -139,7 +140,7 @@ func identityGroupName(path string) string {
 // which a realm import reads: a group carrying it is never made from a
 // bundle (internal/keycloak PlatformMarkerAttribute).
 func (id *identityScope) entitlementGroup() *unstructured.Unstructured {
-	path := fmt.Sprintf("gentian:tenant:%s:app:%s", id.tenant, id.in.App)
+	path := keycloak.TenantAppGroup(id.tenant, id.in.App)
 	attrs := map[string]interface{}{}
 	if raw := id.in.ProfileAnnotations["gentianos.io/keycloak-group-attributes"]; raw != "" {
 		var parsed map[string]interface{}

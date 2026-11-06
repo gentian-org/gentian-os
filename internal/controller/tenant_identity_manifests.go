@@ -434,28 +434,13 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 			}
 			return nil, err
 		}
-		var attrs map[string][]string
-		if profile.Annotations != nil {
-			if val, ok := profile.Annotations["gentianos.io/keycloak-group-attributes"]; ok {
-				var parsed map[string]any
-				if err := json.Unmarshal([]byte(val), &parsed); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal keycloak-group-attributes for %s: %w", profileName, err)
-				}
-				attrs = make(map[string][]string)
-				for k, v := range parsed {
-					if list, ok := v.([]any); ok {
-						var strList []string
-						for _, item := range list {
-							strList = append(strList, fmt.Sprint(item))
-						}
-						attrs[k] = strList
-					} else if valStr, ok := v.(string); ok {
-						attrs[k] = []string{valStr}
-					} else {
-						attrs[k] = []string{fmt.Sprint(v)}
-					}
-				}
-			}
+		val, ok := profile.Annotations[keycloak.GroupAttributesAnnotation]
+		if !ok {
+			return nil, nil
+		}
+		attrs, err := keycloak.ParseGroupAttributes(val)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal keycloak-group-attributes for %s: %w", profileName, err)
 		}
 		return attrs, nil
 	}
