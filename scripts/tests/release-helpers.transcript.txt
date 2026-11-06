@@ -98,6 +98,30 @@ rc=1
   call: bao version --short
   call: bao version --short
   call: bao version --short
+== _helm_retry: transient, then success, under set -e
+rc=0
+  out: out of helm version --short
+  out: [1;33m[WARN][0m  helm failed (attempt 1/4): transient network error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of helm version --short
+  out: carried on
+  err: connection refused
+  call: helm version --short
+  call: helm version --short
+== _kubectl_retry: transient, then success, under set -e
+rc=0
+  out: out of kubectl version --short
+  out: [1;33m[WARN][0m  kubectl failed (attempt 1/12): transient API error
+  out: [1;33m[WARN][0m    Retrying in 1s...
+  out: out of kubectl version --short
+  out: carried on
+  err: connection refused
+  call: kubectl version --short
+  call: kubectl version --short
+== _bao_retry: transient, then success, under set -e
+rc=1
+  out: out of bao version --short
+  call: bao version --short
 == _bao_retry: body from _BAO_RETRY_STDIN, read again on the retry
 rc=0
   out: out of bao policy write p -

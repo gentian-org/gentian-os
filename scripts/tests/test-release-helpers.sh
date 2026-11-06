@@ -8,8 +8,8 @@
 #   - _helm_retry, _kubectl_retry and _bao_retry: what each prints, to which
 #     stream, what it returns and how often it calls, for a success with a
 #     warning, a failure that is not transient, a transient failure that
-#     passes on the next attempt, one that never does, and bao reading its
-#     body from _BAO_RETRY_STDIN.
+#     passes on the next attempt (also under set -e, as the installer runs),
+#     one that never does, and bao reading its body from _BAO_RETRY_STDIN.
 #   - the paths that delete objects, wait for them and strip the finalizers
 #     of what is left (A-03, A-06, B-05, E-01 and the teardown library): every
 #     call they make against a cluster where everything goes at once, and
@@ -129,6 +129,12 @@ transcript() {
         retry "${w}" "not transient" "1|Error: chart not found"
         retry "${w}" "transient, then success" "1|dial tcp 10.0.0.1:443: connection refused" "0|"
         retry "${w}" "transient every time" "1|dial tcp: i/o timeout" "1|dial tcp: i/o timeout" "1|dial tcp: i/o timeout"
+    done
+    # The installer runs under set -e, as load.sh sets it.
+    for w in _helm_retry _kubectl_retry _bao_retry; do
+        printf '%s\n' "1|connection refused" "0|" >"${SB}/results"
+        echo "== ${w}: transient, then success, under set -e"
+        run "set -e; ${w} version --short; echo carried on" HELM_RETRY_DELAY_SECS=1 KUBECTL_RETRY_DELAY_SECS=1 BAO_RETRY_DELAY_SECS=1
     done
     printf '%s\n' "1|connection refused" "0|" >"${SB}/results"
     echo "== _bao_retry: body from _BAO_RETRY_STDIN, read again on the retry"
