@@ -30,6 +30,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/composed"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/modelgateway"
 	"github.com/gentian-org/gentian-os/internal/placement"
 )
@@ -205,14 +206,23 @@ func (r *TenantReconciler) seedAppPrerequisites(ctx context.Context, tenant *gen
 // …/internal/{name} with key "value". No-op when Seeder is nil or the profile
 // declares no app-secrets. Repeated calls are idempotent.
 func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {
-	if r.Seeder == nil || len(profile.GeneratedSecrets()) == 0 {
+	return seedGeneratedSecrets(ctx, r.Seeder, tenant.Name, appName, profile)
+}
+
+// seedGeneratedSecrets makes the secrets a profile has the platform generate
+// for an app and for each of its extensions, the first value stored staying
+// the path's. Shared by an installed app (the tenant's loop above) and a
+// component the platform places (the Component reconciler), whose sensitive
+// values read them alike. No-op without a Seeder.
+func seedGeneratedSecrets(ctx context.Context, seeder *secrets.Seeder, tenantName, appName string, profile *gentianov1alpha1.ComponentProfile) error {
+	if seeder == nil || profile == nil {
 		return nil
 	}
 	for _, s := range profile.GeneratedSecrets() {
 		if s.Name == "" {
 			continue
 		}
-		if _, err := r.Seeder.SeedAppSecret(ctx, tenant.Name, appName, s.Name); err != nil {
+		if _, err := seeder.SeedAppSecret(ctx, tenantName, appName, s.Name); err != nil {
 			return err
 		}
 	}
@@ -222,7 +232,7 @@ func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov
 			if s.Name == "" {
 				continue
 			}
-			if _, err := r.Seeder.SeedAppSecret(ctx, tenant.Name, scAppName, s.Name); err != nil {
+			if _, err := seeder.SeedAppSecret(ctx, tenantName, scAppName, s.Name); err != nil {
 				return err
 			}
 		}
