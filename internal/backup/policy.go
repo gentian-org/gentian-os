@@ -165,6 +165,21 @@ func ApplyExportDestination(
 	return eff
 }
 
+// BundlePrefix is where in its bucket an export's bundle goes.
+//
+// The platform's own storage gives each tenant a bucket of its own, and there
+// the export's name is enough. Any other bucket may be shared by every tenant
+// -- a cluster policy's destination is -- and an export's name is unique in
+// its tenant only: the same night's scheduled exports all carry the same
+// one. Those bundles go under the tenant's name, or each would write over
+// the others.
+func BundlePrefix(eff Effective, tenant *gentianov1alpha1.Tenant, exportName string) string {
+	if eff.Endpoint == "" && eff.Bucket == BackupBucket(tenant) {
+		return exportName
+	}
+	return tenant.Name + "/" + exportName
+}
+
 // ExportCredentialSecretName is the staged copy's name, beside the capture
 // Jobs. Derived from the export rather than the requester's Secret name, so a
 // tenant cannot aim it at a Secret in the kernel namespace it does not own —

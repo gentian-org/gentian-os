@@ -405,3 +405,21 @@ func TestTheAddressingStyleTravelsWithTheEndpoint(t *testing.T) {
 		t.Errorf("one export's style is not taken: %q", custom.AddressingStyle)
 	}
 }
+
+func TestBundlesInASharedBucketGoUnderTheirTenant(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "team"}}
+	own := Effective{Bucket: BackupBucket(tenant)}
+	if got := BundlePrefix(own, tenant, "policy-20261106-0300"); got != "policy-20261106-0300" {
+		t.Fatalf("the tenant's own bucket: %q", got)
+	}
+	shared := Effective{Bucket: "new-bucket", Endpoint: "https://sos-ch-dk-2.exo.io"}
+	if got := BundlePrefix(shared, tenant, "policy-20261106-0300"); got != "team/policy-20261106-0300" {
+		t.Fatalf("a shared bucket: %q", got)
+	}
+	// A bucket elsewhere that happens to carry the tenant's own bucket's name
+	// is still not the platform's storage.
+	elsewhere := Effective{Bucket: BackupBucket(tenant), Endpoint: "https://s3.example.org"}
+	if got := BundlePrefix(elsewhere, tenant, "x"); got != "team/x" {
+		t.Fatalf("an external bucket of the same name: %q", got)
+	}
+}
