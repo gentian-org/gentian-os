@@ -21,8 +21,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -79,9 +79,9 @@ check() { # <what> <output> <first line> [stderr must contain]
     local first rest
     first="$(head -1 <<<"$2")"; rest="$(tail -n +2 <<<"$2")"
     if [[ "${first}" == "$3" && "$2" != *"unbound variable"* && ( -z "${4:-}" || "${rest}" == *"$4"* ) && ( -n "${4:-}" || -z "${rest// /}" ) ]]; then
-        printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1))
+        ok "$1"
     else
-        printf '  %sFAIL%s  %s\n    got: %s\n' "${RED}" "${NC}" "$1" "$2"; fail=$((fail + 1))
+        bad "$1" "    got: $2"
     fi
 }
 
@@ -160,9 +160,4 @@ out="$(fields OPENBAO_STORAGE=file)"
 check "  and file where the setting says file" \
     "$(grep -A1 '^  openbao:$' <<<"${out}" | tail -1 | tr -d ' ')" "storage:file"
 
-echo ""
-if (( fail > 0 )); then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} passed.${NC}"
+finish

@@ -18,8 +18,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -62,10 +62,6 @@ run() {
         ' 2>&1
 }
 
-check() {
-    if eval "$2"; then printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1))
-    else printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${3:-}"; fail=$((fail + 1)); fi
-}
 seed() { jq -r .signing_seed "${STATE}/vault/gentian-os_kernel_backup_signing.json" 2>/dev/null; }
 
 echo ""
@@ -120,8 +116,4 @@ echo "The cluster's id in its claim (step 0)"
 check "a new claim is scaffolded with an id" \
     'grep -q "clusterUID: \$(gentian_new_cluster_uid)" "${REPO}/scripts/lib/bootstrap.sh"'
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d of %d failed.%s\n' "${RED}" "${fail}" "$((pass + fail))" "${NC}"; exit 1
-fi
-printf '%sAll %d bundle-signing cases pass.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

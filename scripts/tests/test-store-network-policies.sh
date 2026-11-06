@@ -24,15 +24,17 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
+
 check() {
     # check <description> <assertion...>
     local what="$1"
     shift
     if python3 scripts/tests/store_network_policies.py "$@"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
-        fail=$((fail + 1))
+        bad "${what}"
     fi
 }
 
@@ -41,14 +43,12 @@ check_llm() {
     local what="$1"
     shift
     if python3 scripts/tests/llm_network_policies.py "$@"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
-        fail=$((fail + 1))
+        bad "${what}"
     fi
 }
 
-fail=0
 echo ""
 echo "System tier: the NetworkPolicy on each shared store"
 echo ""
@@ -70,10 +70,9 @@ check_server() {
     local what="$1"
     shift
     if python3 scripts/tests/server_network_policies.py "$@"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
-        fail=$((fail + 1))
+        bad "${what}"
     fi
 }
 
@@ -102,9 +101,4 @@ check_llm "storeNetworkPolicies=false: no policy; with GPUs no mock and no polic
 check_llm "the gateway's console is off unless the claim switches it on: only then is the edge admitted to the gateway" console
 check_llm "a model served on the cluster's GPUs: its instance is admitted from the gateway alone" vllm
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${fail} check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+finish
