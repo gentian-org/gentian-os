@@ -31,10 +31,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SB="$(mktemp -d)"
 trap 'rm -rf "${SB}"' EXIT
@@ -464,10 +462,4 @@ before="$(manifest "${H}")"
 run "${T[@]}" GENTIAN_DEPLOYMENTS_REPO=https://git.example.test/d -- 'save_kubectl_gentian_config' >/dev/null
 is "  nor is ~/.gentian/config written" "$(manifest "${H}")" "${before}"
 
-echo ""
-if [[ ${fail} -eq 0 ]]; then
-    echo "${GREEN}${pass} checks passed.${NC}"
-    exit 0
-fi
-echo "${RED}${fail} failed${NC}, ${pass} passed."
-exit 1
+finish
