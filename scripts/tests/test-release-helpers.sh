@@ -50,7 +50,8 @@ fi
 printf '%s\n' "${line}" >>"${SB}/calls"
 if [[ -s "${SB}/results" ]]; then
     answer="$(head -n 1 "${SB}/results")"
-    sed -i.bak 1d "${SB}/results"
+    tail -n +2 "${SB}/results" >"${SB}/results.next"
+    mv "${SB}/results.next" "${SB}/results"
     echo "out of ${tool} $*"
     [[ -n "${answer#*|}" ]] && printf '%s\n' "${answer#*|}" >&2
     exit "${answer%%|*}"
