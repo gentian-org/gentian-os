@@ -22,7 +22,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -72,16 +71,7 @@ func run(log *slog.Logger) error {
 	// The store the operator established and recorded; this process never
 	// writes one, and without the record it does not start rather than find
 	// a store by its name.
-	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
-	fgaOptions.StoreID, fgaOptions.ModelID = os.Getenv("OPENFGA_STORE_ID"), os.Getenv("OPENFGA_MODEL_ID")
-	pinCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	pinnedStore, pinnedModel, err := authz.Pinned(pinCtx, fgaOptions)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("authorization store: %w", err)
-	}
-	fgaOptions.StoreID, fgaOptions.ModelID = pinnedStore, pinnedModel
-	store, err := authz.NewOpenFGA(fgaOptions)
+	store, err := authz.OpenPinned(fgaURL, log)
 	if err != nil {
 		return err
 	}
@@ -124,7 +114,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
-	log.Info("usher listening", "addr", srv.Addr, "issuer", issuerBase, "store", fgaOptions.StoreID)
+	log.Info("usher listening", "addr", srv.Addr, "issuer", issuerBase, "store", store.StoreID())
 	select {
 	case err := <-done:
 		return err

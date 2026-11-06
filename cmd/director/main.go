@@ -70,9 +70,6 @@ func run(log *slog.Logger) error {
 	issuerBase := req.env("DIRECTOR_ISSUER_BASE_URL")
 	audience := req.env("DIRECTOR_AUDIENCE")
 	fgaURL := req.env("OPENFGA_API_URL")
-	// The store and the model the operator recorded in its ConfigMap.
-	fgaStore := os.Getenv("OPENFGA_STORE_ID")
-	fgaModel := os.Getenv("OPENFGA_MODEL_ID")
 	repoPath := req.env("GENTIAN_DEPLOYMENTS_PATH")
 	repoURL := req.env("GENTIAN_DEPLOYMENTS_REPO")
 	cluster := req.env("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
@@ -88,7 +85,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
 	// Pinned, never created and never found by name.
 	//
 	// The director decides; it does not establish. The store and the model are
@@ -97,18 +93,9 @@ func run(log *slog.Logger) error {
 	// only has to READ the graph to answer a question should not hold a
 	// credential that can rewrite it. Without the operator's record it does
 	// not start: a store found by its name is whichever store carries it.
-	fgaOptions.StoreID, fgaOptions.ModelID = fgaStore, fgaModel
-	pinCtx, cancelPin := context.WithTimeout(context.Background(), 5*time.Minute)
-	fgaStore, fgaModel, err = authz.Pinned(pinCtx, fgaOptions)
-	cancelPin()
+	checker, err := authz.OpenPinned(fgaURL, log)
 	if err != nil {
-		return fmt.Errorf("authorization graph: %w "+
-			"(the operator creates the store and the model and records them; this service only reads them)", err)
-	}
-	fgaOptions.StoreID, fgaOptions.ModelID = fgaStore, fgaModel
-	checker, err := authz.NewOpenFGA(fgaOptions)
-	if err != nil {
-		return err
+		return fmt.Errorf("%w (the operator creates the store and the model and records them; this service only reads them)", err)
 	}
 	repo := gitops.NewGitOps(repoPath, repoURL, cluster, gitops.Person{
 		Name:  envOr("DIRECTOR_COMMITTER_NAME", "gentian-director"),
@@ -348,7 +335,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
-	log.Info("director listening", "addr", srv.Addr, "cluster", cluster, "issuer", issuerBase, "model", fgaModel)
+	log.Info("director listening", "addr", srv.Addr, "cluster", cluster, "issuer", issuerBase, "model", checker.ModelID())
 
 	select {
 	case err := <-done:
