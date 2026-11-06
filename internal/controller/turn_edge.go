@@ -41,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 // The TURN edge (networking.md §9): the relay that real-time media takes
@@ -305,8 +306,10 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 	udp, tcp := corev1.ProtocolUDP, corev1.ProtocolTCP
 	turnTarget, turnsTarget := intstr.FromInt32(turnPort), intstr.FromInt32(turnsListenPort)
 	replicas := int32(2)
-	no, yes := false, true
+	no := false
 	uid := int64(65532)
+	pod := meta.NonRootPod(uid)
+	pod.RunAsGroup = &uid
 
 	config := &corev1.Secret{
 		ObjectMeta: om(turnEdgeConfigSecret),
@@ -336,10 +339,7 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 							},
 						}},
 					}},
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &yes, RunAsUser: &uid, RunAsGroup: &uid,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
+					SecurityContext: pod,
 					Containers: []corev1.Container{{
 						Name:  "stunnerd",
 						Image: image,
@@ -361,10 +361,7 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 							Path: "/ready", Port: intstr.FromString("health")}}, PeriodSeconds: 5},
 						LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live", Port: intstr.FromString("health")}}, PeriodSeconds: 20},
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
-							Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-						},
+						SecurityContext: meta.ReadOnlyContainer(),
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
 							Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")},

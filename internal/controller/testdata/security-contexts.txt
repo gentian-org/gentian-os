@@ -1,0 +1,31 @@
+arbiter a: 92d4e7e3d37fbad0
+arbiter b: e1fce6f44d30d239
+arbiter c: 95c613c7d21a7da0
+arbiter d: b0d57d7d42e211af
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true}
+  .spec.template.spec.securityContext {"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
+arbiter e: 00139c7546ffa2cf
+arbiter f: 13a19abe824d79c5
+arbiter g: d00195c19f76a5f6
+keycloak: 0e333b9f6cf3aeff
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
+mariadb: 8f0a65c37ac12be6
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
+perimeter: 090ca6d0b79d2ff6
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsNonRoot":true}
+  .spec.template.spec.securityContext {"runAsNonRoot":true,"runAsUser":101,"seccompProfile":{"type":"RuntimeDefault"}}
+psql: bda87b1359fe9ade
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
+redis: afab15bbd98b4158
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
+sign-in: 7581427327a4d12b
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsNonRoot":true}
+  .spec.template.spec.securityContext {"runAsGroup":1000,"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
+turn a: 7617609d1e9b5736
+turn b: 344ba69e045bb887
+turn c: d9fc69a7347b497a
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true}
+  .spec.template.spec.securityContext {"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
+turn d: 6b25242319b41fed
+turn e: 4adb915a309a57dd
+turn f: 451a83ff22b55331

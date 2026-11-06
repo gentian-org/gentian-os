@@ -167,16 +167,12 @@ func SyncJob(
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{{
-						Name:    "privilege-sync",
-						Image:   spec.Image,
-						Command: []string{"/bin/sh", scriptMountPath + "/run.sh"},
-						Env:     env,
-						EnvFrom: envFrom,
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: ptr(false),
-							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-							SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-						},
+						Name:            "privilege-sync",
+						Image:           spec.Image,
+						Command:         []string{"/bin/sh", scriptMountPath + "/run.sh"},
+						Env:             env,
+						EnvFrom:         envFrom,
+						SecurityContext: meta.RestrictedContainer(),
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "scripts", MountPath: scriptMountPath, ReadOnly: true},
 							{Name: "app-admins", MountPath: membersMountPath, ReadOnly: true},
