@@ -190,7 +190,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator, graph authz.Ch
 			// credential paths, no reading of values. Bound to this pod's
 			// ServiceAccount by the cluster's Composition.
 			envvar.Or("CUSTODIAN_BAO_ROLE", "gentian-os-custodian"),
-			loadBaoCA(mgr),
+			loadBaoCA(mgr.GetAPIReader()),
 			secrets.SkipVerifyFromEnv(),
 		),
 		Validator: validator,
@@ -262,7 +262,7 @@ func clusterRelayResolver(mgr manager.Manager) RelayResolver {
 // that gave OpenBao a publicly trusted certificate needs no CA here, and
 // failing startup over a missing one would break it. A CA file that cannot be
 // read, or a Secret that holds no certificate, is a CA that verifies nothing.
-func loadBaoCA(mgr manager.Manager) []byte {
+func loadBaoCA(reader client.Reader) []byte {
 	log := ctrl.Log.WithName("custodian")
 	if path := os.Getenv("BAO_CACERT"); path != "" {
 		pem, err := os.ReadFile(path)
@@ -280,7 +280,7 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	sec := &corev1.Secret{}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
+	if err := reader.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
 		// An in-cluster address over https is a certificate no public root
 		// signs, so this is not the conditional warning it used to be: the
 		// custodian's login WILL fail, and saying it at Info under an "if" is
