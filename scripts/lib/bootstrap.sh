@@ -1518,15 +1518,15 @@ _claim_cluster_fields() {
 
     printf '\n'
     printf '  # metrics-server, where the installer puts one in. true stops it\n'
-    printf '  # verifying the kubelets certificates; needed only where they name no\n'
-    printf '  # IP address and node names do not resolve from a pod (Infomaniak),\n'
-    printf '  # where it otherwise never becomes Ready and step A-07 times out.\n'
-    if [[ "${METRICS_SERVER_KUBELET_INSECURE_TLS:-}" == "true" ]]; then
+    printf '  # verifying the kubelets certificates. Unset, step A-07 does that by\n'
+    printf '  # itself, with a warning, only where they name no IP address and node\n'
+    printf '  # names do not resolve from a pod (Infomaniak); false never does.\n'
+    if [[ -n "${METRICS_SERVER_KUBELET_INSECURE_TLS:-}" ]]; then
         printf '  metricsServer:\n'
-        printf '    kubeletInsecureTLS: true\n'
+        printf '    kubeletInsecureTLS: %s\n' "${METRICS_SERVER_KUBELET_INSECURE_TLS}"
     else
         printf '  # metricsServer:\n'
-        printf '  #   kubeletInsecureTLS: false  kubelet certificates are verified\n'
+        printf '  #   kubeletInsecureTLS: false  never give up verification\n'
     fi
 
     printf '\n'
