@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // ClusterRoles are the cluster's role relations: admin and break_glass, held
@@ -184,7 +185,7 @@ func TenantAdministrator(ctx context.Context, c Checker, requestID, tenant, sub 
 	if err != nil {
 		return false, nil
 	}
-	group, err := Group("gentian:tenant:" + tenant + ":admins")
+	group, err := Group(keycloak.TenantAdminsGroup(tenant))
 	if err != nil || strings.ContainsAny(tenant, ":/") {
 		return false, nil
 	}

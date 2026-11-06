@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // One tenant's people signing in to another of the same cluster.
@@ -70,7 +71,7 @@ func signInGroupPaths(target *gentianov1alpha1.Tenant, groups []string) []interf
 		var path string
 		switch {
 		case g == signInMemberGroup:
-			path = fmt.Sprintf("/gentian:tenant:%s:members", target.Name)
+			path = "/" + keycloak.TenantMembersGroup(target.Name)
 		case declared[g]:
 			path = "/" + g
 		default:
