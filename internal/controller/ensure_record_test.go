@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -45,7 +46,8 @@ func ensureScheme(t *testing.T) *runtime.Scheme {
 }
 
 // ensureCase is one ensure: what it writes on an empty cluster, on the
-// cluster it left, and after drift changed what it wrote.
+// cluster it left, and after drift changed what it wrote, and what it says
+// when the write before the first and the one after drift are turned down.
 type ensureCase struct {
 	name string
 	// seed is on the cluster before the first run.
@@ -80,6 +82,9 @@ func describeWritten(t *testing.T, obj client.Object) string {
 	return string(out)
 }
 
+// errEnsureRefused is what a write turned down answers.
+var errEnsureRefused = errors.New("refused")
+
 func ensureTranscript(t *testing.T, cases []ensureCase) string {
 	t.Helper()
 	var out []string
@@ -88,18 +93,30 @@ func ensureTranscript(t *testing.T, cases []ensureCase) string {
 		record := func(verb string, obj client.Object) {
 			calls = append(calls, fmt.Sprintf("%s %s/%s", verb, obj.GetNamespace(), obj.GetName()))
 		}
+		// refuse turns every write down, to show what an ensure says when
+		// one fails.
+		refuse := false
 		cl := fake.NewClientBuilder().WithScheme(ensureScheme(t)).WithObjects(c.seed...).WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 				record("create", obj)
+				if refuse {
+					return errEnsureRefused
+				}
 				return cl.Create(ctx, obj, opts...)
 			},
 			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
 				record("update", obj)
+				if refuse {
+					return errEnsureRefused
+				}
 				return cl.Update(ctx, obj, opts...)
 			},
 			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				data, _ := patch.Data(obj)
 				record("patch "+string(patch.Type())+" "+string(data), obj)
+				if refuse {
+					return errEnsureRefused
+				}
 				return cl.Patch(ctx, obj, patch, opts...)
 			},
 		}).Build()
@@ -118,6 +135,9 @@ func ensureTranscript(t *testing.T, cases []ensureCase) string {
 			}
 			out = append(out, line)
 		}
+		refuse = true
+		step("refused on an empty cluster")
+		refuse = false
 		step("first")
 		step("again")
 		obj := c.written.DeepCopyObject().(client.Object)
@@ -127,6 +147,9 @@ func ensureTranscript(t *testing.T, cases []ensureCase) string {
 				t.Fatal(err)
 			}
 		}
+		refuse = true
+		step("refused after drift")
+		refuse = false
 		step("after drift")
 	}
 	sort.Strings(out)
