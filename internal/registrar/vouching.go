@@ -59,7 +59,7 @@ import (
 // identify.
 func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		if holder := s.cfg.VouchingKeys.holder(guard.Bearer(r)); holder != nil {
+		if holder := s.cfg.VouchingKeys.Find(guard.Bearer(r)); holder != nil {
 			if c, ok := s.admitComponent(w, r, pattern, holder); ok {
 				h(w, r, c)
 			}

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/componentkeys/keystest"
 )
 
@@ -47,7 +48,7 @@ func writtenLast[A, B, L any](t *testing.T, f func(A, B, L) (string, error), raw
 // The lists the operator writes for the services that recognize a component
 // by its key, byte for byte, held to testdata/component-keys.txt.
 func TestComponentKeyDocumentsTranscript(t *testing.T) {
-	h1, h2 := keystest.Hash("notary-key"), keystest.Hash("scribe-key")
+	h1, h2 := componentkeys.Hash("notary-key"), componentkeys.Hash("scribe-key")
 	plain := `[{"tenant":"demo","component":"notary","keyHash":"` + h1 + `"},{"tenant":"solo","component":"scribe","keyHash":"` + h2 + `"}]`
 	commission := `[{"tenant":"demo","component":"notary","keyHash":"` + h1 + `","tenants":["demo","solo"]}]`
 	checkers := `[{"tenant":"demo","component":"notary","keyHash":"` + h1 + `"},` +
@@ -62,10 +63,10 @@ func TestComponentKeyDocumentsTranscript(t *testing.T) {
 		}, raw)
 	}
 	keystest.Golden(t, "component-keys", []string{
-		"registrar, none: " + written(t, registrarVouchingKeysDocument, ""),
-		"registrar: " + written(t, registrarVouchingKeysDocument, plain),
-		"director, none: " + written(t, directorCommissionKeysDocument, ""),
-		"director: " + written(t, directorCommissionKeysDocument, commission),
+		"registrar, none: " + written(t, componentkeys.Document[componentkeys.Key], ""),
+		"registrar: " + written(t, componentkeys.Document[componentkeys.Key], plain),
+		"director, none: " + written(t, componentkeys.Document[componentkeys.Commission], ""),
+		"director: " + written(t, componentkeys.Document[componentkeys.Commission], commission),
 		"bouncer, none:\n" + bouncer(""),
 		"bouncer:\n" + bouncer(checkers),
 		"arbiter: " + arbiterTable(stores),

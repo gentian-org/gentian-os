@@ -16,8 +16,6 @@ package keystest
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -28,16 +26,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/guard/guardtest"
 )
 
 var update = flag.Bool("update-keys", false, "rewrite the recorded key transcripts")
-
-// Hash is the hex SHA-256 of a key, as the operator lists it.
-func Hash(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
 
 // Lists are the lists every reader is held to: good ones and each way of
 // being refused. entry is how the reader's entry is written from a tenant,
@@ -48,21 +41,21 @@ func Lists(entry func(tenant, component, hash string) string) [][2]string {
 		{"not a list", `nonsense`},
 		{"no keys", `{}`},
 		{"an empty list", list()},
-		{"one", list(entry("demo", "notary", Hash("notary-key")))},
-		{"two", list(entry("demo", "notary", Hash("notary-key")), entry("solo", "scribe", Hash("scribe-key")))},
-		{"no tenant", list(entry("", "notary", Hash("a")))},
-		{"a blank tenant", list(entry(" ", "notary", Hash("a")))},
-		{"no component", list(entry("demo", "", Hash("a")))},
+		{"one", list(entry("demo", "notary", componentkeys.Hash("notary-key")))},
+		{"two", list(entry("demo", "notary", componentkeys.Hash("notary-key")), entry("solo", "scribe", componentkeys.Hash("scribe-key")))},
+		{"no tenant", list(entry("", "notary", componentkeys.Hash("a")))},
+		{"a blank tenant", list(entry(" ", "notary", componentkeys.Hash("a")))},
+		{"no component", list(entry("demo", "", componentkeys.Hash("a")))},
 		{"the key itself", list(entry("demo", "notary", "notary-key"))},
-		{"an upper-case hash", list(entry("demo", "notary", strings.ToUpper(Hash("a"))))},
-		{"a short hash", list(entry("demo", "notary", Hash("a")[:63]))},
-		{"a shared key", list(entry("demo", "notary", Hash("a")), entry("solo", "notary", Hash("a")))},
-		{"a bad second entry", list(entry("demo", "notary", Hash("a")), entry("solo", "", Hash("b")))},
+		{"an upper-case hash", list(entry("demo", "notary", strings.ToUpper(componentkeys.Hash("a"))))},
+		{"a short hash", list(entry("demo", "notary", componentkeys.Hash("a")[:63]))},
+		{"a shared key", list(entry("demo", "notary", componentkeys.Hash("a")), entry("solo", "notary", componentkeys.Hash("a")))},
+		{"a bad second entry", list(entry("demo", "notary", componentkeys.Hash("a")), entry("solo", "", componentkeys.Hash("b")))},
 	}
 }
 
 // Keys are the keys a reader is asked to find.
-var Keys = []string{"", "notary-key", "scribe-key", Hash("notary-key"), "other"}
+var Keys = []string{"", "notary-key", "scribe-key", componentkeys.Hash("notary-key"), "other"}
 
 // Golden holds lines to testdata/name.txt, or writes it with -update-keys.
 func Golden(t *testing.T, name string, lines []string) {
@@ -147,7 +140,7 @@ func Follow(t *testing.T, follow func(ctx context.Context, path string, every ti
 		out = append(out, "holds "+probe())
 	}
 	loaded, refused, gone := `keys loaded"`, "WARN", "are gone"
-	two := `{"keys":[` + entry("demo", "notary", Hash("notary-key")) + "," + entry("solo", "scribe", Hash("scribe-key")) + `]}`
+	two := `{"keys":[` + entry("demo", "notary", componentkeys.Hash("notary-key")) + "," + entry("solo", "scribe", componentkeys.Hash("scribe-key")) + `]}`
 	step("no file", "")
 	write(two)
 	step("a list", loaded)
@@ -160,7 +153,7 @@ func Follow(t *testing.T, follow func(ctx context.Context, path string, every ti
 	}
 	step("the file gone", gone)
 	step("still gone", "")
-	write(`{"keys":[` + entry("demo", "notary", Hash("notary-key")) + `]}`)
+	write(`{"keys":[` + entry("demo", "notary", componentkeys.Hash("notary-key")) + `]}`)
 	step("a list again", loaded)
 	return out
 }

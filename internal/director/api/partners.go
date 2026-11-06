@@ -13,6 +13,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -50,7 +51,7 @@ const commissionerPrincipal = "component:"
 // component's key or a person allowed relation on obj.
 func (s *Server) commissioned(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		if holder := s.cfg.CommissionKeys.holder(guard.Bearer(r)); holder != nil {
+		if holder := s.cfg.CommissionKeys.Find(guard.Bearer(r)); holder != nil {
 			if c, ok := s.admitCommissioner(w, r, pattern, holder); ok {
 				h(w, r, c)
 			}
@@ -71,7 +72,7 @@ func (s *Server) admitCommissioner(w http.ResponseWriter, r *http.Request, patte
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return call{}, false
 	}
-	if !holder.may(tenant) {
+	if !slices.Contains(holder.Tenants, tenant) {
 		s.cfg.Log.WarnContext(ctx, "refused: a component's key was used for a tenant that does not name it",
 			"request_id", guard.ID(ctx), "route", pattern, "key_tenant", holder.Tenant, "key_component", holder.Component,
 			"tenant", tenant)

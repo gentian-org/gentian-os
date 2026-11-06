@@ -13,9 +13,7 @@ package controller
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"sort"
 
@@ -29,6 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 )
@@ -158,21 +158,6 @@ func rightsCheckEgress() networkingv1.NetworkPolicyEgressRule {
 	}
 }
 
-// bouncerChecker is one checker of the bouncer's table (internal/bouncer).
-type bouncerChecker struct {
-	Tenant    string               `json:"tenant"`
-	Component string               `json:"component"`
-	KeyHash   string               `json:"keyHash"`
-	Audit     *bouncerCheckerAudit `json:"audit,omitempty"`
-}
-
-// bouncerCheckerAudit is what an audit key's questions are asked against:
-// the cluster, and the realm of the platform tenant's people.
-type bouncerCheckerAudit struct {
-	Cluster string `json:"cluster"`
-	Realm   string `json:"realm"`
-}
-
 // wantsAuditCheck reports whether a profile asks the audit questions with its
 // key (requires.services.rights.audit). The schema holds the rights check to
 // platform trust; rightsCheckers holds the audit questions to the platform
@@ -188,12 +173,12 @@ func wantsAuditCheck(profile *gentianov1alpha1.ComponentProfile) bool {
 // the platform tenant whose profile asks the audit questions has them, asked
 // against audit; one of any other tenant asks the app question alone,
 // whatever its profile says.
-func rightsCheckers(ctx context.Context, c client.Reader, audit bouncerCheckerAudit) ([]bouncerChecker, error) {
-	keys, err := componentKeys(ctx, c, wantsRightsCheck)
+func rightsCheckers(ctx context.Context, c client.Reader, audit bouncer.CheckerAudit) ([]bouncer.Checker, error) {
+	keys, err := componentKeys(ctx, c, rightsCheckKeys, wantsRightsCheck)
 	if err != nil {
 		return nil, err
 	}
-	auditing, err := componentKeys(ctx, c, wantsAuditCheck)
+	auditing, err := componentKeys(ctx, c, rightsCheckKeys, wantsAuditCheck)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +188,9 @@ func rightsCheckers(ctx context.Context, c client.Reader, audit bouncerCheckerAu
 			audits[k.KeyHash] = true
 		}
 	}
-	var out []bouncerChecker
+	var out []bouncer.Checker
 	for _, k := range keys {
-		checker := bouncerChecker{Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash}
+		checker := bouncer.Checker{Key: componentkeys.Key{Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash}}
 		if audits[k.KeyHash] {
 			checker.Audit = &audit
 		}
@@ -213,6 +198,19 @@ func rightsCheckers(ctx context.Context, c client.Reader, audit bouncerCheckerAu
 	}
 	return out, nil
 }
+
+// keySecret is a kind of Secret a component's key is delivered in: the
+// label that finds them, the entry the key is in, and the Secret's name for a
+// component.
+type keySecret struct {
+	label string
+	key   string
+	name  func(component string) string
+}
+
+// rightsCheckKeys are the keys for the rights check, which the bouncer's
+// table, the registrar's list and the director's list are written from.
+var rightsCheckKeys = keySecret{label: rightsCheckerLabel, key: rightsCheckKeyKey, name: rightsCheckSecretName}
 
 // componentKey is one component that holds a key of its own, with the hash
 // of the key. The key itself never leaves the component's Secret.
@@ -222,20 +220,26 @@ type componentKey struct {
 	// Profile is the profile the component runs.
 	Profile string
 	KeyHash string
+
+	// holder is the component's tenant, profile the profile it runs and
+	// namespace its namespace.
+	holder    *gentianov1alpha1.Tenant
+	profile   *gentianov1alpha1.ComponentProfile
+	namespace string
 }
 
-// componentKeys are the components that hold a key and whose profile says,
-// now, that they want it for the purpose asked about. It is the one reading
-// of those Secrets: the bouncer's table and the registrar's list are both
-// written from it (rightsCheckers, vouchingKeys), each with its own wants.
+// componentKeys are the components that hold a key of the kind and whose
+// profile says, now, that they want it for the purpose asked about. It is
+// the one reading of those Secrets: every list of keys is written from it,
+// each with its own kind and wants.
 //
 // The label finds the candidates and decides nothing. An entry is written
 // only for a Secret in a tenant's namespace that a Component of that
 // namespace controls, and whose profile declares the requirement now. The
 // tenant is the namespace's, never something the Secret says about itself.
-func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1alpha1.ComponentProfile) bool) ([]componentKey, error) {
+func componentKeys(ctx context.Context, c client.Reader, kind keySecret, wants func(*gentianov1alpha1.ComponentProfile) bool) ([]componentKey, error) {
 	list := &corev1.SecretList{}
-	if err := c.List(ctx, list, client.MatchingLabels{rightsCheckerLabel: "true"}); err != nil {
+	if err := c.List(ctx, list, client.MatchingLabels{kind.label: "true"}); err != nil {
 		return nil, err
 	}
 	tenants := &gentianov1alpha1.TenantList{}
@@ -247,9 +251,9 @@ func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1a
 		secret := &list.Items[i]
 		holder := gentianov1alpha1.TenantInNamespace(tenants.Items, secret.Namespace)
 		owner := metav1.GetControllerOf(secret)
-		key := secret.Data[rightsCheckKeyKey]
+		key := secret.Data[kind.key]
 		if holder == nil || secret.DeletionTimestamp != nil || len(key) == 0 ||
-			owner == nil || owner.Kind != "Component" || secret.Name != rightsCheckSecretName(owner.Name) {
+			owner == nil || owner.Kind != "Component" || secret.Name != kind.name(owner.Name) {
 			continue
 		}
 		comp := &gentianov1alpha1.Component{}
@@ -272,9 +276,9 @@ func componentKeys(ctx context.Context, c client.Reader, wants func(*gentianov1a
 		if !wants(profile) {
 			continue
 		}
-		sum := sha256.Sum256(key)
 		out = append(out, componentKey{
-			Tenant: holder.Name, Component: comp.Name, Profile: profile.Name, KeyHash: hex.EncodeToString(sum[:]),
+			Tenant: holder.Name, Component: comp.Name, Profile: profile.Name, KeyHash: componentkeys.Hash(string(key)),
+			holder: holder, profile: profile, namespace: comp.Namespace,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

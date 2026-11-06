@@ -11,20 +11,14 @@ SPDX-License-Identifier: MPL-2.0
 package bouncer
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
-
-func keyHash(key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
 
 func checkFixture(t *testing.T) (*fakeStore, http.Handler) {
 	t.Helper()
@@ -46,9 +40,9 @@ func checkFixture(t *testing.T) (*fakeStore, http.Handler) {
 		"user:kernel/dana|can_read_evidence|tenant:acme":   true,
 	}}
 	table := &Table{Checkers: []Checker{
-		{Tenant: "acme", Component: "notary", KeyHash: keyHash("acme-key")},
-		{Tenant: "globex", Component: "notary", KeyHash: keyHash("globex-key")},
-		{Tenant: "platform", Component: "evidence", KeyHash: keyHash("platform-key"),
+		{Key: componentkeys.Key{Tenant: "acme", Component: "notary", KeyHash: componentkeys.Hash("acme-key")}},
+		{Key: componentkeys.Key{Tenant: "globex", Component: "notary", KeyHash: componentkeys.Hash("globex-key")}},
+		{Key: componentkeys.Key{Tenant: "platform", Component: "evidence", KeyHash: componentkeys.Hash("platform-key")},
 			Audit: &CheckerAudit{Cluster: "main", Realm: "kernel"}},
 	}}
 	return store, New(Options{Store: store, Table: table}).CheckHandler()
@@ -81,7 +75,7 @@ func TestCheckAnswersForTheCheckersOwnTenant(t *testing.T) {
 
 func TestCheckRefusesWhoeverHoldsNoKey(t *testing.T) {
 	store, h := checkFixture(t)
-	for _, key := range []string{"", "wrong", keyHash("acme-key")} {
+	for _, key := range []string{"", "wrong", componentkeys.Hash("acme-key")} {
 		if rec := ask(h, key, `{"person":"anna","app":"projects"}`); rec.Code != http.StatusUnauthorized {
 			t.Errorf("key %q: got %d, want 401", key, rec.Code)
 		}
@@ -191,22 +185,22 @@ func TestCheckFailsClosedAndTakesNoOtherMethod(t *testing.T) {
 
 func TestTableRefusesAMalformedChecker(t *testing.T) {
 	for name, entry := range map[string]string{
-		"no tenant":                          `{component: notary, keyHash: "` + keyHash("k") + `"}`,
+		"no tenant":                          `{component: notary, keyHash: "` + componentkeys.Hash("k") + `"}`,
 		"no hash":                            `{tenant: acme, component: notary}`,
 		"a plain key":                        `{tenant: acme, component: notary, keyHash: "acme-key"}`,
-		"audit with no realm":                `{tenant: platform, component: evidence, keyHash: "` + keyHash("k") + `", audit: {cluster: main}}`,
-		"audit with no cluster":              `{tenant: platform, component: evidence, keyHash: "` + keyHash("k") + `", audit: {realm: kernel}}`,
-		"audit of a cluster that is no name": `{tenant: platform, component: evidence, keyHash: "` + keyHash("k") + `", audit: {cluster: "a:b", realm: kernel}}`,
+		"audit with no realm":                `{tenant: platform, component: evidence, keyHash: "` + componentkeys.Hash("k") + `", audit: {cluster: main}}`,
+		"audit with no cluster":              `{tenant: platform, component: evidence, keyHash: "` + componentkeys.Hash("k") + `", audit: {realm: kernel}}`,
+		"audit of a cluster that is no name": `{tenant: platform, component: evidence, keyHash: "` + componentkeys.Hash("k") + `", audit: {cluster: "a:b", realm: kernel}}`,
 	} {
 		if _, err := ParseTable([]byte("checkers: [" + entry + "]")); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	shared := `{tenant: acme, component: a, keyHash: "` + keyHash("k") + `"}, {tenant: globex, component: b, keyHash: "` + keyHash("k") + `"}`
+	shared := `{tenant: acme, component: a, keyHash: "` + componentkeys.Hash("k") + `"}, {tenant: globex, component: b, keyHash: "` + componentkeys.Hash("k") + `"}`
 	if _, err := ParseTable([]byte("checkers: [" + shared + "]")); err == nil {
 		t.Error("two tenants sharing one key: accepted")
 	}
-	table, err := ParseTable([]byte(`checkers: [{tenant: acme, component: notary, keyHash: "` + keyHash("k") + `"}]`))
+	table, err := ParseTable([]byte(`checkers: [{tenant: acme, component: notary, keyHash: "` + componentkeys.Hash("k") + `"}]`))
 	if err != nil || table.checker("k") == nil || table.checker("other") != nil {
 		t.Fatalf("a well-formed checker: %v", err)
 	}

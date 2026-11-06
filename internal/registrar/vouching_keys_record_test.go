@@ -11,9 +11,12 @@ SPDX-License-Identifier: MPL-2.0
 package registrar
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/componentkeys/keystest"
 )
@@ -40,19 +43,21 @@ func TestVouchingKeysTranscript(t *testing.T) {
 		held.Set(keys)
 		out = append(out, fmt.Sprintf("  len %d", held.Len()))
 		for _, k := range keystest.Keys {
-			out = append(out, fmt.Sprintf("  find %q: %s", k, describeVouching(held.holder(k))))
+			out = append(out, fmt.Sprintf("  find %q: %s", k, describeVouching(held.Find(k))))
 		}
 	}
 	var none *VouchingKeys
-	out = append(out, fmt.Sprintf("nil list: len %d, finds %s", none.Len(), describeVouching(none.holder("notary-key"))))
+	out = append(out, fmt.Sprintf("nil list: len %d, finds %s", none.Len(), describeVouching(none.Find("notary-key"))))
 	unset := &VouchingKeys{}
-	out = append(out, fmt.Sprintf("unset list: len %d, finds %s", unset.Len(), describeVouching(unset.holder("notary-key"))))
+	out = append(out, fmt.Sprintf("unset list: len %d, finds %s", unset.Len(), describeVouching(unset.Find("notary-key"))))
 
 	held := &VouchingKeys{}
-	out = append(out, keystest.Follow(t, held.Follow, vouchingEntry, func() string {
+	out = append(out, keystest.Follow(t, func(ctx context.Context, path string, every time.Duration, log *slog.Logger) {
+		held.Follow(ctx, path, every, log, VouchingKeysList)
+	}, vouchingEntry, func() string {
 		found := []string{fmt.Sprintf("len %d", held.Len())}
 		for _, k := range keystest.Keys {
-			found = append(found, describeVouching(held.holder(k)))
+			found = append(found, describeVouching(held.Find(k)))
 		}
 		return strings.Join(found, "; ")
 	})...)

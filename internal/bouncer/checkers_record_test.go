@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/componentkeys/keystest"
 )
 
@@ -36,7 +37,7 @@ func describeChecker(c *Checker) string {
 // held to testdata/checkers.txt.
 func TestCheckersTranscript(t *testing.T) {
 	audited := func(audit string) string {
-		return `{"routes":[],"checkers":[{"tenant":"platform","component":"evidence","keyHash":"` + keystest.Hash("notary-key") + `","audit":` + audit + `}]}`
+		return `{"routes":[],"checkers":[{"tenant":"platform","component":"evidence","keyHash":"` + componentkeys.Hash("notary-key") + `","audit":` + audit + `}]}`
 	}
 	cases := [][2]string{}
 	for _, c := range keystest.Lists(checkerEntry) {
@@ -47,8 +48,8 @@ func TestCheckersTranscript(t *testing.T) {
 		[2]string{"an audit without a cluster", audited(`{"realm":"kernel"}`)},
 		[2]string{"an audit with a slash in the cluster", audited(`{"cluster":"ma/in","realm":"kernel"}`)},
 		[2]string{"an audit without a realm", audited(`{"cluster":"main"}`)},
-		[2]string{"a shared key and a bad audit", `{"routes":[],"checkers":[` + checkerEntry("demo", "notary", keystest.Hash("a")) +
-			`,{"tenant":"platform","component":"evidence","keyHash":"` + keystest.Hash("a") + `","audit":{}}]}`},
+		[2]string{"a shared key and a bad audit", `{"routes":[],"checkers":[` + checkerEntry("demo", "notary", componentkeys.Hash("a")) +
+			`,{"tenant":"platform","component":"evidence","keyHash":"` + componentkeys.Hash("a") + `","audit":{}}]}`},
 	)
 	var out []string
 	for _, c := range cases {

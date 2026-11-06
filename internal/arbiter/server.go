@@ -26,8 +26,6 @@ package arbiter
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +35,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/openfga"
 	"github.com/openfga/language/pkg/go/transformer"
 	"golang.org/x/time/rate"
@@ -237,8 +236,7 @@ func (s *Server) call(h handler) http.HandlerFunc {
 			writeRefusal(w, &refusal{status: http.StatusUnauthorized, code: "unauthenticated", message: "a key is required"})
 			return
 		}
-		sum := sha256.Sum256([]byte(key))
-		hash := hex.EncodeToString(sum[:])
+		hash := componentkeys.Hash(key)
 		e, known := s.table.Load().byHash[hash]
 		if !known {
 			writeRefusal(w, &refusal{status: http.StatusUnauthorized, code: "unauthenticated", message: "the key opens no store"})

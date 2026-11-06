@@ -11,9 +11,13 @@ SPDX-License-Identifier: MPL-2.0
 package api
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/componentkeys/keystest"
 )
@@ -26,7 +30,7 @@ func describeCommission(k *CommissionKey) string {
 	if k == nil {
 		return "none"
 	}
-	return fmt.Sprintf("%s/%s may demo=%v other=%v", k.Tenant, k.Component, k.may("demo"), k.may("other"))
+	return fmt.Sprintf("%s/%s may demo=%v other=%v", k.Tenant, k.Component, slices.Contains(k.Tenants, "demo"), slices.Contains(k.Tenants, "other"))
 }
 
 // What the director does with the operator's list of commission keys,
@@ -39,18 +43,20 @@ func TestCommissionKeysTranscript(t *testing.T) {
 		held := &CommissionKeys{}
 		held.Set(keys)
 		for _, k := range keystest.Keys {
-			out = append(out, fmt.Sprintf("  find %q: %s", k, describeCommission(held.holder(k))))
+			out = append(out, fmt.Sprintf("  find %q: %s", k, describeCommission(held.Find(k))))
 		}
 	}
 	var none *CommissionKeys
-	out = append(out, "nil list finds: "+describeCommission(none.holder("notary-key")))
-	out = append(out, "unset list finds: "+describeCommission((&CommissionKeys{}).holder("notary-key")))
+	out = append(out, "nil list finds: "+describeCommission(none.Find("notary-key")))
+	out = append(out, "unset list finds: "+describeCommission((&CommissionKeys{}).Find("notary-key")))
 
 	held := &CommissionKeys{}
-	out = append(out, keystest.Follow(t, held.Follow, commissionEntry, func() string {
+	out = append(out, keystest.Follow(t, func(ctx context.Context, path string, every time.Duration, log *slog.Logger) {
+		held.Follow(ctx, path, every, log, CommissionKeysList)
+	}, commissionEntry, func() string {
 		var found []string
 		for _, k := range keystest.Keys {
-			found = append(found, describeCommission(held.holder(k)))
+			found = append(found, describeCommission(held.Find(k)))
 		}
 		return strings.Join(found, "; ")
 	})...)
