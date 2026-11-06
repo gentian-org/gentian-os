@@ -5,6 +5,40 @@ type: overview
 
 # FAQ
 
+## What does it run on?
+
+A Kubernetes cluster, version 1.33 or newer: your own servers or any
+provider. Traffic reaches it through a Cloudflare Tunnel, the default, or at a
+fixed IP address of its own, which its own mail server needs. The services it
+builds on are other projects' software under their own licenses (Keycloak,
+OpenFGA, OpenBao, PostgreSQL, SeaweedFS, Envoy Gateway, Argo CD, Crossplane),
+each pinned to the release. [GETTING-STARTED.md](../../GETTING-STARTED.md)
+lists what a cluster needs before the installer runs;
+[versions.md](../reference/versions.md) lists the pins.
+
+## Where do the apps come from?
+
+A catalog: an https address serving an index and one bundle per app.
+gentian-apps is the open-source one. Anyone may publish another, and a
+cluster or a tenant adds it by its address; nothing copies a catalog into a
+cluster ahead of an install. [custom-catalogs.md](../guides/custom-catalogs.md)
+has the format and a worked example.
+
+## How do I contribute?
+
+Open a pull request on GitHub and sign off each commit with `git commit -s`,
+which states the Developer Certificate of Origin. There is no contributor
+agreement and no copyright to assign: a contribution is licensed under the
+license of the files it touches, and you keep the copyright in what you
+write. [CONTRIBUTING.md](../../CONTRIBUTING.md) has the process,
+[LICENSING.md](../../LICENSING.md) the licenses.
+
+## What state is it in?
+
+Early, and in the open. Releases are tagged in gentian-os and described under
+[releases](../releases/v0.4.md); the issues say what the code still lacks.
+Read both before you depend on it.
+
 ## Is the StorageClass configurable?
 
 Yes. Gentian requires at least one default StorageClass in the cluster, and you
