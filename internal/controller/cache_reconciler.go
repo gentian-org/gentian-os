@@ -294,7 +294,7 @@ func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 		Name:            name,
 		Image:           kernel.RedisProvisionerImage(),
 		Command:         []string{"/bin/sh", "-c", script},
-		SecurityContext: provisioningSecurityContext(),
+		SecurityContext: meta.RestrictedContainer(),
 		// The admin connection by the inventory's one block, then the
 		// per-user values as safe literals.
 		Env: append(backup.CacheAdminEnv(),

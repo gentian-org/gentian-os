@@ -561,22 +561,17 @@ type ObjectStorageOptions struct {
 // ObjectStorageProvisionContainerWith is ObjectStorageProvisionContainer
 // with the profile's options.
 func ObjectStorageProvisionContainerWith(name, bucket, keySecret string, opts ObjectStorageOptions) corev1.Container {
-	no := false
 	yes := true
 	user := objectStoreUser
+	sc := meta.RestrictedContainer()
+	sc.RunAsNonRoot, sc.RunAsUser = &yes, &user
 	c := corev1.Container{
-		Name:    name,
-		Image:   kernel.SeaweedFSImage(),
-		Command: []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket, opts)},
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: &no,
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-			RunAsNonRoot:             &yes,
-			RunAsUser:                &user,
-		},
-		Env:          append(objectStoreShellEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
-		VolumeMounts: []corev1.VolumeMount{objectStoreClientTLSMount()},
+		Name:            name,
+		Image:           kernel.SeaweedFSImage(),
+		Command:         []string{"/bin/sh", "-c", objectStorageProvisionScript(bucket, opts)},
+		SecurityContext: sc,
+		Env:             append(objectStoreShellEnv(), corev1.EnvVar{Name: "BUCKET_NAME", Value: bucket}),
+		VolumeMounts:    []corev1.VolumeMount{objectStoreClientTLSMount()},
 	}
 	if keySecret != "" {
 		c.Env = append(c.Env,
@@ -1010,12 +1005,7 @@ func destroyJob(namespace, name, tenantName, app string, deadline DestroyDeadlin
 	ttl := meta.ProvisioningJobTTLSeconds
 	seconds := int64(deadline)
 	backoff := int32(1)
-	no := false
-	container.SecurityContext = &corev1.SecurityContext{
-		AllowPrivilegeEscalation: &no,
-		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-	}
+	container.SecurityContext = meta.RestrictedContainer()
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

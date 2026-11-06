@@ -1,0 +1,20 @@
+cache destroy: d7a6ebda1780ee72
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
+hardened, already set: 6b4d1a5c1f7e484f
+  [0].securityContext {"allowPrivilegeEscalation":false,"privileged":false,"seccompProfile":{"type":"RuntimeDefault"}}
+hardened, empty: 1289abc8b585a9e7
+  [0].securityContext {"allowPrivilegeEscalation":false,"seccompProfile":{"type":"RuntimeDefault"}}
+mail: 8450931431974b12
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":1000,"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
+mailbox destroy: 7a06b0d88658d582
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":1000,"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
+object storage destroy: aee3d66b14b8a46f
+  .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
+object storage provision: 03ba304cba3c1a52
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
+storage tools: 4a13d5acb47e131d
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
+tools: 963a1525a1d1183c
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
+volume tools: 929615f77ca4bbf0
+  .securityContext {"allowPrivilegeEscalation":false,"runAsGroup":0,"runAsUser":0,"seccompProfile":{"type":"RuntimeDefault"}}

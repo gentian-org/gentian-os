@@ -2,6 +2,14 @@
 # only matters for `helm template` run by hand.
 env: dev
 
+# The upstream chart's pin, from versions.yaml (versions.postfix), which the
+# mail ApplicationSet passes in. Never set by hand; the empty entries are the
+# pins the templates read.
+versions:
+  postfix:
+    chart: ""
+    repo: ""
+
 # The namespace the kernel mail stack runs in.
 #
 # This MUST match where the operator addresses mail (layout.System("mail")).

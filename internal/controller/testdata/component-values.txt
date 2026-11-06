@@ -1,0 +1,42 @@
+both, no operator values, placed=false: claim: has=true config={"extraValues":{"a":{"c":"own"}},"replicas":3}
+both, no operator values, placed=false: render input: replicas=3 values={"a":{"c":"own"}} <nil>
+both, no operator values, placed=true: render input: replicas=nil values=null <nil>
+both, operator values, placed=false: claim: has=true config={"extraValues":{"a":{"c":"operator","d":4},"e":5},"replicas":3}
+both, operator values, placed=false: render input: replicas=3 values={"a":{"c":"operator","d":4},"e":5} int64
+both, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+empty values, no operator values, placed=false: claim: has=false config=null
+empty values, no operator values, placed=false: render input: replicas=nil values=null <nil>
+empty values, no operator values, placed=true: render input: replicas=nil values=null <nil>
+empty values, operator values, placed=false: claim: has=true config={"extraValues":{"a":{"c":"operator","d":4},"e":5}}
+empty values, operator values, placed=false: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+empty values, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+empty, no operator values, placed=false: claim: has=false config=null
+empty, no operator values, placed=false: render input: replicas=nil values=null <nil>
+empty, no operator values, placed=true: render input: replicas=nil values=null <nil>
+empty, operator values, placed=false: claim: has=true config={"extraValues":{"a":{"c":"operator","d":4},"e":5}}
+empty, operator values, placed=false: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+empty, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+none, no operator values, placed=false: claim: has=false config=null
+none, no operator values, placed=false: render input: replicas=nil values=null <nil>
+none, no operator values, placed=true: render input: replicas=nil values=null <nil>
+none, operator values, placed=false: claim: has=true config={"extraValues":{"a":{"c":"operator","d":4},"e":5}}
+none, operator values, placed=false: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+none, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+not an object, no operator values, placed=false: claim: config.extraValues is not an object: json: cannot unmarshal array into Go value of type map[string]interface {}
+not an object, no operator values, placed=false: render input: config.extraValues is not an object: json: cannot unmarshal array into Go value of type map[string]interface {}
+not an object, no operator values, placed=true: render input: replicas=nil values=null <nil>
+not an object, operator values, placed=false: claim: config.extraValues is not an object: json: cannot unmarshal array into Go value of type map[string]interface {}
+not an object, operator values, placed=false: render input: config.extraValues is not an object: json: cannot unmarshal array into Go value of type map[string]interface {}
+not an object, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+replicas, no operator values, placed=false: claim: has=true config={"replicas":3}
+replicas, no operator values, placed=false: render input: replicas=3 values=null <nil>
+replicas, no operator values, placed=true: render input: replicas=nil values=null <nil>
+replicas, operator values, placed=false: claim: has=true config={"extraValues":{"a":{"c":"operator","d":4},"e":5},"replicas":3}
+replicas, operator values, placed=false: render input: replicas=3 values={"a":{"c":"operator","d":4},"e":5} int64
+replicas, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64
+values, no operator values, placed=false: claim: has=true config={"extraValues":{"a":{"b":1,"c":"own"},"n":2}}
+values, no operator values, placed=false: render input: replicas=nil values={"a":{"b":1,"c":"own"},"n":2} <nil>
+values, no operator values, placed=true: render input: replicas=nil values=null <nil>
+values, operator values, placed=false: claim: has=true config={"extraValues":{"a":{"b":1,"c":"operator","d":4},"e":5,"n":2}}
+values, operator values, placed=false: render input: replicas=nil values={"a":{"b":1,"c":"operator","d":4},"e":5,"n":2} int64
+values, operator values, placed=true: render input: replicas=nil values={"a":{"c":"operator","d":4},"e":5} int64

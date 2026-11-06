@@ -292,6 +292,7 @@ func main() {
 		ClusterID:                os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
+		MailAliases:              os.Getenv("MAIL_ALIASES"),
 		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),

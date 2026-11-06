@@ -12,7 +12,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -21,7 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -172,40 +170,20 @@ func (r *ComponentReconciler) ensureAppClaim(
 	if len(ids) > 0 {
 		spec["addons"] = toInterfaceSlice(ids)
 	}
-	config := map[string]interface{}{}
-	values := map[string]interface{}{}
-	if cfg := comp.Spec.Config; cfg != nil {
-		if cfg.Replicas != nil {
-			config["replicas"] = int64(*cfg.Replicas)
-		}
-		if cfg.ExtraValues != nil && len(cfg.ExtraValues.Raw) > 0 {
-			if err := decodeJSONObject(cfg.ExtraValues.Raw, &values); err != nil {
-				return false, "", fmt.Errorf("config.extraValues is not an object: %w", err)
-			}
-		}
-	}
 	// What the operator tells the chart (the platform's facts its profile
 	// mapped, its placement, the model gateway) travels in the same values
 	// the Composition lays over the profile's, and over the component's own:
-	// the facts are the operator's to know, not a tenant's to override. A
-	// chart delivered this way got none of them before, and one that needs
-	// them could not start.
-	if len(operatorValues) > 0 {
-		mergeValues(values, operatorValues)
+	// the facts are the operator's to know, not a tenant's to override.
+	replicas, values, valuesErr := componentValues(comp.Spec.Config, operatorValues)
+	if valuesErr != nil {
+		return false, "", valuesErr
 	}
-	if len(values) > 0 {
-		// Through JSON, so the claim holds only what the API server would
-		// give back: an int read back as int64 would otherwise differ from
-		// the int written, and the claim be patched on every pass.
-		raw, err := json.Marshal(values)
-		if err != nil {
-			return false, "", fmt.Errorf("claim values: %w", err)
-		}
-		normalised := map[string]interface{}{}
-		if err := utiljson.Unmarshal(raw, &normalised); err != nil {
-			return false, "", fmt.Errorf("claim values: %w", err)
-		}
-		config["extraValues"] = normalised
+	config := map[string]interface{}{}
+	if replicas != nil {
+		config["replicas"] = *replicas
+	}
+	if values != nil {
+		config["extraValues"] = values
 	}
 	if len(config) > 0 {
 		spec["config"] = config
