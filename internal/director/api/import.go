@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,7 +26,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/guard"
+	"github.com/gentian-org/gentian-os/internal/httpbody"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -174,7 +177,21 @@ func (s *Server) uploadBundle(w http.ResponseWriter, r *http.Request, _ call) {
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}
-	status, body, err := s.cfg.Lifecycle.Upload(r.Context(), path, r.Header.Get("Content-Type"), r.Body)
+	// The body is handed on without its Close: the transport closes what it
+	// sends, and a closed body could not be drained below.
+	status, body, err := s.cfg.Lifecycle.Upload(r.Context(), path, r.Header.Get("Content-Type"), struct{ io.Reader }{r.Body})
+	if err != nil || status < 200 || status > 299 {
+		// The operator answered -- or the connection to it broke -- before
+		// the sender finished sending: what is left is read before the
+		// answer, or the sender sees only a reset (httpbody.Drain).
+		drained, ended := httpbody.Drain(w, r, httpbody.DrainWindow)
+		reason := lifecycle.ErrorMessage(body)
+		if err != nil {
+			reason = err.Error()
+		}
+		s.cfg.Log.WarnContext(r.Context(), "bundle upload refused", "request_id", guard.ID(r.Context()),
+			"status", status, "reason", reason, "into", r.URL.Query().Get("into"), "discarded", drained, "bodyEnded", ended)
+	}
 	if err != nil {
 		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 		return

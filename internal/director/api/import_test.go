@@ -11,11 +11,14 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -915,5 +918,52 @@ func TestAnImportedBundleIsRemovedOnRequest(t *testing.T) {
 
 	if code, _ := h.do(t, "DELETE", "/v1/clusters/"+dt.Cluster+"/bundles/in-use-0", alice, ""); code != http.StatusConflict {
 		t.Errorf("a bundle in use: %d, want 409", code)
+	}
+}
+
+// refusingOperator refuses an upload after its first kibibyte, as the
+// operator does when the import storage is full.
+type refusingOperator struct{ importingOperator }
+
+func (o *refusingOperator) Upload(_ context.Context, _, _ string, body io.Reader) (int, []byte, error) {
+	_, _ = io.CopyN(io.Discard, body, 1<<10)
+	return http.StatusBadGateway, []byte(`{"error":"the import storage did not store the file: no writable volumes"}`), nil
+}
+
+// An upload the operator refuses part-way reaches its sender as the
+// operator's status and reason -- the sender sends the whole body before it
+// reads the answer -- and not as a reset of the connection.
+func TestAnUploadRefusedPartWayReachesTheSender(t *testing.T) {
+	op := &refusingOperator{}
+	h := startWith(t, op)
+	alice := h.token(t, "gentian", "alice")
+	srv := httptest.NewServer(h.server())
+	t.Cleanup(srv.Close)
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	body := bytes.Repeat([]byte("x"), 32<<20)
+	head := fmt.Sprintf("POST /v1/clusters/%s/bundles HTTP/1.1\r\nHost: director\r\nAuthorization: Bearer %s\r\n"+
+		"Content-Type: application/x-tar\r\nContent-Length: %d\r\n\r\n", dt.Cluster, alice, len(body))
+	if _, err := io.WriteString(conn, head); err != nil {
+		t.Fatal(err)
+	}
+	for rest := body; len(rest) > 0; rest = rest[min(len(rest), 64<<10):] {
+		if _, err := conn.Write(rest[:min(len(rest), 64<<10)]); err != nil {
+			t.Fatalf("the sender saw %v, not the refusal", err)
+		}
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("the answer was lost: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	answer, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(answer), "no writable volumes") {
+		t.Fatalf("answer = %d %s", resp.StatusCode, answer)
 	}
 }
