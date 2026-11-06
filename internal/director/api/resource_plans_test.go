@@ -27,22 +27,27 @@ import (
 
 type planOperator struct {
 	*httptest.Server
-	on   map[string]string // tenant -> plan
+	on   map[string]string            // tenant -> plan
+	used map[string]map[string]string // tenant -> resource -> used
 	down bool
 }
 
 func startPlanOperator(t *testing.T) *planOperator {
 	t.Helper()
-	op := &planOperator{on: map[string]string{}}
+	op := &planOperator{on: map[string]string{}, used: map[string]map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/resources", func(w http.ResponseWriter, _ *http.Request) {
 		if op.down {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		tenants := []map[string]string{}
+		tenants := []map[string]any{}
 		for tenant, plan := range op.on {
-			tenants = append(tenants, map[string]string{"tenant": tenant, "plan": plan})
+			quota := []map[string]string{}
+			for res, used := range op.used[tenant] {
+				quota = append(quota, map[string]string{"resource": res, "used": used, "hard": used})
+			}
+			tenants = append(tenants, map[string]any{"tenant": tenant, "plan": plan, "quota": quota})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"tenants": tenants, "unavailable": []any{}})
 	})
@@ -166,26 +171,49 @@ func TestTheCatalogKeepsOneDefaultAndATierPerPlan(t *testing.T) {
 	}
 }
 
-func TestAPlansQuotasDoNotChangeUnderTheTenantsOnIt(t *testing.T) {
+// A plan is edited in place, tenants and all: the tenants on it get its new
+// quotas in the same commit as the plan, so none is left on a ceiling that is
+// no longer the plan's. Not under a tenant whose usage the new quotas do not
+// hold, and not blind.
+func TestAPlanIsEditedInPlaceWithTheTenantsOnIt(t *testing.T) {
 	h, op := startWithPlans(t)
 	alice := h.token(t, "gentian", "alice")
-	for name, body := range map[string]string{"base": basePlan} {
-		if code, _ := h.do(t, http.MethodPut, plansPath+"/"+name, alice, body); code != http.StatusAccepted {
-			t.Fatal("seed")
-		}
+	if code, _ := h.do(t, http.MethodPut, plansPath+"/base", alice, basePlan); code != http.StatusAccepted {
+		t.Fatal("seed base")
 	}
 	if code, _ := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, twoNodes); code != http.StatusAccepted {
 		t.Fatal("seed nodes-2")
 	}
 	op.on["demo"] = "nodes-2"
-	bigger := strings.Replace(twoNodes, `"requestsCpu":"8"`, `"requestsCpu":"10"`, 1)
+	op.used["demo"] = map[string]string{"requests.cpu": "6", "requests.memory": "20Gi"}
 
+	// Larger: the plan and demo's copy of it change in one commit.
+	bigger := strings.Replace(twoNodes, `"requestsCpu":"8"`, `"requestsCpu":"10"`, 1)
+	before := h.tip(t)
 	code, body := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, bigger)
-	if code != http.StatusConflict || !strings.Contains(body["error"].(string), "tenant demo") {
-		t.Fatalf("quotas changed under a tenant: %d %v", code, body)
+	if code != http.StatusAccepted || h.tip(t) == before {
+		t.Fatalf("a plan edited with a tenant on it: %d %v", code, body)
 	}
-	// What a plan is called, its SKU and whether it is offered may change.
-	retired := strings.Replace(twoNodes, `"tier":10`, `"tier":10,"retired":true`, 1)
+	changed := dt.Git(t, "", "--git-dir", h.remote, "show", "--name-only", "--format=%s", "main")
+	for _, want := range []string{"resource-plans/nodes-2.yaml", "tenants/demo/resource-plan.yaml", "and the quotas of tenant demo with it"} {
+		if !strings.Contains(changed, want) {
+			t.Fatalf("the commit is missing %q:\n%s", want, changed)
+		}
+	}
+	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/resource-plan.yaml")
+	if !strings.Contains(patch, "resource-plan: nodes-2") || !strings.Contains(patch, `requestsCpu: "10"`) {
+		t.Fatalf("demo's copy of the plan:\n%s", patch)
+	}
+
+	// Smaller than what demo uses: refused, naming demo and what does not fit.
+	smaller := strings.Replace(twoNodes, `"requestsMemory":"32Gi"`, `"requestsMemory":"16Gi"`, 1)
+	code, body = h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, smaller)
+	if code != http.StatusConflict || !strings.Contains(body["error"].(string), "demo") || !strings.Contains(body["error"].(string), "requests.memory") {
+		t.Fatalf("a plan shrunk under a tenant's usage: %d %v", code, body)
+	}
+
+	// What a plan is called, its SKU and whether it is offered change alone.
+	retired := strings.Replace(bigger, `"tier":10`, `"tier":10,"retired":true`, 1)
 	if code, body := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, retired); code != http.StatusAccepted {
 		t.Fatalf("retiring a plan in use: %d %v", code, body)
 	}
@@ -196,12 +224,12 @@ func TestAPlansQuotasDoNotChangeUnderTheTenantsOnIt(t *testing.T) {
 
 	// Not knowing who is on it is not nobody.
 	op.down = true
-	if code, body := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, bigger); code != http.StatusServiceUnavailable {
+	if code, body := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, twoNodes); code != http.StatusServiceUnavailable {
 		t.Fatalf("quotas changed blind: %d %v", code, body)
 	}
 	op.down = false
 	delete(op.on, "demo")
-	if code, body := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, bigger); code != http.StatusAccepted {
+	if code, body := h.do(t, http.MethodPut, plansPath+"/nodes-2", alice, twoNodes); code != http.StatusAccepted {
 		t.Fatalf("quotas of a plan nobody is on: %d %v", code, body)
 	}
 }

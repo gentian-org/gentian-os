@@ -19,9 +19,13 @@ import (
 	"sort"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/guard"
+	"github.com/gentian-org/gentian-os/internal/resourceplan"
 )
 
 // The cluster's resource plans: reading them, and changing them.
@@ -29,11 +33,11 @@ import (
 // The plans are files in git (gitops/resource_plans.go), written here for
 // whoever may configure the cluster. Two rules need to know which tenant is
 // on which plan, which is the operator's answer, not git's: a plan's
-// quantities do not change under the tenants on it, because each of them
-// holds a copy in its resource-plan.yaml and would be left on a ceiling that
-// is no longer the plan's; and a plan a tenant is on is not removed. When the
-// operator cannot be asked, a change those rules decide is refused rather
-// than made blind.
+// quantities change with the copies the tenants on it hold in their
+// resource-plan.yaml, in one commit, and only where each tenant's usage fits
+// under them; and a plan a tenant is on is not removed. When the operator
+// cannot be asked, a change those rules decide is refused rather than made
+// blind.
 
 // planTenants is the operator's answer to who is on which plan: the plan a
 // tenant's quotas match, and the plan it was last set to, which differ when
@@ -79,6 +83,43 @@ func (s *Server) planTenants(ctx context.Context) (map[string][]string, error) {
 	}
 	for p := range out {
 		sort.Strings(out[p])
+	}
+	return out, nil
+}
+
+// tenantUsage is what each tenant uses of its ceiling, as the operator reads
+// it from the tenant's ResourceQuota: the usage a plan's new quotas must hold.
+func (s *Server) tenantUsage(ctx context.Context) (map[string]corev1.ResourceList, error) {
+	if s.cfg.Lifecycle == nil {
+		return nil, errors.New("no app-lifecycle API is configured")
+	}
+	status, body, err := s.cfg.Lifecycle.Get(ctx, "/v1/resources", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("app-lifecycle API answered %d", status)
+	}
+	var answer struct {
+		Tenants []struct {
+			Tenant string                  `json:"tenant"`
+			Quota  []resourceplan.Headroom `json:"quota"`
+		} `json:"tenants"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return nil, fmt.Errorf("app-lifecycle API: resources: %w", err)
+	}
+	out := map[string]corev1.ResourceList{}
+	for _, t := range answer.Tenants {
+		used := corev1.ResourceList{}
+		for _, h := range t.Quota {
+			q, err := resource.ParseQuantity(h.Used)
+			if err != nil {
+				return nil, fmt.Errorf("app-lifecycle API: tenant %s uses %q of %s: %w", t.Tenant, h.Used, h.Resource, err)
+			}
+			used[corev1.ResourceName(h.Resource)] = q
+		}
+		out[t.Tenant] = used
 	}
 	return out, nil
 }
@@ -154,6 +195,10 @@ func (s *Server) setClusterResourcePlan(w http.ResponseWriter, r *http.Request, 
 		s.fail(w, r, http.StatusConflict, "the cluster's first plan is its default")
 		return
 	}
+	// A plan is edited in place, tenants and all: the tenants on it get its
+	// new quotas in the same commit. Not under one whose usage the new
+	// quotas do not hold -- the same rule as a move to a smaller plan.
+	var on []string
 	if existing != nil && !gitops.SameQuotas(existing.Quotas, body.Quotas) {
 		tenants, err := s.planTenants(r.Context())
 		if err != nil {
@@ -162,19 +207,36 @@ func (s *Server) setClusterResourcePlan(w http.ResponseWriter, r *http.Request, 
 			s.fail(w, r, http.StatusServiceUnavailable, "which tenants are on this plan could not be read from the operator; its quotas are not changed blind")
 			return
 		}
-		if on := tenants[body.Name]; len(on) > 0 {
-			s.fail(w, r, http.StatusConflict, fmt.Sprintf(
-				"%s is on this plan, so its quotas cannot change: make a new plan with these quotas and move the tenants to it", namesOf(on)))
-			return
+		on = tenants[body.Name]
+		if len(on) > 0 {
+			used, err := s.tenantUsage(r.Context())
+			if err != nil {
+				s.cfg.Log.WarnContext(r.Context(), "plan change refused: what its tenants use is unknown",
+					"request_id", guard.ID(r.Context()), "plan", body.Name, "error", err.Error())
+				s.fail(w, r, http.StatusServiceUnavailable, "what the tenants on this plan use could not be read from the operator; its quotas are not changed blind")
+				return
+			}
+			changed := &gentianov1alpha1.ResourcePlan{}
+			changed.Name = body.Name
+			changed.Spec.Quotas = *gitops.TenantQuotasOf(body.Quotas)
+			for _, tenant := range on {
+				if err := resourceplan.CheckFit(changed, used[tenant]); err != nil {
+					s.fail(w, r, http.StatusConflict, fmt.Sprintf("%s does not fit under these quotas: %s", tenant, err.Error()))
+					return
+				}
+			}
 		}
 	}
 
-	writes := []gitops.PlanWrite{{Plan: body}}
+	writes := []gitops.PlanWrite{{Plan: body, Tenants: on}}
 	verb := "Add"
 	if existing != nil {
 		verb = "Change"
 	}
 	message := fmt.Sprintf("%s resource plan %s", verb, body.Name)
+	if len(on) > 0 {
+		message += fmt.Sprintf(", and the quotas of %s with it", namesOf(on))
+	}
 	if body.Default && currentDefault != nil {
 		moved := *currentDefault
 		moved.Default = false
