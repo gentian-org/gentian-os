@@ -22,6 +22,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
+	"github.com/gentian-org/gentian-os/internal/tokenreview"
 )
 
 // router is what the route registrars take, so the guard cannot be forgotten
@@ -115,16 +116,16 @@ func (h *HTTPServer) authenticated(next http.HandlerFunc, reader bool) http.Hand
 			writeErr(w, http.StatusUnauthorized, errors.New("this API is the director's and the usher's; present a ServiceAccount token of theirs"))
 			return
 		}
-		username, err := h.Auth.identify(r.Context(), presented)
+		username, err := h.Auth.review.Identify(r.Context(), presented)
 		callers := h.Auth.callers
 		switch {
-		case errors.Is(err, errNotAuthenticated):
+		case errors.Is(err, tokenreview.ErrNotAuthenticated):
 			writeErr(w, http.StatusUnauthorized, errors.New("this API is the director's and the usher's; the token presented is not a valid one for it"))
 			return
 		case err != nil:
 			// The API server could not be asked. Refused, not admitted: the
 			// alternative is a listener that opens when the control plane is
-			// unwell. The error names no token; identify never puts one in.
+			// unwell. The error names no token; Identify never puts one in.
 			ctrllog.FromContext(r.Context()).WithName("app-lifecycle").Error(err, "a caller could not be identified and was refused")
 			writeErr(w, http.StatusServiceUnavailable, errors.New("the caller could not be identified: the API server did not answer"))
 			return

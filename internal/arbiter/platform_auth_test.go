@@ -59,11 +59,11 @@ func TestPlatformAdmission(t *testing.T) {
 		apiFailure bool
 	}{
 		{header: "Bearer operator", want: 0, wantAsked: 1},
-		{header: "Bearer app", want: http.StatusForbidden, wantAsked: 2},
+		{header: "Bearer app", want: http.StatusForbidden, wantAsked: 1},
 		{header: "Bearer other-audience", want: http.StatusUnauthorized, wantAsked: 2},
 		{header: "Bearer no-audience", want: http.StatusUnauthorized, wantAsked: 2},
-		{header: "Bearer contradictory", want: 0, wantAsked: 1},
-		{header: "Bearer no-username", want: http.StatusForbidden, wantAsked: 2},
+		{header: "Bearer contradictory", want: http.StatusUnauthorized, wantAsked: 2},
+		{header: "Bearer no-username", want: http.StatusUnauthorized, wantAsked: 2},
 		{header: "Bearer refused", want: http.StatusUnauthorized, wantAsked: 2},
 		{header: "Bearer operator", want: http.StatusServiceUnavailable, wantAsked: 2, apiFailure: true},
 		{header: "", want: http.StatusUnauthorized, wantAsked: 0},

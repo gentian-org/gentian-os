@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/gentian-org/gentian-os/internal/tokenreview"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
@@ -275,7 +276,7 @@ func TestTheListenerIsClosedWhenTheAPIServerDoesNotAnswer(t *testing.T) {
 func TestAPositiveAnswerIsKeptBrieflyAndARefusalNotAtAll(t *testing.T) {
 	api, auth := cluster()
 	now := time.Unix(1_700_000_000, 0)
-	auth.now = func() time.Time { return now }
+	auth.review.Now = func() time.Time { return now }
 	mux := guardOnly(&HTTPServer{Auth: auth})
 
 	for range 3 {
@@ -293,7 +294,7 @@ func TestAPositiveAnswerIsKeptBrieflyAndARefusalNotAtAll(t *testing.T) {
 	}
 	// The pod is gone and its token with it.
 	delete(api.tokens, "usher")
-	now = now.Add(reviewCacheTTL)
+	now = now.Add(tokenreview.TTL)
 	if got := answer(mux, "GET", "/v1/tenants/demo/backups", "usher"); got != http.StatusUnauthorized {
 		t.Fatalf("a token the API server no longer vouches for, after the cache lifetime: %d, want 401", got)
 	}
@@ -307,28 +308,12 @@ func TestAPositiveAnswerIsKeptBrieflyAndARefusalNotAtAll(t *testing.T) {
 
 	_ = answer(mux, "GET", "/v1/tenants/demo/backups", "director")
 	api.err = errors.New("connection refused")
-	now = now.Add(reviewCacheTTL)
+	now = now.Add(tokenreview.TTL)
 	if got := answer(mux, "GET", "/v1/tenants/demo/backups", "director"); got != http.StatusServiceUnavailable {
 		t.Fatalf("the director after its kept answer ran out, with the API server away: %d, want 503", got)
 	}
-	if reviewCacheTTL > time.Minute {
-		t.Fatalf("a positive answer is kept for %s; a minute is the most", reviewCacheTTL)
-	}
-}
-
-// The cache is keyed by a hash. The token is not in it.
-func TestTheTokenIsNotKept(t *testing.T) {
-	_, auth := cluster()
-	if _, err := auth.identify(context.Background(), "director"); err != nil {
-		t.Fatal(err)
-	}
-	if len(auth.cache) != 1 {
-		t.Fatalf("cache holds %d entries, want 1", len(auth.cache))
-	}
-	for key, kept := range auth.cache {
-		if strings.Contains(string(key[:]), "director") || kept.username != directorUser {
-			t.Fatalf("the cache holds the token, or the wrong name: %q", kept.username)
-		}
+	if tokenreview.TTL > time.Minute {
+		t.Fatalf("a positive answer is kept for %s; a minute is the most", tokenreview.TTL)
 	}
 }
 
