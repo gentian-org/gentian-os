@@ -285,7 +285,71 @@ gentian_dns_wait_for() {
     return 0
 }
 
-# _helm_retry — the same idea as _kubectl_retry, for helm.
+# _retry_transient <tool> <attempts> <delay> <transient> <what> <args...> --
+# runs <tool> <args...> until it succeeds, fails with an error that does not
+# match the extended regex <transient>, or has run <attempts> times, <delay>
+# seconds apart, and returns its last status. A failed attempt's stderr is
+# printed after it ends; each retry is warned of as "<tool> failed (attempt
+# n/m): <what>".
+#
+# Only a transport failure is retried. A command that is genuinely wrong -- a
+# bad value, an immutable field, a failed hook -- fails on its first attempt:
+# retrying it would only delay the diagnosis by the length of the backoff.
+#
+# The status is read in the else branch, not after the fi: after
+# `if cmd; then ...; fi` with no branch taken, $? is the status of the if
+# construct, 0, and every failure would read as success. And the command runs
+# as an if's condition, where set -e does not end the shell at a failed
+# attempt that is about to be retried.
+#
+# Two settings, which _bao_retry uses:
+#   _RETRY_STDIN, when set, is every attempt's stdin. A heredoc at the call
+#     site reaches this function's stdin once, so a retry after the first
+#     attempt consumed it would send an empty body instead of failing loudly.
+#   _RETRY_LOUD=1 prints a successful attempt's stderr too, and writes the
+#     warnings to stderr. warn() writes to stdout, and in a caller like
+#     cp_token=$(_bao_retry token create ... | jq ...) its lines fed jq bogus
+#     input, jq closed the pipe, and the next write died of SIGPIPE after one
+#     or two of the attempts.
+_retry_transient() {
+    local tool="$1" attempts="$2" delay="$3" transient="$4" what="$5"
+    shift 5
+    local n=1 rc=0 err="" err_file
+    err_file="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '${err_file}'; trap - RETURN" RETURN
+
+    while (( n <= attempts )); do
+        if [[ -n "${_RETRY_STDIN+set}" ]]; then
+            if "${tool}" "$@" 2>"${err_file}" <<<"${_RETRY_STDIN}"; then rc=0; else rc=$?; fi
+        else
+            if "${tool}" "$@" 2>"${err_file}"; then rc=0; else rc=$?; fi
+        fi
+        if (( rc == 0 )); then
+            if [[ "${_RETRY_LOUD:-}" == 1 && -s "${err_file}" ]]; then cat "${err_file}" >&2; fi
+            return 0
+        fi
+        err="$(<"${err_file}")"
+        [[ -n "${err}" ]] && printf '%s\n' "${err}" >&2
+        if ! [[ "${err}" =~ ${transient} ]]; then
+            return "${rc}"
+        fi
+        if (( n >= attempts )); then
+            return "${rc}"
+        fi
+        if [[ "${_RETRY_LOUD:-}" == 1 ]]; then
+            warn "${tool} failed (attempt ${n}/${attempts}): ${what}" >&2
+            warn "  Retrying in ${delay}s..." >&2
+        else
+            warn "${tool} failed (attempt ${n}/${attempts}): ${what}"
+            warn "  Retrying in ${delay}s..."
+        fi
+        sleep "${delay}"
+        n=$((n + 1))
+    done
+}
+
+# _helm_retry <helm args...> -- helm, retried over a transient network error.
 #
 # Every chart this installer applies is fetched over the network, from a chart
 # repository or an OCI registry, and those have bad seconds. A single one aborts
@@ -298,143 +362,41 @@ gentian_dns_wait_for() {
 # steps are idempotent so a re-run resumes, but an operator watching a
 # multi-hour install should not have to babysit a CDN.
 #
-# Matched on the error text, like the kubectl helper, so this only ever retries
-# a transport failure. A chart that is genuinely wrong — a bad value, an
-# immutable field, a failed hook — still fails on the first attempt, which is
-# the behavior worth keeping: retrying those just delays the diagnosis by
-# however long the backoff lasts.
-#
 # Override with HELM_RETRY_ATTEMPTS / HELM_RETRY_DELAY_SECS.
 _helm_retry() {
-    local attempts="${HELM_RETRY_ATTEMPTS:-4}"
-    local delay="${HELM_RETRY_DELAY_SECS:-10}"
-    local n=1 rc=0 err=""
-    local err_file
-    err_file="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'; trap - RETURN" RETURN
-
-    while (( n <= attempts )); do
-        if helm "$@" 2>"${err_file}"; then
-            return 0
-        else
-            # Inside the else, not after the fi. After `if cmd; then ...; fi`
-            # with no branch taken, $? is the status of the if construct — which
-            # is 0 — so reading it there reported success for every failure the
-            # regex declined to retry. Caught by a test that made helm fail with
-            # a non-transient error and got exit 0 back.
-            rc=$?
-        fi
-        err="$(<"${err_file}")"
-        [[ -n "${err}" ]] && printf '%s\n' "${err}" >&2
-
-        if ! [[ "${err}" =~ (EOF|connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|i/o[[:space:]]timeout|dial[[:space:]]tcp|no[[:space:]]route[[:space:]]to[[:space:]]host|context[[:space:]]deadline[[:space:]]exceeded|failed[[:space:]]to[[:space:]]perform|temporary[[:space:]]failure[[:space:]]in[[:space:]]name[[:space:]]resolution|502[[:space:]]Bad[[:space:]]Gateway|503[[:space:]]Service[[:space:]]Unavailable|504[[:space:]]Gateway[[:space:]]Time) ]]; then
-            return "${rc}"
-        fi
-        if (( n >= attempts )); then
-            return "${rc}"
-        fi
-        warn "helm failed (attempt ${n}/${attempts}): transient network error"
-        warn "  Retrying in ${delay}s..."
-        sleep "${delay}"
-        n=$((n + 1))
-    done
+    _retry_transient helm "${HELM_RETRY_ATTEMPTS:-4}" "${HELM_RETRY_DELAY_SECS:-10}" \
+        '(EOF|connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|i/o[[:space:]]timeout|dial[[:space:]]tcp|no[[:space:]]route[[:space:]]to[[:space:]]host|context[[:space:]]deadline[[:space:]]exceeded|failed[[:space:]]to[[:space:]]perform|temporary[[:space:]]failure[[:space:]]in[[:space:]]name[[:space:]]resolution|502[[:space:]]Bad[[:space:]]Gateway|503[[:space:]]Service[[:space:]]Unavailable|504[[:space:]]Gateway[[:space:]]Time)' \
+        "transient network error" "$@"
 }
 
+# _kubectl_retry <kubectl args...> -- kubectl, retried over a transient API
+# error. Override with KUBECTL_RETRY_ATTEMPTS / KUBECTL_RETRY_DELAY_SECS.
 _kubectl_retry() {
-    local attempts="${KUBECTL_RETRY_ATTEMPTS:-12}"
-    local delay="${KUBECTL_RETRY_DELAY_SECS:-5}"
-    local n=1 rc=0 err=""
-    local err_file
-    err_file="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'; trap - RETURN" RETURN
-
-    while (( n <= attempts )); do
-        if kubectl "$@" 2>"${err_file}"; then
-            return 0
-        else
-            rc=$?
-        fi
-        err="$(<"${err_file}")"
-        if [[ -n "$err" ]]; then
-            printf '%s\n' "$err" >&2
-        fi
-        if ! [[ "$err" =~ (connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|timeout[[:space:]]awaiting[[:space:]]response[[:space:]]headers|Unable[[:space:]]to[[:space:]]connect[[:space:]]to[[:space:]]the[[:space:]]server|no[[:space:]]route[[:space:]]to[[:space:]]host|i/o[[:space:]]timeout|dial[[:space:]]tcp) ]]; then
-            return "$rc"
-        fi
-        if (( n >= attempts )); then
-            return "$rc"
-        fi
-        warn "kubectl failed (attempt ${n}/${attempts}): transient API error"
-        warn "  Retrying in ${delay}s..."
-        sleep "$delay"
-        n=$((n + 1))
-    done
+    _retry_transient kubectl "${KUBECTL_RETRY_ATTEMPTS:-12}" "${KUBECTL_RETRY_DELAY_SECS:-5}" \
+        '(connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|timeout[[:space:]]awaiting[[:space:]]response[[:space:]]headers|Unable[[:space:]]to[[:space:]]connect[[:space:]]to[[:space:]]the[[:space:]]server|no[[:space:]]route[[:space:]]to[[:space:]]host|i/o[[:space:]]timeout|dial[[:space:]]tcp)' \
+        "transient API error" "$@"
 }
 
-# Same idea as _kubectl_retry, for bao. The OpenBao Service resolved by
-# gentian_service_addr answers a one-off reachability probe and then, on this
-# host at least, is not reliably reachable call to call — seen live as a
-# bootstrap that minted two of three tokens/policies fine (bao's own client
-# retried under the timeout and recovered) and then hard-failed on the third
-# with nothing to retry it. Override attempts/delay via BAO_RETRY_ATTEMPTS /
-# BAO_RETRY_DELAY_SECS.
+# _bao_retry <bao args...> -- bao, retried over a transient connection error.
+# The OpenBao Service resolved by gentian_service_addr answers a one-off
+# reachability probe and then, on this host at least, is not reliably
+# reachable call to call -- seen live as a bootstrap that minted two of three
+# tokens/policies fine (bao's own client retried under the timeout and
+# recovered) and then hard-failed on the third with nothing to retry it.
+# Override attempts/delay via BAO_RETRY_ATTEMPTS / BAO_RETRY_DELAY_SECS.
 #
-# Commands that read a body from stdin (bao policy write NAME -) cannot just
-# inherit a heredoc at the call site: bash hands that heredoc to this
-# function's stdin exactly once, so a retry after the first attempt consumes
-# it would send bao an empty body instead of failing loudly. Set
-# _BAO_RETRY_STDIN before calling to have this function re-feed the same
-# content as a fresh here-string on every attempt.
+# Set _BAO_RETRY_STDIN before calling for a command that reads a body from
+# stdin (bao policy write NAME -): every attempt is fed the same content.
+# bao's stderr is printed after a success too, and its warnings go to stderr
+# (_retry_transient, _RETRY_LOUD).
 _bao_retry() {
-    local attempts="${BAO_RETRY_ATTEMPTS:-6}"
-    local delay="${BAO_RETRY_DELAY_SECS:-5}"
-    local n=1 rc=0 err=""
-    local err_file
-    err_file="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap "rm -f '${err_file}'; trap - RETURN" RETURN
-
-    while (( n <= attempts )); do
-        # Not `if bao ...; then return 0; fi`: when neither branch of an
-        # if/elif with no else executes, bash resets $? to 0 regardless of
-        # what the untaken conditions returned — a real, nonzero bao failure
-        # would read back as success. Capturing rc from the call directly
-        # sidesteps that.
-        if [[ -n "${_BAO_RETRY_STDIN+set}" ]]; then
-            bao "$@" 2>"${err_file}" <<<"${_BAO_RETRY_STDIN}"
-            rc=$?
-        else
-            bao "$@" 2>"${err_file}"
-            rc=$?
-        fi
-        if (( rc == 0 )); then
-            [[ -s "${err_file}" ]] && cat "${err_file}" >&2
-            return 0
-        fi
-        err="$(<"${err_file}")"
-        if [[ -n "$err" ]]; then
-            printf '%s\n' "$err" >&2
-        fi
-        if ! [[ "$err" =~ (connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|timeout[[:space:]]awaiting[[:space:]]response[[:space:]]headers|i/o[[:space:]]timeout|dial[[:space:]]tcp) ]]; then
-            return "$rc"
-        fi
-        if (( n >= attempts )); then
-            return "$rc"
-        fi
-        # >&2 explicitly: warn() writes to stdout in this codebase, which is
-        # fine for a plain call but corrupts a caller like
-        # cp_token=$(_bao_retry token create ... | jq ...) — these lines would
-        # feed straight into jq as bogus input, jq would error out and close
-        # the pipe, and this loop's next write would die to SIGPIPE after only
-        # one or two of the configured attempts. Reproduced live: exactly that
-        # jq parse error, and the retry count silently short by attempt 6.
-        warn "bao failed (attempt ${n}/${attempts}): transient connection error" >&2
-        warn "  Retrying in ${delay}s..." >&2
-        sleep "$delay"
-        n=$((n + 1))
-    done
+    local _RETRY_LOUD=1
+    if [[ -n "${_BAO_RETRY_STDIN+set}" ]]; then
+        local _RETRY_STDIN="${_BAO_RETRY_STDIN}"
+    fi
+    _retry_transient bao "${BAO_RETRY_ATTEMPTS:-6}" "${BAO_RETRY_DELAY_SECS:-5}" \
+        '(connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|timeout[[:space:]]awaiting[[:space:]]response[[:space:]]headers|i/o[[:space:]]timeout|dial[[:space:]]tcp)' \
+        "transient connection error" "$@"
 }
 
 # cri_cleanup() and kubelite_restart() are defined in scripts/lib/lib-runtime.sh
