@@ -424,7 +424,16 @@ func (s *Server) writeIdentityErr(w http.ResponseWriter, err error) {
 			fmt.Errorf("the custodian cannot ask the authorization store; this is not a problem with your account"))
 		return
 	}
-	writeErr(w, http.StatusUnauthorized, err)
+	writeUnauthenticated(w, err)
+}
+
+// writeUnauthenticated answers 401 with a plain "unauthenticated". Why the
+// caller was not identified goes to the log: it can be the verifier's own
+// account of the token, which is the custodian's to read and not the
+// caller's.
+func writeUnauthenticated(w http.ResponseWriter, err error) {
+	ctrl.Log.WithName("custodian").Info("refusing an unidentified caller", "reason", err.Error())
+	writeErr(w, http.StatusUnauthorized, errors.New("unauthenticated"))
 }
 
 // writeVaultErr answers a failure of the custodian's own access to the vault.
