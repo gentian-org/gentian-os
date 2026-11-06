@@ -1483,23 +1483,7 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 			return err
 		}
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(securityPolicyGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: policy.GetName(), Namespace: comp.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, policy)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], policy.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, policy)
 }
 
 // ConditionClientAuthorization is the Component condition that says whether
@@ -1851,23 +1835,7 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 		managedByLabel: managedByValue,
 		tenantLabel:    tenantName,
 	})
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 // ensureZoneSecret keeps a copy of the zone's edge client secret in the
@@ -1891,21 +1859,13 @@ func (r *ComponentReconciler) ensureZoneSecret(ctx context.Context, comp *gentia
 		Type: source.Type,
 		Data: source.Data,
 	}
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.Secret) bool {
+		if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+			return false
+		}
+		existing.Data, existing.Labels = desired.Data, desired.Labels
+		return true
+	})
 }
 
 func (r *ComponentReconciler) deleteZoneGrant(ctx context.Context, comp *gentianov1alpha1.Component) error {

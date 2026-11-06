@@ -907,47 +907,38 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: servicesNamespace}, source); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
-		}
-	} else {
-		desired := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      defaultSecretName,
-				Namespace: nsName,
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Type: source.Type,
-			Data: source.Data,
-		}
-
-		existing := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: nsName}, existing)
 		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, desired); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		} else if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
-			patch := client.MergeFrom(existing.DeepCopy())
-			existing.Type = desired.Type
-			existing.Data = desired.Data
-			if existing.Labels == nil {
-				existing.Labels = map[string]string{}
-			}
-			existing.Labels[tenantLabel] = tenant.Name
-			existing.Labels[managedByLabel] = managedByValue
-			if err := r.Patch(ctx, existing, patch); err != nil {
-				return err
-			}
+			return nil
 		}
+		return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
 	}
+	return ensureSecretCopy(ctx, r.Client, source, nsName, tenant.Name)
+}
 
-	return nil
+// ensureSecretCopy keeps a copy of source, under its name, in namespace,
+// labelled as tenant's: its type and data are source's.
+func ensureSecretCopy(ctx context.Context, c client.Client, source *corev1.Secret, namespace, tenant string) error {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      source.Name,
+			Namespace: namespace,
+			Labels:    map[string]string{tenantLabel: tenant, managedByLabel: managedByValue},
+		},
+		Type: source.Type,
+		Data: source.Data,
+	}
+	return ensureObject(ctx, c, desired, func(existing *corev1.Secret) bool {
+		if equality.Semantic.DeepEqual(existing.Data, desired.Data) && existing.Type == desired.Type {
+			return false
+		}
+		existing.Type, existing.Data = desired.Type, desired.Data
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		existing.Labels[tenantLabel] = tenant
+		existing.Labels[managedByLabel] = managedByValue
+		return true
+	})
 }
 
 // ensureStagingCaTrust bootstraps gentian-trust-anchor-tls in the services namespace
@@ -968,39 +959,7 @@ func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gen
 		return fmt.Errorf("failed to read source %s in %s: %w", secretName, servicesNamespace, err)
 	}
 
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Type: source.Type,
-		Data: source.Data,
-	}
-
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Type = desired.Type
-		existing.Data = desired.Data
-		if existing.Labels == nil {
-			existing.Labels = map[string]string{}
-		}
-		existing.Labels[tenantLabel] = tenant.Name
-		existing.Labels[managedByLabel] = managedByValue
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSecretCopy(ctx, r.Client, source, nsName, tenant.Name)
 }
 
 // setCondition sets a condition on the Tenant status (setStatusCondition).

@@ -555,23 +555,7 @@ func (r *ComponentReconciler) ensureSignInACSRateLimit(ctx context.Context, comp
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(backendTrafficPolicyGVK)
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
-	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-		return err
-	}
-	return r.Patch(ctx, existing, patch)
+	return ensureSpec(ctx, r.Client, desired)
 }
 
 func (r *ComponentReconciler) deleteSignInACSRateLimit(ctx context.Context, namespace, name string) error {
@@ -609,7 +593,7 @@ func (r *ComponentReconciler) ensureSignInSidecar(
 	if err := owned(handler); err != nil {
 		return err
 	}
-	if err := upsert(ctx, r.Client, handler, func(existing *corev1.ConfigMap) bool {
+	if err := ensureObject(ctx, r.Client, handler, func(existing *corev1.ConfigMap) bool {
 		if equality.Semantic.DeepEqual(existing.Data, handler.Data) && equality.Semantic.DeepEqual(existing.Labels, handler.Labels) && ownedBy(existing, comp) {
 			return false
 		}
@@ -628,7 +612,7 @@ func (r *ComponentReconciler) ensureSignInSidecar(
 	if err := owned(deploy); err != nil {
 		return err
 	}
-	if err := upsert(ctx, r.Client, deploy, func(existing *appsv1.Deployment) bool {
+	if err := ensureObject(ctx, r.Client, deploy, func(existing *appsv1.Deployment) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, deploy.Spec) && ownedBy(existing, comp) {
 			return false
 		}
@@ -651,7 +635,7 @@ func (r *ComponentReconciler) ensureSignInSidecar(
 	if err := owned(svc); err != nil {
 		return err
 	}
-	if err := upsert(ctx, r.Client, svc, func(existing *corev1.Service) bool {
+	if err := ensureObject(ctx, r.Client, svc, func(existing *corev1.Service) bool {
 		if equality.Semantic.DeepEqual(existing.Spec.Ports, svc.Spec.Ports) &&
 			equality.Semantic.DeepEqual(existing.Spec.Selector, svc.Spec.Selector) && ownedBy(existing, comp) {
 			return false
@@ -900,7 +884,7 @@ func (r *ComponentReconciler) ensureSignInPolicies(
 	if err := controllerutil.SetControllerReference(comp, egress, r.Scheme); err != nil {
 		return err
 	}
-	if err := upsert(ctx, r.Client, egress, func(existing *networkingv1.NetworkPolicy) bool {
+	if err := ensureObject(ctx, r.Client, egress, func(existing *networkingv1.NetworkPolicy) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, egress.Spec) && ownedBy(existing, comp) {
 			return false
 		}
@@ -927,7 +911,7 @@ func (r *ComponentReconciler) ensureSignInPolicies(
 	if err := controllerutil.SetControllerReference(comp, toApp, r.Scheme); err != nil {
 		return err
 	}
-	return upsert(ctx, r.Client, toApp, func(existing *networkingv1.NetworkPolicy) bool {
+	return ensureObject(ctx, r.Client, toApp, func(existing *networkingv1.NetworkPolicy) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, toApp.Spec) && ownedBy(existing, comp) {
 			return false
 		}

@@ -26,7 +26,6 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -307,7 +306,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
 		Data:       map[string]string{"nginx.conf": config},
 	}
-	if err := upsert(ctx, r.Client, cm, func(existing *corev1.ConfigMap) bool {
+	if err := ensureObject(ctx, r.Client, cm, func(existing *corev1.ConfigMap) bool {
 		if equality.Semantic.DeepEqual(existing.Data, cm.Data) && equality.Semantic.DeepEqual(existing.Labels, cm.Labels) {
 			return false
 		}
@@ -323,7 +322,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	// happens to restart the pod.
 	sum := sha256.Sum256([]byte(config))
 	deploy := perimeterDeployment(name, dmz, labels, hex.EncodeToString(sum[:])[:16])
-	if err := upsert(ctx, r.Client, deploy, func(existing *appsv1.Deployment) bool {
+	if err := ensureObject(ctx, r.Client, deploy, func(existing *appsv1.Deployment) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, deploy.Spec) {
 			return false
 		}
@@ -343,7 +342,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 			}},
 		},
 	}
-	if err := upsert(ctx, r.Client, svc, func(existing *corev1.Service) bool {
+	if err := ensureObject(ctx, r.Client, svc, func(existing *corev1.Service) bool {
 		if equality.Semantic.DeepEqual(existing.Spec.Ports, svc.Spec.Ports) &&
 			equality.Semantic.DeepEqual(existing.Spec.Selector, svc.Spec.Selector) {
 			return false
@@ -482,7 +481,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 			},
 		},
 	}
-	if err := upsert(ctx, r.Client, egress, func(existing *networkingv1.NetworkPolicy) bool {
+	if err := ensureObject(ctx, r.Client, egress, func(existing *networkingv1.NetworkPolicy) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, egress.Spec) {
 			return false
 		}
@@ -523,7 +522,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 		if err := r.Delete(ctx, edge); client.IgnoreNotFound(err) != nil {
 			return err
 		}
-	} else if err := upsert(ctx, r.Client, edge, func(existing *networkingv1.NetworkPolicy) bool {
+	} else if err := ensureObject(ctx, r.Client, edge, func(existing *networkingv1.NetworkPolicy) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, edge.Spec) {
 			return false
 		}
@@ -553,7 +552,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 			}},
 		},
 	}
-	return upsert(ctx, r.Client, ingress, func(existing *networkingv1.NetworkPolicy) bool {
+	return ensureObject(ctx, r.Client, ingress, func(existing *networkingv1.NetworkPolicy) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, ingress.Spec) {
 			return false
 		}
@@ -618,7 +617,7 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 	if err := withRestoreHold(ctx, r.Client, held, route); err != nil {
 		return err
 	}
-	return upsert(ctx, r.Client, route, func(existing *gatewayv1.HTTPRoute) bool {
+	return ensureObject(ctx, r.Client, route, func(existing *gatewayv1.HTTPRoute) bool {
 		annotated := syncRestoreHoldAnnotation(existing, route)
 		if equality.Semantic.DeepEqual(existing.Spec, route.Spec) {
 			return annotated
@@ -818,22 +817,4 @@ func (r *ComponentReconciler) prunePerimeter(
 		}
 	}
 	return nil
-}
-
-// upsert creates the object, or applies mutate to what is already there and
-// patches when mutate says something changed.
-func upsert[T client.Object](ctx context.Context, c client.Client, desired T, mutate func(T) bool) error {
-	existing := desired.DeepCopyObject().(T)
-	err := c.Get(ctx, types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}, existing)
-	if errors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	patch := client.MergeFrom(existing.DeepCopyObject().(T))
-	if !mutate(existing) {
-		return nil
-	}
-	return c.Patch(ctx, existing, patch)
 }

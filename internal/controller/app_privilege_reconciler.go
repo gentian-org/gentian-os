@@ -316,20 +316,11 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 
 // applySecret creates or updates a Secret the operator owns.
 func (r *TenantReconciler) applySecret(ctx context.Context, desired *corev1.Secret) error {
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Labels = desired.Labels
-	existing.Type = desired.Type
-	existing.Data = desired.Data
-	existing.StringData = desired.StringData
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.Secret) bool {
+		existing.Labels, existing.Type = desired.Labels, desired.Type
+		existing.Data, existing.StringData = desired.Data, desired.StringData
+		return true
+	})
 }
 
 // pruneAppPrivilegeFingerprints drops the recorded fingerprint of every app

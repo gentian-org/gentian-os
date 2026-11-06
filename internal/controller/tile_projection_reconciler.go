@@ -482,20 +482,13 @@ func (r *TileProjectionReconciler) writeTo(ctx context.Context, namespace, rende
 		Data: map[string]string{tilecatalogue.Key: rendered},
 	}
 
-	existing := &corev1.ConfigMap{}
-	err := r.Get(ctx, key, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Data, desired.Data) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Data = desired.Data
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
+		if equality.Semantic.DeepEqual(existing.Data, desired.Data) {
+			return false
+		}
+		existing.Data = desired.Data
+		return true
+	})
 }
 
 // SetupWithManager rebuilds the catalog when a component, a profile, a
