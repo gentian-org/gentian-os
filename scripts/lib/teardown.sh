@@ -40,6 +40,27 @@ GENTIAN_NS_FINALIZE_WAIT="${GENTIAN_NS_FINALIZE_WAIT:-30}"
 # Every namespace a teardown removed in this run, for purge_verify_namespaces_gone.
 _GENTIAN_REMOVED_NAMESPACES=""
 
+# strip_finalizers <object...> [kubectl patch flags...] — clear the finalizers
+# of an object whose controller will not: it is gone, or it is about to be.
+# Never fails; kubectl's errors are dropped, what it prints is the caller's.
+strip_finalizers() {
+    kubectl patch "$@" --type=merge -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
+}
+
+# wait_until_empty <seconds> <poll> <command...> — run the command every <poll>
+# seconds until it prints nothing, for at most <seconds>. 0 once it printed
+# nothing, 1 when the time ran out first. Its errors are dropped: a listing
+# that fails lists nothing.
+wait_until_empty() {
+    local deadline=$((SECONDS + $1)) poll="$2"
+    shift 2
+    while [[ -n "$("$@" 2>/dev/null || true)" ]]; do
+        (( SECONDS < deadline )) || return 1
+        sleep "${poll}"
+    done
+    return 0
+}
+
 # Poll until the namespace holds nothing, for at most $2 seconds. 0 = empty.
 _ns_wait_empty() {
     local ns="$1" wait="$2" end left rc
@@ -83,8 +104,7 @@ _ns_purge_contents() {
     refs="$(ns_objects "${ns}" | cut -f1 || true)"
     warn "  ${ns}: $(printf '%s\n' "${refs}" | sed '/^$/d' | wc -l | tr -d ' ') object(s) still present — stripping their finalizers..."
     for ref in ${refs}; do
-        kubectl patch "${ref}" -n "${ns}" --type=merge \
-            -p='{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+        strip_finalizers "${ref}" -n "${ns}" >/dev/null
     done
     _ns_delete_refs "${ns}" "${refs}"
     _ns_wait_empty "${ns}" "${GENTIAN_NS_DRAIN_WAIT}"
@@ -193,10 +213,11 @@ _drain_pvcs() {
 
     # Belt-and-suspenders: strip any lingering pvc-protection finalizers so
     # that a timed-out delete doesn't block namespace termination.
-    kubectl get pvc -n "${ns}" -o name 2>/dev/null \
-        | xargs_r -I%% kubectl patch %% -n "${ns}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
+    local pvc
+    while IFS= read -r pvc; do
+        [[ -n "${pvc}" ]] || continue
+        strip_finalizers "${pvc}" -n "${ns}"
+    done < <(kubectl get pvc -n "${ns}" -o name 2>/dev/null || true)
 }
 
 # Delete PVs that were previously bound to PVCs in a namespace.
@@ -375,13 +396,11 @@ _strip_and_delete_one() {
     # Branching rather than an array of flags: bash 3.2 errors on an empty
     # array expansion under `set -u`, and macOS ships 3.2.
     if [[ -n "${ns}" ]]; then
-        kubectl patch "${kind}" "${name}" -n "${ns}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        strip_finalizers "${kind}" "${name}" -n "${ns}"
         kubectl delete "${kind}" "${name}" -n "${ns}" \
             --ignore-not-found=true --wait=false 2>/dev/null || true
     else
-        kubectl patch "${kind}" "${name}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        strip_finalizers "${kind}" "${name}"
         kubectl delete "${kind}" "${name}" \
             --ignore-not-found=true --wait=false 2>/dev/null || true
     fi
@@ -412,9 +431,7 @@ _delete_crds_matching() {
     while IFS= read -r crd; do
         [[ -z "${crd}" ]] && continue
         _strip_and_delete_crd_instances "${crd}"
-        kubectl patch crd "${crd}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
+        strip_finalizers crd "${crd}"
         kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
     done <<< "${crds}"
     success "${label} removal queued."
@@ -530,8 +547,7 @@ _purge_strip_crossplane_finalizers() {
         info "Clearing finalizers on ${count} Crossplane managed resource(s)..."
         kubectl get managed -o name 2>/dev/null | while IFS= read -r obj; do
             [[ -n "${obj}" ]] || continue
-            kubectl patch "${obj}" --type=merge \
-                -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+            strip_finalizers "${obj}"
         done
         success "Managed resource finalizers cleared."
     else
@@ -549,8 +565,7 @@ _purge_strip_crossplane_finalizers() {
     #    is gone, which is why the three steps above come first.
     local xrd
     for xrd in $(kubectl get compositeresourcedefinitions -o name 2>/dev/null || true); do
-        kubectl patch "${xrd}" --type=merge \
-            -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        strip_finalizers "${xrd}"
     done
     success "Crossplane finalizers cleared."
 }

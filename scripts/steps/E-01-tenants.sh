@@ -39,7 +39,7 @@ apply() {
 }
 
 destroy() {
-    local tenant ns app comp deadline
+    local tenant ns app comp
     # The operator registers a ValidatingWebhookConfiguration intercepting PATCH
     # on Tenant CRs. With the operator already gone its webhook service is
     # unavailable and every patch fails with "service not found", so the webhook
@@ -71,20 +71,14 @@ destroy() {
                 kubectl delete components.gentianos.io "$comp" -n "$ns" \
                     --ignore-not-found=true --wait=false 2>/dev/null || true
             done
-        deadline=$(( SECONDS + 60 ))
-        while kubectl get components.gentianos.io -A --no-headers 2>/dev/null | grep -q .; do
-            if (( SECONDS >= deadline )); then
-                warn "Component finalizers did not clear; stripping them."
-                kubectl get components.gentianos.io -A --no-headers 2>/dev/null |
-                    while read -r ns comp _; do
-                        [[ -n "$ns" && -n "$comp" ]] || continue
-                        kubectl patch components.gentianos.io "$comp" -n "$ns" --type=merge \
-                            -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
-                    done
-                break
-            fi
-            sleep 2
-        done
+        if ! wait_until_empty 60 2 kubectl get components.gentianos.io -A --no-headers; then
+            warn "Component finalizers did not clear; stripping them."
+            kubectl get components.gentianos.io -A --no-headers 2>/dev/null |
+                while read -r ns comp _; do
+                    [[ -n "$ns" && -n "$comp" ]] || continue
+                    strip_finalizers components.gentianos.io "$comp" -n "$ns"
+                done
+        fi
     fi
 
     if kubectl get crd apps.gentianos.io >/dev/null 2>&1; then
@@ -107,20 +101,14 @@ destroy() {
         # --wait=false above, so clear whatever the operator did not finalize.
         # An App holding a finalizer blocks its tenant namespace, which blocks
         # every namespace delete downstream of this step.
-        deadline=$(( SECONDS + 60 ))
-        while kubectl get apps.gentianos.io -A --no-headers 2>/dev/null | grep -q .; do
-            if (( SECONDS >= deadline )); then
-                warn "App CR finalizers did not clear; stripping them."
-                kubectl get apps.gentianos.io -A --no-headers 2>/dev/null |
-                    while read -r ns app _; do
-                        [[ -n "$ns" && -n "$app" ]] || continue
-                        kubectl patch apps.gentianos.io "$app" -n "$ns" --type=merge \
-                            -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
-                    done
-                break
-            fi
-            sleep 2
-        done
+        if ! wait_until_empty 60 2 kubectl get apps.gentianos.io -A --no-headers; then
+            warn "App CR finalizers did not clear; stripping them."
+            kubectl get apps.gentianos.io -A --no-headers 2>/dev/null |
+                while read -r ns app _; do
+                    [[ -n "$ns" && -n "$app" ]] || continue
+                    strip_finalizers apps.gentianos.io "$app" -n "$ns"
+                done
+        fi
     fi
 
     kubectl get tenants.gentianos.io --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |
@@ -133,16 +121,10 @@ destroy() {
                 --ignore-not-found=true --wait=false || true
             # Wait for the operator to clear its finalizer, then force it. A
             # stuck finalizer here blocks every namespace deletion downstream.
-            deadline=$((SECONDS + 60))
-            while kubectl get tenants.gentianos.io "$tenant" >/dev/null 2>&1; do
-                if (( SECONDS >= deadline )); then
-                    warn "Tenant ${tenant} finalizer did not clear; stripping it."
-                    kubectl patch tenants.gentianos.io "$tenant" --type=merge \
-                        -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
-                    break
-                fi
-                sleep 2
-            done
+            if ! wait_until_empty 60 2 kubectl get tenants.gentianos.io "$tenant"; then
+                warn "Tenant ${tenant} finalizer did not clear; stripping it."
+                strip_finalizers tenants.gentianos.io "$tenant"
+            fi
         done
 
     # The binding of the account tenant apps are installed as holds its
@@ -154,7 +136,6 @@ destroy() {
         -o custom-columns='NS:.metadata.namespace' 2>/dev/null |
         while read -r ns; do
             [[ -n "$ns" ]] || continue
-            kubectl patch rolebinding gentian-tenant-apps-helm -n "$ns" --type=merge \
-                -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            strip_finalizers rolebinding gentian-tenant-apps-helm -n "$ns" >/dev/null
         done
 }

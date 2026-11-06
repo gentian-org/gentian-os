@@ -25,7 +25,7 @@ apply() {
 # "unable to create new content in namespace kernel-edge". So: delete them
 # all, give the controller a bounded wait, strip what is left, then uninstall.
 _a03_release_external_secrets() {
-    local kinds="externalsecrets.external-secrets.io pushsecrets.external-secrets.io" kind deadline left obj ns
+    local kinds="externalsecrets.external-secrets.io pushsecrets.external-secrets.io" kind obj ns
     for kind in ${kinds}; do
         kubectl get "${kind}" -A -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null \
             | while read -r ns obj; do
@@ -33,17 +33,12 @@ _a03_release_external_secrets() {
                 kubectl delete "${kind}" "${obj}" -n "${ns}" --wait=false >/dev/null 2>&1 || true
             done
     done
-    deadline=$((SECONDS + 60))
-    while (( SECONDS < deadline )); do
-        left="$(kubectl get externalsecrets.external-secrets.io,pushsecrets.external-secrets.io -A -o name 2>/dev/null || true)"
-        [[ -n "${left}" ]] || return 0
-        sleep 5
-    done
+    wait_until_empty 60 5 kubectl get externalsecrets.external-secrets.io,pushsecrets.external-secrets.io -A -o name && return 0
     for kind in ${kinds}; do
         kubectl get "${kind}" -A -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' 2>/dev/null \
             | while read -r ns obj; do
                 [[ -n "${obj}" ]] || continue
-                kubectl patch "${kind}" "${obj}" -n "${ns}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+                strip_finalizers "${kind}" "${obj}" -n "${ns}" >/dev/null
             done
     done
 }

@@ -276,25 +276,29 @@ apply() {
 # it a bounded wait, and strip the finalizers of whatever is left -- this is a
 # purge, and the namespaces those releases installed into go with it anyway.
 _b05_sweep_managed() {
-    local left deadline obj ns
+    local obj ns
     # Every managed resource of every provider -- `managed` is the category
     # Crossplane gives them all. Naming kinds missed the Keycloak provider's.
     kubectl get managed -o name 2>/dev/null | xargs_r kubectl delete --wait=false >/dev/null 2>&1 || true
-    deadline=$((SECONDS + 90))
-    while (( SECONDS < deadline )); do
-        left="$(kubectl get managed -o name 2>/dev/null || true)"
-        [[ -n "${left}" ]] || return 0
-        sleep 5
-    done
+    wait_until_empty 90 5 kubectl get managed -o name && return 0
     while IFS= read -r obj; do
         [[ -n "${obj}" ]] || continue
         warn "  ${obj} was not released by its provider; removing its finalizer."
         # A Release's target namespace, so one the provider recreated
         # does not outlive the purge.
         ns="$(kubectl get "${obj}" -o jsonpath='{.spec.forProvider.namespace}' 2>/dev/null || true)"
-        kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+        strip_finalizers "${obj}" >/dev/null
         [[ -z "${ns}" ]] || kubectl delete namespace "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
     done < <(kubectl get managed -o name 2>/dev/null || true)
+}
+
+# _b05_provider_configs <kind...> -- every object of the ProviderConfig kinds
+# named, in every namespace.
+_b05_provider_configs() {
+    local crd
+    for crd in "$@"; do
+        kubectl get "${crd}" -A -o name 2>/dev/null || true
+    done
 }
 
 # _b05_release_provider_configs -- every ProviderConfig of every provider,
@@ -309,24 +313,19 @@ _b05_sweep_managed() {
 # served. So: delete them all while the providers still run, wait, strip what
 # is left.
 _b05_release_provider_configs() {
-    local crds crd deadline left obj
+    local crds crd obj
     crds="$(kubectl get crd -o name 2>/dev/null | sed -n 's|^customresourcedefinition.apiextensions.k8s.io/\(providerconfigs\..*\)$|\1|p' || true)"
     [[ -n "${crds}" ]] || return 0
     for crd in ${crds}; do
         kubectl get "${crd}" -A -o name 2>/dev/null | xargs_r kubectl delete --wait=false >/dev/null 2>&1 || true
     done
-    deadline=$((SECONDS + 60))
-    while (( SECONDS < deadline )); do
-        left=""
-        for crd in ${crds}; do left+="$(kubectl get "${crd}" -A -o name 2>/dev/null || true)"; done
-        [[ -n "${left}" ]] || return 0
-        sleep 5
-    done
+    # shellcheck disable=SC2086 # one kind per word, by construction
+    wait_until_empty 60 5 _b05_provider_configs ${crds} && return 0
     for crd in ${crds}; do
         while IFS= read -r obj; do
             [[ -n "${obj}" ]] || continue
             warn "  ${obj} kept its in-use finalizer; removing it."
-            kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            strip_finalizers "${obj}" >/dev/null
         done < <(kubectl get "${crd}" -o name 2>/dev/null || true)
     done
 }
@@ -342,7 +341,7 @@ _b05_release_terminating_provider_crds() {
         [[ -n "${crd}" ]] || continue
         while IFS= read -r obj; do
             [[ -n "${obj}" ]] || continue
-            kubectl patch "${obj}" --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            strip_finalizers "${obj}" >/dev/null
         done < <(kubectl get "${crd}" -A -o name 2>/dev/null || true)
         warn "  ${crd} was left Terminating; released what held it."
     done < <(kubectl get crd -o json 2>/dev/null | jq -r '.items[]
