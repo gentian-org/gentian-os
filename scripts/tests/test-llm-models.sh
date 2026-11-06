@@ -16,19 +16,20 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
+
 check() {
     # check <description> <assertion>
     local what="$1"
     shift
     if python3 scripts/tests/llm_models.py "$@"; then
-        printf '  \033[0;32mok\033[0m    %s\n' "${what}"
+        ok "${what}"
     else
-        printf '  \033[0;31mFAIL\033[0m  %s\n' "${what}"
-        fail=$((fail + 1))
+        bad "${what}"
     fi
 }
 
-fail=0
 echo ""
 echo "The model gateway: its models are the Cluster claim's"
 echo ""
@@ -37,9 +38,4 @@ check "instances (with GPUs) and providers' models are offered under their names
 check "a provider's token is a variable set from the mounted Secret, never in the file; no provider, no ExternalSecret" tokens
 check "the gateway starts with the file it mounts and takes models from nowhere else" gateway
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${fail} check(s) failed"
-    exit 1
-fi
-echo "all checks passed"
+finish

@@ -41,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 // The TURN edge (networking.md §9): the relay that real-time media takes
@@ -305,8 +306,10 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 	udp, tcp := corev1.ProtocolUDP, corev1.ProtocolTCP
 	turnTarget, turnsTarget := intstr.FromInt32(turnPort), intstr.FromInt32(turnsListenPort)
 	replicas := int32(2)
-	no, yes := false, true
+	no := false
 	uid := int64(65532)
+	pod := meta.NonRootPod(uid)
+	pod.RunAsGroup = &uid
 
 	config := &corev1.Secret{
 		ObjectMeta: om(turnEdgeConfigSecret),
@@ -336,10 +339,7 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 							},
 						}},
 					}},
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &yes, RunAsUser: &uid, RunAsGroup: &uid,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
+					SecurityContext: pod,
 					Containers: []corev1.Container{{
 						Name:  "stunnerd",
 						Image: image,
@@ -361,10 +361,7 @@ func turnEdgeObjects(image string, conf []byte) []client.Object {
 							Path: "/ready", Port: intstr.FromString("health")}}, PeriodSeconds: 5},
 						LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live", Port: intstr.FromString("health")}}, PeriodSeconds: 20},
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
-							Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-						},
+						SecurityContext: meta.ReadOnlyContainer(),
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
 							Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")},
@@ -545,23 +542,20 @@ func (r *TURNEdgeReconciler) ensureDNS(ctx context.Context) error {
 	if err := unstructured.SetNestedSlice(obj.Object, []interface{}{record}, "spec", "endpoints"); err != nil {
 		return err
 	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(dnsEndpointGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: turnEdgeName, Namespace: turnEdgeNamespace}, existing)
+	err := ensureObject(ctx, r.Client, obj, func(existing *unstructured.Unstructured) bool {
+		if equality.Semantic.DeepEqual(existing.Object["spec"], obj.Object["spec"]) {
+			return false
+		}
+		existing.Object["spec"] = obj.Object["spec"]
+		existing.SetLabels(obj.GetLabels())
+		existing.SetAnnotations(obj.GetAnnotations())
+		existing.SetOwnerReferences(obj.GetOwnerReferences())
+		return true
+	})
 	if runtimeMeta.IsNoMatchError(err) {
 		return nil
 	}
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, obj)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], obj.Object["spec"]) {
-		return nil
-	}
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	return r.Update(ctx, obj)
+	return err
 }
 
 // apply writes obj as desired, over what an earlier reconcile left.

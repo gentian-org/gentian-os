@@ -10,7 +10,7 @@ SPDX-License-Identifier: MPL-2.0
 
 package kernel
 
-import "os"
+import "github.com/gentian-org/gentian-os/internal/envvar"
 
 // Provisioner images for operator-managed data-plane Jobs. Override via env vars
 // on the gentian-os Deployment (see charts/gentian-os/templates/deployment.yaml).
@@ -87,51 +87,44 @@ const (
 
 // TURNEdgeImage is the TURN edge's server.
 func TURNEdgeImage() string {
-	return envOrDefault("TURN_EDGE_IMAGE", DefaultTURNEdgeImage)
+	return envvar.Or("TURN_EDGE_IMAGE", DefaultTURNEdgeImage)
 }
 
 func PostgresProvisionerImage() string {
-	return envOrDefault("POSTGRES_PROVISIONER_IMAGE", DefaultPostgresProvisionerImage)
+	return envvar.Or("POSTGRES_PROVISIONER_IMAGE", DefaultPostgresProvisionerImage)
 }
 
 func MariaDBProvisionerImage() string {
-	return envOrDefault("MARIADB_PROVISIONER_IMAGE", DefaultMariaDBProvisionerImage)
+	return envvar.Or("MARIADB_PROVISIONER_IMAGE", DefaultMariaDBProvisionerImage)
 }
 
 func RedisProvisionerImage() string {
-	return envOrDefault("REDIS_PROVISIONER_IMAGE", DefaultRedisProvisionerImage)
+	return envvar.Or("REDIS_PROVISIONER_IMAGE", DefaultRedisProvisionerImage)
 }
 
 func MemcachedImage() string {
-	return envOrDefault("MEMCACHED_IMAGE", DefaultMemcachedImage)
+	return envvar.Or("MEMCACHED_IMAGE", DefaultMemcachedImage)
 }
 
 // PerimeterProxyImage is the publishing proxy for a tenant's DMZ.
 func PerimeterProxyImage() string {
-	return envOrDefault("PERIMETER_PROXY_IMAGE", DefaultPerimeterProxyImage)
+	return envvar.Or("PERIMETER_PROXY_IMAGE", DefaultPerimeterProxyImage)
 }
 
 // SignInSidecarImage is the sign-in sidecar the operator runs beside an app
 // whose profile declares one.
 func SignInSidecarImage() string {
-	return envOrDefault("SIGN_IN_SIDECAR_IMAGE", DefaultSignInSidecarImage)
+	return envvar.Or("SIGN_IN_SIDECAR_IMAGE", DefaultSignInSidecarImage)
 }
 
 // StorageToolsImage is the image of the Jobs that capture, upload, fetch,
 // restore and delete a tenant's objects, pack and unpack its archives, and
 // provision, export and import its identity realm.
 func StorageToolsImage() string {
-	return envOrDefault("STORAGE_TOOLS_IMAGE", DefaultStorageToolsImage)
+	return envvar.Or("STORAGE_TOOLS_IMAGE", DefaultStorageToolsImage)
 }
 
 // SeaweedFSImage is the image of the Jobs that administer the object store.
 func SeaweedFSImage() string {
-	return envOrDefault("SEAWEEDFS_IMAGE", DefaultSeaweedFSImage)
-}
-
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+	return envvar.Or("SEAWEEDFS_IMAGE", DefaultSeaweedFSImage)
 }

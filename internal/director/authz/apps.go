@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // App is the object an installed app is in the store: app:<tenant>/<profile>.
@@ -31,7 +33,7 @@ type InstalledApp struct {
 // gentian:tenant:<t>:app:<profile>. The operator creates one per installed
 // app and per activated addon, and a person is put in it or not.
 func appGroup(tenant, profile string) (string, error) {
-	return Group("gentian:tenant:" + tenant + ":app:" + profile)
+	return Group(keycloak.TenantAppGroup(tenant, profile))
 }
 
 // appTuples is what one tenant's installed apps are in the store.

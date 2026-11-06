@@ -29,10 +29,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "realm mail: every mail mode of the claim gives the kernel realm a mail server"
@@ -52,7 +50,9 @@ if [[ -z "${modes}" ]]; then
 fi
 
 MODE=""
+# shellcheck disable=SC2317,SC2329 # called by the library under test
 gentian_mail_service_mode() { printf '%s' "${MODE}"; }
+# shellcheck disable=SC2317,SC2329 # called by the library under test
 _derived() { printf 'derived-%s-%s' "$1" "$2"; }
 eval "$(sed -n '/^_keycloak_smtp_settings() {/,/^}/p' scripts/lib/portal-login-bootstrap.sh)"
 if ! declare -F _keycloak_smtp_settings >/dev/null; then
@@ -109,9 +109,4 @@ else
     bad "the operator's Job script takes the cluster's own mail as '${own}', and the schema's modes are: ${modes}"
 fi
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sall %d passed%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

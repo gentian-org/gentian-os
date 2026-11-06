@@ -161,12 +161,14 @@ DELETE /v1/clusters/{c}/resource-plans/{name}   can_configure  remove one
 
 What a change has to keep:
 
-- **A plan's quotas do not change while a tenant is on it.** Each tenant on
-  it holds a copy of the quantities in its `resource-plan.yaml` (§3.2), so
-  the edit would leave them `drifted` on a ceiling the plan no longer
-  describes. A different ceiling is a new plan, and the tenants move to it.
-  Who is on which plan is the operator's answer; a change it cannot answer
-  for is refused with 503 rather than made blind.
+- **A plan is edited in place, with the tenants on it.** Each tenant on it
+  holds a copy of the quantities in its `resource-plan.yaml` (§3.2), and a
+  change of quotas writes the plan and every one of those copies in one
+  commit, so no tenant is left `drifted` on a ceiling the plan no longer
+  describes. A change a tenant's usage does not fit under is refused with
+  409, naming the tenant and what does not fit, as a move to a smaller plan
+  is. Who is on which plan, and what each uses, is the operator's answer; a
+  change it cannot answer for is refused with 503 rather than made blind.
 - **`retired: true`** withholds a plan from every new choice and keeps it
   for the tenants on it. Name, description, tier, SKU, units and retirement
   change at any time.

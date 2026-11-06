@@ -271,7 +271,7 @@ func arbiterObjects(image, control, caller string) []client.Object {
 	tcp := corev1.ProtocolTCP
 	port := intstr.FromInt32(arbiter.Port)
 	replicas := int32(1)
-	no, yes := false, true
+	yes := true
 	uid := int64(65532)
 
 	sa := &corev1.ServiceAccount{ObjectMeta: om(arbiter.ServiceName)}
@@ -303,10 +303,7 @@ func arbiterObjects(image, control, caller string) []client.Object {
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: arbiter.ServiceName,
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &yes, RunAsUser: &uid,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
+					SecurityContext:    meta.NonRootPod(uid),
 					Containers: []corev1.Container{{
 						Name:    arbiter.ServiceName,
 						Image:   image,
@@ -329,10 +326,7 @@ func arbiterObjects(image, control, caller string) []client.Object {
 							Path: "/healthz", Port: intstr.FromString("health")}}, PeriodSeconds: 5},
 						LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
 							Path: "/healthz", Port: intstr.FromString("health")}}, PeriodSeconds: 20},
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
-							Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-						},
+						SecurityContext: meta.ReadOnlyContainer(),
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("20m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
 							Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")},

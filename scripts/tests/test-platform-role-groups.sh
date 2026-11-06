@@ -18,15 +18,13 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
 mkdir -p "${SANDBOX}/home" "${SANDBOX}/bin"
 
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${2:-}"; fail=$((fail + 1)); }
 is() { # <what> <output> <exactly>
     if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1" "    got:  $2
     want: $3"; fi
@@ -80,9 +78,4 @@ else
     ok "the bootstrap Job makes no security officers' group"
 fi
 
-echo ""
-if (( fail > 0 )); then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%sall %d passed%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

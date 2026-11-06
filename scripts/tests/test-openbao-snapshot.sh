@@ -39,14 +39,10 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 ROOT="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 check() {
-    if [[ "$2" == 1 ]]; then
-        printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1))
-    else
-        printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; fail=$((fail + 1))
-    fi
+    if [[ "$2" == 1 ]]; then ok "$1"; else bad "$1"; fi
 }
 
 # names <dir> — the names in a directory, one a line, dot files too; nothing
@@ -78,6 +74,7 @@ stop_server() {
         PID=""
     fi
 }
+# shellcheck disable=SC2317,SC2329 # called by the EXIT trap
 cleanup() { stop_server; rm -rf "${W}"; }
 trap cleanup EXIT INT TERM
 
@@ -532,9 +529,4 @@ check "the vault unseals through the restored seal and holds its secret" \
 stop_server
 stop_transit
 
-echo ""
-if (( fail > 0 )); then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} passed.${NC}"
+finish

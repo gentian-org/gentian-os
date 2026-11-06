@@ -483,18 +483,20 @@ func (r *ComponentReconciler) ensureDatabaseSecret(ctx context.Context, comp *ge
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return false, "", "", err
 	}
-	// Only what is written here is compared: the API server fills in the
-	// schema's defaults, which would read as drift on every pass.
+	// existing is the ExternalSecret that was there, as written; nil when
+	// it was made now.
 	var existing *unstructured.Unstructured
-	if err := ensureObject(ctx, r.Client, desired, func(have *unstructured.Unstructured) bool {
-		existing = have
-		if covers(have.Object["spec"], desired.Object["spec"]) {
+	if err := ensureObject(ctx, r.Client, desired, func(es *unstructured.Unstructured) bool {
+		existing = es
+		// Only what is written here is compared: the API server fills in
+		// the schema's defaults, which would read as drift on every pass.
+		if covers(es.Object["spec"], desired.Object["spec"]) {
 			return false
 		}
-		have.Object["spec"] = desired.Object["spec"]
+		es.Object["spec"] = desired.Object["spec"]
 		return true
 	}); err != nil {
-		return false, "", "", err
+		return false, "", "", fmt.Errorf("ensure ExternalSecret %s: %w", name, err)
 	}
 	if existing == nil || !crossplaneObjectReady(existing) {
 		return false, "DatabaseProvisioning", "the database credential is being delivered", nil

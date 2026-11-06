@@ -22,7 +22,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/usher"
 )
 
@@ -42,13 +42,6 @@ func main() {
 		log.Error("usher stopped", "error", err.Error())
 		os.Exit(1)
 	}
-}
-
-func envOr(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
 }
 
 func run(log *slog.Logger) error {
@@ -63,7 +56,7 @@ func run(log *slog.Logger) error {
 	verifier, err := authn.NewVerifier(authn.Config{
 		IssuerBase: issuerBase,
 		JWKSBase:   os.Getenv("DIRECTOR_JWKS_BASE_URL"),
-		Audience:   envOr("USHER_AUDIENCE", "gentian-director"),
+		Audience:   envvar.Or("USHER_AUDIENCE", "gentian-director"),
 	})
 	if err != nil {
 		return err
@@ -72,23 +65,14 @@ func run(log *slog.Logger) error {
 	// The store the operator established and recorded; this process never
 	// writes one, and without the record it does not start rather than find
 	// a store by its name.
-	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
-	fgaOptions.StoreID, fgaOptions.ModelID = os.Getenv("OPENFGA_STORE_ID"), os.Getenv("OPENFGA_MODEL_ID")
-	pinCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	pinnedStore, pinnedModel, err := authz.Pinned(pinCtx, fgaOptions)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("authorization store: %w", err)
-	}
-	fgaOptions.StoreID, fgaOptions.ModelID = pinnedStore, pinnedModel
-	store, err := authz.NewOpenFGA(fgaOptions)
+	store, err := authz.OpenPinned(fgaURL, log)
 	if err != nil {
 		return err
 	}
 
 	cfg := usher.Config{
 		Authn: verifier, Authz: store, Log: log,
-		TilesPath: envOr("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
+		TilesPath: envvar.Or("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Cluster:   os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		// Whether the cluster reports what it runs, as the chart rendered it
 		// for the operator: on only with an address to report to. Unset is
@@ -105,7 +89,7 @@ func run(log *slog.Logger) error {
 	if base := os.Getenv("USHER_LIFECYCLE_URL"); base == "" {
 		log.Warn("no app-lifecycle URL: reads of live state are not served here", "setting", "USHER_LIFECYCLE_URL")
 	} else {
-		tokenFile := envOr("USHER_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
+		tokenFile := envvar.Or("USHER_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token")
 		cfg.Lifecycle = lifecycle.NewReader(base, lifecycle.TokenFile(tokenFile))
 		if cfg.Cluster == "" {
 			log.Warn("no cluster id: the cluster's own reads are not served here", "setting", "GENTIAN_DEPLOYMENTS_CLUSTER_ID")
@@ -113,7 +97,7 @@ func run(log *slog.Logger) error {
 	}
 
 	srv := &http.Server{
-		Addr:              envOr("USHER_LISTEN", ":8080"),
+		Addr:              envvar.Or("USHER_LISTEN", ":8080"),
 		Handler:           usher.New(cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -124,7 +108,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
-	log.Info("usher listening", "addr", srv.Addr, "issuer", issuerBase, "store", fgaOptions.StoreID)
+	log.Info("usher listening", "addr", srv.Addr, "issuer", issuerBase, "store", store.StoreID())
 	select {
 	case err := <-done:
 		return err

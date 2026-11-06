@@ -41,8 +41,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -166,8 +166,6 @@ sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
     RC=$?
 }
 
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${2:-}"; fail=$((fail + 1)); }
 is() { # <what> <got> <exactly>
     if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1" "    got:  $2
     want: $3"; fi
@@ -1338,8 +1336,4 @@ is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 has "the token reaches curl as a header it reads from a file" "$(cat "${CALLS}.headers")" "Authorization: Bearer stub-access-token"
 lacks "... and is none of curl's arguments" "$(cat "${CALLS}.argv")" "stub-access-token"
 
-if [[ "${fail}" -gt 0 ]]; then
-    printf '%s%d failed%s, %d passed\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%s%d passed%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

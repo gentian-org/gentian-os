@@ -184,24 +184,14 @@ func (r *ComponentReconciler) applyComponentPolicy(ctx context.Context, comp *ge
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err
 	}
-	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return fmt.Errorf("create NetworkPolicy %s: %w", desired.Name, err)
+	if err := ensureObject(ctx, r.Client, desired, func(existing *networkingv1.NetworkPolicy) bool {
+		if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+			return false
 		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Spec, existing.Labels = desired.Spec, desired.Labels
-	if err := r.Patch(ctx, existing, patch); err != nil {
-		return fmt.Errorf("patch NetworkPolicy %s: %w", desired.Name, err)
+		existing.Spec, existing.Labels = desired.Spec, desired.Labels
+		return true
+	}); err != nil {
+		return fmt.Errorf("ensure NetworkPolicy %s: %w", desired.Name, err)
 	}
 	return nil
 }

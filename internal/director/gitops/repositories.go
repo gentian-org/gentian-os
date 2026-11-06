@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // A repository, as a commit.
@@ -177,9 +178,9 @@ func repositoryNeedsConfirmation(existingURL string, found bool, d *RepositoryDe
 // else's secret as its own.
 func RepositoryVaultPath(tenant, name string) string {
 	if tenant == "" {
-		return "gentian-os/kernel/repositories/" + name
+		return secrets.KernelPath("repositories", name)
 	}
-	return fmt.Sprintf("gentian-os/tenants/%s/repositories/%s", tenant, name)
+	return secrets.TenantPath(tenant) + "/repositories/" + name
 }
 
 // RepositoryCredentialName is the credential requirement the composition

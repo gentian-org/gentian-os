@@ -13,7 +13,6 @@ package apprender
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -65,7 +64,7 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 	for _, s := range ext.AppSecrets {
 		if s.Name != "" && s.ValuePath != "" {
 			add("internal-"+s.Name,
-				fmt.Sprintf("gentian-os/tenants/%s/apps/%s/internal/%s", tenant, key, s.Name),
+				secrets.InternalPath(tenant, key, s.Name),
 				"value", s.ValuePath)
 		}
 	}
@@ -74,7 +73,7 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 	// named.
 	if ext.ValueMapping != nil && ext.ValueMapping.OIDC != nil {
 		vm := ext.ValueMapping.OIDC
-		oidcPath := fmt.Sprintf("gentian-os/tenants/%s/apps/%s/oidc", tenant, key)
+		oidcPath := secrets.CategoryPath(tenant, key, "oidc")
 		if vm.IssuerKey != "" {
 			add("oidc-issuer", oidcPath, "issuer", vm.IssuerKey)
 		}
@@ -199,23 +198,8 @@ func extensionValues(in *Input, ext *gentianov1alpha1.AppSidecarSpec) (map[strin
 			if err != nil {
 				return nil, err
 			}
-			pairs := []string{
-				"${TENANT_DOMAIN}", in.TenantDomain(),
-				"${TENANT_NAMESPACE}", in.Namespace,
-				"${TENANT_ID}", in.Tenant(),
-				"${APP_ID}", in.App,
-				"${SIDECAR_ID}", ext.Name,
-			}
-			if d := in.KernelServices["KERNEL_DOMAIN"]; d != "" {
-				pairs = append(pairs, "${KERNEL_DOMAIN}", d)
-			}
-			if ip := in.ClusterConfig["node.ip"]; ip != "" {
-				pairs = append(pairs, "${NODE_IP}", ip)
-			}
-			text := string(raw)
-			for i := 0; i < len(pairs); i += 2 {
-				text = strings.ReplaceAll(text, pairs[i], pairs[i+1])
-			}
+			pairs := append(in.placeholders(), "${SIDECAR_ID}", ext.Name)
+			text := expand(string(raw), append(pairs, in.clusterPlaceholders()...)...)
 			if err := json.Unmarshal([]byte(text), &values); err != nil {
 				return nil, fmt.Errorf("extraValues after substitution: %w", err)
 			}

@@ -24,11 +24,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; [[ -n "${2:-}" ]] && printf '%s\n' "$2"; fail=$((fail + 1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1" "${3:-}"; fi; }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 echo ""
 echo "build pin: a run from a newer checkout is not satisfied with the build before"
@@ -100,9 +97,4 @@ check "D-01: pinned, Synced and Healthy, and still running the build before: not
 out="$(verdict D-01-operator GENTIAN_OS_IMAGE_TAG=${NEW} PINNED=${OLD} RUNNING=${OLD})"
 check "D-01: the pin itself is the build before: not satisfied" '[[ "${out}" == "rc=1" ]]' "${out}"
 
-echo ""
-if [[ "${fail}" -gt 0 ]]; then
-    echo "${RED}${fail} failed${NC}, ${pass} passed."
-    exit 1
-fi
-echo "${GREEN}${pass} checks passed.${NC}"
+finish

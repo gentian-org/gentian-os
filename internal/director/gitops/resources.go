@@ -78,37 +78,12 @@ func (g *GitOps) SetResourcePlan(ctx context.Context, tenant string, plan Plan, 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for started, attempt := time.Now(), 1; ; attempt++ {
-		manifest, err := g.tenantFile(ctx, tenant)
+		files, err := g.stageTenantPlan(ctx, tenant, plan, meta)
 		if err != nil {
 			return Result{}, err
 		}
-		dir := filepath.Dir(manifest)
-		patchPath := filepath.Join(dir, ResourcePlanFile)
-		kustomizationPath := filepath.Join(dir, "kustomization.yaml")
-
-		desired := renderResourcePlan(tenant, plan, meta)
-		existing, err := os.ReadFile(patchPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return Result{}, err
-		}
-		kustomization, err := os.ReadFile(kustomizationPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return Result{}, err
-		}
-		listed, kustomizationChanged := ensurePatchListed(string(kustomization), ResourcePlanFile)
-
-		if samePlan(string(existing), desired) && !kustomizationChanged {
+		if len(files) == 0 {
 			return Result{Status: "unchanged"}, nil
-		}
-		if err := os.WriteFile(patchPath, []byte(desired), 0o644); err != nil {
-			return Result{}, err
-		}
-		files := []string{patchPath}
-		if kustomizationChanged {
-			if err := os.WriteFile(kustomizationPath, []byte(listed), 0o644); err != nil {
-				return Result{}, err
-			}
-			files = append(files, kustomizationPath)
 		}
 		rels := make([]string, 0, len(files))
 		for _, f := range files {
@@ -129,6 +104,62 @@ func (g *GitOps) SetResourcePlan(ctx context.Context, tenant string, plan Plan, 
 			return Result{}, err
 		}
 	}
+}
+
+// stageTenantPlan writes a tenant's plan patch, and the kustomization entry
+// that applies it, into the checkout without committing them, and returns
+// the files it changed: none when the tenant is already on this plan with
+// these quotas. The caller holds g.mu and commits.
+func (g *GitOps) stageTenantPlan(ctx context.Context, tenant string, plan Plan, meta Meta) ([]string, error) {
+	manifest, err := g.tenantPlanManifest(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	return writeTenantPlan(manifest, tenant, plan, meta)
+}
+
+// tenantPlanManifest finds the tenant's manifest. Finding it may bring the
+// checkout up to date, so a caller writing several files finds every
+// manifest before it writes any.
+func (g *GitOps) tenantPlanManifest(ctx context.Context, tenant string) (string, error) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
+		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	return g.tenantFile(ctx, tenant)
+}
+
+// writeTenantPlan writes the plan patch beside the tenant's manifest and
+// lists it, returning the files it changed.
+func writeTenantPlan(manifest, tenant string, plan Plan, meta Meta) ([]string, error) {
+	dir := filepath.Dir(manifest)
+	patchPath := filepath.Join(dir, ResourcePlanFile)
+	kustomizationPath := filepath.Join(dir, "kustomization.yaml")
+
+	desired := renderResourcePlan(tenant, plan, meta)
+	existing, err := os.ReadFile(patchPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	kustomization, err := os.ReadFile(kustomizationPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	listed, kustomizationChanged := ensurePatchListed(string(kustomization), ResourcePlanFile)
+
+	if samePlan(string(existing), desired) && !kustomizationChanged {
+		return nil, nil
+	}
+	if err := os.WriteFile(patchPath, []byte(desired), 0o644); err != nil {
+		return nil, err
+	}
+	files := []string{patchPath}
+	if kustomizationChanged {
+		if err := os.WriteFile(kustomizationPath, []byte(listed), 0o644); err != nil {
+			return nil, err
+		}
+		files = append(files, kustomizationPath)
+	}
+	return files, nil
 }
 
 // samePlan reports whether the patch already says what desired says, apart

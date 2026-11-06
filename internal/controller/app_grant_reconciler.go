@@ -61,7 +61,7 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if grant.Status.Phase == gentianov1alpha1.AppGrantPhaseReady && grant.Status.ObservedGeneration == grant.Generation {
 		return ctrl.Result{}, nil
 	}
-	stampCondition(&grant.Status.Conditions, conditionAppGrantReady, metav1.ConditionTrue, "Recorded",
+	setStatusCondition(&grant.Status.Conditions, grant.Generation, conditionAppGrantReady, metav1.ConditionTrue, "Recorded",
 		"grant recorded; the director projects it to the authorization store from git")
 	grant.Status.Phase = gentianov1alpha1.AppGrantPhaseReady
 	grant.Status.ObservedGeneration = grant.Generation

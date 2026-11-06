@@ -16,8 +16,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // The values a chart is told without their being release values: each one
@@ -143,7 +144,7 @@ func (r *valuesRender) sensitiveValues() *valuesSensitive {
 	}
 	for _, contract := range integrations {
 		m := vm.Integrations[contract]
-		path := fmt.Sprintf("gentian-os/tenants/%s/contracts/%s", r.tenant, contract)
+		path := secrets.ContractPath(r.tenant, contract)
 		read(m.EndpointKey, "integration-"+contract+"-endpoint", path, "endpoint")
 		read(m.UserKey, "integration-"+contract+"-user", path, "user")
 		read(m.PasswordKey, "integration-"+contract+"-password", path, "password")

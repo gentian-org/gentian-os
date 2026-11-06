@@ -24,8 +24,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 REPO="$(pwd)"
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
@@ -58,8 +58,6 @@ run() {
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; '"$1" 2>&1
 }
 
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n%s\n' "${RED}" "${NC}" "$1" "${2:-}"; fail=$((fail + 1)); }
 
 echo ""
 echo "Step 0: what the initial install approves"
@@ -140,9 +138,4 @@ else
     bad "the approvals are made only in the run that writes the Cluster claim" ""
 fi
 
-echo ""
-if (( fail )); then
-    printf '%s%d failed%s, %d passed.\n' "${RED}" "${fail}" "${NC}" "${pass}"
-    exit 1
-fi
-printf '%s%d checks passed.%s\n' "${GREEN}" "${pass}" "${NC}"
+finish

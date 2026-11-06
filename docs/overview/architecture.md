@@ -56,6 +56,21 @@ The reasoning behind each mapping is in
 
 ## 3. Architecture at a Glance
 
+Seen as layers, from what people use down to what runs it. gentian.org draws
+the same five with plain labels; here each carries its components.
+
+```mermaid
+flowchart TB
+    apps["<b>Your apps</b> — from a catalog, or your own<br/><small>Nextcloud · OpenProject · Element · XWiki · Odoo · Open WebUI · …</small>"]
+    ui["<b>One desktop, one sign-in, one app store</b> — what people see<br/><small>gentian-ui: desktop · admin console · App Store · sign-in</small>"]
+    os["<b>The operating system</b> — onboards tenants, installs apps, enforces policy, routes traffic<br/><small>gentian-os: operator · director · usher · custodian · registrar · bouncer · arbiter</small>"]
+    shared["<b>Shared services</b> — identity, secrets, databases, storage, mail, AI models<br/><small>Keycloak · OpenFGA · OpenBao · Argo CD · Crossplane · Envoy Gateway · Kyverno · PostgreSQL · MariaDB · Valkey · SeaweedFS · Postfix · Dovecot · LiteLLM</small>"]
+    ground["<b>Your servers, or any provider you choose</b><br/><small>Kubernetes, anywhere</small>"]
+    apps ~~~ ui ~~~ os ~~~ shared ~~~ ground
+    style os fill:#1c1b2e,color:#f4f1ea,stroke:#1c1b2e
+    style ground stroke:#3d3cb5,stroke-width:2px
+```
+
 Git says what a cluster is. Two processes of the platform stand on either
 side of it: the **director** is the only one that writes to the deployments
 repository, and the **operator** is the one that writes to the cluster. Argo

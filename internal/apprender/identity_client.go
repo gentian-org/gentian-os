@@ -11,12 +11,13 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
-	"fmt"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // appClient is the app's own OIDC client (requires.services.identity.oidc)
@@ -59,7 +60,7 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 	var objs []*unstructured.Unstructured
 	if accessType == "CONFIDENTIAL" {
 		objs = append(objs, id.clientCreds(credsName,
-			fmt.Sprintf("gentian-os/tenants/%s/apps/%s/oidc", id.tenant, id.in.App)))
+			secrets.CategoryPath(id.tenant, id.in.App, "oidc")))
 	}
 
 	// The platform's mark: a realm import makes no client carrying it from a
@@ -288,7 +289,7 @@ func (id *identityScope) packObjects(pack gentianov1alpha1.OIDCPackSpec, clientN
 				"realmId":    id.realm,
 				"exhaustive": false,
 				"groupIdRef": map[string]interface{}{
-					"name": identityGroupName(fmt.Sprintf("gentian:tenant:%s:app:%s", id.tenant, id.in.App)),
+					"name": identityGroupName(keycloak.TenantAppGroup(id.tenant, id.in.App)),
 				},
 				"roleIdsRefs": []interface{}{map[string]interface{}{"name": roleName}},
 			},

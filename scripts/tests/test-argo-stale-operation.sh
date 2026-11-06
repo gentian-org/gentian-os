@@ -21,10 +21,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
-pass=0; fail=0
-ok()  { printf '  %sok%s    %s\n' "${GREEN}" "${NC}" "$1"; pass=$((pass + 1)); }
-bad() { printf '  %sFAIL%s  %s\n' "${RED}" "${NC}" "$1"; fail=$((fail + 1)); }
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
 
 command -v jq >/dev/null || { echo "jq required"; exit 1; }
 
@@ -101,6 +99,4 @@ run_case "single source, automated, older revision: stopped" "${single}" stop
 run_case "single source, automated, same revision: left alone" \
     "$(jq '.status.operationState.operation.sync.source.targetRevision = "abc"' <<<"${single}")" leave
 
-echo ""
-echo "  ${pass} passed, ${fail} failed"
-[[ ${fail} -eq 0 ]]
+finish

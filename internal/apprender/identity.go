@@ -19,6 +19,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // renderIdentity registers the app at the tenant's realm: its entitlement
@@ -103,8 +104,7 @@ func (id *identityScope) services() *gentianov1alpha1.ServiceRequirements {
 
 // place puts the tenant's and the kernel's domains into an address.
 func (id *identityScope) place(uri string) string {
-	uri = strings.ReplaceAll(uri, "${TENANT_DOMAIN}", id.domain)
-	return strings.ReplaceAll(uri, "${KERNEL_DOMAIN}", id.kernelDomain)
+	return expand(uri, "${TENANT_DOMAIN}", id.domain, "${KERNEL_DOMAIN}", id.kernelDomain)
 }
 
 func (id *identityScope) placeAll(uris []string) []string {
@@ -140,7 +140,7 @@ func identityGroupName(path string) string {
 // which a realm import reads: a group carrying it is never made from a
 // bundle (internal/keycloak PlatformMarkerAttribute).
 func (id *identityScope) entitlementGroup() *unstructured.Unstructured {
-	path := fmt.Sprintf("gentian:tenant:%s:app:%s", id.tenant, id.in.App)
+	path := keycloak.TenantAppGroup(id.tenant, id.in.App)
 	attrs := map[string]interface{}{}
 	if raw := id.in.ProfileAnnotations["gentianos.io/keycloak-group-attributes"]; raw != "" {
 		var parsed map[string]interface{}

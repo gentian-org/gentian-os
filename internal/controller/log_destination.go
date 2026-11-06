@@ -230,22 +230,15 @@ func (r *ComponentReconciler) logDestinationHeldElsewhere(ctx context.Context, c
 
 func (r *ComponentReconciler) applyLogDestinationCertificate(ctx context.Context, comp *gentianov1alpha1.Component, ld *gentianov1alpha1.LogDestinationRequirement) error {
 	desired := buildLogDestinationCertificate(comp, ld)
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(certManagerCertGVK)
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if reflect.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
-		reflect.DeepEqual(existing.GetLabels(), desired.GetLabels()) {
-		return nil
-	}
-	existing.Object["spec"] = desired.Object["spec"]
-	existing.SetLabels(desired.GetLabels())
-	return r.Update(ctx, existing)
+	return ensureObject(ctx, r.Client, desired, func(existing *unstructured.Unstructured) bool {
+		if reflect.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
+			reflect.DeepEqual(existing.GetLabels(), desired.GetLabels()) {
+			return false
+		}
+		existing.Object["spec"] = desired.Object["spec"]
+		existing.SetLabels(desired.GetLabels())
+		return true
+	})
 }
 
 func (r *ComponentReconciler) applyLogDestinationPolicy(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, port int32) error {
@@ -253,19 +246,13 @@ func (r *ComponentReconciler) applyLogDestinationPolicy(ctx context.Context, com
 	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
 		return err
 	}
-	existing := &networkingv1.NetworkPolicy{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
-		return nil
-	}
-	existing.Spec = desired.Spec
-	return r.Update(ctx, existing)
+	return ensureObject(ctx, r.Client, desired, func(existing *networkingv1.NetworkPolicy) bool {
+		if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+			return false
+		}
+		existing.Spec = desired.Spec
+		return true
+	})
 }
 
 // copyLogDestinationSecret puts the issued certificate where the component
