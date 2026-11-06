@@ -324,6 +324,10 @@ func (s *Service) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	if err := s.client.List(ctx, &tenants); err != nil {
 		return nil, fmt.Errorf("list tenants: %w", err)
 	}
+	allowed, err := security.LoadAllowedMacWaivers(ctx, s.client)
+	if err != nil {
+		return nil, err
+	}
 	out := []Approval{}
 	now := time.Now()
 	for i := range tenants.Items {
@@ -344,7 +348,7 @@ func (s *Service) PendingApprovals(ctx context.Context) ([]Approval, error) {
 				}
 				profile = nil
 			}
-			for _, p := range pendingApprovals(comp, profile, now) {
+			for _, p := range pendingApprovals(comp, profile, allowed, now) {
 				out = append(out, Approval{Tenant: tenant, Profile: comp.Spec.ProfileRef.Name, Install: comp.Name, PendingPrivilege: p})
 			}
 		}

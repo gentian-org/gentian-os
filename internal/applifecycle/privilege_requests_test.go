@@ -181,6 +181,39 @@ func TestTheClusterListsWhatAwaitsAnApprover(t *testing.T) {
 	}
 }
 
+// A pending pod-security request names the allowlist entry it needs and
+// whether the cluster permits it already, so an approver sees that half of
+// the answer; nothing else carries one.
+func TestAPendingWaiverSaysWhetherTheClusterPermitsIt(t *testing.T) {
+	ctx := context.Background()
+	waiverOf := func(s *Service) *PendingWaiver {
+		t.Helper()
+		list, err := s.PendingApprovals(ctx)
+		if err != nil || len(list) != 2 {
+			t.Fatalf("approvals = %+v, %v", list, err)
+		}
+		if list[0].Waiver != nil {
+			t.Errorf("an egress request carries a waiver: %+v", list[0].Waiver)
+		}
+		return list[1].Waiver
+	}
+	want := PendingWaiver{Profile: "crm", Policy: "gentian-require-non-root", Scope: "web"}
+
+	if got := waiverOf(appsService(t, demoTenant(), crmProfile(), waitingCRM())); got == nil || *got != want {
+		t.Errorf("without an allowlist: %+v, want %+v", got, want)
+	}
+	policy := &gentianov1alpha1.PlatformSecurityPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PlatformSecurityPolicyName},
+		Spec: gentianov1alpha1.PlatformSecurityPolicySpec{AllowedMacWaivers: []gentianov1alpha1.AllowedMacWaiver{
+			{Profile: "crm", Policy: "gentian-require-non-root", Scope: "web"},
+		}},
+	}
+	want.Allowlisted = true
+	if got := waiverOf(appsService(t, demoTenant(), crmProfile(), waitingCRM(), policy)); got == nil || *got != want {
+		t.Errorf("allowlisted: %+v, want %+v", got, want)
+	}
+}
+
 // The list is a read the usher's identity is admitted to; the request is the
 // one command, and it records the actor the director named.
 func TestTheApprovalRoutes(t *testing.T) {
