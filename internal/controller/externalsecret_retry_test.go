@@ -20,11 +20,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 func externalSecretWithReady(status string, since time.Time, annotations map[string]string) *unstructured.Unstructured {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	es.SetName("app-values")
 	es.SetNamespace("tenant-a")
 	es.SetAnnotations(annotations)
@@ -44,7 +46,7 @@ func TestAFailedExternalSecretIsReadAgain(t *testing.T) {
 	key := types.NamespacedName{Name: "app-values", Namespace: "tenant-a"}
 	retried := func(r *ExternalSecretRetryReconciler) string {
 		es := &unstructured.Unstructured{}
-		es.SetGroupVersionKind(externalSecretGVK)
+		es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 		if err := r.Get(ctx, key, es); err != nil {
 			t.Fatal(err)
 		}

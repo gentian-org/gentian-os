@@ -21,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -33,6 +32,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
@@ -45,24 +45,7 @@ const (
 	// goes through answers for the same objects.
 	clusterBackupPolicy = backup.ClusterPolicyName
 	managedScheduleName = backup.ManagedScheduleName
-
-	// credentialProbePrefix names the ExternalSecret that reports whether a
-	// destination's keys have been supplied. One constant rather than four
-	// literals, because SetupWithManager now has to recognize the name it
-	// builds elsewhere, and a prefix spelled twice is a watch that silently
-	// matches nothing.
-	credentialProbePrefix = "credreq-"
 )
-
-// externalSecretGVK is used unstructured rather than through ESO's Go types,
-// for the reason the custodian already records: adding external-secrets
-// to go.mod for a handful of fields couples this build to an API version that
-// has already moved once.
-var externalSecretGVK = schema.GroupVersionKind{
-	Group:   "external-secrets.io",
-	Version: "v1",
-	Kind:    "ExternalSecret",
-}
 
 // BackupPolicyReconciler turns a policy into the things it implies: the
 // credential its destination needs, and the resolved values an admin reads.
@@ -396,11 +379,11 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 		return err
 	}
 	for _, es := range []struct{ name, namespace string }{
-		{credentialProbePrefix + name, meta.OperatorNamespace},
+		{credentialprobe.Prefix + name, meta.OperatorNamespace},
 		{name, s3Namespace},
 	} {
 		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(externalSecretGVK)
+		obj.SetGroupVersionKind(secrets.ExternalSecretGVK)
 		obj.SetName(es.name)
 		obj.SetNamespace(es.namespace)
 		if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
@@ -414,7 +397,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 // no Secret and exists only so ESO's Ready condition answers "has this been
 // supplied". The custodian reads exactly this object.
 func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPath, scope string) error {
-	return applyExternalSecret(ctx, r.Client, credentialProbePrefix+name, meta.OperatorNamespace, vaultPath, "None", nil, map[string]string{
+	return applyExternalSecret(ctx, r.Client, credentialprobe.Prefix+name, meta.OperatorNamespace, vaultPath, "None", nil, map[string]string{
 		"gentianos.io/credential-requirement": name,
 		"gentianos.io/credential-phase":       "runtime",
 		"gentianos.io/credential-scope":       scope,
@@ -451,58 +434,22 @@ func applyExternalSecret(
 ) error {
 	data := []any{}
 	for _, key := range []string{backup.DestinationAccessKeyField, backup.DestinationSecretKeyField} {
-		data = append(data, map[string]any{
-			"secretKey": key,
-			"remoteRef": map[string]any{"key": vaultPath, "property": key},
-		})
+		data = append(data, secrets.RemoteRef(key, vaultPath, key))
 	}
-
-	desired := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": externalSecretGVK.GroupVersion().String(),
-		"kind":       externalSecretGVK.Kind,
-		"metadata": map[string]any{
-			"name":      name,
-			"namespace": namespace,
-		},
-		"spec": map[string]any{
-			"refreshInterval": "1h",
-			// The kernel's store: both ExternalSecrets are in kernel
-			// namespaces, also where the path is a tenant's.
-			"secretStoreRef": secrets.StoreRef(secrets.KernelStore),
-			"target":         map[string]any{"creationPolicy": creationPolicy},
-			"data":           data,
-		},
-	}}
+	// The kernel's store: both ExternalSecrets are in kernel namespaces, also
+	// where the path is a tenant's.
+	desired := secrets.ExternalSecret(name, namespace, secrets.KernelStore, map[string]any{"creationPolicy": creationPolicy}, data)
 	desired.SetLabels(labels)
 	if len(owners) > 0 {
 		desired.SetOwnerReferences(owners)
 	}
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(externalSecretGVK)
-	err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
-	switch {
-	case apierrors.IsNotFound(err):
-		if err := c.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("create ExternalSecret %s/%s: %w", namespace, name, err)
-		}
-		return nil
-	case err != nil:
-		return err
-	}
-	// Only on a real difference. An unconditional Update here rewrote the
-	// object on every pass, and ESO writes it too: the two raced, the loser got
-	// a conflict, and the conflict was reported as a failed policy.
-	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
-		equality.Semantic.DeepEqual(existing.GetLabels(), desired.GetLabels()) &&
-		(len(owners) == 0 || equality.Semantic.DeepEqual(existing.GetOwnerReferences(), desired.GetOwnerReferences())) {
+	err := ensureExternalSecret(ctx, c, desired, func(existing *unstructured.Unstructured) bool {
+		return len(owners) == 0 || equality.Semantic.DeepEqual(existing.GetOwnerReferences(), desired.GetOwnerReferences())
+	})
+	if apierrors.IsAlreadyExists(err) {
 		return nil
 	}
-	desired.SetResourceVersion(existing.GetResourceVersion())
-	if err := c.Update(ctx, desired); err != nil {
-		return fmt.Errorf("update ExternalSecret %s/%s: %w", namespace, name, err)
-	}
-	return nil
+	return err
 }
 
 // credentialSatisfied reads ESO's verdict from the probe, the same way the
@@ -515,29 +462,13 @@ func (r *BackupPolicyReconciler) credentialSatisfied(ctx context.Context, name s
 // supplied, from its probe.
 func credentialProbeSatisfied(ctx context.Context, c client.Client, name string) (bool, string) {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
-	key := types.NamespacedName{Name: credentialProbePrefix + name, Namespace: meta.OperatorNamespace}
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
+	key := types.NamespacedName{Name: credentialprobe.Prefix + name, Namespace: meta.OperatorNamespace}
 	if err := c.Get(ctx, key, es); err != nil {
 		return false, "no satisfaction probe found"
 	}
-	conds, found, err := unstructured.NestedSlice(es.Object, "status", "conditions")
-	if err != nil || !found {
-		return false, "probe has not reported yet"
-	}
-	for _, raw := range conds {
-		cond, ok := raw.(map[string]any)
-		if !ok || cond["type"] != "Ready" {
-			continue
-		}
-		if cond["status"] == "True" {
-			return true, ""
-		}
-		if msg, ok := cond["message"].(string); ok && msg != "" {
-			return false, msg
-		}
-		return false, "not ready"
-	}
-	return false, "probe has not reported a Ready condition"
+	ready, _, reason := credentialprobe.Ready(es)
+	return ready, reason
 }
 
 func (r *BackupPolicyReconciler) failPolicy(
@@ -559,7 +490,7 @@ func (r *BackupPolicyReconciler) persistPolicy(ctx context.Context, policy *gent
 // backup policies, and there is one of those per app per tenant.
 func isCredentialProbe(obj client.Object) bool {
 	return obj.GetNamespace() == meta.OperatorNamespace &&
-		strings.HasPrefix(obj.GetName(), credentialProbePrefix)
+		strings.HasPrefix(obj.GetName(), credentialprobe.Prefix)
 }
 
 // policiesForProbe maps a satisfaction probe back to the policies waiting on it.
@@ -571,7 +502,7 @@ func isCredentialProbe(obj client.Object) bool {
 // costs one no-op reconcile and covers the ordering where the probe reports
 // before the policy first records what it is waiting for.
 func (r *BackupPolicyReconciler) policiesForProbe(ctx context.Context, obj client.Object) []reconcile.Request {
-	name := strings.TrimPrefix(obj.GetName(), credentialProbePrefix)
+	name := strings.TrimPrefix(obj.GetName(), credentialprobe.Prefix)
 
 	policies := &gentianov1alpha1.BackupPolicyList{}
 	if err := r.List(ctx, policies); err != nil {
@@ -607,7 +538,7 @@ func (r *BackupPolicyReconciler) policiesForProbe(ctx context.Context, obj clien
 // nudged by hand.
 func (r *BackupPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	probe := &unstructured.Unstructured{}
-	probe.SetGroupVersionKind(externalSecretGVK)
+	probe.SetGroupVersionKind(secrets.ExternalSecretGVK)
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.BackupPolicy{}).

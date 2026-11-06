@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -61,10 +63,7 @@ func (r *valuesRender) suppliedCredentials() ([]*unstructured.Unstructured, erro
 				field["example"] = f.Example
 			}
 			fields = append(fields, field)
-			data = append(data, map[string]interface{}{
-				"secretKey": f.Key,
-				"remoteRef": map[string]interface{}{"key": path, "property": f.Key},
-			})
+			data = append(data, secrets.RemoteRef(f.Key, path, f.Key))
 		}
 
 		req := valuesObject("gentianos.io/v1alpha1", "CredentialRequirement", reqName, "")
@@ -97,22 +96,13 @@ func (r *valuesRender) suppliedCredentials() ([]*unstructured.Unstructured, erro
 		}
 		req.Object["spec"] = spec
 
-		probe := valuesObject("external-secrets.io/v1", "ExternalSecret", "credreq-"+reqName, kernelNs)
+		probe := secrets.ExternalSecret(credentialprobe.Prefix+reqName, kernelNs, secrets.KernelStore,
+			map[string]interface{}{"creationPolicy": "None"}, data)
 		probe.SetLabels(map[string]string{
 			"gentianos.io/credential-requirement": reqName,
 			"gentianos.io/credential-phase":       "runtime",
 			"gentianos.io/credential-scope":       "tenant",
 		})
-		probeSpec := map[string]interface{}{
-			"refreshInterval": "1h",
-			"secretStoreRef":  map[string]interface{}{"name": "openbao", "kind": "ClusterSecretStore"},
-			"target":          map[string]interface{}{"creationPolicy": "None"},
-			"data":            nil,
-		}
-		if data != nil {
-			probeSpec["data"] = data
-		}
-		probe.Object["spec"] = probeSpec
 		objs = append(objs, req, probe)
 	}
 	return objs, nil

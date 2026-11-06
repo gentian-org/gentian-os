@@ -688,7 +688,7 @@ func TestTheCataloguesSidecarProfilesAreServed(t *testing.T) {
 		host, appURL string
 		secrets      int
 	}{
-		"docmost-ce":      {"docs.acme.k.example", "http://docmost-ce.tenant-acme.svc.cluster.local:3000", 1},
+		"docmost-ce": {"docs.acme.k.example", "http://docmost-ce.tenant-acme.svc.cluster.local:3000", 1},
 		// Its key and the password of its own service account: its handler
 		// has the app make the account and the session itself.
 		"openproject-ce": {"projects.acme.k.example", "http://openproject-ce.tenant-acme.svc.cluster.local:8080", 2},
@@ -751,7 +751,7 @@ func (h *digestHarness) sidecarObjects() []string {
 	in, selector := client.InNamespace(h.comp.Namespace), client.MatchingLabels{signInSidecarLabel: h.comp.Name}
 	var out []string
 	secretsList := &unstructured.UnstructuredList{}
-	secretsList.SetGroupVersionKind(schema.GroupVersionKind{Group: externalSecretGVK.Group, Version: externalSecretGVK.Version, Kind: externalSecretGVK.Kind + "List"})
+	secretsList.SetGroupVersionKind(schema.GroupVersionKind{Group: secrets.ExternalSecretGVK.Group, Version: secrets.ExternalSecretGVK.Version, Kind: secrets.ExternalSecretGVK.Kind + "List"})
 	for kind, list := range map[string]client.ObjectList{
 		"ExternalSecret": secretsList, "Deployment": &appsv1.DeploymentList{}, "Service": &corev1.ServiceList{},
 		"ConfigMap": &corev1.ConfigMapList{}, "NetworkPolicy": &networkingv1.NetworkPolicyList{},
@@ -859,7 +859,7 @@ func TestTheSidecarIsWrittenBesideTheApp(t *testing.T) {
 	// What it is handed: this app's own database and the one secret the
 	// profile named, from this app's own vault paths.
 	handed := &unstructured.Unstructured{}
-	handed.SetGroupVersionKind(externalSecretGVK)
+	handed.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := h.c.Get(ctx, types.NamespacedName{Name: "notes-sign-in", Namespace: ns}, handed); err != nil {
 		t.Fatal(err)
 	}

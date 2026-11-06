@@ -24,6 +24,8 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -59,7 +61,7 @@ func TestExternalSecretTranscript(t *testing.T) {
 				return applyExternalSecret(ctx, c, "credreq-x", meta.OperatorNamespace, "gentian-os/kernel/backup/x", "None", nil,
 					map[string]string{"a": "b"})
 			},
-			written: unstructuredOf(externalSecretGVK, meta.OperatorNamespace, "credreq-x"),
+			written: unstructuredOf(secrets.ExternalSecretGVK, meta.OperatorNamespace, "credreq-x"),
 			drift:   externalSecretDrift,
 		},
 		{
@@ -68,7 +70,7 @@ func TestExternalSecretTranscript(t *testing.T) {
 				return applyExternalSecret(ctx, c, "dest", "kernel-s3", "gentian-os/kernel/backup/x", "Owner", owner,
 					map[string]string{"a": "b"})
 			},
-			written: unstructuredOf(externalSecretGVK, "kernel-s3", "dest"),
+			written: unstructuredOf(secrets.ExternalSecretGVK, "kernel-s3", "dest"),
 			drift:   externalSecretDrift,
 		},
 		{
@@ -82,12 +84,12 @@ func TestExternalSecretTranscript(t *testing.T) {
 				}
 				return outcome("handed=%v", handed)
 			},
-			written: unstructuredOf(externalSecretGVK, "tenant-demo", "wiki-sign-in"),
+			written: unstructuredOf(secrets.ExternalSecretGVK, "tenant-demo", "wiki-sign-in"),
 			drift:   externalSecretDrift,
 		},
 		{
 			name: "sign-in secret, nothing handed",
-			seed: []client.Object{unstructuredOf(externalSecretGVK, "tenant-demo", "wiki-sign-in")},
+			seed: []client.Object{unstructuredOf(secrets.ExternalSecretGVK, "tenant-demo", "wiki-sign-in")},
 			run: func(ctx context.Context, c client.Client) error {
 				r := &ComponentReconciler{Client: c, Scheme: c.Scheme()}
 				s := &signInSidecar{service: "wiki-sign-in"}
@@ -97,7 +99,7 @@ func TestExternalSecretTranscript(t *testing.T) {
 				}
 				return outcome("handed=%v", handed)
 			},
-			written: unstructuredOf(externalSecretGVK, "tenant-demo", "wiki-sign-in"),
+			written: unstructuredOf(secrets.ExternalSecretGVK, "tenant-demo", "wiki-sign-in"),
 			drift:   externalSecretDrift,
 		},
 		{
@@ -107,7 +109,7 @@ func TestExternalSecretTranscript(t *testing.T) {
 				return r.applyExternalSecret(ctx, "datastore", map[string]any{"uri": "{{ .user }}"},
 					[]any{map[string]any{"secretKey": "user", "remoteRef": map[string]any{"key": "p", "property": "user"}}})
 			},
-			written: unstructuredOf(externalSecretGVK, arbiter.Namespace, "datastore"),
+			written: unstructuredOf(secrets.ExternalSecretGVK, arbiter.Namespace, "datastore"),
 			drift:   externalSecretDrift,
 		},
 		{
@@ -122,7 +124,7 @@ func TestExternalSecretTranscript(t *testing.T) {
 				}
 				return outcome("ready=%v reason=%q message=%q", ready, reason, message)
 			},
-			written: unstructuredOf(externalSecretGVK, "tenant-demo", "wiki"+componentDatabaseSecretSuffix),
+			written: unstructuredOf(secrets.ExternalSecretGVK, "tenant-demo", "wiki"+componentDatabaseSecretSuffix),
 			drift: func(obj client.Object) {
 				externalSecretDrift(obj)
 				u := obj.(*unstructured.Unstructured)
@@ -151,7 +153,7 @@ func TestCredentialProbeTranscript(t *testing.T) {
 	ctx := context.Background()
 	for name, status := range probes {
 		var seed []client.Object
-		es := unstructuredOf(externalSecretGVK, meta.OperatorNamespace, credentialProbePrefix+"req")
+		es := unstructuredOf(secrets.ExternalSecretGVK, meta.OperatorNamespace, credentialprobe.Prefix+"req")
 		if status != nil {
 			es.Object["status"] = status
 		}

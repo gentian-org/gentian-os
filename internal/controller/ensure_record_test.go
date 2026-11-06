@@ -29,6 +29,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
@@ -37,7 +38,7 @@ import (
 func ensureScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := SchemeForTest(t)
-	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK, externalSecretGVK} {
+	for _, gvk := range []schema.GroupVersionKind{securityPolicyGVK, clientTrafficPolicyGVK, backendTrafficPolicyGVK, referenceGrantGVK, httpRouteFilterGVK, secrets.ExternalSecretGVK} {
 		s.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		s.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
 	}

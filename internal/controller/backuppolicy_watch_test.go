@@ -23,12 +23,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 func probe(name, namespace string) client.Object {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(externalSecretGVK)
+	u.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	u.SetName(name)
 	u.SetNamespace(namespace)
 	return u
@@ -177,7 +178,7 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 func externalSecretVersion(t *testing.T, r *BackupPolicyReconciler, name string) string {
 	t.Helper()
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := r.Get(context.Background(),
 		types.NamespacedName{Name: name, Namespace: s3Namespace}, es); err != nil {
 		t.Fatalf("get ExternalSecret: %v", err)

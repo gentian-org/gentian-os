@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -40,10 +41,7 @@ type valuesSensitive struct {
 }
 
 func (v *valuesSensitive) read(secretKey, path, property string) {
-	v.data = append(v.data, map[string]interface{}{
-		"secretKey": secretKey,
-		"remoteRef": map[string]interface{}{"key": path, "property": property},
-	})
+	v.data = append(v.data, secrets.RemoteRef(secretKey, path, property))
 }
 
 // sensitiveValues collects every value the profile maps from the tenant's
@@ -264,7 +262,6 @@ func (r *valuesRender) sensitiveSecret(v *valuesSensitive) *unstructured.Unstruc
 	if len(v.data) == 0 {
 		return nil
 	}
-	es := valuesObject("external-secrets.io/v1", "ExternalSecret", r.secretName(), r.ns)
 	target := map[string]interface{}{
 		"name":           r.secretName(),
 		"creationPolicy": "Owner",
@@ -277,16 +274,8 @@ func (r *valuesRender) sensitiveSecret(v *valuesSensitive) *unstructured.Unstruc
 			"data":          v.documents,
 		}
 	}
-	es.Object["spec"] = map[string]interface{}{
-		"refreshInterval": "1h",
-		// The tenant's own store: the kernel's is not usable from a
-		// tenant's namespace.
-		"secretStoreRef": map[string]interface{}{
-			"kind": "ClusterSecretStore",
-			"name": "openbao-tenant-" + r.tenant,
-		},
-		"target": target,
-		"data":   v.data,
-	}
+	// The tenant's own store: the kernel's is not usable from a tenant's
+	// namespace.
+	es := secrets.ExternalSecret(r.secretName(), r.ns, secrets.TenantStore(r.tenant), target, v.data)
 	return es
 }

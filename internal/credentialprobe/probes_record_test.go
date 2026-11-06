@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -43,11 +44,11 @@ var recordedProbes = map[string]map[string]any{
 // testdata/satisfied.txt.
 func TestSatisfiedTranscript(t *testing.T) {
 	s := runtime.NewScheme()
-	s.AddKnownTypeWithName(externalSecretGVK, &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(secrets.ExternalSecretGVK, &unstructured.Unstructured{})
 	var out []string
 	for name, status := range recordedProbes {
 		es := &unstructured.Unstructured{}
-		es.SetGroupVersionKind(externalSecretGVK)
+		es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 		es.SetNamespace(meta.OperatorNamespace)
 		es.SetName("credreq-req")
 		if status != nil {

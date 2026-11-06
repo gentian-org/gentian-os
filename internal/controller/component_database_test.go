@@ -63,7 +63,7 @@ func componentDatabaseScheme(t *testing.T) *runtime.Scheme {
 	for _, gvk := range []schema.GroupVersionKind{
 		cnpgClusterGVK,
 		{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind},
-		externalSecretGVK,
+		secrets.ExternalSecretGVK,
 	} {
 		s.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 		s.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &unstructured.UnstructuredList{})
@@ -197,7 +197,7 @@ func TestATenantDesktopsDatabaseIsMadeOnTheTenantPostgres(t *testing.T) {
 		t.Fatal("ready before the credential arrived")
 	}
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
 		t.Fatalf("ExternalSecret: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestThePlatformTenantsDesktopReadsItsPasswordThroughItsOwnStore(t *testing.
 		t.Fatal(err)
 	}
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := c.Get(ctx, types.NamespacedName{Name: comp.Name + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
 		t.Fatalf("ExternalSecret: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestAnInstalledComponentIsGivenItsOwnDatabaseNotTheDesktops(t *testing.T) {
 		t.Fatalf("ready=%v reason=%q err=%v, want waiting for the credential", ready, reason, err)
 	}
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := c.Get(ctx, types.NamespacedName{Name: "fellwort" + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
 		t.Fatal(err)
 	}

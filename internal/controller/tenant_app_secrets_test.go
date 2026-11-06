@@ -221,7 +221,7 @@ func newSecretsWorld(t *testing.T, mutate func(*gentianov1alpha1.TenantRestore))
 			},
 		},
 	}}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	es.SetName("wiki-sensitive-values")
 	es.SetNamespace("tenant-demo")
 	other := es.DeepCopy()
@@ -311,7 +311,7 @@ func (w *secretsWorld) playSecretsOperator(t *testing.T, all bool) {
 	t.Helper()
 	ctx := context.Background()
 	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(externalSecretGVK.GroupVersion().WithKind(externalSecretGVK.Kind + "List"))
+	list.SetGroupVersionKind(secrets.ExternalSecretGVK.GroupVersion().WithKind(secrets.ExternalSecretGVK.Kind + "List"))
 	if err := w.c.List(ctx, list, client.InNamespace("tenant-demo")); err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +754,7 @@ func TestARestoreThatFindsTheSameSecretsChangesNothing(t *testing.T) {
 		t.Errorf("written %v, upgraded %v, status %+v", w.vault.puts, upgraded, st)
 	}
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := w.c.Get(context.Background(), types.NamespacedName{Name: "wiki-sensitive-values", Namespace: "tenant-demo"}, es); err != nil {
 		t.Fatal(err)
 	}

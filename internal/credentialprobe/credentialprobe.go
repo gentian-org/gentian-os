@@ -21,9 +21,9 @@ package credentialprobe
 
 import (
 	"context"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -31,7 +31,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
-var externalSecretGVK = schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ExternalSecret"}
+// Prefix begins the name of every probe: a requirement's probe is Prefix and
+// the requirement's name.
+const Prefix = "credreq-"
 
 // Awaited is one supplied credential that is not set yet.
 type Awaited struct {
@@ -65,17 +67,39 @@ func AwaitedSupplied(ctx context.Context, c client.Reader, tenant, app string, p
 // Satisfied reads ESO's verdict from the probe of the requirement.
 func Satisfied(ctx context.Context, c client.Reader, requirement string) bool {
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
-	if err := c.Get(ctx, client.ObjectKey{Namespace: meta.OperatorNamespace, Name: "credreq-" + requirement}, es); err != nil {
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
+	if err := c.Get(ctx, client.ObjectKey{Namespace: meta.OperatorNamespace, Name: Prefix + requirement}, es); err != nil {
 		return false
 	}
-	conds, _, _ := unstructured.NestedSlice(es.Object, "status", "conditions")
-	for _, raw := range conds {
-		if cond, ok := raw.(map[string]any); ok && cond["type"] == "Ready" {
-			return cond["status"] == "True"
-		}
+	ready, _, _ := Ready(es)
+	return ready
+}
+
+// Ready is ESO's Ready condition of a probe: whether it is True, when it last
+// changed (zero when unknown), and its message.
+func Ready(es *unstructured.Unstructured) (bool, time.Time, string) {
+	conds, found, err := unstructured.NestedSlice(es.Object, "status", "conditions")
+	if err != nil || !found {
+		return false, time.Time{}, "probe has not reported yet"
 	}
-	return false
+	for _, raw := range conds {
+		cond, ok := raw.(map[string]any)
+		if !ok || cond["type"] != "Ready" {
+			continue
+		}
+		var since time.Time
+		if at, ok := cond["lastTransitionTime"].(string); ok {
+			since, _ = time.Parse(time.RFC3339, at)
+		}
+		if cond["status"] == "True" {
+			return true, since, ""
+		}
+		if msg, ok := cond["message"].(string); ok && msg != "" {
+			return false, since, msg
+		}
+		return false, since, "not ready"
+	}
+	return false, time.Time{}, "probe has not reported a Ready condition"
 }
 
 // Text names the awaited credentials for a person, and where they are set:

@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 )
 
 // What the custodian reads from each probe status, held to
@@ -41,7 +43,7 @@ func TestReadyConditionTranscript(t *testing.T) {
 		if status != nil {
 			es.Object["status"] = status
 		}
-		ok, since, reason := readyCondition(es)
+		ok, since, reason := credentialprobe.Ready(es)
 		out = append(out, fmt.Sprintf("%s: ready=%v since=%s reason=%q", name, ok, since.UTC().Format("2006-01-02T15:04:05Z"), reason))
 	}
 	sort.Strings(out)

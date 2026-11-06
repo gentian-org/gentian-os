@@ -18,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // forceSyncAnnotation is what External Secrets watches to re-read a value ahead
@@ -58,8 +60,8 @@ func (s *Server) refreshConsumers(ctx context.Context, vaultPath string) {
 
 	list := &unstructured.UnstructuredList{}
 	// The List kind, from the same GVK the rest of this package reads one by.
-	list.SetGroupVersionKind(externalSecretGVK.GroupVersion().WithKind(
-		externalSecretGVK.Kind + "List"))
+	list.SetGroupVersionKind(secrets.ExternalSecretGVK.GroupVersion().WithKind(
+		secrets.ExternalSecretGVK.Kind + "List"))
 	if err := s.Client.List(ctx, list); err != nil {
 		log.Error(err, "cannot list ExternalSecrets to refresh a stored credential",
 			"path", vaultPath)
