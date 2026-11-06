@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // appClient is the app's own OIDC client (requires.services.identity.oidc)
@@ -288,7 +289,7 @@ func (id *identityScope) packObjects(pack gentianov1alpha1.OIDCPackSpec, clientN
 				"realmId":    id.realm,
 				"exhaustive": false,
 				"groupIdRef": map[string]interface{}{
-					"name": identityGroupName(fmt.Sprintf("gentian:tenant:%s:app:%s", id.tenant, id.in.App)),
+					"name": identityGroupName(keycloak.TenantAppGroup(id.tenant, id.in.App)),
 				},
 				"roleIdsRefs": []interface{}{map[string]interface{}{"name": roleName}},
 			},

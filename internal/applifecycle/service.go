@@ -12,7 +12,6 @@ package applifecycle
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -189,28 +188,10 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 		return fmt.Errorf("failed to get ComponentProfile %s: %w", profileName, err)
 	}
 
+	// A malformed annotation gives the group no declared attributes.
 	var attrs map[string][]string
-	annotations := profile.GetAnnotations()
-	if annotations != nil {
-		if val, ok := annotations["gentianos.io/keycloak-group-attributes"]; ok {
-			var parsed map[string]any
-			if err := json.Unmarshal([]byte(val), &parsed); err == nil {
-				attrs = make(map[string][]string)
-				for k, v := range parsed {
-					if list, ok := v.([]any); ok {
-						var strList []string
-						for _, item := range list {
-							strList = append(strList, fmt.Sprint(item))
-						}
-						attrs[k] = strList
-					} else if valStr, ok := v.(string); ok {
-						attrs[k] = []string{valStr}
-					} else {
-						attrs[k] = []string{fmt.Sprint(v)}
-					}
-				}
-			}
-		}
+	if val, ok := profile.GetAnnotations()[keycloak.GroupAttributesAnnotation]; ok {
+		attrs, _ = keycloak.ParseGroupAttributes(val)
 	}
 
 	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
@@ -219,7 +200,7 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 	}
 
 	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
-	fullGroupName := fmt.Sprintf("gentian:tenant:%s:app:%s", tenantName, profileName)
+	fullGroupName := keycloak.TenantAppGroup(tenantName, profileName)
 
 	// Provisioning is what separates Install from Provision, and the difference
 	// outlives this call: the tenant admin adding a user later should find this
