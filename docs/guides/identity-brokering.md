@@ -191,8 +191,8 @@ kubectl gentian tenants partners customers remove acme     # ends it
   tells this realm, the partner's realm never does; an address that has an
   account here already links the arrival to it, after a sign-in to it.
 - **Bounds.** The Cluster claim's `spec.partners.allowedIssuers` lists the
-  issuers a tenant may name (`*` matches any run of characters); the
-  director refuses and the operator leaves out any other.
+  issuers a tenant may name (`*` matches any run of characters except
+  `/`); the director refuses and the operator leaves out any other.
   `spec.partners.defaults` are partners every tenant issues towards; the
   installer declares the store's vendor there with the store's extra
   services.

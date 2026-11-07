@@ -139,8 +139,8 @@ spec:
   which writes them as `partners.yaml` beside the tenant; the commit names
   them. The cluster's administrator bounds it on the Cluster claim:
   `spec.partners.allowedIssuers[]` (issuers a tenant may name, `*` matching
-  any run of characters; empty means none) and may declare partners for any
-  tenant. A partner outside the bounds is refused by the director and not
+  any run of characters except `/`; empty means none) and may declare
+  partners for any tenant. A partner outside the bounds is refused by the director and not
   composed by the operator.
 - **Partners of every tenant.** The Cluster claim's
   `spec.partners.defaults[]` (`name`, `issuer`) are issuing partners of every
