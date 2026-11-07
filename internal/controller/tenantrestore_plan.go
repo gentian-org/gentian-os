@@ -806,7 +806,9 @@ func planRetained(
 // which is what restoring an old backup always relies on. An older one, or a
 // version that cannot be compared, is not -- the failure is silent, an older
 // app serving data written by a newer schema -- unless the restore says to
-// skip the check.
+// skip the check. Two versions that differ only past their numbers, such as
+// builds named by a commit (0.1.0-main.db1547c, 0.1.0-main.72bb735), cannot
+// be compared: nothing in them says which came first.
 func buildRule(app backup.ManifestApp, profile *gentianov1alpha1.ComponentProfile, digest string, skip bool) (note, why string) {
 	wrote, installed := app.ChartVersion, profileChartVersion(profile)
 	if wrote == installed {
@@ -831,7 +833,7 @@ func buildRule(app backup.ManifestApp, profile *gentianov1alpha1.ComponentProfil
 		return fmt.Sprintf("its data was written by version %s and version %s is installed; the app upgrades it when it starts", wrote, installed), ""
 	case skip:
 		return fmt.Sprintf("its data was written by version %s and version %s is installed; restored because spec.skipVersionCheck is set", wrote, installed), ""
-	case werr != nil || ierr != nil:
+	case werr != nil || ierr != nil || !i.LessThan(w):
 		return "", fmt.Sprintf("was written by version %s and version %s is installed, which cannot be compared; set spec.skipVersionCheck to restore it anyway",
 			wrote, installed)
 	default:

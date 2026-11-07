@@ -213,6 +213,9 @@ func TestTheBuildRule(t *testing.T) {
 		{"", "", false, false, "cannot be compared"},
 		{"", "", true, true, "could not be compared"},
 		{"edge", "", false, false, "cannot be compared"},
+		// Builds named by a commit: the same numbers, no order between them.
+		{"2.0.0-main.72bb735", "", false, false, "cannot be compared"},
+		{"2.0.0-main.72bb735", "", true, true, "restored because spec.skipVersionCheck is set"},
 	}
 	for _, c := range cases {
 		profile := chartProfile("wiki", c.installed, "", false)
