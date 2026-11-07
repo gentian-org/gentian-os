@@ -135,7 +135,7 @@ func TestARemovedAddressReceivesAgainOnceSomebodyHoldsIt(t *testing.T) {
 	if got := w.postfixMaps()[postfixVirtualMailboxDomainsKey]; !strings.Contains(got, refusal("dana@k.example")) {
 		t.Fatalf("on the cluster's own domain: %q", got)
 	}
-	w.people.set("kernel", keycloakRealmUser{Username: "dana", Email: "dana@k.example", Enabled: true})
+	w.people.set("kernel", realmPerson{Username: "dana", Email: "dana@k.example", Enabled: true})
 	if got := w.postfixMaps()[postfixVirtualMailboxDomainsKey]; strings.Contains(got, "dana@") {
 		t.Errorf("an address an administrator of the kernel realm holds is refused: %q", got)
 	}

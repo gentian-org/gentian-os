@@ -240,7 +240,18 @@ func (c *KeycloakAdminClient) UpdateRealmMailSender(ctx context.Context, realm, 
 	return err
 }
 
+// ListRealmUsers lists a realm's enabled users.
 func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) ([]KeycloakUser, error) {
+	return c.listRealmUsers(ctx, realm, false)
+}
+
+// ListRealmAccounts lists every user of a realm, whether or not they may sign
+// in at the moment: Enabled says which.
+func (c *KeycloakAdminClient) ListRealmAccounts(ctx context.Context, realm string) ([]KeycloakUser, error) {
+	return c.listRealmUsers(ctx, realm, true)
+}
+
+func (c *KeycloakAdminClient) listRealmUsers(ctx context.Context, realm string, withDisabled bool) ([]KeycloakUser, error) {
 	token, err := c.adminToken(ctx)
 	if err != nil {
 		return nil, err
@@ -253,7 +264,9 @@ func (c *KeycloakAdminClient) ListRealmUsers(ctx context.Context, realm string) 
 			return nil, fmt.Errorf("keycloak list users: %w", err)
 		}
 		for _, u := range page {
-			if user, ok := keycloakUserFromRecord(u); ok {
+			if withDisabled && u.ID != "" {
+				out = append(out, KeycloakUser(u))
+			} else if user, ok := keycloakUserFromRecord(u); ok {
 				out = append(out, user)
 			}
 		}

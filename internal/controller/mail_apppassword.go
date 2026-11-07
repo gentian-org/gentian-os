@@ -17,13 +17,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
@@ -112,109 +108,24 @@ func argon2idPasswdLine(address, password string) (string, error) {
 		address, m, t, p, b64(salt), b64(sum)), nil
 }
 
-// keycloakRealmUsers lists usernames in a realm.
+// keycloakRealmUsers lists the logins of a realm's enabled users.
 //
 // Read from Keycloak rather than from the mail system, because Keycloak is
 // where a user comes into existence — a mailbox derived from anywhere else is a
 // second registry that drifts the first time someone is added or removed.
-// keycloakAdminHTTP is used for both calls below.
-//
-// http.DefaultClient has no timeout. A Keycloak that accepts the connection and
-// then never answers — a wedged pod, a NetworkPolicy that blackholes rather than
-// rejects — would block a controller-runtime worker forever, and the tenant
-// whose reconcile owned that worker would simply stop being reconciled with
-// nothing logged.
-var keycloakAdminHTTP = &http.Client{Timeout: 30 * time.Second}
-
-// keycloakAdminBase returns the admin API base URL and a bearer token for it.
-//
-// Extracted so the two realm readers below share one way of authenticating
-// rather than two that can drift.
-//
-// The admin Secret is read beside Keycloak, where its ExternalSecret writes it
-// and where the identity Jobs mount it. It was read from the edge namespace,
-// which holds no such Secret, so every caller failed before asking Keycloak
-// anything: no user was listed, no mail password was minted, and no realm was
-// given a submission credential.
-func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token string, err error) {
-	ns := identityNamespace
-	if base, err = r.secretValue(ctx, keycloakAdminSecret, ns, "url"); err != nil {
-		return "", "", err
-	}
-	user, err := r.secretValue(ctx, keycloakAdminSecret, ns, "client_id")
-	if err != nil {
-		return "", "", err
-	}
-	pass, err := r.secretValue(ctx, keycloakAdminSecret, ns, "client_secret")
-	if err != nil {
-		return "", "", err
-	}
-	base = strings.TrimSuffix(base, "/")
-
-	form := url.Values{
-		"client_id":     {user},
-		"client_secret": {pass},
-		"grant_type":    {"client_credentials"},
-	}
-	// NewRequestWithContext, not http.PostForm: PostForm takes no context, so
-	// this call could not be canceled when the reconcile was.
-	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		base+"/realms/master/protocol/openid-connect/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", "", err
-	}
-	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := keycloakAdminHTTP.Do(tokenReq)
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return "", "", err
-	}
-	if tok.AccessToken == "" {
-		return "", "", fmt.Errorf("keycloak returned no admin token (status %d)", resp.StatusCode)
-	}
-	return base, tok.AccessToken, nil
-}
-
 func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string) ([]string, error) {
-	base, token, err := r.keycloakAdminBase(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
-
-	// Paged: a realm with more than the default page of users would otherwise
-	// have the tail silently omitted, and a missing mailbox reads as a mail
-	// fault rather than a truncated list.
+	users, err := kc.ListRealmUsers(ctx, realm)
+	if err != nil {
+		return nil, err
+	}
 	var names []string
-	for first := 0; ; first += 100 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, realm, first), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		page, err := keycloakAdminHTTP.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var users []keycloakRealmUser
-		err = json.NewDecoder(page.Body).Decode(&users)
-		_ = page.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range users {
-			if u.Enabled && u.Username != "" {
-				names = append(names, u.Username)
-			}
-		}
-		if len(users) < 100 {
-			break
+	for _, u := range users {
+		if u.Username != "" {
+			names = append(names, u.Username)
 		}
 	}
 	sort.Strings(names)
@@ -225,12 +136,11 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 // by username: what keycloakRealmUsers answers, for a realm that also holds
 // accounts people made themselves.
 func (r *TenantReconciler) keycloakTenantMembers(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, fmt.Errorf("load keycloak-admin: %w", err)
 	}
-	members, err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).
-		ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
+	members, err := kc.ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
 	if err != nil {
 		return nil, err
 	}
@@ -244,13 +154,6 @@ func (r *TenantReconciler) keycloakTenantMembers(ctx context.Context, tenant *ge
 	return names, nil
 }
 
-// keycloakRealmUser is the part of a realm user this file reads.
-type keycloakRealmUser struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Enabled  bool   `json:"enabled"`
-}
-
 // mailAddress is where this user receives, which is not always the login.
 //
 // A tenant realm creates its users with the address as the username, so the two
@@ -261,7 +164,7 @@ type keycloakRealmUser struct {
 //
 // Returns "" for a user with no usable address, which the caller skips rather
 // than counting as an owner.
-func (u keycloakRealmUser) mailAddress() string {
+func mailAddress(u authz.KeycloakUser) string {
 	if strings.Contains(u.Username, "@") {
 		return u.Username
 	}
@@ -278,39 +181,18 @@ func (u keycloakRealmUser) mailAddress() string {
 // and changing what it returns would silently re-derive every password a tenant
 // has already configured in a mail client.
 func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm string) ([]string, error) {
-	base, token, err := r.keycloakAdminBase(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
-
+	users, err := kc.ListRealmUsers(ctx, realm)
+	if err != nil {
+		return nil, err
+	}
 	var addrs []string
-	for first := 0; ; first += 100 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, realm, first), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		page, err := keycloakAdminHTTP.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var users []keycloakRealmUser
-		err = json.NewDecoder(page.Body).Decode(&users)
-		_ = page.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range users {
-			if !u.Enabled {
-				continue
-			}
-			if a := u.mailAddress(); a != "" {
-				addrs = append(addrs, a)
-			}
-		}
-		if len(users) < 100 {
-			break
+	for _, u := range users {
+		if a := mailAddress(u); a != "" {
+			addrs = append(addrs, a)
 		}
 	}
 	sort.Strings(addrs)
@@ -789,41 +671,20 @@ func (r *TenantReconciler) mailSignInListed(ctx context.Context, address string)
 // or as their address, whether or not they may sign in at the moment: a
 // person who was switched off is still a person, and their mailbox is theirs.
 func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm string) (map[string]bool, error) {
-	base, token, err := r.keycloakAdminBase(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
+	users, err := kc.ListRealmAccounts(ctx, realm)
+	if err != nil {
+		return nil, fmt.Errorf("listing the people of realm %s: %w", realm, err)
+	}
 	held := map[string]bool{}
-	for first := 0; ; first += 100 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, url.PathEscape(realm), first), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		page, err := keycloakAdminHTTP.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		if page.StatusCode != http.StatusOK {
-			_ = page.Body.Close()
-			return nil, fmt.Errorf("listing the people of realm %s: the identity provider answered %d", realm, page.StatusCode)
-		}
-		var users []keycloakRealmUser
-		err = json.NewDecoder(page.Body).Decode(&users)
-		_ = page.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range users {
-			for _, a := range []string{u.Username, u.Email} {
-				if strings.Contains(a, "@") {
-					held[strings.ToLower(a)] = true
-				}
+	for _, u := range users {
+		for _, a := range []string{u.Username, u.Email} {
+			if strings.Contains(a, "@") {
+				held[strings.ToLower(a)] = true
 			}
-		}
-		if len(users) < 100 {
-			break
 		}
 	}
 	return held, nil

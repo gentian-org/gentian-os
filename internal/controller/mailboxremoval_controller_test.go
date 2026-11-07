@@ -36,16 +36,29 @@ import (
 // What becomes of a removed person's mailbox, from the record the registrar
 // writes to the Job beside the mail server's volume and back.
 
+// realmPerson is a user as Keycloak's admin API lists it.
+type realmPerson struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Enabled  bool   `json:"enabled"`
+}
+
 // realmPeople is an identity provider with people in realms.
 type realmPeople struct {
 	mu     sync.Mutex
-	realms map[string][]keycloakRealmUser
+	realms map[string][]realmPerson
 	down   bool
 }
 
-func (p *realmPeople) set(realm string, users ...keycloakRealmUser) {
+func (p *realmPeople) set(realm string, users ...realmPerson) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	for i := range users {
+		if users[i].ID == "" {
+			users[i].ID = "id-" + users[i].Username
+		}
+	}
 	p.realms[realm] = users
 }
 
@@ -106,7 +119,7 @@ func selfhosted(name string) *gentianov1alpha1.Tenant {
 
 func newMailboxWorld(t *testing.T, objects ...client.Object) *mailboxWorld {
 	t.Helper()
-	people := &realmPeople{realms: map[string][]keycloakRealmUser{}}
+	people := &realmPeople{realms: map[string][]realmPerson{}}
 	kc := people.serve(t)
 	scheme := deleteGapsScheme()
 	objects = append(objects, mailCluster()...)
@@ -173,8 +186,8 @@ func env(job *batchv1.Job) map[string]string {
 	return out
 }
 
-func person(address string, enabled bool) keycloakRealmUser {
-	return keycloakRealmUser{Username: address, Email: address, Enabled: enabled}
+func person(address string, enabled bool) realmPerson {
+	return realmPerson{Username: address, Email: address, Enabled: enabled}
 }
 
 // The whole of an archive: nothing is touched while the person is there;
@@ -351,7 +364,7 @@ func TestAMailboxThatHasAPersonIsNotTouched(t *testing.T) {
 	user := selfhosted(gentianov1alpha1.SingleUserTenantName)
 	w = newMailboxWorld(t, user, mailboxRecord("u-r1", user.Name, "dana@k.example", gentianov1alpha1.MailboxChoiceArchive))
 	w.tr.TenancyMode = gentianov1alpha1.TenancyModeSingle
-	w.people.set("kernel", keycloakRealmUser{Username: "dana", Email: "dana@k.example", Enabled: true})
+	w.people.set("kernel", realmPerson{Username: "dana", Email: "dana@k.example", Enabled: true})
 	w.now = w.now.Add(mailboxPersonGrace + time.Minute)
 	if record := w.reconcile("u-r1"); !record.Status.Refused || !strings.Contains(record.Status.Message, "realm kernel") || len(w.jobs()) != 0 {
 		t.Errorf("an address the kernel realm's administrator holds: %+v", record.Status)

@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -80,11 +78,11 @@ func (s *Service) accessGroups(ctx context.Context) (AccessGroups, error) {
 	if s.groups != nil {
 		return s.groups, nil
 	}
-	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, s.client)
 	if err != nil {
 		return nil, fmt.Errorf("load keycloak admin credentials: %w", err)
 	}
-	return authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass), nil
+	return kc, nil
 }
 
 // tryLockApp is lockApp for a request that must not queue: it reports false
@@ -155,26 +153,6 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	return svc, nil
 }
 
-func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string, error) {
-	secret := &corev1.Secret{}
-	// Where External Secrets projects it: beside Keycloak, in the layout's
-	// authentication namespace. This read "platform-kernel", a namespace v5
-	// never creates, so every provisioning failed on a Secret that was not
-	// there and no app group ever got its members.
-	err := s.client.Get(ctx, types.NamespacedName{
-		Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)}, secret)
-	if err != nil {
-		return "", "", "", err
-	}
-	u := string(secret.Data["url"])
-	user := string(secret.Data["client_id"])
-	pass := string(secret.Data["client_secret"])
-	if u == "" || user == "" || pass == "" {
-		return "", "", "", fmt.Errorf("keycloak-admin secret is incomplete")
-	}
-	return u, user, pass, nil
-}
-
 func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) error {
 	// The group's name carries the tenant's; the realm it is in is the
 	// tenant's own, which need not be called the same.
@@ -194,12 +172,11 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1
 		attrs, _ = keycloak.ParseGroupAttributes(val)
 	}
 
-	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, s.client)
 	if err != nil {
 		return fmt.Errorf("load keycloak admin credentials: %w", err)
 	}
 
-	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	fullGroupName := keycloak.TenantAppGroup(tenantName, profileName)
 
 	// Provisioning is what separates Install from Provision, and the difference
@@ -277,12 +254,11 @@ func (s *Service) GrantAppByDefault(ctx context.Context, tenantName, profile str
 		return false, err
 	}
 
-	kcURL, kcUser, kcPass, err := s.loadKeycloakAdmin(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, s.client)
 	if err != nil {
 		return false, fmt.Errorf("load keycloak admin credentials: %w", err)
 	}
-	exists, err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).
-		GroupExists(ctx, keycloak.RealmName(tenant), keycloak.TenantAppGroup(tenantName, profile))
+	exists, err := kc.GroupExists(ctx, keycloak.RealmName(tenant), keycloak.TenantAppGroup(tenantName, profile))
 	if err != nil {
 		return false, fmt.Errorf("look up the app's group: %w", err)
 	}
