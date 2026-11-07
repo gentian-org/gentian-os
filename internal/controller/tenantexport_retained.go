@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -256,7 +257,7 @@ func (r *TenantExportReconciler) captureRetained(
 	if err := r.persist(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: time.Second}, nil
 }
 
 // claimRecord is a volume claim as a bundle records it: what making it

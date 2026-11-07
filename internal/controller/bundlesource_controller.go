@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -68,7 +69,7 @@ func (r *BundleSourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	name := backup.SourceCredentialName(source.Name)
 	if err := r.ensureCredential(ctx, source); err != nil {
 		if apierrors.IsConflict(err) {
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return ctrl.Result{}, r.report(ctx, source, metav1.ConditionFalse, "CredentialUnavailable", err.Error())
 	}

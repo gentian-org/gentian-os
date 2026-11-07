@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/meta"
 	batchv1 "k8s.io/api/batch/v1"
@@ -162,7 +163,7 @@ func (r *TenantRestoreReconciler) restoreRetained(
 	if err := r.persist(ctx, restore); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: time.Second}, nil
 }
 
 // ensureRetainedStores makes whatever the plan's artefacts go into and the

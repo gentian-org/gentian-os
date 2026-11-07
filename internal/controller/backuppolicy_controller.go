@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -83,7 +84,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// fix, and reporting it as one is what made Accepted flip to False
 			// and back about once a second: each flip rewrote the status that
 			// woke the next reconcile, which conflicted again.
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return r.failPolicy(ctx, policy, "CredentialUnavailable", err.Error())
 	}

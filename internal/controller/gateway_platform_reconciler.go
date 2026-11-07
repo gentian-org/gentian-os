@@ -615,7 +615,7 @@ func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretN
 		Name:     gatewayv1.SectionName(name),
 		Protocol: gatewayv1.HTTPSProtocolType,
 		Port:     port,
-		TLS: &gatewayv1.GatewayTLSConfig{
+		TLS: &gatewayv1.ListenerTLSConfig{
 			Mode: &mode,
 			CertificateRefs: []gatewayv1.SecretObjectReference{
 				ref,

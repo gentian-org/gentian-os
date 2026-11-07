@@ -59,7 +59,7 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 			if err := r.ensureDefaultPolicy(ctx); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return ctrl.Result{}, err
 	}
