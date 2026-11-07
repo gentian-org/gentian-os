@@ -75,6 +75,9 @@ type JobParams struct {
 	Role string
 	// Export names the TenantExport this Job serves, for provenance.
 	Export string
+	// RunKind says whether Export names a TenantExport or a TenantRestore
+	// (RunKindExport, RunKindRestore): the two may share a name.
+	RunKind string
 	// Node pins this Job to one node, when it must run where a volume already
 	// is. Empty leaves scheduling alone, which is right for every Job that
 	// mounts no claim.
@@ -654,17 +657,21 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 		})
 	}
 
+	labels := map[string]string{
+		meta.TenantLabel:    p.Tenant,
+		meta.AppLabel:       p.App,
+		meta.ManagedByLabel: meta.ManagedByValue,
+		meta.ComponentLabel: "tenant-export",
+		ExportLabel:         p.Export,
+	}
+	if p.RunKind != "" {
+		labels[RunKindLabel] = p.RunKind
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      p.Name,
 			Namespace: p.Namespace,
-			Labels: map[string]string{
-				meta.TenantLabel:    p.Tenant,
-				meta.AppLabel:       p.App,
-				meta.ManagedByLabel: meta.ManagedByValue,
-				meta.ComponentLabel: "tenant-export",
-				ExportLabel:         p.Export,
-			},
+			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
@@ -723,6 +730,16 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 // that asked for it — which is how a controller restart finds work already in
 // flight instead of starting it again.
 const ExportLabel = "gentianos.io/tenant-export"
+
+// RunKindLabel says which kind of run a Job's ExportLabel names: an export
+// and a restore may share a name, and their Jobs then share ExportLabel.
+const RunKindLabel = "gentianos.io/run-kind"
+
+// The values of RunKindLabel.
+const (
+	RunKindExport  = "export"
+	RunKindRestore = "restore"
+)
 
 func needsWorkDir(groups ...[]corev1.Container) bool {
 	for _, group := range groups {
