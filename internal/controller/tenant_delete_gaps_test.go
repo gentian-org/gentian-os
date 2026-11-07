@@ -232,3 +232,37 @@ func TestDeleteMailRemovesTheTenantsMailRecords(t *testing.T) {
 		t.Errorf("another tenant's mail records were removed: %v", err)
 	}
 }
+
+// A cluster that composes no mail function has no namespace for the shared
+// mail maps. Deleting a tenant there writes nothing into it: the API server
+// refuses an object in a namespace that does not exist, and the tenant's
+// deletion would fail on every pass. With the function there, the maps still
+// follow the removal.
+func TestDeleteMailWithoutAMailFunctionWritesNoSharedMaps(t *testing.T) {
+	scheme := deleteGapsScheme()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       gentianov1alpha1.TenantSpec{DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete},
+	}
+	maps := &corev1.ConfigMap{}
+	key := client.ObjectKey{Name: postfixVirtualMailboxMapsConfigMap, Namespace: postfixNamespace}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
+	if err := r.deleteMail(context.Background(), tenant); err != nil {
+		t.Fatalf("without a mail function: %v", err)
+	}
+	if err := c.Get(context.Background(), key, maps); !apierrors.IsNotFound(err) {
+		t.Errorf("without a mail function the Postfix maps were written: %v", err)
+	}
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: mailNamespace}}
+	c = fake.NewClientBuilder().WithScheme(scheme).WithObjects(ns).Build()
+	r = &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
+	if err := r.deleteMail(context.Background(), tenant); err != nil {
+		t.Fatalf("with a mail function: %v", err)
+	}
+	if err := c.Get(context.Background(), key, maps); err != nil {
+		t.Errorf("with a mail function the Postfix maps were not rewritten: %v", err)
+	}
+}
