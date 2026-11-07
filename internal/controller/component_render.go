@@ -417,10 +417,22 @@ func (r *ComponentReconciler) applyRendered(ctx context.Context, comp *gentianov
 	if err := r.recordInventory(ctx, comp, append(append([]string{}, previous...), current...)); err != nil {
 		return false, "", "", err
 	}
+	var held string
 	for _, obj := range rest {
+		if waiting, err := r.secretRefPending(ctx, obj); err != nil {
+			return false, "", "", err
+		} else if waiting != "" {
+			if held == "" {
+				held = waiting
+			}
+			continue
+		}
 		if _, err := r.applyObject(ctx, comp, tenantName, obj); err != nil {
 			return false, "", "", fmt.Errorf("%s %s: %w", obj.GetKind(), obj.GetName(), err)
 		}
+	}
+	if held != "" {
+		return false, "ValuesPending", held, nil
 	}
 	if waiting, err := r.sensitiveValuesPending(ctx, comp, rest); err != nil || waiting != "" {
 		return false, "ValuesPending", waiting, err
@@ -684,6 +696,34 @@ func (r *ComponentReconciler) sensitiveValuesPending(ctx context.Context, comp *
 		}
 	}
 	return "", nil
+}
+
+// secretRefPending holds back the creation of an object that reads a secret
+// from a Secret (spec.forProvider.clientSecretSecretRef: a confidential
+// client of the realm) while that Secret is not there with a value. The
+// Secret is made by an ExternalSecret written on the same pass, a moment
+// later; a client created before it gets a secret the realm made up, which
+// the app does not hold, and its sign-in fails until the provider's next
+// poll writes the right one (#908). An object that exists is not held: what
+// it holds is the provider's to keep.
+func (r *ComponentReconciler) secretRefPending(ctx context.Context, obj *unstructured.Unstructured) (string, error) {
+	ref, found, _ := unstructured.NestedStringMap(obj.Object, "spec", "forProvider", "clientSecretSecretRef")
+	if !found || ref["name"] == "" || ref["key"] == "" {
+		return "", nil
+	}
+	live, err := r.liveCopy(ctx, obj)
+	if err != nil || live != nil {
+		return "", err
+	}
+	secret := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: ref["name"], Namespace: ref["namespace"]}, secret)
+	if err != nil && !errors.IsNotFound(err) {
+		return "", err
+	}
+	if err == nil && len(secret.Data[ref["key"]]) > 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("waiting for the secret of %s %s (%s/%s)", obj.GetKind(), obj.GetName(), ref["namespace"], ref["name"]), nil
 }
 
 // renderedReady reports whether what was rendered is in place: every
