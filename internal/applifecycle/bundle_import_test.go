@@ -12,6 +12,9 @@ package applifecycle
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -39,6 +42,40 @@ func TestARestoreSaysWhereItIsOutsideTheGuaranteeApartFromWhereItIs(t *testing.T
 	r.Status.Conditions = r.Status.Conditions[1:]
 	if got := restoreStatus(r, "demo"); got.OutsideGuarantee != "" {
 		t.Errorf("a restore within the guarantee says %q", got.OutsideGuarantee)
+	}
+}
+
+// A restore names each of its apps with its phase, in the order of its
+// status, the tenant-wide entry included; only a failed app carries its
+// message. A restore that has not listed its apps yet names none.
+func TestARestoreNamesEachAppWithItsPhase(t *testing.T) {
+	r := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "restore-1"}}
+	if got := restoreStatus(r, "demo"); got.Apps != nil {
+		t.Errorf("a restore without apps names %v", got.Apps)
+	}
+	r.Status.Apps = []gentianov1alpha1.AppExportStatus{
+		{Name: "gentian-tenant", Phase: gentianov1alpha1.TenantExportPhaseReady, Message: "realm imported"},
+		{Name: "nextcloud", Phase: gentianov1alpha1.TenantExportPhaseRunning, Message: "restoring postgres"},
+		{Name: "openproject", Phase: gentianov1alpha1.TenantExportPhaseFailed, Message: "the dump did not load"},
+		{Name: "vaultwarden", Phase: gentianov1alpha1.TenantExportPhasePending},
+	}
+	want := []RestoreAppStatus{
+		{Name: "gentian-tenant", Phase: "Ready"},
+		{Name: "nextcloud", Phase: "Running"},
+		{Name: "openproject", Phase: "Failed", Message: "the dump did not load"},
+		{Name: "vaultwarden", Phase: "Pending"},
+	}
+	got := restoreStatus(r, "demo")
+	if !reflect.DeepEqual(got.Apps, want) {
+		t.Errorf("apps %+v, want %+v", got.Apps, want)
+	}
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"apps":[{"name":"gentian-tenant","phase":"Ready"},`) ||
+		!strings.Contains(string(body), `{"name":"openproject","phase":"Failed","message":"the dump did not load"}`) {
+		t.Errorf("serialized as %s", body)
 	}
 }
 
