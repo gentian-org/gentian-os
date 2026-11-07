@@ -1020,3 +1020,21 @@ func TestATenantWhoseNamesAreAnothersIsRefused(t *testing.T) {
 // cluster.
 const singleTenancyClaim = "apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: " + dt.Cluster +
 	"\nspec:\n  kernelDomain: " + dt.KernelDomain + "\n  tenancyMode: single\n"
+
+// A tenant name may have hyphens; a database prefix may not (the Tenant CRD
+// holds it to ^[a-z0-9_]*$). The manifest of such a tenant still applies: its
+// prefix has underscores where the name has hyphens, and its realm and bucket
+// prefix keep the name as it is.
+func TestATenantNameWithAHyphenGivesADatabasePrefixTheCRDAccepts(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme-corp", DisplayName: "Acme Corp"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	text := dt.RemoteFile(t, remote, dt.TenantPath("acme-corp"))
+	for _, want := range []string{"keycloakRealm: acme-corp\n", "databasePrefix: acme_corp_\n", "s3Prefix: acme-corp-\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the manifest has no %q:\n%s", strings.TrimSpace(want), text)
+		}
+	}
+}
