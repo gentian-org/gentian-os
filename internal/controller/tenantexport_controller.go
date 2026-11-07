@@ -195,6 +195,11 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.resumeAll(ctx, export, tenantName); err != nil {
 			return ctrl.Result{}, err
 		}
+		// Units still running stop before their Secrets go, again: an export
+		// can reach its end and the operator stop before they were removed.
+		if err := r.stopRunningExportJobs(ctx, export); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.discardPassphrase(ctx, export); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1089,6 +1094,9 @@ func (r *TenantExportReconciler) complete(
 		return r.requeueExport(ctx, export, tenant)
 	}
 
+	if err := r.stopRunningExportJobs(ctx, export); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.discardPassphrase(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1472,26 +1480,68 @@ func bundleDeleteJobName(tenantName, exportName string) string {
 }
 
 // deleteExportJobs removes every capture Job belonging to this export, in
-// every namespace a unit runs in. By the tenant's label as well as the
-// export's: those namespaces are shared, and another tenant may have an
-// export of the same name.
+// every namespace a unit runs in, ended or not.
 func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
 	tenantName := tenantNameFromNamespace(export.Namespace)
-	keep := bundleDeleteJobName(tenantName, export.Name)
-	for _, ns := range runNamespaces(export.Namespace) {
+	return deleteRunJobs(ctx, r.Client, export.Namespace, export.Name,
+		bundleDeleteJobName(tenantName, export.Name), false)
+}
+
+// stopRunningExportJobs removes the capture Jobs of this export that have not
+// ended, with their pods. An export that has ended has no use for them, and
+// one left running holds what it captures (a volume unit keeps the app's
+// ReadWriteOnce claim attached) while it waits on staged Secrets that are
+// discarded next. Jobs that ended are left to their TTL.
+func (r *TenantExportReconciler) stopRunningExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
+	if running, err := runOfOtherKindUnderWay(ctx, r.Client, export.Namespace, export.Name,
+		&gentianov1alpha1.TenantRestore{}); err != nil || running {
+		return err
+	}
+	tenantName := tenantNameFromNamespace(export.Namespace)
+	return deleteRunJobs(ctx, r.Client, export.Namespace, export.Name,
+		bundleDeleteJobName(tenantName, export.Name), true)
+}
+
+// runOfOtherKindUnderWay reports whether a run of the other kind (other is an
+// empty TenantExport or TenantRestore) with this name has started in the
+// namespace and not ended. An export and a restore may share a name, and
+// their Jobs then carry the same labels: while the other runs, the Jobs found
+// under the name may be its own, and none of them is stopped.
+func runOfOtherKindUnderWay(ctx context.Context, c client.Client, namespace, name string, other client.Object) (bool, error) {
+	if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, other); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	switch run := other.(type) {
+	case *gentianov1alpha1.TenantExport:
+		return run.Status.StartedAt != nil && !run.IsTerminal(), nil
+	case *gentianov1alpha1.TenantRestore:
+		return run.Status.StartedAt != nil && !run.IsTerminal(), nil
+	}
+	return false, fmt.Errorf("%T is not a run", other)
+}
+
+// deleteRunJobs deletes the Jobs of one run, an export or a restore, in every
+// namespace its units run in, with their pods. By the tenant's label as well
+// as the run's: those namespaces are shared, and another tenant may have a
+// run of the same name. The Job named keep is spared, and with runningOnly
+// so is every Job that has completed or failed.
+func deleteRunJobs(ctx context.Context, c client.Client, tenantNamespace, runName, keep string, runningOnly bool) error {
+	tenantName := tenantNameFromNamespace(tenantNamespace)
+	for _, ns := range runNamespaces(tenantNamespace) {
 		jobs := &batchv1.JobList{}
-		if err := r.List(ctx, jobs,
+		if err := c.List(ctx, jobs,
 			client.InNamespace(ns),
-			client.MatchingLabels{backup.ExportLabel: export.Name, tenantLabel: tenantName}); err != nil {
-			return fmt.Errorf("list capture jobs for %s in %s: %w", export.Name, ns, err)
+			client.MatchingLabels{backup.ExportLabel: runName, tenantLabel: tenantName}); err != nil {
+			return fmt.Errorf("list the Jobs of %s in %s: %w", runName, ns, err)
 		}
 		for i := range jobs.Items {
-			if jobs.Items[i].Name == keep {
+			job := &jobs.Items[i]
+			if job.Name == keep || (runningOnly && meta.JobEnded(job)) {
 				continue
 			}
-			if err := r.Delete(ctx, &jobs.Items[i],
+			if err := c.Delete(ctx, job,
 				client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("delete capture job %s: %w", jobs.Items[i].Name, err)
+				return fmt.Errorf("delete Job %s in %s: %w", job.Name, ns, err)
 			}
 		}
 	}
@@ -1594,8 +1644,11 @@ func (r *TenantExportReconciler) fail(
 	export *gentianov1alpha1.TenantExport,
 	reason, message string,
 ) (ctrl.Result, error) {
-	// Best effort: a failure to tidy the staged secrets must not mask the
-	// failure being reported, but they are still attempted on the way out.
+	// Best effort: a failure to tidy up must not mask the failure being
+	// reported, but it is still attempted on the way out, and again on every
+	// reconcile of the ended export. The Jobs first: a unit still running
+	// would otherwise wait for ever on the Secrets discarded after them.
+	_ = r.stopRunningExportJobs(ctx, export)
 	_ = r.discardPassphrase(ctx, export)
 	_ = r.discardDestinationCredential(ctx, export)
 	_ = r.discardStagedSecrets(ctx, export)

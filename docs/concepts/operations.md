@@ -825,8 +825,10 @@ command that fails and discards no failure. The realm import goes on to the
 end, names every person and membership it could not put back, and then
 fails. A step whose pod does not start is counted like one that failed, and a
 backup or a restore gives up after `exportMaxAttempts` of them, in every
-stage, starting the paused app again. A `TenantRestore` holds a finalizer:
-deleting one that runs stops its Jobs and starts the app again.
+stage, starting the paused app again. A backup or a restore that ends, either
+way, stops its Jobs still running before it removes the Secrets they were
+given; Jobs that ended are left to their TTL. A `TenantRestore` holds a
+finalizer: deleting one that runs stops its Jobs and starts the app again.
 
 ### 9.6 Known limits
 
