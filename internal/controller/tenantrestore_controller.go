@@ -1583,18 +1583,47 @@ func stagedDecryptionSecretName(tenantName, restoreName string) string {
 }
 
 // discardStagedRestoreSecrets removes every staged copy: the decryption key
-// beside the object store, and the credentials and key staged wherever a unit
-// ran. The copy beside the object store leaking past the restore was a real
-// gap — the identity is escrowed off-cluster precisely so the cluster does
-// not hold it.
+// beside the object store, the credentials and key staged wherever a unit
+// ran, and the key Secret in the tenant's namespace when the restore controls
+// it. The identity is escrowed off-cluster precisely so the cluster does not
+// hold it past the restore that needed it.
 func (r *TenantRestoreReconciler) discardStagedRestoreSecrets(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
 	keyErr := discardStagedSecret(ctx, r.Client,
 		stagedDecryptionSecretName(tenantNameFromNamespace(restore.Namespace), restore.Name), s3Namespace)
 	stagedErr := r.discardRestoreStagedSecrets(ctx, restore)
-	if keyErr != nil {
-		return keyErr
+	ownedErr := r.discardOwnedDecryptionSecrets(ctx, restore)
+	return errors.Join(keyErr, stagedErr, ownedErr)
+}
+
+// discardOwnedDecryptionSecrets deletes the Secrets spec.decryption names in
+// the restore's namespace that this restore is the controller of: the key
+// stored for it when it was requested. A Secret the restore does not control
+// was put there by a person, who removes it when they are done with it.
+func (r *TenantRestoreReconciler) discardOwnedDecryptionSecrets(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
+	spec := restore.Spec.Decryption
+	if spec == nil || restore.UID == "" {
+		return nil
 	}
-	return stagedErr
+	var errs []error
+	for _, ref := range []*gentianov1alpha1.SecretKeyRef{spec.IdentitySecretRef, spec.PassphraseSecretRef} {
+		if ref == nil || ref.Name == "" {
+			continue
+		}
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: restore.Namespace}, secret); err != nil {
+			if !apierrors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("read the decryption Secret %s: %w", ref.Name, err))
+			}
+			continue
+		}
+		if owner := metav1.GetControllerOf(secret); owner == nil || owner.UID != restore.UID {
+			continue
+		}
+		if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("delete the decryption Secret %s: %w", ref.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (r *TenantRestoreReconciler) fail(
