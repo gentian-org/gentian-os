@@ -73,7 +73,7 @@ system:
     holds: MariaDB, for catalog apps that speak no other engine
   - name: system-cache
     function: cache
-    holds: Redis
+    holds: Valkey, the shared cache apps speak the Redis protocol to
   - name: system-s3
     function: s3
     holds: SeaweedFS, the object store apps take buckets from

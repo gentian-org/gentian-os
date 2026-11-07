@@ -72,7 +72,7 @@ writes one by hand.
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
 | `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
-| the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares Redis uses the shared cache store through `kernel-access-<app>` instead |
+| the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared Valkey store through `kernel-access-<app>` instead |
 
 Network rules only ever add: a pod the baseline selects cannot be closed again
 by another policy, which is why an adapter's pods are left out of the baseline
@@ -122,7 +122,7 @@ and what stands in its place is in [security/design.md §2.13](../security/desig
 
 A tenant's namespace denies egress by default and an app's
 `kernel-access-<app>` policy opens the store its profile declares, on that
-store's port. Each store -- PostgreSQL, MariaDB, Redis, SeaweedFS -- carries
+store's port. Each store -- PostgreSQL, MariaDB, Valkey, SeaweedFS -- carries
 the other side, a `store-ingress` policy on its server's pods: tenant
 namespaces, the pods of its own namespace (the operator's provisioning and
 destroy Jobs, and the steps of a backup and a restore that work on that

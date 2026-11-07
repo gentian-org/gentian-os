@@ -364,7 +364,7 @@ and function; the list is `kernel/namespaces.yaml`.
 | Admission | Kyverno and the baseline policies | `kernel-admission` |
 | Cluster view | Headlamp | `kernel-observability` |
 | Relational data for tenants | PostgreSQL (CloudNativePG), MariaDB | `system-postgresql`, `system-mariadb` |
-| Cache | Redis | `system-cache` |
+| Cache | Valkey | `system-cache` |
 | Object storage | SeaweedFS | `system-s3` |
 | Mail (where the claim asks) | Postfix and Dovecot; the mail edge | `system-mail`, `system-mail-dmz` |
 | Models (where the claim asks) | LiteLLM and vLLM | `system-llm` |
