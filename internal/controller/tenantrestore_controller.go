@@ -1066,6 +1066,7 @@ func (r *TenantRestoreReconciler) jobParams(
 		Tenant:    tenant.Name,
 		App:       appName,
 		Export:    restore.Name,
+		RunKind:   backup.RunKindRestore,
 		Bucket:    bundle.Bucket,
 		Prefix:    bundle.Prefix,
 		// The bundle's own record of where it was written, never the policy's
@@ -1562,7 +1563,7 @@ func currentRestoreApp(restore *gentianov1alpha1.TenantRestore) string {
 // deleteRestoreJobs removes every Job of this restore, in every namespace a
 // unit runs in, ended or not.
 func (r *TenantRestoreReconciler) deleteRestoreJobs(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
-	return deleteRunJobs(ctx, r.Client, restore.Namespace, restore.Name, "", false)
+	return deleteRunJobs(ctx, r.Client, restore.Namespace, restore.Name, backup.RunKindRestore, "", false)
 }
 
 // stopRunningRestoreJobs removes the Jobs of this restore that have not ended,
@@ -1570,11 +1571,7 @@ func (r *TenantRestoreReconciler) deleteRestoreJobs(ctx context.Context, restore
 // is resumed, and wait for ever on the staged Secrets discarded next. Jobs
 // that ended are left to their TTL.
 func (r *TenantRestoreReconciler) stopRunningRestoreJobs(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
-	if running, err := runOfOtherKindUnderWay(ctx, r.Client, restore.Namespace, restore.Name,
-		&gentianov1alpha1.TenantExport{}); err != nil || running {
-		return err
-	}
-	return deleteRunJobs(ctx, r.Client, restore.Namespace, restore.Name, "", true)
+	return deleteRunJobs(ctx, r.Client, restore.Namespace, restore.Name, backup.RunKindRestore, "", true)
 }
 
 // stagedDecryptionSecretName names the kernel-namespace copy of the

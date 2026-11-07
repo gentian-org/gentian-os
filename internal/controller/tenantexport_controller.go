@@ -968,6 +968,7 @@ func (r *TenantExportReconciler) jobParams(
 		Tenant:          tenant.Name,
 		App:             appName,
 		Export:          export.Name,
+		RunKind:         backup.RunKindExport,
 		Bucket:          bundle.Bucket,
 		Prefix:          bundle.Prefix,
 		Endpoint:        bundle.Endpoint,
@@ -1483,7 +1484,7 @@ func bundleDeleteJobName(tenantName, exportName string) string {
 // every namespace a unit runs in, ended or not.
 func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
 	tenantName := tenantNameFromNamespace(export.Namespace)
-	return deleteRunJobs(ctx, r.Client, export.Namespace, export.Name,
+	return deleteRunJobs(ctx, r.Client, export.Namespace, export.Name, backup.RunKindExport,
 		bundleDeleteJobName(tenantName, export.Name), false)
 }
 
@@ -1493,40 +1494,40 @@ func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *g
 // ReadWriteOnce claim attached) while it waits on staged Secrets that are
 // discarded next. Jobs that ended are left to their TTL.
 func (r *TenantExportReconciler) stopRunningExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
-	if running, err := runOfOtherKindUnderWay(ctx, r.Client, export.Namespace, export.Name,
-		&gentianov1alpha1.TenantRestore{}); err != nil || running {
-		return err
-	}
 	tenantName := tenantNameFromNamespace(export.Namespace)
-	return deleteRunJobs(ctx, r.Client, export.Namespace, export.Name,
+	return deleteRunJobs(ctx, r.Client, export.Namespace, export.Name, backup.RunKindExport,
 		bundleDeleteJobName(tenantName, export.Name), true)
 }
 
-// runOfOtherKindUnderWay reports whether a run of the other kind (other is an
-// empty TenantExport or TenantRestore) with this name has started in the
-// namespace and not ended. An export and a restore may share a name, and
-// their Jobs then carry the same labels: while the other runs, the Jobs found
-// under the name may be its own, and none of them is stopped.
-func runOfOtherKindUnderWay(ctx context.Context, c client.Client, namespace, name string, other client.Object) (bool, error) {
-	if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, other); err != nil {
+// runOfOtherKindUnderWay reports whether a run of the other kind than kind
+// with this name has started in the namespace and not ended.
+func runOfOtherKindUnderWay(ctx context.Context, c client.Client, namespace, name, kind string) (bool, error) {
+	key := types.NamespacedName{Name: name, Namespace: namespace}
+	if kind == backup.RunKindRestore {
+		run := &gentianov1alpha1.TenantExport{}
+		if err := c.Get(ctx, key, run); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		return run.Status.StartedAt != nil && !run.IsTerminal(), nil
+	}
+	run := &gentianov1alpha1.TenantRestore{}
+	if err := c.Get(ctx, key, run); err != nil {
 		return false, client.IgnoreNotFound(err)
 	}
-	switch run := other.(type) {
-	case *gentianov1alpha1.TenantExport:
-		return run.Status.StartedAt != nil && !run.IsTerminal(), nil
-	case *gentianov1alpha1.TenantRestore:
-		return run.Status.StartedAt != nil && !run.IsTerminal(), nil
-	}
-	return false, fmt.Errorf("%T is not a run", other)
+	return run.Status.StartedAt != nil && !run.IsTerminal(), nil
 }
 
-// deleteRunJobs deletes the Jobs of one run, an export or a restore, in every
-// namespace its units run in, with their pods. By the tenant's label as well
-// as the run's: those namespaces are shared, and another tenant may have a
-// run of the same name. The Job named keep is spared, and with runningOnly
-// so is every Job that has completed or failed.
-func deleteRunJobs(ctx context.Context, c client.Client, tenantNamespace, runName, keep string, runningOnly bool) error {
+// deleteRunJobs deletes the Jobs of one run, an export or a restore as kind
+// says, in every namespace its units run in, with their pods. By the tenant's
+// label as well as the run's: those namespaces are shared, and another tenant
+// may have a run of the same name. An export and a restore may share a name
+// too: a Job labeled as the other kind's is never deleted, and a Job with no
+// kind label is deleted only while no run of the other kind with the name is
+// under way, since it may be that run's. The Job named keep is spared, and
+// with runningOnly so is every Job that has completed or failed.
+func deleteRunJobs(ctx context.Context, c client.Client, tenantNamespace, runName, kind, keep string, runningOnly bool) error {
 	tenantName := tenantNameFromNamespace(tenantNamespace)
+	var otherUnderWay *bool
 	for _, ns := range runNamespaces(tenantNamespace) {
 		jobs := &batchv1.JobList{}
 		if err := c.List(ctx, jobs,
@@ -1538,6 +1539,21 @@ func deleteRunJobs(ctx context.Context, c client.Client, tenantNamespace, runNam
 			job := &jobs.Items[i]
 			if job.Name == keep || (runningOnly && meta.JobEnded(job)) {
 				continue
+			}
+			switch jobKind := job.Labels[backup.RunKindLabel]; {
+			case jobKind != "" && jobKind != kind:
+				continue
+			case jobKind == "":
+				if otherUnderWay == nil {
+					running, err := runOfOtherKindUnderWay(ctx, c, tenantNamespace, runName, kind)
+					if err != nil {
+						return err
+					}
+					otherUnderWay = &running
+				}
+				if *otherUnderWay {
+					continue
+				}
 			}
 			if err := c.Delete(ctx, job,
 				client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
@@ -1578,6 +1594,7 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 			Tenant:          tenantName,
 			App:             "bundle",
 			Export:          export.Name,
+			RunKind:         backup.RunKindExport,
 			Bucket:          bundle.Bucket,
 			Prefix:          bundle.Prefix,
 			Endpoint:        bundle.Endpoint,

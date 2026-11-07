@@ -217,6 +217,14 @@ func TestCaptureJobsAreBoundedAndLabelled(t *testing.T) {
 	if job.Labels["gentianos.io/tenant"] != "demo" {
 		t.Errorf("tenant label = %q", job.Labels["gentianos.io/tenant"])
 	}
+	if _, ok := job.Labels[RunKindLabel]; ok {
+		t.Errorf("run-kind label %q set with no RunKind", job.Labels[RunKindLabel])
+	}
+	p := params()
+	p.RunKind = RunKindRestore
+	if got := PostgresDumpJob(p, "demo_app").Labels[RunKindLabel]; got != RunKindRestore {
+		t.Errorf("run-kind label = %q, want %q", got, RunKindRestore)
+	}
 
 	// The scratch mount must be bounded, or one oversized tenant fills a node's
 	// ephemeral storage and evicts unrelated workloads.

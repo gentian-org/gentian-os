@@ -229,3 +229,114 @@ func TestAFailedRestoreStopsItsRunningJobs(t *testing.T) {
 		jobs.check(t, w.c, d)
 	})
 }
+
+// kindJob is runJob labeled with the kind of run it belongs to.
+func kindJob(name, namespace, run, kind string) *batchv1.Job {
+	job := runJob(name, namespace, "demo", run, "")
+	job.Labels[backup.RunKindLabel] = kind
+	return job
+}
+
+// A Job says which kind of run it is: an export and a restore of the same
+// name each delete only their own, ending or deleted, while the other runs.
+// A Job made before the label, with no kind, is left while a run of the
+// other kind with the name is under way.
+func TestARunDeletesOnlyTheJobsOfItsOwnKind(t *testing.T) {
+	started := metav1.Now()
+	ctx := context.Background()
+	exportJob := kindJob("tx-demo-same-notes-vol0", "tenant-demo", "same", backup.RunKindExport)
+	restoreJob := kindJob("tx-demo-same-notes-pgr", postgresNamespace, "same", backup.RunKindRestore)
+	unlabeled := runJob("tx-demo-same-notes-s3", s3Namespace, "demo", "same", "")
+	jobs := func() []client.Object {
+		return []client.Object{exportJob.DeepCopy(), restoreJob.DeepCopy(), unlabeled.DeepCopy()}
+	}
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "same", Namespace: "tenant-demo"},
+		Status:     gentianov1alpha1.TenantExportStatus{Phase: gentianov1alpha1.TenantExportPhaseRunning, StartedAt: &started},
+	}
+	restore := &gentianov1alpha1.TenantRestore{
+		ObjectMeta: metav1.ObjectMeta{Name: "same", Namespace: "tenant-demo"},
+		Status:     gentianov1alpha1.TenantRestoreStatus{Phase: gentianov1alpha1.TenantExportPhaseRunning, StartedAt: &started},
+	}
+
+	for name, tc := range map[string]struct {
+		run     func(c client.Client) error
+		deleted *batchv1.Job
+		kept    []*batchv1.Job
+	}{
+		"an export deleted while the restore runs": {
+			run: func(c client.Client) error {
+				return (&TenantExportReconciler{Client: c}).deleteExportJobs(ctx, export)
+			},
+			deleted: exportJob, kept: []*batchv1.Job{restoreJob, unlabeled},
+		},
+		"an export failing while the restore runs": {
+			run: func(c client.Client) error {
+				return (&TenantExportReconciler{Client: c}).stopRunningExportJobs(ctx, export)
+			},
+			deleted: exportJob, kept: []*batchv1.Job{restoreJob, unlabeled},
+		},
+		"a restore deleted while the export runs": {
+			run: func(c client.Client) error {
+				return (&TenantRestoreReconciler{Client: c}).deleteRestoreJobs(ctx, restore)
+			},
+			deleted: restoreJob, kept: []*batchv1.Job{exportJob, unlabeled},
+		},
+		"a restore failing while the export runs": {
+			run: func(c client.Client) error {
+				return (&TenantRestoreReconciler{Client: c}).stopRunningRestoreJobs(ctx, restore)
+			},
+			deleted: restoreJob, kept: []*batchv1.Job{exportJob, unlabeled},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := fake.NewClientBuilder().WithScheme(quiesceScheme(t)).
+				WithObjects(append(jobs(), export.DeepCopy(), restore.DeepCopy())...).Build()
+			if err := tc.run(c); err != nil {
+				t.Fatal(err)
+			}
+			if jobExists(t, c, tc.deleted) {
+				t.Errorf("the run's own Job %s is still there", tc.deleted.Name)
+			}
+			for _, kept := range tc.kept {
+				if !jobExists(t, c, kept) {
+					t.Errorf("Job %s was deleted; it is not the run's own, or may not be", kept.Name)
+				}
+			}
+		})
+	}
+
+	// With no run of the other kind under way, a Job with no kind label is
+	// taken to be the run's own, as every Job was before the label.
+	t.Run("an unlabeled Job once the other run has ended", func(t *testing.T) {
+		ended := restore.DeepCopy()
+		ended.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
+		c := fake.NewClientBuilder().WithScheme(quiesceScheme(t)).
+			WithObjects(append(jobs(), export.DeepCopy(), ended)...).Build()
+		if err := (&TenantExportReconciler{Client: c}).deleteExportJobs(ctx, export); err != nil {
+			t.Fatal(err)
+		}
+		if jobExists(t, c, unlabeled) || jobExists(t, c, exportJob) {
+			t.Error("the export's Jobs, labeled and not, were not deleted")
+		}
+		if !jobExists(t, c, restoreJob) {
+			t.Error("the restore's labeled Job was deleted by an export")
+		}
+	})
+}
+
+// Every Job an export or a restore makes says which kind of run it is.
+func TestRunJobParamsSayTheKindOfRun(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	bundle := &gentianov1alpha1.BundleRef{Bucket: "demo-gentian-backup", Prefix: "same"}
+	export := &gentianov1alpha1.TenantExport{ObjectMeta: metav1.ObjectMeta{Name: "same", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{Bundle: bundle}}
+	restore := &gentianov1alpha1.TenantRestore{ObjectMeta: metav1.ObjectMeta{Name: "same", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantRestoreStatus{Bundle: bundle}}
+	if got := (&TenantExportReconciler{}).jobParams(tenant, "notes", export, backup.Encryption{}).RunKind; got != backup.RunKindExport {
+		t.Errorf("export Jobs say run kind %q", got)
+	}
+	if got := (&TenantRestoreReconciler{}).jobParams(tenant, "notes", restore).RunKind; got != backup.RunKindRestore {
+		t.Errorf("restore Jobs say run kind %q", got)
+	}
+}
