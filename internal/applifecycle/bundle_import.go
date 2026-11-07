@@ -434,6 +434,18 @@ type RestoreStatus struct {
 	// -- when something does: the message of the
 	// restore's OutsideGuarantee condition.
 	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
+	// Apps names each app of the restore with its phase, in the order the
+	// restore takes them; the tenant-wide entry (gentian-tenant: the realm
+	// and the desktop's database) is one of them.
+	Apps []RestoreAppStatus `json:"apps,omitempty"`
+}
+
+// RestoreAppStatus is one app of a restore: its phase, and the message of
+// an app that failed.
+type RestoreAppStatus struct {
+	Name    string `json:"name"`
+	Phase   string `json:"phase"`
+	Message string `json:"message,omitempty"`
 }
 
 // StartRestore writes the key into a Secret, creates the TenantRestore
@@ -568,6 +580,13 @@ func restoreStatus(r *gentianov1alpha1.TenantRestore, tenant string) *RestoreSta
 	}
 	if r.Status.CompletedAt != nil {
 		out.CompletedAt = r.Status.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	for _, a := range r.Status.Apps {
+		app := RestoreAppStatus{Name: a.Name, Phase: string(a.Phase)}
+		if a.Phase == gentianov1alpha1.TenantExportPhaseFailed {
+			app.Message = a.Message
+		}
+		out.Apps = append(out.Apps, app)
 	}
 	return out
 }

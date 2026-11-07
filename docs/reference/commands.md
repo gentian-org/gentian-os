@@ -1697,8 +1697,10 @@ importing it.
 `decryption` is `{"passphrase": "..."}` or `{"identity": "AGE-SECRET-KEY-1..."}`.
 The key is written into a Secret the restore owns and goes with it. Members
 come back without credentials (no bundle carries them); the status says
-`passwordResetRequired`, and carries the restore's `complete`, `notRestored`
-and `notes`, and `outsideGuarantee` when the bundle is of an older platform
+`passwordResetRequired`, and carries the restore's `complete`, `notRestored`,
+`notes` and `apps` (each app the restore takes, in its order, with its
+`phase`, and the `message` of one that failed; `gentian-tenant` is the
+tenant-wide entry), and `outsideGuarantee` when the bundle is of an older platform
 version line, or records none, or the tenant's domain here is another (the
 command prints it). A bundle of a newer version line is refused. The cluster's own
 version line is in the answer to `GET /v1/clusters/{c}/settings` (whoever may
