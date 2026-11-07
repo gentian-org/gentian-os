@@ -802,6 +802,7 @@ spec:
     # than being trusted not to look.
     mode: namespace
     keycloakRealm: %s
+    # A database name has no hyphens: the tenant's become underscores.
     databasePrefix: %s_
     s3Prefix: %s-
   # Retain, so retiring the tenant does not take its data with it. Changing
@@ -818,5 +819,5 @@ spec:
     maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
-`, name, name, display, requireMFA, signUpBlock, name, name, name)
+`, name, name, display, requireMFA, signUpBlock, name, strings.ReplaceAll(name, "-", "_"), name)
 }
