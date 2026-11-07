@@ -150,3 +150,39 @@ func TestAKeyARestoreDoesNotControlIsLeftWhenItEnds(t *testing.T) {
 		}
 	})
 }
+
+// The key is stored before the restore is created and made the restore's
+// after it, so a restore can end while its key is not yet its own. It passes
+// the key over then; the reconcile that follows the key becoming its own
+// deletes it.
+func TestAKeyMadeTheRestoresAfterItEndedIsDeletedThen(t *testing.T) {
+	w := newRestoreKeyWorld(t, false)
+	ctx := context.Background()
+	w.bundles.err = errors.New("the manifest could not be opened with that key")
+	if _, err := w.r.Reconcile(ctx, ctrl.Request{NamespacedName: w.key}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.restore(t); got.Status.Phase != gentianov1alpha1.TenantExportPhaseFailed {
+		t.Fatalf("phase = %s", got.Status.Phase)
+	}
+	if !w.keyExists(t) {
+		t.Fatal("a key that was not yet the restore's was deleted")
+	}
+
+	key := &corev1.Secret{}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: "r1-key", Namespace: "tenant-demo"}, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := controllerutil.SetControllerReference(w.restore(t), key, w.r.Scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.c.Update(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.r.Reconcile(ctx, ctrl.Request{NamespacedName: w.key}); err != nil {
+		t.Fatal(err)
+	}
+	if w.keyExists(t) {
+		t.Error("the ended restore became the key's controller and the key is still there")
+	}
+}
