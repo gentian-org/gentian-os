@@ -1858,8 +1858,16 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 		mode = tenant.Spec.Mail.Mode
 	}
 
+	// A cluster that composes no mail function registered nothing (ensureMail),
+	// and has no namespace to rewrite the shared maps in: writing them there
+	// fails on every pass, and the tenant's deletion never ends.
+	present, err := r.mailFunctionPresent(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Remove domain entries from shared ConfigMaps (always — these affect live routing).
-	if mode == gentianov1alpha1.MailModeSelfhosted || mode == gentianov1alpha1.MailModeTransportOnly {
+	if present && (mode == gentianov1alpha1.MailModeSelfhosted || mode == gentianov1alpha1.MailModeTransportOnly) {
 		if err := r.removeFromMailConfigMap(ctx, mailPostfixVirtualDomainsConfigMap, tenant.Name); err != nil {
 			return fmt.Errorf("remove Postfix virtual domain for tenant %s: %w", tenant.Name, err)
 		}
@@ -1870,7 +1878,7 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 			return fmt.Errorf("sync Postfix virtual mailbox maps for tenant %s: %w", tenant.Name, err)
 		}
 	}
-	if mode == gentianov1alpha1.MailModeSelfhosted {
+	if present && mode == gentianov1alpha1.MailModeSelfhosted {
 		if err := r.removeFromMailConfigMap(ctx, mailDovecotDomainsConfigMap, tenant.Name); err != nil {
 			return fmt.Errorf("remove Dovecot domain config for tenant %s: %w", tenant.Name, err)
 		}
