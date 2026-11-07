@@ -648,11 +648,11 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.clusterRoles[].name` | string | yes | `Name` is the platform's name of the role, and what a PrivilegeGrant refers to (clusterRoles/\<name>). |
 | `spec.requires.privileges.clusterRoles[].reason` | string | yes | `Reason` is what the approver reads. |
 | `spec.requires.privileges.clusterRoles[].rules` | []object |  | `Rules` is not used. |
-| `spec.requires.privileges.clusterRoles[].rules[].apiGroups` | []string |  | `APIGroups` is the name of the APIGroup that contains the resources. |
-| `spec.requires.privileges.clusterRoles[].rules[].nonResourceURLs` | []string |  | `NonResourceURLs` is a set of partial urls that a user should have access to. |
-| `spec.requires.privileges.clusterRoles[].rules[].resourceNames` | []string |  | `ResourceNames` is an optional white list of names that the rule applies to. |
-| `spec.requires.privileges.clusterRoles[].rules[].resources` | []string |  | `Resources` is a list of resources this rule applies to. |
-| `spec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `Verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
+| `spec.requires.privileges.clusterRoles[].rules[].apiGroups` | []string |  | `apiGroups` is the name of the APIGroup that contains the resources. |
+| `spec.requires.privileges.clusterRoles[].rules[].nonResourceURLs` | []string |  | `nonResourceURLs` is a set of partial urls that a user should have access to. |
+| `spec.requires.privileges.clusterRoles[].rules[].resourceNames` | []string |  | `resourceNames` is an optional white list of names that the rule applies to. |
+| `spec.requires.privileges.clusterRoles[].rules[].resources` | []string |  | `resources` is a list of resources this rule applies to. |
+| `spec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
 | `spec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `spec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
 | `spec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
@@ -1441,11 +1441,11 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.clusterRoles[].name` | string | yes | `Name` is the platform's name of the role, and what a PrivilegeGrant refers to (clusterRoles/\<name>). |
 | `status.profileSpec.requires.privileges.clusterRoles[].reason` | string | yes | `Reason` is what the approver reads. |
 | `status.profileSpec.requires.privileges.clusterRoles[].rules` | []object |  | `Rules` is not used. |
-| `status.profileSpec.requires.privileges.clusterRoles[].rules[].apiGroups` | []string |  | `APIGroups` is the name of the APIGroup that contains the resources. |
-| `status.profileSpec.requires.privileges.clusterRoles[].rules[].nonResourceURLs` | []string |  | `NonResourceURLs` is a set of partial urls that a user should have access to. |
-| `status.profileSpec.requires.privileges.clusterRoles[].rules[].resourceNames` | []string |  | `ResourceNames` is an optional white list of names that the rule applies to. |
-| `status.profileSpec.requires.privileges.clusterRoles[].rules[].resources` | []string |  | `Resources` is a list of resources this rule applies to. |
-| `status.profileSpec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `Verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
+| `status.profileSpec.requires.privileges.clusterRoles[].rules[].apiGroups` | []string |  | `apiGroups` is the name of the APIGroup that contains the resources. |
+| `status.profileSpec.requires.privileges.clusterRoles[].rules[].nonResourceURLs` | []string |  | `nonResourceURLs` is a set of partial urls that a user should have access to. |
+| `status.profileSpec.requires.privileges.clusterRoles[].rules[].resourceNames` | []string |  | `resourceNames` is an optional white list of names that the rule applies to. |
+| `status.profileSpec.requires.privileges.clusterRoles[].rules[].resources` | []string |  | `resources` is a list of resources this rule applies to. |
+| `status.profileSpec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
 | `status.profileSpec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `status.profileSpec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
 | `status.profileSpec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |

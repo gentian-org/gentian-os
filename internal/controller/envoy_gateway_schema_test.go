@@ -276,7 +276,7 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := &unstructured.Unstructured{Object: raw}
-	route.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("HTTPRoute"))
+	route.SetGroupVersionKind(schema.FromAPIVersionAndKind(gatewayv1.GroupVersion.String(), "HTTPRoute"))
 	if err := c.Create(ctx, route, client.FieldValidation(metav1.FieldValidationStrict)); err != nil {
 		t.Errorf("a held route is not a valid HTTPRoute: %v", err)
 	}

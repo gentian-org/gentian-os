@@ -22,8 +22,9 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
@@ -31,8 +32,24 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "gentianos.io", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add functions to this group's scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	SchemeBuilder = &schemeBuilder{}
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// schemeBuilder collects the types each *_types.go file registers in its
+// init, all under GroupVersion. It needs only apimachinery, so importing this
+// package does not pull in controller-runtime.
+type schemeBuilder struct {
+	runtime.SchemeBuilder
+}
+
+// Register adds objects to GroupVersion when AddToScheme runs.
+func (b *schemeBuilder) Register(objects ...runtime.Object) {
+	b.SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(GroupVersion, objects...)
+		metav1.AddToGroupVersion(s, GroupVersion)
+		return nil
+	})
+}

@@ -7,13 +7,11 @@ require (
 	k8s.io/apiextensions-apiserver v0.37.2
 	k8s.io/apimachinery v0.37.2
 	k8s.io/apiserver v0.37.2
-	sigs.k8s.io/controller-runtime v0.25.2
 	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
 	cel.dev/expr v0.25.3 // indirect
-	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect

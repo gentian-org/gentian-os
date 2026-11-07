@@ -470,7 +470,7 @@ func (r *TenantExportReconciler) captureApp(
 	if err := r.persist(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: time.Second}, nil
 }
 
 // captureUnit is one artifact to produce.

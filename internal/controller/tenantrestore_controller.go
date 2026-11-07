@@ -533,7 +533,7 @@ func (r *TenantRestoreReconciler) awaitRollout(
 	if err := r.persist(ctx, restore); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: time.Second}, nil
 }
 
 // recordOwnedNames keeps, on the artifact a Job restored databases an app
