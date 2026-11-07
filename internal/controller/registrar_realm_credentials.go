@@ -88,11 +88,10 @@ func (r *KeycloakPlatformReconciler) ensureRegistrarRealmCredentials(ctx context
 		}
 	}
 
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("load keycloak-admin for registrar realm credentials: %w", err)
 	}
-	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 
 	names := make([]string, 0, len(realms))
 	for realm := range realms {

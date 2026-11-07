@@ -25,11 +25,10 @@ func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context
 	if realm == "" {
 		return nil
 	}
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("load keycloak-admin for browser security headers: %w", err)
 	}
-	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	if err := kc.UpdateRealmBrowserSecurityHeaders(ctx, realm, locales); err != nil {
 		return fmt.Errorf("update realm %s browser security headers: %w", realm, err)
 	}
@@ -38,11 +37,11 @@ func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context
 
 // ensureKernelRealmMailSender names the kernel realm's mail after the brand.
 func (r *TenantReconciler) ensureKernelRealmMailSender(ctx context.Context, realm string) error {
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("load keycloak-admin for the mail sender: %w", err)
 	}
-	if err := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass).UpdateRealmMailSender(ctx, realm, brandName(ctx, r.Client)); err != nil {
+	if err := kc.UpdateRealmMailSender(ctx, realm, brandName(ctx, r.Client)); err != nil {
 		return fmt.Errorf("update realm %s mail sender: %w", realm, err)
 	}
 	return nil
