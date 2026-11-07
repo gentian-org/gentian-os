@@ -1757,6 +1757,12 @@ func (r *TenantRestoreReconciler) persist(ctx context.Context, restore *gentiano
 func (r *TenantRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.TenantRestore{}).
+		// The key a restore is requested with is stored before the restore
+		// is created, and made the restore's only after it: a restore can
+		// end, and pass over the key as not its own, before that. Becoming
+		// the key's controller reconciles the restore, and an ended restore
+		// deletes the key it controls (discardOwnedDecryptionSecrets).
+		Owns(&corev1.Secret{}).
 		Named("tenantrestore").
 		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.TenantRestore{}, r))
 }
