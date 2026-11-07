@@ -1527,7 +1527,7 @@ cluster may no longer list as a backup, `{"name": "storage"|"destination",
 lists them (§12a). The director opens the manifest with the key first and refuses a
 bundle of another tenant with `422` (bringing one here is an import, §12a).
 The key goes to the operator in the request and into a Secret the restore
-owns; it is never committed or logged. The platform's version line, which
+owns, deleted when the restore ends; it is never committed or logged. The platform's version line, which
 a console compares a bundle's with, is in `GET /v1/tenants/{t}/me`
 (`platformVersionLine`) for whoever may enter the tenant.
 
@@ -1695,9 +1695,9 @@ is in `gentian-imports` like an upload, for a console that rewrites it before
 importing it.
 
 `decryption` is `{"passphrase": "..."}` or `{"identity": "AGE-SECRET-KEY-1..."}`.
-The key is written into a Secret the restore owns and goes with it. Members
-come back without credentials (no bundle carries them); the status says
-`passwordResetRequired`, and carries the restore's `complete`, `notRestored`,
+The key is written into a Secret the restore owns, deleted when the restore
+ends. Members come back without credentials (no bundle carries them); the
+status says `passwordResetRequired`, and carries the restore's `complete`, `notRestored`,
 `notes` and `apps` (each app the restore takes, in its order, with its
 `phase`, and the `message` of one that failed; `gentian-tenant` is the
 tenant-wide entry), and `outsideGuarantee` when the bundle is of an older platform

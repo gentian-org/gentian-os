@@ -535,8 +535,9 @@ func (s *Service) StartRestore(ctx context.Context, tenantName string, req Resto
 		_ = s.client.Delete(ctx, secret)
 		return nil, fmt.Errorf("create restore: %w", err)
 	}
-	// Owned by the restore, so the key goes when the restore does. Nothing
-	// else writes the Secret, so this patch has nobody to lose to.
+	// Controlled by the restore: the operator deletes the key when the
+	// restore ends, and the garbage collector when the restore is deleted.
+	// Nothing else writes the Secret, so this patch has nobody to lose to.
 	owned := secret.DeepCopy()
 	if err := controllerutil.SetControllerReference(restore, owned, s.client.Scheme()); err != nil {
 		return nil, err
