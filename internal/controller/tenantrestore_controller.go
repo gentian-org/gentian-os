@@ -115,7 +115,10 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, err
 		}
 		// Again, for a restore that reached its end with the operator stopping
-		// before the copies were removed.
+		// before its running units and the copies were removed.
+		if err := r.stopRunningRestoreJobs(ctx, restore); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.discardStagedRestoreSecrets(ctx, restore); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -240,6 +243,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// The staged key material has done its work; keeping it would quietly
 	// defeat the escrow the identity secret is supposed to live in.
+	_ = r.stopRunningRestoreJobs(ctx, restore)
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	restore.Status.CompletedAt = ptrNow()
@@ -1556,24 +1560,21 @@ func currentRestoreApp(restore *gentianov1alpha1.TenantRestore) string {
 }
 
 // deleteRestoreJobs removes every Job of this restore, in every namespace a
-// unit runs in, by the tenant's label and the restore's.
+// unit runs in, ended or not.
 func (r *TenantRestoreReconciler) deleteRestoreJobs(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
-	tenantName := tenantNameFromNamespace(restore.Namespace)
-	for _, ns := range runNamespaces(restore.Namespace) {
-		jobs := &batchv1.JobList{}
-		if err := r.List(ctx, jobs,
-			client.InNamespace(ns),
-			client.MatchingLabels{backup.ExportLabel: restore.Name, tenantLabel: tenantName}); err != nil {
-			return fmt.Errorf("list the Jobs of restore %s in %s: %w", restore.Name, ns, err)
-		}
-		for i := range jobs.Items {
-			if err := r.Delete(ctx, &jobs.Items[i],
-				client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("delete restore Job %s: %w", jobs.Items[i].Name, err)
-			}
-		}
+	return deleteRunJobs(ctx, r.Client, restore.Namespace, restore.Name, "", false)
+}
+
+// stopRunningRestoreJobs removes the Jobs of this restore that have not ended,
+// with their pods: a unit left running would go on writing into an app that
+// is resumed, and wait for ever on the staged Secrets discarded next. Jobs
+// that ended are left to their TTL.
+func (r *TenantRestoreReconciler) stopRunningRestoreJobs(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
+	if running, err := runOfOtherKindUnderWay(ctx, r.Client, restore.Namespace, restore.Name,
+		&gentianov1alpha1.TenantExport{}); err != nil || running {
+		return err
 	}
-	return nil
+	return deleteRunJobs(ctx, r.Client, restore.Namespace, restore.Name, "", true)
 }
 
 // stagedDecryptionSecretName names the kernel-namespace copy of the
@@ -1631,6 +1632,8 @@ func (r *TenantRestoreReconciler) fail(
 	restore *gentianov1alpha1.TenantRestore,
 	reason, message string,
 ) (ctrl.Result, error) {
+	// Best effort, as the Secrets are: the terminal reconcile tries again.
+	_ = r.stopRunningRestoreJobs(ctx, restore)
 	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	restore.Status.CompletedAt = ptrNow()
