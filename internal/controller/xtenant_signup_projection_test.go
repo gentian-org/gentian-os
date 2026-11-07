@@ -130,7 +130,7 @@ func TestPartnersReachTheXTenantWithinTheClaimsBounds(t *testing.T) {
 	if tenantPartnerProjection(&gentianov1alpha1.Tenant{Spec: named.Spec}, claim) != nil {
 		t.Fatal("a tenant without a uid projects partners")
 	}
-	if !issuerpattern.Allowed([]string{"https://*"}, "https://id.x.example/auth/realms/y") ||
+	if !issuerpattern.Allowed([]string{"https://*/auth/realms/*"}, "https://id.x.example/auth/realms/y") ||
 		issuerpattern.Allowed([]string{"https://id.a.example/auth/realms/b"}, "https://id.a.example/auth/realms/bc") {
 		t.Fatal("issuerpattern.Allowed matches wrongly")
 	}
