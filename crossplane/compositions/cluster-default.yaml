@@ -196,7 +196,7 @@ spec:
                  -dev chart version, the tag vX.Y.Z on a release. The ref is
                  written from charts/gentian-os/Chart.yaml by
                  make gen-platform-version; do not edit it by hand. */}}
-            {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/v0.5.0/charts/infra/packages" }}
+            {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
             {{- /* Which engines run (kernel.md §7). SeaweedFS
                  always: it is the platform's own object store, where every
                  backup, bundle and export is written whether or not an app

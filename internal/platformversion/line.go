@@ -13,10 +13,10 @@ SPDX-License-Identifier: MPL-2.0
 package platformversion
 
 // Line is the version line this platform is built towards: the major and
-// minor of the chart's version, 0.5.0. It moves with the chart: the release
+// minor of the chart's version, 0.6.0-dev. It moves with the chart: the release
 // commit that cuts X.Y.0 and the commit after it, which sets X.(Y+1).0-dev,
 // both change it.
-const Line = "0.5"
+const Line = "0.6"
 
 // ChartVersion is the chart's version as written, the platform's number.
-const ChartVersion = "0.5.0"
+const ChartVersion = "0.6.0-dev"
