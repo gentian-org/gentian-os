@@ -369,7 +369,7 @@ spec:
   forProvider:
     chart:
       name: seaweedfs
-      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/v0.5.0/charts/infra/packages
       version: 4.48.0-gentian.1
     namespace: system-s3
     set:
