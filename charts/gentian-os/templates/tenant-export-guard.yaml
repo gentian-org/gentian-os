@@ -1,0 +1,64 @@
+# What an export started by anybody but the platform may be.
+#
+# The operator starts exports, for the Admin Console's export and the
+# platform's own schedules. A component may as well, once break-glass granted
+# it the cluster role tenant-exports (internal/security/cluster_roles.go):
+# the backup add-on. Such an export takes a tenant's data out of its
+# namespace, so it is held here to what the tenant and the cluster declared:
+#
+#   - it goes to the cluster's storage (platform), to the tenant's backup
+#     policy (policy, or no destination), or to a store the tenant declared
+#     (source; the operator refuses another tenant's store) -- never to an
+#     endpoint the export names (custom);
+#   - it names no recipients of its own and no passphrase, so the component
+#     cannot make a bundle that only it can read: it is encrypted to the
+#     cluster's recovery keys, to the keys the tenant's store declares, or
+#     (encryption mode policy) to the keys the tenant's backup policy names.
+#
+# A person is not looked at: what a person may export is the director's and
+# the console's to decide, and a person with kubectl here is break-glass.
+{{- $operator := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "gentian-os.serviceAccountName" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gentian-tenant-exports
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["gentianos.io"]
+      apiVersions: ["v1alpha1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["tenantexports"]
+  matchConditions:
+  - name: a-service-account-not-the-operator
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:')
+      && request.userInfo.username != {{ $operator | quote }}
+  validations:
+  - expression: >-
+      !has(object.spec.destination) || !has(object.spec.destination.mode)
+      || object.spec.destination.mode in ['policy', 'platform', 'source']
+    reason: Forbidden
+    messageExpression: >-
+      request.userInfo.username + " may export only to the cluster's storage, the tenant's policy or a store the tenant declared"
+  - expression: >-
+      !has(object.spec.encryption)
+      || ((!has(object.spec.encryption.mode) || object.spec.encryption.mode in ['recipient', 'policy'])
+          && (!has(object.spec.encryption.recipients) || size(object.spec.encryption.recipients) == 0)
+          && !has(object.spec.encryption.passphraseSecretRef))
+    reason: Forbidden
+    messageExpression: >-
+      request.userInfo.username + " may export only to the cluster's recovery keys: no recipients of its own and no passphrase"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gentian-tenant-exports
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  policyName: gentian-tenant-exports
+  validationActions: [Deny]

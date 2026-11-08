@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package customization
@@ -50,7 +44,7 @@ func TestSupportsRungCompanionAlwaysAvailable(t *testing.T) {
 }
 
 func TestSupportsRungDefaultsWhenUndeclared(t *testing.T) {
-	// An uncharacterised app may only be configured or repackaged.
+	// An uncharacterized app may only be configured or repackaged.
 	if !SupportsRung(nil, gentianov1alpha1.RungConfigure) {
 		t.Fatal("L0 must be available by default")
 	}
@@ -58,27 +52,10 @@ func TestSupportsRungDefaultsWhenUndeclared(t *testing.T) {
 		t.Fatal("L4 must be available by default")
 	}
 	if SupportsRung(nil, gentianov1alpha1.RungExtension) {
-		t.Fatal("L3 must not be inferred for an uncharacterised app")
+		t.Fatal("L3 must not be inferred for an uncharacterized app")
 	}
 	if SupportsRung(nil, gentianov1alpha1.RungPatch) {
-		t.Fatal("L5 must not be inferred for an uncharacterised app")
-	}
-}
-
-func TestLowestSupportedRungPicksCheapest(t *testing.T) {
-	surface := &gentianov1alpha1.CustomizationSurface{
-		SupportedRungs: []gentianov1alpha1.CustomizationRung{
-			gentianov1alpha1.RungConfigure,
-			gentianov1alpha1.RungDropIn,
-			gentianov1alpha1.RungExtension,
-		},
-	}
-	got, ok := LowestSupportedRung(surface, []gentianov1alpha1.CustomizationRung{
-		gentianov1alpha1.RungExtension,
-		gentianov1alpha1.RungDropIn,
-	})
-	if !ok || got != gentianov1alpha1.RungDropIn {
-		t.Fatalf("expected L1, got %q (ok=%v)", got, ok)
+		t.Fatal("L5 must not be inferred for an uncharacterized app")
 	}
 }
 
@@ -203,42 +180,6 @@ func TestValidateRecordRejectsTenantScopeWithoutTenants(t *testing.T) {
 	}
 	if errs := ValidateRecord(record); !containsMessage(errs, "spec.tenants must be non-empty") {
 		t.Fatalf("expected tenants requirement, got %v", errs)
-	}
-}
-
-func TestValidateNamespaceScopingEnforcesTenantNamespace(t *testing.T) {
-	record := &gentianov1alpha1.Customization{
-		Spec: gentianov1alpha1.CustomizationSpec{
-			Target:  gentianov1alpha1.CustomizationTarget{Profile: "odoo-cb-base"},
-			Rung:    gentianov1alpha1.RungExtension,
-			Scope:   gentianov1alpha1.ScopeTenant,
-			Tenants: []string{"acme"},
-		},
-	}
-	if err := ValidateNamespaceScoping(record, "tenant-acme", []string{"tenant-acme"}); err != nil {
-		t.Fatalf("expected dedicated namespace to pass, got %v", err)
-	}
-	err := ValidateNamespaceScoping(record, "shared-erp", []string{"tenant-acme"})
-	if err == nil || !strings.Contains(err.Error(), "shared runtime are") {
-		t.Fatalf("expected shared-namespace rejection, got %v", err)
-	}
-}
-
-func TestGradeForScoreBanding(t *testing.T) {
-	cases := map[int32]gentianov1alpha1.CustomizationGrade{
-		8: gentianov1alpha1.GradeA,
-		7: gentianov1alpha1.GradeA,
-		6: gentianov1alpha1.GradeB,
-		5: gentianov1alpha1.GradeB,
-		4: gentianov1alpha1.GradeC,
-		3: gentianov1alpha1.GradeC,
-		2: gentianov1alpha1.GradeD,
-		0: gentianov1alpha1.GradeD,
-	}
-	for score, want := range cases {
-		if got := GradeForScore(score); got != want {
-			t.Fatalf("score %d: expected %q, got %q", score, want, got)
-		}
 	}
 }
 

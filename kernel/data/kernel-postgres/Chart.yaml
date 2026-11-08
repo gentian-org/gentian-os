@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kernel-postgres
+description: The CNPG cluster for the kernel's own databases — Keycloak, its extensions, OpenFGA, the console
+type: application
+version: 0.1.0

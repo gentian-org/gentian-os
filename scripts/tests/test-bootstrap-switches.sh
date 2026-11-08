@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# =============================================================================
+# scripts/tests/test-bootstrap-switches.sh
+# =============================================================================
+# The bootstrap chart has three switches the installer turns on phase by
+# phase: the ApplicationSets (C-02), the operator (D-01) and Headlamp's OIDC
+# (D-03). The installer passes them with --set-string, so "off" arrives as the
+# string "false" -- which a template that tests it for truth reads as ON. A
+# fresh install rendered all three in B-01, and Headlamp waited ten minutes on
+# a Secret that only D-03 writes.
+#
+# Rendered exactly as B-01 passes them, with helm and no cluster.
+# =============================================================================
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
+
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
+
+render() {
+    # The layout and the platform table, as B-01 passes them: the chart
+    # names namespaces by function and refuses to render without them.
+    helm template boot kernel/bootstrap/chart \
+        -f "${NAMESPACES}" -f kernel/platforms.yaml \
+        --set-string "appsets.enabled=$1" \
+        --set-string "operator.enabled=$2" \
+        --set-string "operator.tag=develop-abc1234" \
+        --set-string "headlamp.oidc.enabled=$3" \
+        --set-string "kernelDomain=k.example" \
+        --set-string "cluster=c" \
+        --set-string "versions.headlamp.chart=0.0.0" \
+        --set-string "versions.headlamp.repo=https://example.invalid" "${@:4}" 2>&1
+}
+
+has() { grep -qE "$2" <<<"$1"; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+NAMESPACES="${TMP}/namespaces.yaml"
+{ echo "namespaces:"; sed 's/^/  /' kernel/namespaces.yaml; } > "${NAMESPACES}"
+
+check() {
+    local what="$1" ok="$2"
+    if [[ "${ok}" == 1 ]]; then ok "${what}"; else bad "${what}"; fi
+}
+
+echo ""
+echo "Bootstrap chart: the phase switches"
+echo ""
+
+off="$(render false false false)"
+if has "${off}" '^Error'; then echo "${off}" | head -5; exit 1; fi
+check "B-01 (all \"false\"): no gentian-appsets Application" "$(has "${off}" 'name: gentian-appsets$' && echo 0 || echo 1)"
+check "B-01 (all \"false\"): no operator Application"         "$(has "${off}" 'name: gentian-os$' && echo 0 || echo 1)"
+check "B-01 (all \"false\"): Headlamp does not read headlamp-oidc" "$(has "${off}" 'headlamp-oidc' && echo 0 || echo 1)"
+check "B-01 (all \"false\"): no kube-oidc-proxy"              "$(has "${off}" 'name: kube-oidc-proxy$' && echo 0 || echo 1)"
+
+on="$(render true true true)"
+check "D-03 (all \"true\"): gentian-appsets Application"      "$(has "${on}" 'name: gentian-appsets$' && echo 1 || echo 0)"
+check "D-03 (all \"true\"): operator Application"             "$(has "${on}" 'name: gentian-os$' && echo 1 || echo 0)"
+check "D-03 (all \"true\"): Headlamp reads headlamp-oidc"     "$(has "${on}" 'headlamp-oidc' && echo 1 || echo 0)"
+
+# The usage statistics report. The address is the bootstrap chart's default and nobody
+# else's; the installer's "off" arrives as the string "false" like every other
+# switch, and must reach the operator's chart as a boolean false.
+report_on="$(render true true true)"
+check "usage statistics report: on by default, at the default address" \
+    "$(grep -A2 '^        usageStatistics:$' <<<"${report_on}" | grep -q '^          enabled: true$' && has "${report_on}" 'url: "https://statistics\.aluvian\.io/api/v1/usage-statistics"$' && echo 1 || echo 0)"
+report_off="$(render true true true --set-string usageStatistics.enabled=false)"
+check "usage statistics report: --no-usage-statistics renders enabled: false" \
+    "$(grep -A2 '^        usageStatistics:$' <<<"${report_off}" | grep -q '^          enabled: false$' && echo 1 || echo 0)"
+report_else="$(render true true true --set-string usageStatistics.url=https://reports.example/r)"
+check "usage statistics report: another address replaces the default" \
+    "$(has "${report_else}" 'url: "https://reports\.example/r"$' && ! has "${report_else}" 'corp\.gentian-os\.org' && echo 1 || echo 0)"
+report_unset="$(render true true true --set-string usageStatistics.url=)"
+check "usage statistics report: an empty address from the installer is the default" \
+    "$(has "${report_unset}" 'url: "https://statistics\.aluvian\.io/api/v1/usage-statistics"$' && echo 1 || echo 0)"
+
+# The claim's networkMode reaches the operator's values: the operator chooses
+# its edge ingress by it and whether a TURN edge can be reached, and a cluster
+# whose value never arrived read as a tunnel (#749).
+check "networkMode: static-ip from the installer reaches the operator" \
+    "$(has "$(render true true true --set-string networkMode=static-ip)" '^        networkMode: "static-ip"$' && echo 1 || echo 0)"
+check "networkMode: the chart's default (tunnel) reaches the operator" \
+    "$(has "$(render true true true)" '^        networkMode: "tunnel"$' && echo 1 || echo 0)"
+
+# external-dns's zone filter: the kernel domain's walk, then the zones the
+# claim lists (certificates.dnsZones) for tenants served on a domain of
+# their own. Passed as a list, the way B-01 writes its values file; nothing
+# listed is the walk alone.
+zones_of() { awk '/^        domainFilters:$/{f=1;next} f&&/^          - /{print $2;next} f{exit}' <<<"$1" | tr '\n' ' '; }
+# A provider named, since "none" installs no external-dns at all.
+filter_default="$(zones_of "$(render true true true --set-string dnsProvider=cloudflare)")"
+check "external-dns: no dnsZones renders the kernel domain's walk alone" \
+    "$([[ "${filter_default}" == "k.example " ]] && echo 1 || echo 0)"
+filter_zones="$(zones_of "$(render true true true --set-string dnsProvider=cloudflare --set 'dnsZones={gentian.org,example.ch}')")"
+check "external-dns: the claim's dnsZones follow the walk, in order" \
+    "$([[ "${filter_zones}" == "k.example gentian.org example.ch " ]] && echo 1 || echo 0)"
+filter_empty="$(zones_of "$(render true true true --set-string dnsProvider=cloudflare --set 'dnsZones=null')")"
+check "external-dns: an empty dnsZones list is the walk alone" \
+    "$([[ "${filter_empty}" == "k.example " ]] && echo 1 || echo 0)"
+
+# The Applications follow the commit the installer passes, the one the
+# operator image is built from, not the branch tip; without one, the branch.
+pinned="$(render true true true --set-string dnsProvider=cloudflare --set-string gentianOsBranch=develop \
+    --set-string gentianOsRevision=0123456789abcdef0123456789abcdef01234567 --set-string operator.tag=develop-0123456)"
+check "revision: every Application follows the commit passed" \
+    "$(has "${pinned}" 'targetRevision: "?0123456789abcdef' && ! has "${pinned}" 'targetRevision: "?develop' && echo 1 || echo 0)"
+check "revision: the kernel ApplicationSets get the operator's image tag beside it" \
+    "$(has "${pinned}" 'imageTag: "develop-0123456"' && echo 1 || echo 0)"
+check "revision: none passed follows the branch" \
+    "$(has "$(render true true true --set-string gentianOsBranch=develop)" 'targetRevision: "?develop' && echo 1 || echo 0)"
+
+# Declared records (certificates.dnsRecords) reach the dns-records Application
+# as data; a name outside every zone stops the render, since external-dns would
+# skip it without a word. The Application is there with none, so that emptying
+# the list prunes the object.
+records_render() { render true true true --set-string dnsProvider=cloudflare "$@"; }
+check "dnsRecords: the Application is rendered with none" \
+    "$(has "$(records_render)" 'records: \[\]$' && echo 1 || echo 0)"
+rec="$(records_render --set-string 'dnsZones[0]=gentian.org' --set-string 'dnsRecords[0]=docs.gentian.org CNAME gentian-org.github.io')"
+check "dnsRecords: a record reaches the Application as name, type and target" \
+    "$(has "${rec}" '"name":"docs\.gentian\.org"' && has "${rec}" '"target":"gentian-org\.github\.io"' && has "${rec}" '"type":"CNAME"' && echo 1 || echo 0)"
+outside="$(records_render --set-string 'dnsRecords[0]=docs.gentian.org CNAME gentian-org.github.io')"
+check "dnsRecords: a name in no zone stops the render, naming the setting" \
+    "$(has "${outside}" 'lies in no zone' && has "${outside}" 'certificates\.dnsZones' && echo 1 || echo 0)"
+endpoint="$(helm template d kernel/manifests/dns-records/chart --set 'records[0].name=docs.gentian.org' --set 'records[0].type=CNAME' --set 'records[0].target=gentian-org.github.io' 2>&1)"
+check "dnsRecords: the chart renders the DNSEndpoint" \
+    "$(has "${endpoint}" 'kind: DNSEndpoint' && has "${endpoint}" 'dnsName: "docs\.gentian\.org"' && echo 1 || echo 0)"
+check "dnsRecords: no records, no object" \
+    "$(has "$(helm template d kernel/manifests/dns-records/chart 2>&1)" 'kind: DNSEndpoint' && echo 0 || echo 1)"
+
+# The model gateway's console (llm.<kernelDomain>) is a claim decision, off
+# unless the claim says true. The installer reads the claim's answer, passes
+# it on as it is, and says so once where the cluster serves models and the
+# console is off: a claim written before the setting existed does not state
+# it, and nothing else would tell the administrator where the console went.
+# The library's own function over a throwaway claim; no cluster.
+console_claim() { # <llm.enabled> [llm.console.enabled] -- prints the notices, then LLM_CONSOLE=<value>
+    local dir="${TMP}/deployments" claims
+    claims="${dir}/clusters/c1/kernel/claims"
+    mkdir -p "${claims}" "${TMP}/home"
+    {
+        printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1\nspec:\n  kernelDomain: k.example\n'
+        printf '  llm:\n    enabled: %s\n' "$1"
+        [[ -n "${2:-}" ]] && printf '    console:\n      enabled: %s\n' "$2"
+    } > "${claims}/cluster.yaml"
+    # The single quotes are the point: the inner shell expands LLM_CONSOLE.
+    # shellcheck disable=SC2016
+    env -i HOME="${TMP}/home" PATH="${PATH}" SCRIPT_DIR="$(pwd)" \
+        GENTIAN_DEPLOYMENTS_PATH="${dir}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 KERNEL_DOMAIN=k.example \
+        bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
+                 load_deployments_cluster_settings; load_deployments_cluster_settings
+                 echo "LLM_CONSOLE=${LLM_CONSOLE:-unset}"' 2>&1
+}
+said() { grep -c 'spec\.llm\.console\.enabled' <<<"$1"; }
+
+unstated="$(console_claim true)"
+check "console: a claim that does not state it reads as off" "$(has "${unstated}" '^LLM_CONSOLE=false$' && echo 1 || echo 0)"
+check "console: models served and the console off is said once, naming the setting" "$([[ "$(said "${unstated}")" == 1 ]] && echo 1 || echo 0)"
+stated_on="$(console_claim true true)"
+check "console: the claim switches it on, and nothing is said" \
+    "$(has "${stated_on}" '^LLM_CONSOLE=true$' && [[ "$(said "${stated_on}")" == 0 ]] && echo 1 || echo 0)"
+no_models="$(console_claim false)"
+check "console: a cluster that serves no models is told nothing about it" \
+    "$(has "${no_models}" '^LLM_CONSOLE=false$' && [[ "$(said "${no_models}")" == 0 ]] && echo 1 || echo 0)"
+check "console: no run reads an unset variable" "$(has "${unstated}${stated_on}${no_models}" 'unbound variable' && echo 0 || echo 1)"
+
+# The claim's certificates.dnsZones reaches the installer as one comma-joined
+# value, DNS_ZONES, which B-01 turns back into the chart's list; a claim that
+# lists none leaves it unset. The library's own reader over a throwaway claim.
+zones_claim() { # [zone...] -- prints DNS_ZONES=<value>
+    local dir="${TMP}/deployments-zones" claims z
+    claims="${dir}/clusters/c1/kernel/claims"
+    rm -rf "${dir}"; mkdir -p "${claims}" "${TMP}/home"
+    {
+        printf 'apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: c1\nspec:\n  kernelDomain: k.example\n'
+        if [[ $# -gt 0 ]]; then
+            printf '  certificates:\n    dnsZones:\n'
+            for z in "$@"; do printf '      - %s\n' "${z}"; done
+        fi
+    } > "${claims}/cluster.yaml"
+    # shellcheck disable=SC2016
+    env -i HOME="${TMP}/home" PATH="${PATH}" SCRIPT_DIR="$(pwd)" \
+        GENTIAN_DEPLOYMENTS_PATH="${dir}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 KERNEL_DOMAIN=k.example \
+        bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
+                 load_deployments_cluster_settings
+                 echo "DNS_ZONES=${DNS_ZONES:-unset}"' 2>&1
+}
+check "dnsZones: the claim's list reads as one comma-joined value" \
+    "$(has "$(zones_claim gentian.org example.ch)" '^DNS_ZONES=gentian.org,example.ch$' && echo 1 || echo 0)"
+check "dnsZones: a claim that lists none leaves DNS_ZONES unset" \
+    "$(has "$(zones_claim)" '^DNS_ZONES=unset$' && echo 1 || echo 0)"
+
+# The vault's storage (openbao.storage). Unset is file: a cluster rendered by
+# an installer that passes nothing keeps the backend its data is in. Raft
+# names the pod as its node; anything else is refused at render.
+storage_default="$(render false false false)"
+check "openbao.storage unset: the vault is rendered on file storage" \
+    "$(has "${storage_default}" '^              storage "file" \{$' && ! has "${storage_default}" 'storage "raft"' && echo 1 || echo 0)"
+storage_raft="$(render false false false --set-string openbao.storage=raft)"
+check "openbao.storage=raft: Raft at /openbao/data, the pod's name as its node id" \
+    "$(has "${storage_raft}" '^              storage "raft" \{$' && has "${storage_raft}" 'node_id = "openbao-0"' &&
+        [[ "$(grep -c 'storage "file"' <<<"${storage_raft}")" -eq 1 ]] && echo 1 || echo 0)"
+check "openbao.storage=raft keeps the transit seal" \
+    "$(has "${storage_raft}" 'seal "transit"' && echo 1 || echo 0)"
+check "openbao.transitStorage unset: the seal is rendered on file storage, with its plain listener" \
+    "$(! has "${storage_default}" 'node_id = "openbao-transit-0"' && has "${storage_default}" 'tls_disable     = 1' && echo 1 || echo 0)"
+storage_seal="$(render false false false --set-string openbao.transitStorage=raft)"
+check "openbao.transitStorage=raft: the seal on Raft, its pod's name as its node id; the vault left alone" \
+    "$(has "${storage_seal}" 'node_id = "openbao-transit-0"' && ! has "${storage_seal}" 'node_id = "openbao-0"' && echo 1 || echo 0)"
+check "openbao.transitStorage that is neither is refused" \
+    "$(has "$(render false false false --set-string openbao.transitStorage=consul)" 'it is raft or file' && echo 1 || echo 0)"
+check "openbao.storage that is neither is refused" \
+    "$(has "$(render false false false --set-string openbao.storage=consul)" 'it is raft or file' && echo 1 || echo 0)"
+
+# The operator's image is the tag the installer resolved, never a branch name
+# the chart falls back to: a branch tag moves.
+check "operator: no image tag refuses to render" \
+    "$(has "$(render false true false --set-string operator.tag=)" 'operator.tag' && echo 1 || echo 0)"
+check "operator: the tag the installer resolved is the image" \
+    "$(has "$(render false true false)" 'tag: "develop-abc1234"' && echo 1 || echo 0)"
+
+finish

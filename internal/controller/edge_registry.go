@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -24,7 +18,7 @@ import (
 // Which EdgeIngress a cluster runs, chosen by name.
 //
 // The name is the key in kernel/platforms.yaml's edgeIngress table, so the
-// catalogue that decides which credential to ask for and the code that decides
+// catalog that decides which credential to ask for and the code that decides
 // which implementation to build agree by construction rather than by two people
 // remembering the same string.
 //
@@ -40,7 +34,7 @@ import (
 // is the coupling this registry exists to remove. Fields no implementation
 // reads cost nothing.
 type EdgeIngressConfig struct {
-	// Token authorises the ingress's own API, whatever that is.
+	// Token authorizes the ingress's own API, whatever that is.
 	Token string
 	// Target is the address or hostname traffic arrives at, when the ingress
 	// is told rather than asked — a tunnel CNAME, an exit node's address.

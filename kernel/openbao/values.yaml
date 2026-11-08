@@ -1,11 +1,13 @@
 # OpenBao Helm values
 # Chart: https://openbao.github.io/openbao-helm
-# Single-node Raft for dev; scale to ha.replicas=3 for production.
+# One node, in standalone mode. The storage backend is not decided here: the
+# server configuration below is replaced whole by the one
+# kernel/bootstrap/chart/templates/openbao.yaml renders, which holds Raft or
+# file storage as the Cluster claim's openbao.storage says.
 
 server:
-  # Use Raft integrated storage (no external Consul needed)
   ha:
-    enabled: false   # set to true + replicas: 3 for production HA
+    enabled: false
 
   dataStorage:
     enabled: true
@@ -31,6 +33,12 @@ server:
   ui:
     enabled: true
 
+  # The standalone config, for a render of this file alone. What a cluster runs
+  # is the one kernel/bootstrap/chart/templates/openbao.yaml merges over it:
+  # the same listener and seal, the seal's address from the layout, and the
+  # storage backend from the claim (raft, or file for a cluster not yet
+  # migrated).
+  #
   # Override the default standalone config to add the transit auto-unseal stanza.
   # The token is injected at runtime from the openbao-transit-token k8s Secret
   # (created by scripts/bootstrap/init-openbao-transit.sh) using $AUTOUNSEAL_TOKEN env var.
@@ -41,9 +49,9 @@ server:
   #   2. Run scripts/bootstrap/init-openbao-transit.sh  (creates k8s Secret openbao-transit-token).
   #   3. Let ArgoCD reconcile this values.yaml (or force: `argocd app sync openbao`).
   #   4. Delete the primary pod to trigger restart with new config:
-  #        kubectl delete pod -n openbao openbao-0
+  #        kubectl delete pod -n kernel-secrets openbao-0
   #   5. Unseal once with the Shamir key + migration flag (this is the LAST manual unseal):
-  #        kubectl exec -n openbao openbao-0 -- bao operator unseal -migrate <shamir-key>
+  #        kubectl exec -n kernel-secrets openbao-0 -- bao operator unseal -migrate <shamir-key>
   #   6. Verify: bao status should show  Seal Type: transit  /  Sealed: false
   standalone:
     config: |
@@ -64,7 +72,7 @@ server:
       # Token is read from the AUTOUNSEAL_TOKEN environment variable which is
       # populated from the openbao-transit-token Kubernetes Secret.
       seal "transit" {
-        address    = "http://openbao-transit.openbao.svc.cluster.local:8200"
+        address    = "http://openbao-transit.kernel-seal.svc.cluster.local:8200"
         key_name   = "autounseal"
         mount_path = "transit/"
       }
@@ -81,10 +89,62 @@ server:
     - name: tls
       secret:
         secretName: openbao-tls
+    # Mounted over tls-reload's token path, so the API server's admission
+    # puts no service account token into that container.
+    - name: no-service-account-token
+      emptyDir:
+        medium: Memory
+        sizeLimit: 1Mi
   volumeMounts:
     - name: tls
       mountPath: /openbao/tls
       readOnly: true
+
+  # OpenBao reads its TLS files only at start and on SIGHUP, and its
+  # StatefulSet updates OnDelete because a restart seals it. tls-reload
+  # watches the mounted serving certificate and signals bao when cert-manager
+  # has renewed it, so a renewal needs nobody. It shares the pod's process
+  # namespace for that, runs as the pod's uid (the same as bao's, which is
+  # what lets it signal without any capability), and has no service account
+  # token and no API rights. A change here reaches a running vault only when
+  # its pod is next restarted (docs/concepts/operations.md §8.2).
+  shareProcessNamespace: true
+  extraContainers:
+    - name: tls-reload
+      image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+      command:
+        - sh
+        - -c
+        - |
+          crt=/openbao/tls/tls.crt
+          last="$(sha256sum "${crt}" 2>/dev/null)"
+          while sleep 30; do
+            now="$(sha256sum "${crt}" 2>/dev/null)" || continue
+            [ "${now}" = "${last}" ] && continue
+            if pkill -HUP -x bao; then
+              echo "tls-reload: ${crt} changed; signalled bao to load it"
+              last="${now}"
+            fi
+          done
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          memory: 16Mi
+      volumeMounts:
+        - name: tls
+          mountPath: /openbao/tls
+          readOnly: true
+        - name: no-service-account-token
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
 
 # Injector is not needed — ESO handles secret syncing
 injector:

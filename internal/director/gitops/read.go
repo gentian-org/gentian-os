@@ -1,0 +1,204 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package gitops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
+	"sigs.k8s.io/yaml"
+
+	"github.com/gentian-org/gentian-os/internal/director/authz"
+)
+
+// App is one entry of a tenant's apps list as git records it.
+type App struct {
+	Profile string `json:"profile"`
+	// Digest is the build the install is pinned to, when it was installed
+	// at one.
+	Digest string   `json:"digest,omitempty"`
+	Addons []string `json:"addons,omitempty"`
+	// AddonPins is the build each pinned addon was installed at, by the
+	// addon's name. An addon with no entry here is not pinned.
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+	// AddonGrants is which addons are for everyone, by the addon's name. An
+	// addon with no entry is given per person.
+	AddonGrants []AddonGrant `json:"addonGrants,omitempty"`
+	// DefaultGrant is whether every member of the tenant has access to the
+	// app by default: the install was made for everyone.
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
+	// Catalogue is the source the pinned build was fetched from.
+	Catalogue string `json:"catalogue,omitempty"`
+	// UpdateMode is the tenant's override of how the app moves to newer
+	// builds, when the cluster's administrator wrote one.
+	UpdateMode string `json:"updateMode,omitempty"`
+	// MovedAt and MovedBy record the last move of the pin.
+	MovedAt string `json:"movedAt,omitempty"`
+	MovedBy string `json:"movedBy,omitempty"`
+	// Placed says the platform put the app here (Tenant.spec.apps[].placed):
+	// only the placement worker changes the entry.
+	Placed bool `json:"placed,omitempty"`
+}
+
+// Apps returns what git says a tenant has installed. Git is the desired state;
+// what the cluster has made of it is the operator's to report, not the
+// director's.
+func (g *GitOps) Apps(ctx context.Context, tenant string) ([]App, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	file, err := g.tenantFile(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Spec struct {
+			Apps []App `json:"apps"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", file, err)
+	}
+	if doc.Spec.Apps == nil {
+		return []App{}, nil
+	}
+	return doc.Spec.Apps, nil
+}
+
+// Tenants lists the tenants deployed on this cluster: every directory under
+// clusters/<cluster>/tenants/ that holds a tenant.yaml, by the name in the
+// file. Git is the list of record; what the cluster has made of it is the
+// operator's to report.
+func (g *GitOps) Tenants(ctx context.Context) ([]string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepoRead(ctx); err != nil {
+		return nil, err
+	}
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
+	}
+	entries, err := os.ReadDir(filepath.Join(g.path, "clusters", cluster, "tenants"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(g.path, "clusters", cluster, "tenants", e.Name(), "tenant.yaml"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var doc struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := yaml.Unmarshal(b, &doc); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
+		}
+		if doc.Metadata.Name == "" || !gentianov1alpha1.ValidTenantName(doc.Metadata.Name) {
+			continue
+		}
+		out = append(out, doc.Metadata.Name)
+	}
+	return out, nil
+}
+
+// ErrNoClusterClaim is returned when the repository has no Cluster claim for
+// this cluster.
+var ErrNoClusterClaim = errors.New("no Cluster claim in the repository")
+
+// PlatformRoles returns the Keycloak group that holds each platform role,
+// keyed by the cluster relation it grants, from the cluster's Cluster claim.
+//
+// The claim in git is where authority over a cluster is written down, so this
+// is read from the same file the kernel domain comes from rather than from the
+// cluster: a cluster cannot widen its own administrators' rights by editing
+// something inside itself.
+func (g *GitOps) PlatformRoles(ctx context.Context) (map[string]string, error) {
+	var claim struct {
+		Spec struct {
+			PlatformRoles map[string]string `json:"platformRoles"`
+		} `json:"spec"`
+	}
+	if err := g.readClusterClaim(ctx, &claim); err != nil {
+		return nil, err
+	}
+	// The claim's field names are what an operator writes; the map's keys are
+	// the model's relations. authz.RolesFromClaim is the one translation
+	// between the two, shared with the operator's projection, so what the
+	// director checks is what the operator wrote. A field it does not know
+	// is not a role and grants nothing, the same as the operator treats it.
+	roles, _ := authz.RolesFromClaim(claim.Spec.PlatformRoles)
+	return roles, nil
+}
+
+// KernelDomain returns the kernel domain the cluster's Cluster claim declares
+// (clusters/<cluster>/kernel/claims/cluster.yaml). The claim in git is the one
+// source of that name; the director does not ask the cluster.
+// readClusterClaim parses this cluster's Cluster claim into out. One reader,
+// so every field taken from the claim comes from the same file and the same
+// "which cluster am I" answer.
+func (g *GitOps) readClusterClaim(ctx context.Context, out any) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepoRead(ctx); err != nil {
+		return err
+	}
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
+	}
+	raw, err := os.ReadFile(filepath.Join(g.path, "clusters", cluster, "kernel", "claims", "cluster.yaml"))
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrNoClusterClaim
+	}
+	if err != nil {
+		return err
+	}
+	if err := yaml.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("parse cluster claim: %w", err)
+	}
+	return nil
+}
+
+func (g *GitOps) KernelDomain(ctx context.Context) (string, error) {
+	var claim struct {
+		Spec struct {
+			KernelDomain string `json:"kernelDomain"`
+		} `json:"spec"`
+	}
+	if err := g.readClusterClaim(ctx, &claim); err != nil {
+		return "", err
+	}
+	if claim.Spec.KernelDomain == "" {
+		return "", fmt.Errorf("%w: the claim declares no kernelDomain", ErrNoClusterClaim)
+	}
+	return claim.Spec.KernelDomain, nil
+}

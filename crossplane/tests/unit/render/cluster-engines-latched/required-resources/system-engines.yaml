@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: system-engines
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: system-engines
+data:
+  cache: purge

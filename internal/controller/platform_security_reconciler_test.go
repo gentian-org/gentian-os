@@ -1,23 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -25,10 +20,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -61,7 +59,7 @@ func TestPlatformSecurityReconciler_SyncsConfigMap(t *testing.T) {
 	cm := &corev1.ConfigMap{}
 	if err := c.Get(context.Background(), types.NamespacedName{
 		Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
-		Namespace: "gentian-system",
+		Namespace: layout.Namespace(layout.Control),
 	}, cm); err != nil {
 		t.Fatalf("get ConfigMap: %v", err)
 	}
@@ -81,7 +79,7 @@ func TestPlatformSecurityReconciler_UpdatesExistingConfigMap(t *testing.T) {
 	existing := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
-			Namespace: "gentian-system",
+			Namespace: layout.Namespace(layout.Control),
 		},
 		Data: map[string]string{
 			gentianov1alpha1.PlatformSecurityConfigMapKey: `[{"profile":"old","policy":"p","scope":"s"}]`,
@@ -111,11 +109,62 @@ func TestPlatformSecurityReconciler_UpdatesExistingConfigMap(t *testing.T) {
 	cm := &corev1.ConfigMap{}
 	if err := c.Get(context.Background(), types.NamespacedName{
 		Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
-		Namespace: "gentian-system",
+		Namespace: layout.Namespace(layout.Control),
 	}, cm); err != nil {
 		t.Fatalf("get ConfigMap: %v", err)
 	}
 	if !strings.Contains(cm.Data[gentianov1alpha1.PlatformSecurityConfigMapKey], "new-app") {
 		t.Fatalf("ConfigMap not updated: %q", cm.Data[gentianov1alpha1.PlatformSecurityConfigMapKey])
+	}
+}
+
+// A failed sync is returned alone, so controller-runtime's backoff retries
+// it, and a failure to record it on the policy is returned with it rather
+// than dropped.
+func TestPlatformSecurityReconciler_ReturnsTheSyncAndStatusFailures(t *testing.T) {
+	t.Parallel()
+
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PlatformSecurityPolicyName},
+	}
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	syncErr := errors.New("configmap write refused")
+	statusErr := errors.New("status write refused")
+	refuseConfigMap := func(obj client.Object) error {
+		if _, ok := obj.(*corev1.ConfigMap); ok {
+			return syncErr
+		}
+		return nil
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(psp).WithStatusSubresource(psp).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, w client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if err := refuseConfigMap(obj); err != nil {
+					return err
+				}
+				return w.Create(ctx, obj, opts...)
+			},
+			Update: func(ctx context.Context, w client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if err := refuseConfigMap(obj); err != nil {
+					return err
+				}
+				return w.Update(ctx, obj, opts...)
+			},
+			SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+				return statusErr
+			},
+		}).Build()
+
+	r := &PlatformSecurityPolicyReconciler{Client: c}
+	res, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName},
+	})
+	if !errors.Is(err, syncErr) || !errors.Is(err, statusErr) {
+		t.Fatalf("Reconcile error = %v; want both the sync and the status failure", err)
+	}
+	if res != (reconcile.Result{}) {
+		t.Fatalf("Result = %+v beside an error; controller-runtime would ignore it", res)
 	}
 }

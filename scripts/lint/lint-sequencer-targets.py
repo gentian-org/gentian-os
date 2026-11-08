@@ -40,7 +40,7 @@
 # same Composition are unioned, because one scenario need not exercise every
 # conditional resource.
 #
-# The entries are regexes. Which flavour of match the sequencer performs is its
+# The entries are regexes. Which flavor of match the sequencer performs is its
 # business, so a name passes if it matches under any of fullmatch, match or
 # search: the aim is to catch a name that matches nothing at all, not to
 # second-guess the sequencer's dialect on names that match something.

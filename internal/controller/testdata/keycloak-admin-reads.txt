@@ -1,0 +1,45 @@
+answers, realm users: err=<nil> 176 names sha=1a39d3f6fcfc first=administrator last=p202@demo.example
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+  GET /admin/realms/demo/users?first=200&max=200 auth="Bearer token-1"
+answers, realm addresses: err=<nil> 176 names sha=b9dbe71da550 first=Mail005@demo.example last=p202@demo.example admin=true off=false email-only=true
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+  GET /admin/realms/demo/users?first=200&max=200 auth="Bearer token-1"
+answers, realm holders: err=<nil> 205 names sha=1ef0a1bc1bb4 first=admin@demo.example last=p202@demo.example off=true email-only-lowered=true
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+  GET /admin/realms/demo/users?first=200&max=200 auth="Bearer token-1"
+credentials with a trailing newline, realm users: err=<nil> 176 names sha=1a39d3f6fcfc first=administrator last=p202@demo.example
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+  GET /admin/realms/demo/users?first=200&max=200 auth="Bearer token-1"
+credentials with a trailing newline, realm addresses: err=<nil> 176 names sha=b9dbe71da550 first=Mail005@demo.example last=p202@demo.example admin=true off=false email-only=true
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+  GET /admin/realms/demo/users?first=200&max=200 auth="Bearer token-1"
+credentials with a trailing newline, realm holders: err=<nil> 205 names sha=1ef0a1bc1bb4 first=admin@demo.example last=p202@demo.example off=true email-only-lowered=true
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+  GET /admin/realms/demo/users?first=200&max=200 auth="Bearer token-1"
+token refused, realm users: err=keycloak token: 401 Unauthorized: {"error":"unauthorized_client"} []
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+token refused, realm addresses: err=keycloak token: 401 Unauthorized: {"error":"unauthorized_client"} [] admin=false off=false email-only=false
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+token refused, realm holders: err=listing the people of realm demo: keycloak token: 401 Unauthorized: {"error":"unauthorized_client"} [] off=false email-only-lowered=false
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+listing refused, realm users: err=keycloak list users: keycloak GET /admin/realms/demo/users?first=0&max=200: 500 Internal Server Error []
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+listing refused, realm addresses: err=keycloak list users: keycloak GET /admin/realms/demo/users?first=0&max=200: 500 Internal Server Error [] admin=false off=false email-only=false
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+listing refused, realm holders: err=listing the people of realm demo: keycloak list users: keycloak GET /admin/realms/demo/users?first=0&max=200: 500 Internal Server Error [] off=false email-only-lowered=false
+  POST token client_id="gentian-admin" client_secret="s3cret" grant_type=client_credentials
+  GET /admin/realms/demo/users?first=0&max=200 auth="Bearer token-1"
+secret incomplete, realm users: err=keycloak-admin secret missing url, client_id or client_secret []
+secret incomplete, realm addresses: err=keycloak-admin secret missing url, client_id or client_secret [] admin=false off=false email-only=false
+secret incomplete, realm holders: err=keycloak-admin secret missing url, client_id or client_secret [] off=false email-only-lowered=false
+no secret, realm users: err=get Secret kernel-authentication/keycloak-admin: secrets "keycloak-admin" not found []
+no secret, realm addresses: err=get Secret kernel-authentication/keycloak-admin: secrets "keycloak-admin" not found [] admin=false off=false email-only=false
+no secret, realm holders: err=get Secret kernel-authentication/keycloak-admin: secrets "keycloak-admin" not found [] off=false email-only-lowered=false

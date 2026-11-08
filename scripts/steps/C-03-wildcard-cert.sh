@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# step: C-03-wildcard-cert
+# phase: platform
+# requires: C-02-appsets
+# provides: the cluster issuers and the wildcard certificate for *.<kernelDomain>, copied into the namespaces that terminate TLS for a kernel host
+# mutates: ClusterIssuers, the Certificate in cert-manager, and wildcard-tls Secrets in the edge and gitops namespaces and, where the cluster runs its own mail, the mail namespace; on this host, the kept copy of the wildcard under ~/.gentian/certs
+
+# The Gateway's listener reads wildcard-tls from its own namespace: without it
+# the listener is invalid and the Gateway is never programmed, whatever else
+# is right.
+
+# Postfix and Dovecot present it too, for smtp.<kernelDomain> and
+# imap.<kernelDomain>, and read it from their own namespace. That namespace
+# exists only where mail.serviceMode is system; the copy skips a namespace the
+# cluster does not have, and apply() refuses to go on without one it should.
+_v5_wildcard_targets() { echo "$(ns_kernel edge) $(ns_kernel gitops) $(ns_system mail)"; }
+
+check() {
+    # The claim says which provider hosts the zone, not the environment: a
+    # --status pass carries no DNS_PROVIDER and would otherwise report a
+    # cluster that is serving the certificate as undefined.
+    [[ "$(gentian_dns_provider)" == "none" ]] && return "${CHECK_UNDEFINED}"
+    # Issued by the issuer the claim names now. A switch from staging to
+    # production otherwise left the staging certificate in place for good:
+    # it was still there and still propagated, which was all this asked.
+    [[ "$(kubectl get certificate wildcard-kernel -n "$(gentian_cert_manager_namespace)" \
+        -o jsonpath='{.spec.issuerRef.name}' 2>/dev/null)" == "$(gentian_dns01_cluster_issuer_name)" ]] \
+        || return "${CHECK_MISSING}"
+    # And issued by it: during a reissue the old certificate is still in the
+    # Secret and already copied everywhere, which the comparison below
+    # cannot tell from done.
+    kernel_wildcard_current || return "${CHECK_MISSING}"
+    GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)" kernel_wildcard_propagated
+}
+
+apply() {
+    export SERVICES_NAMESPACE GENTIAN_WILDCARD_TARGETS OPENBAO_NAMESPACE
+    SERVICES_NAMESPACE="$(ns_kernel edge)"
+    GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)"
+    OPENBAO_NAMESPACE="$(ns_kernel secrets)"
+    # Composed from the Cluster claim, and delivered by C-02 before this runs.
+    # Missing here, the copy would be skipped and check() satisfied, with
+    # Postfix and Dovecot held on a Secret nothing is going to write.
+    if [[ "$(gentian_mail_service_mode)" == "system" ]] &&
+        ! kubectl get namespace "$(ns_system mail)" >/dev/null 2>&1; then
+        error "mail.serviceMode is system and the namespace $(ns_system mail) does not exist."
+        error "  The Cluster claim composes it; C-02 waits for it. Re-run once it is there."
+        return 1
+    fi
+    install_kernel_wildcard
+}
+
+destroy() {
+    local ns
+    # Before the namespace that holds it goes: the next install reuses it.
+    save_kernel_wildcard
+    for ns in $(_v5_wildcard_targets); do
+        kubectl delete secret wildcard-tls -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
+    done
+}

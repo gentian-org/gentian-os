@@ -1,0 +1,23 @@
+# The two on-demand engines, composed on an earlier reconcile.
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: dev-cluster-mariadb
+  annotations:
+    crossplane.io/composition-resource-name: mariadb-release
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: dev-cluster-redis
+  annotations:
+    crossplane.io/composition-resource-name: redis-release
+status:
+  conditions:
+  - type: Ready
+    status: "True"

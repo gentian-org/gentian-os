@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package privilege
@@ -36,6 +30,7 @@ const (
 	FingerprintAnnotation = "gentianos.io/app-privilege-fingerprint"
 
 	membersKey       = "members.json"
+	usersKey         = "users.json"
 	membersMountPath = "/etc/gentian/app-admins"
 	scriptMountPath  = "/scripts"
 )
@@ -43,6 +38,12 @@ const (
 // Member is the privileged-user record handed to an app's sync script. It is
 // deliberately the small intersection every app can act on: apps match users by
 // email or username, never by Keycloak's internal model.
+//
+// Email is the address the app receives in the email claim, which every realm
+// maps to the username (the workspace address). Keycloak's email field holds the
+// person's recovery address; handing that over made a script promote an account
+// nobody signs in as, while the account the person signed in with stayed
+// unprivileged.
 type Member struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
@@ -64,17 +65,18 @@ func MembersJSON(members []authz.KeycloakUser) ([]byte, error) {
 		if m.ID == "" {
 			continue
 		}
-		out = append(out, Member{ID: m.ID, Username: m.Username, Email: m.Email})
+		out = append(out, Member{ID: m.ID, Username: m.Username, Email: m.Username})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return json.Marshal(out)
 }
 
-// MembersSecret publishes the member list into the tenant namespace for the
-// sync Job to read. A Secret rather than a ConfigMap: it carries the email
-// addresses of named people, which is not something to leave in a more
-// casually-readable object.
-func MembersSecret(tenant, app, namespace string, membersJSON []byte) *corev1.Secret {
+// MembersSecret publishes the member lists into the tenant namespace for the
+// sync Job to read: the app administrators, and everyone the tenant entitled
+// to the app. A Secret rather than a ConfigMap: it carries the email addresses
+// of named people, which is not something to leave in a more casually-readable
+// object.
+func MembersSecret(tenant, app, namespace string, membersJSON, usersJSON []byte) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      SecretName(app),
@@ -82,7 +84,7 @@ func MembersSecret(tenant, app, namespace string, membersJSON []byte) *corev1.Se
 			Labels:    labels(tenant, app),
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{membersKey: membersJSON},
+		Data: map[string][]byte{membersKey: membersJSON, usersKey: usersJSON},
 	}
 }
 
@@ -103,6 +105,7 @@ func SyncJob(
 
 	env := []corev1.EnvVar{
 		{Name: "GENTIAN_APP_ADMINS_FILE", Value: membersMountPath + "/" + membersKey},
+		{Name: "GENTIAN_APP_USERS_FILE", Value: membersMountPath + "/" + usersKey},
 		{Name: "GENTIAN_PRIVILEGED_ROLE", Value: roleName},
 		{Name: "GENTIAN_TENANT", Value: tenant},
 		{Name: "GENTIAN_APP", Value: app},
@@ -164,16 +167,12 @@ func SyncJob(
 						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 					},
 					Containers: []corev1.Container{{
-						Name:    "privilege-sync",
-						Image:   spec.Image,
-						Command: []string{"/bin/sh", scriptMountPath + "/run.sh"},
-						Env:     env,
-						EnvFrom: envFrom,
-						SecurityContext: &corev1.SecurityContext{
-							AllowPrivilegeEscalation: ptr(false),
-							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-							SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-						},
+						Name:            "privilege-sync",
+						Image:           spec.Image,
+						Command:         []string{"/bin/sh", scriptMountPath + "/run.sh"},
+						Env:             env,
+						EnvFrom:         envFrom,
+						SecurityContext: meta.RestrictedContainer(),
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "scripts", MountPath: scriptMountPath, ReadOnly: true},
 							{Name: "app-admins", MountPath: membersMountPath, ReadOnly: true},
@@ -195,7 +194,10 @@ func SyncJob(
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
 									SecretName: SecretName(app),
-									Items:      []corev1.KeyToPath{{Key: membersKey, Path: membersKey}},
+									Items: []corev1.KeyToPath{
+										{Key: membersKey, Path: membersKey},
+										{Key: usersKey, Path: usersKey},
+									},
 								},
 							},
 						},
@@ -224,10 +226,8 @@ func StateOf(job *batchv1.Job) JobState {
 	if job.Spec.BackoffLimit != nil {
 		backoff = *job.Spec.BackoffLimit
 	}
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return JobFailed
-		}
+	if meta.JobFailed(job) {
+		return JobFailed
 	}
 	if backoff > 0 && job.Status.Failed > backoff {
 		return JobFailed
@@ -235,7 +235,7 @@ func StateOf(job *batchv1.Job) JobState {
 	return JobRunning
 }
 
-// FailureMessage summarises why a Job failed, for the tenant condition.
+// FailureMessage summarizes why a Job failed, for the tenant condition.
 func FailureMessage(job *batchv1.Job) string {
 	for _, c := range job.Status.Conditions {
 		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue && c.Message != "" {

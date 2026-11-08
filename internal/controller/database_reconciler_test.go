@@ -1,24 +1,17 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -31,26 +24,26 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newPostgresProfile creates a minimal AppProfile that requires a PostgreSQL database.
-func newPostgresProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+// newPostgresProfile creates a minimal ComponentProfile that requires a PostgreSQL database.
+func newPostgresProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{
-					Engine:            gentianov1alpha1.DatabaseEnginePostgreSQL,
-					DatabasePerTenant: true,
+					Engine: gentianov1alpha1.DatabaseEnginePostgreSQL,
 				},
-			},
+			}},
 		},
 	}
 }
@@ -88,49 +81,15 @@ func patchDatabaseCRReady(t *testing.T, name, namespace string) {
 	t.Fatalf("patch Database %s status: too many conflicts", name)
 }
 
-// completePortalShellDatabase satisfies portal shell prerequisites while manual
-// data-plane tests keep app-specific role Jobs pending.
-func completePortalShellDatabase(t *testing.T, tenantName string) {
-	t.Helper()
-	jobName := "pg-role-" + tenantName + "-shell"
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, jobName, "platform-kernel")
-
-	crName := "db-" + tenantName + "-shell"
-	dbGVK := schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"}
-	db := &unstructured.Unstructured{}
-	db.SetGroupVersionKind(dbGVK)
-	err := testClient.Get(context.Background(), types.NamespacedName{Name: crName, Namespace: "platform-kernel"}, db)
-	if err != nil {
-		safe := strings.ReplaceAll(tenantName, "-", "_")
-		db = &unstructured.Unstructured{}
-		db.SetGroupVersionKind(dbGVK)
-		db.SetName(crName)
-		db.SetNamespace("platform-kernel")
-		_ = unstructured.SetNestedField(db.Object, "postgres", "spec", "cluster", "name")
-		_ = unstructured.SetNestedField(db.Object, safe+"_shell", "spec", "name")
-		_ = unstructured.SetNestedField(db.Object, safe+"_shell", "spec", "owner")
-		_ = unstructured.SetNestedField(db.Object, "present", "spec", "ensure")
-		if err := testClient.Create(context.Background(), db); err != nil && !k8serrors.IsAlreadyExists(err) {
-			t.Fatalf("create shell Database CR %s: %v", crName, err)
-		}
-	}
-	patchDatabaseCRReady(t, crName, "platform-kernel")
-}
-
-// TestDB_NoPostgresApps verifies that a Tenant with no apps still provisions the
-// portal shell database and gets DatabaseReady=True with PortalShellReady.
+// TestDB_NoPostgresApps verifies that a Tenant with no apps gets
+// DatabaseReady=True with NoDatabaseRequired: the desktop's database is the
+// desktop component's requirement, not the tenant's.
 func TestDB_NoPostgresApps(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "nodb"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No DB Co",
-			Domain:      "nodb.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -150,13 +109,13 @@ func TestDB_NoPostgresApps(t *testing.T) {
 	if dbCond == nil {
 		t.Fatal("expected DatabaseReady condition")
 	}
-	if dbCond.Reason != "PortalShellReady" {
-		t.Errorf("expected reason PortalShellReady, got %q", dbCond.Reason)
+	if dbCond.Reason != "NoDatabaseRequired" {
+		t.Errorf("expected reason NoDatabaseRequired, got %q", dbCond.Reason)
 	}
 }
 
 // TestDB_CrossplaneAppProvisionedByOperator verifies that Crossplane apps with
-// databasePerTenant are provisioned by the operator in the kernel namespace,
+// a database are provisioned by the operator in the kernel namespace,
 // not deferred to composition-owned db-init Jobs. This is the SEC-1 hardening:
 // tenant-namespace init Jobs no longer read kernel credentials from OpenBao, so
 // the operator must own the role/database provisioning for every engine=postgres
@@ -164,9 +123,8 @@ func TestDB_NoPostgresApps(t *testing.T) {
 func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("element")
-	profile.Spec.DeploymentMethod = gentianov1alpha1.DeploymentMethodCrossplane
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -174,7 +132,6 @@ func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "cpgdb"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Crossplane DB Co",
-			Domain:      "cpgdb.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "element"}},
 		},
 	}
@@ -187,7 +144,7 @@ func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-cpgdb-element", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "pg-role-cpgdb-element", Namespace: "system-postgresql"}, job) == nil
 	})
 }
 
@@ -197,7 +154,7 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("pg-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -205,7 +162,6 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbcreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Create Co",
-			Domain:      "dbcreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app1"}},
 		},
 	}
@@ -218,22 +174,20 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "pg-role-dbcreate-pg-app1", Namespace: "system-postgresql"}, job) == nil
 	})
-
-	completePortalShellDatabase(t, "dbcreate")
 
 	// Reconciler should wait on the role Job before Database CR is applied.
 	waitForTenantConditionReason(t, "dbcreate", "DatabaseReady", "Provisioning")
 
 	// Step 2: mark role Job complete; simulator applies Database CR once all Jobs finish.
-	markJobComplete(t, "pg-role-dbcreate-pg-app1", "platform-kernel")
+	markJobComplete(t, "pg-role-dbcreate-pg-app1", "system-postgresql")
 
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "platform-kernel"}, db) == nil
+			types.NamespacedName{Name: "db-dbcreate-pg-app1", Namespace: "system-postgresql"}, db) == nil
 	})
 
 	clusterName, _, _ := unstructured.NestedString(db.Object, "spec", "cluster", "name")
@@ -256,7 +210,7 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("pg-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -264,7 +218,6 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "rolejob"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Role Job Co",
-			Domain:      "rolejob.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app2"}},
 		},
 	}
@@ -277,22 +230,20 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 	roleJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "platform-kernel"}, roleJob) == nil
+			types.NamespacedName{Name: "pg-role-rolejob-pg-app2", Namespace: "system-postgresql"}, roleJob) == nil
 	})
-
-	completePortalShellDatabase(t, "rolejob")
 
 	waitForTenantConditionReason(t, "rolejob", "DatabaseReady", "Provisioning")
 
 	// Mark role Job as complete; Database CR is applied once all Jobs finish.
-	markJobComplete(t, "pg-role-rolejob-pg-app2", "platform-kernel")
+	markJobComplete(t, "pg-role-rolejob-pg-app2", "system-postgresql")
 
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 
 	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "platform-kernel"}, db) == nil
+			types.NamespacedName{Name: "db-rolejob-pg-app2", Namespace: "system-postgresql"}, db) == nil
 	})
 
 	if roleJob.Labels["gentianos.io/tenant"] != "rolejob" {
@@ -316,7 +267,7 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("pg-app3")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -324,7 +275,6 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dbready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Ready Co",
-			Domain:      "dbready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app3"}},
 		},
 	}
@@ -344,19 +294,18 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "pg-role-dbready-pg-app3", Namespace: "system-postgresql"}, job) == nil
 	})
-	completePortalShellDatabase(t, "dbready")
-	markJobComplete(t, "pg-role-dbready-pg-app3", "platform-kernel")
+	markJobComplete(t, "pg-role-dbready-pg-app3", "system-postgresql")
 
 	// Step 2: wait for Database CR in platform-kernel then mark it ready.
 	waitFor(t, tenantReadyTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "db-dbready-pg-app3", Namespace: "platform-kernel"}, db) == nil
+			types.NamespacedName{Name: "db-dbready-pg-app3", Namespace: "system-postgresql"}, db) == nil
 	})
-	patchDatabaseCRReady(t, "db-dbready-pg-app3", "platform-kernel")
+	patchDatabaseCRReady(t, "db-dbready-pg-app3", "system-postgresql")
 
 	// Now Phase=Ready and DatabaseReady=True
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -382,15 +331,14 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("pg-app4")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "dbdelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "DB Delete Co",
-			Domain:         "dbdelete.example.com",
+			DisplayName:    "Test Tenant",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app4"}},
 		},
@@ -403,31 +351,36 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-dbdelete-pg-app4", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "pg-role-dbdelete-pg-app4", Namespace: "system-postgresql"}, job) == nil
 	})
-	markJobComplete(t, "pg-role-dbdelete-pg-app4", "platform-kernel")
+	markJobComplete(t, "pg-role-dbdelete-pg-app4", "system-postgresql")
 
 	// Step 2: wait for Database CR to be created in platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "platform-kernel"}, db) == nil
+			types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "system-postgresql"}, db) == nil
 	})
 
 	// Delete the tenant.
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteDatabase; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", "platform-kernel")
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-dbdelete-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs. The purge
+	// drops the database and role through a Job before the CR goes.
+	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", layout.Namespace(layout.Authentication))
+	go markJobCompleteWhenReady("pg-delete-dbdelete-pg-app4", "system-postgresql")
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "platform-kernel"}, db)
+			types.NamespacedName{Name: "db-dbdelete-pg-app4", Namespace: "system-postgresql"}, db)
 		return err != nil // gone
 	})
 }
@@ -438,15 +391,14 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	t.Parallel()
 	profile := newPostgresProfile("pg-app5")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "dborphan"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "DB Orphan Co",
-			Domain:         "dborphan.example.com",
+			DisplayName:    "Test Tenant",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app5"}},
 		},
@@ -458,7 +410,7 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	orphan := &unstructured.Unstructured{}
 	orphan.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 	orphan.SetName("db-dborphan-legacy-app")
-	orphan.SetNamespace("platform-kernel")
+	orphan.SetNamespace("system-postgresql")
 	orphan.SetLabels(map[string]string{
 		"gentianos.io/tenant":          "dborphan",
 		"app.kubernetes.io/managed-by": "gentian-os",
@@ -489,13 +441,19 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", "platform-kernel")
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-dborphan-gentian-backup", "system-s3")
+	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", layout.Namespace(layout.Authentication))
+	// The purge drops every database a CR records, the orphan's included.
+	go markJobCompleteWhenReady("pg-delete-dborphan-pg-app5", "system-postgresql")
+	go markJobCompleteWhenReady("pg-delete-dborphan-legacy-app", "system-postgresql")
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}
 		db.SetGroupVersionKind(schema.GroupVersionKind{Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database"})
 		err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "db-dborphan-legacy-app", Namespace: "platform-kernel"}, db)
+			types.NamespacedName{Name: "db-dborphan-legacy-app", Namespace: "system-postgresql"}, db)
 		return err != nil
 	})
 }

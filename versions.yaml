@@ -17,7 +17,7 @@
 #   $(shell bash scripts/lib/versions.sh crossplane cli)
 #
 # Version strings are stored EXACTLY as the upstream publishes them. Some
-# projects prefix chart versions with "v" and some do not; normalising that here
+# projects prefix chart versions with "v" and some do not; normalizing that here
 # would mean translating it back at every call site, and getting one case wrong
 # produces a "chart not found" that reads like a network fault. Where a project
 # publishes a chart and a CLI under different schemes, both are listed.
@@ -48,17 +48,86 @@ metrics-server:
   chart: "3.13.0"
   repo: https://kubernetes-sigs.github.io/metrics-server/
 
+# Envoy Gateway 1.9 is tested on Kubernetes 1.33 to 1.36 and installs the
+# Gateway API v1.6.1 CRDs; the installer's pre-flight refuses an older cluster.
+# The operator's tests validate what it writes against this release's CRDs,
+# which are copied into the repository: after changing the version, run
+# scripts/gen/gen-envoy-gateway-crds.py.
 envoy-gateway:
-  chart: "v1.2.5"
+  chart: "v1.9.3"
   repo: oci://docker.io/envoyproxy/gateway-helm
 
 argocd:
   manifest: "v3.5.0"
   # argo-helm supplies argocd-image-updater; ArgoCD itself installs from manifests.
   repo: https://argoproj.github.io/argo-helm
+  # The image updater's chart, from that repository. Pinned like everything
+  # else: a re-run compares the release with it and upgrades a cluster that
+  # is behind, and an air-gapped mirror knows what to hold.
+  imageUpdaterChart: "1.3.2"
 
+# The CLI is what the installer runs against the vault; the chart is what the
+# bootstrap chart's openbao and openbao-transit Applications install.
 openbao:
   cli: "v2.5.0"
+  chart: "0.25.5"
+  repo: https://openbao.github.io/openbao-helm
+
+# The components below are Applications of the bootstrap chart
+# (kernel/bootstrap/chart). B-01 passes this file to the chart as its
+# `versions` value, so each Application reads its chart and repository from
+# here and the two cannot drift.
+
+# Headlamp: the cluster administrator's view of the cluster, in
+# kernel-observability.
+headlamp:
+  chart: "0.45.0"
+  repo: https://kubernetes-sigs.github.io/headlamp/
+
+reloader:
+  chart: "2.2.9"
+  repo: ghcr.io/stakater/charts
+
+# CloudNativePG 1.25.0. The network policy tests pin the operator's pod labels
+# and ports read at this chart version (scripts/tests/store_network_policies.py).
+cnpg:
+  chart: "0.23.0"
+  repo: ghcr.io/cloudnative-pg/charts
+
+kyverno:
+  chart: "3.3.7"
+  repo: https://kyverno.github.io/kyverno/
+
+# external-dns: 1.22.0 at the earliest; the reasons are beside its Application
+# (kernel/bootstrap/chart/templates/external-dns.yaml).
+external-dns:
+  chart: "1.22.0"
+  repo: https://kubernetes-sigs.github.io/external-dns/
+
+# Postfix: the platform's own mail server (bokysan/mail, chart "mail"), where
+# mail.serviceMode is system. The mail ApplicationSet
+# (kernel/appsets/raw/09a-mail.yaml) hands the pin to the postfix chart, whose
+# provider-helm Release installs it.
+postfix:
+  chart: "5.1.0"
+  repo: https://bokysan.github.io/docker-postfix/
+
+# kube-prometheus-stack (Apache-2.0): the platform's metrics and alerts when
+# the Cluster claim's monitoring.enabled is true. The Cluster Composition
+# composes its Application and writes the version out
+# (crossplane/compositions/cluster-default.yaml); test-log-forwarding.sh holds
+# the two equal.
+monitoring:
+  chart: "92.3.0"
+  repo: https://prometheus-community.github.io/helm-charts
+
+# Vector (MPL-2.0, chart Apache-2.0): the log forwarder, where the Cluster
+# claim names a logForwarding destination. The Cluster Composition composes its
+# Application and writes the version out (crossplane/compositions/
+# cluster-default.yaml); test-log-forwarding.sh holds the two equal.
+logForwarding:
+  chart: "0.59.0"
+  repo: https://helm.vector.dev
 
 # The OpenFGA CLI is NOT pinned here, though it is pinned. It lives in its only
 # caller, scripts/tools/verify-authz-model.sh.

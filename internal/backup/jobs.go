@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -21,22 +15,25 @@ import (
 	"sort"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gentian-org/gentian-os/internal/kernel"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
-	// MinIOAdminSecret holds the credentials every capture uses to write into
-	// the tenant's backup bucket. Captures authenticate as the MinIO admin
-	// because they read app buckets they were never issued a key for; the
-	// bundle they produce is encrypted, and no tenant workload can reach it.
-	MinIOAdminSecret = "minio-admin"
+	// StorageAdminSecret holds the address of the platform's object store and
+	// the administrator's keys, beside the store: what every capture uses to
+	// write into the tenant's backup bucket, and what a capture or a restore
+	// of an app's bucket reads it with. Captures authenticate as the
+	// administrator because they read app buckets they were never issued a
+	// key for; the bundle they produce is encrypted, and no tenant workload
+	// can reach it.
+	StorageAdminSecret = "s3-admin"
 	// PostgresAdminSecret and MariaDBAdminSecret hold the superuser credentials
 	// the dumps run as. A per-app role can read only its own database, which is
 	// exactly what a dump needs, but the roles are per app and the connection
@@ -47,26 +44,12 @@ const (
 	// the identity reconciler already authenticates with.
 	KeycloakAdminSecret = "keycloak-admin"
 
-	// mcImage carries the MinIO client used to upload every artefact.
-	// quay.io, not Docker Hub, and a tag that still exists.
-	//
-	// MinIO retired the older mc tags from Docker Hub: pulling
-	// minio/mc:RELEASE.2025-04-03T17-07-56Z now fails with
-	//   pull access denied, repository does not exist or may require authorization
-	// which reads as a credentials problem and is not one — the tag is simply gone.
-	// The Job then sits in ImagePullBackOff, and because tenant provisioning waits
-	// on that Job, the whole tenant stops short of Ready: storage never finishes, so
-	// the stages behind it never run. Both tenants on this cluster were stuck there.
-	//
-	// quay.io is where MinIO publishes now, so it is the registry to track.
-	mcImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
-
 	// workDir is the scratch mount a dump is staged in before upload.
 	//
 	// Staging rather than streaming is a deliberate v1 simplification: piping a
-	// dump straight into `mc pipe` needs the dump tool and mc in one image, and
-	// the platform has no such image yet. The cost is real — a capture needs
-	// ephemeral node storage the size of the artefact — so ScratchLimit exists
+	// dump straight into the upload needs the dump tool and rclone in one
+	// image, and the platform has no such image. The cost is real — a capture needs
+	// ephemeral node storage the size of the artifact — so ScratchLimit exists
 	// to bound it, and streaming is the obvious Phase 6 follow-up.
 	workDir = "/work"
 )
@@ -85,13 +68,16 @@ type JobParams struct {
 	// Role overrides the database role a restore hands ownership to. Empty
 	// derives it from Tenant and App, which is right for an app: its database,
 	// its role and its label are all the same name. The portal shell is the
-	// exception -- it is labelled with the tenant-wide component so its
+	// exception -- it is labeled with the tenant-wide component so its
 	// progress aggregates there, while its database and role are named for the
 	// shell. Deriving the role from the label restored into a role that has
 	// never existed.
 	Role string
 	// Export names the TenantExport this Job serves, for provenance.
 	Export string
+	// RunKind says whether Export names a TenantExport or a TenantRestore
+	// (RunKindExport, RunKindRestore): the two may share a name.
+	RunKind string
 	// Node pins this Job to one node, when it must run where a volume already
 	// is. Empty leaves scheduling alone, which is right for every Job that
 	// mounts no claim.
@@ -101,12 +87,15 @@ type JobParams struct {
 	Bucket string
 	Prefix string
 	// Endpoint is the S3 API URL when bundles go somewhere other than the
-	// platform's own MinIO, whose address travels with its credentials.
+	// platform's own object store, whose address travels with its credentials.
 	// Resolved from BackupPolicy; empty means the platform's own storage.
 	Endpoint string
-	// Region is passed to S3 tooling that requires one. Recorded rather than
-	// used by mc, which derives a bucket's location from the endpoint.
+	// Region is the destination's, for a provider that requires one; rclone
+	// signs with it. Empty leaves rclone's default.
 	Region string
+	// AddressingStyle is how the destination names a bucket in a request:
+	// path when empty, as the platform's own store does, or virtualHost.
+	AddressingStyle gentianov1alpha1.S3AddressingStyle
 	// ScratchLimit bounds the emptyDir a dump is staged in. Zero leaves it
 	// unbounded, which lets one large tenant fill a node's ephemeral storage.
 	ScratchLimit string
@@ -114,16 +103,17 @@ type JobParams struct {
 	// shared Job waiter recreates a failed Job, so an unbounded capture would
 	// retry a genuinely broken dump forever while holding an app paused.
 	BackoffLimit int32
-	// Encryption protects every artefact this Job writes. There is no unset
+	// Encryption protects every artifact this Job writes. There is no unset
 	// value that means plaintext; Encryption.Validate rejects that before any
 	// Job is built.
 	Encryption Encryption
-	// UploadCredentialsSecret overrides where the MinIO credentials come from.
+	// UploadCredentialsSecret overrides where the bundle store's credentials
+	// come from.
 	//
-	// Empty means the kernel's minio-admin Secret, which is right for every
-	// Job that runs in the kernel namespace. Volume Jobs cannot: a PVC is only
-	// mountable from its own namespace, so they run in the tenant namespace —
-	// where minio-admin does not exist and must not. The controller stages a
+	// Empty means StorageAdminSecret, which is right for every Job that runs
+	// beside the object store. Volume Jobs cannot: a PVC is only mountable
+	// from its own namespace, so they run in the tenant namespace -- where
+	// the administrator's Secret does not exist and must not. The controller stages a
 	// short-lived copy there and names it here.
 	UploadCredentialsSecret string
 }
@@ -149,13 +139,38 @@ func hardened(containers []corev1.Container) []corev1.Container {
 	return containers
 }
 
-// uploadSecretName resolves which Secret carries the MinIO credentials.
+// uploadSecretName resolves which Secret carries the bundle store's
+// credentials.
 func (p JobParams) uploadSecretName() string {
 	if p.UploadCredentialsSecret != "" {
 		return p.UploadCredentialsSecret
 	}
-	return MinIOAdminSecret
+	return StorageAdminSecret
 }
+
+// Where each artifact is in a bundle, below the bundle's prefix and before
+// the suffix encryption adds. An export writes to these and records them in
+// the manifest; a restore reads the manifest. Nothing else spells a path.
+func PostgresArtefact(database string) string { return "postgres/" + database + ".pgc" }
+
+// PostgresOwnedArtefact is the archive of the databases an app's role owns
+// besides the provisioned one, filed under the provisioned one's name.
+func PostgresOwnedArtefact(database string) string {
+	return "postgres/" + database + ".owned.tar.gz"
+}
+
+func MariaDBArtefact(database string) string { return "mariadb/" + database + ".sql.gz" }
+
+// MariaDBOwnedArtefact is the archive of the databases that are an app's
+// besides the provisioned one, filed under the provisioned one's name.
+func MariaDBOwnedArtefact(database string) string {
+	return "mariadb/" + database + ".owned.tar.gz"
+}
+func S3Artefact(bucket string) string    { return "s3/" + bucket + ".tar.gz" }
+func VolumeArtefact(claim string) string { return "volumes/" + claim + ".tar.gz" }
+
+// IdentityArtefact is the realm export; there is one per bundle.
+const IdentityArtefact = "identity/realm.tar.gz"
 
 // PostgresDumpJob captures one PostgreSQL database as a custom-format dump.
 //
@@ -163,7 +178,14 @@ func (p JobParams) uploadSecretName() string {
 // pg_restore consumes, and it allows a selective restore of individual tables
 // later without re-running the whole export.
 func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
-	artefact := "postgres/" + database + ".pgc"
+	return postgresDumpJob(p, database, PostgresAdminEnv())
+}
+
+// postgresDumpJob is the dump of one database, as whoever env connects as:
+// the server's administrator, or the database's owner where a server has no
+// administrator's Secret (KernelDesktopDumpJob).
+func postgresDumpJob(p JobParams, database string, env []corev1.EnvVar) *batchv1.Job {
+	artefact := PostgresArtefact(database)
 	dump := corev1.Container{
 		Name:    "pg-dump",
 		Image:   kernel.PostgresProvisionerImage(),
@@ -173,30 +195,151 @@ func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
 # owner would only pin the dump to this cluster's role names.
 pg_dump --format=custom --no-owner --no-acl --dbname=%s --file=%s/dump.pgc
 echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
-		Env:          postgresAdminEnv(),
+		Env:          env,
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "dump.pgc", artefact, []corev1.Container{dump}, nil)
 }
 
+// PostgresOwnedDumpJob captures every database an app's role owns besides
+// the provisioned one, into one archive.
+//
+// An app allowed to create databases of its own owns each one it made, and a
+// purge drops them all with the role. An export used to dump the provisioned
+// database alone: what a purge destroyed was more than a bundle held, and for
+// an app whose whole purpose is letting people make databases, that was most
+// of its data. Which databases are the app's is the inventory's one rule
+// (postgresOwnedSQL), the one the purge drops by.
+//
+// The names are the tenant's own choice and are not known before the Job
+// runs, so they are not in the manifest: INDEX inside the archive lists them,
+// one per line, and <line number>.pgc is each one's dump. The archive is
+// written when the role owns nothing else too -- an empty INDEX is the
+// record that it was looked at.
+func PostgresOwnedDumpJob(p JobParams, role, database string) *batchv1.Job {
+	artefact := PostgresOwnedArtefact(database)
+	dump := corev1.Container{
+		Name:    "pg-dump-owned",
+		Image:   kernel.PostgresProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+ROLE=%[1]s
+DB=%[2]s
+# Anyone's: the pack step runs as another user and removes what is in it.
+mkdir -p -m 0777 %[3]s/owned
+psql -v ON_ERROR_STOP=1 -tA -v app_role="${ROLE}" -v app_db="${DB}" -d postgres > %[3]s/owned/INDEX <<'PSQL'
+%[4]s
+PSQL
+n=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  # By PGDATABASE, not --dbname: a --dbname holding "=" is read as a
+  # connection string, and these names are whatever the tenant typed.
+  PGDATABASE="${name}" pg_dump --format=custom --no-owner --no-acl --file="%[3]s/owned/${n}.pgc"
+  echo "dumped ${name}"
+  n=$((n + 1))
+done < %[3]s/owned/INDEX
+echo "dumped ${n} database(s) ${ROLE} owns besides ${DB}"`,
+			shellSingleQuote(role), shellSingleQuote(database), workDir, postgresOwnedSQL)},
+		Env:          PostgresAdminEnv(),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	// A separate container because the dump image is not relied on for tar.
+	pack := toolsContainer("pack-owned", fmt.Sprintf(`set -eu
+tar czf %[1]s/owned.tar.gz -C %[1]s/owned .
+rm -rf %[1]s/owned
+echo "archived the databases owned besides %[2]s"`, workDir, database))
+	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
+}
+
+// mariadbDump is one database's dump, to a file: --single-transaction reads
+// the whole database at one instant without locking it. To a file and
+// compressed afterwards, not through a pipe: in a pipe the exit status is
+// gzip's, and a dump that failed half-way was uploaded as a bundle's
+// artefact and reported as taken.
+const mariadbDump = `mariadb-dump --single-transaction --routines --triggers --events \
+  --host="${MYSQL_HOST}" --port="${MYSQL_TCP_PORT}" --user="${MYSQL_ADMIN_USER}"`
+
 // MariaDBDumpJob captures one MariaDB database as compressed SQL.
 func MariaDBDumpJob(p JobParams, database string) *batchv1.Job {
-	artefact := "mariadb/" + database + ".sql.gz"
+	artefact := MariaDBArtefact(database)
 	dump := corev1.Container{
 		Name:    "mariadb-dump",
 		Image:   kernel.MariaDBProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
-# --single-transaction takes a consistent snapshot without locking the whole
-# database; the app is already paused, so this only guards in-flight work.
-mariadb-dump --single-transaction --routines --triggers --events \
-  --host="${MYSQL_HOST}" --port="${MYSQL_TCP_PORT}" --user="${MYSQL_ADMIN_USER}" \
-  %s | gzip -c > %s/dump.sql.gz
-echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
-		Env:          mariadbAdminEnv(),
+# The app is already paused, so the snapshot only guards in-flight work.
+%[1]s \
+  --result-file=%[3]s/dump.sql %[2]s
+gzip %[3]s/dump.sql
+echo "dumped %[4]s"`, mariadbDump, shellSingleQuote(database), workDir, database)},
+		Env:          MariaDBAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return uploadJob(p, "dump.sql.gz", artefact, []corev1.Container{dump}, nil)
+}
+
+// MariaDBOwnedDumpJob captures every database that is an app's besides the
+// provisioned one, into one archive: the databases an app allowed to create
+// its own has made, which a purge drops with the provisioned one. Which they
+// are is the inventory's one rule (mariadbOwnedSQL), the one the purge drops
+// by.
+//
+// The names are the app's own choice below its prefix and are not known
+// before the Job runs, so they are not in the manifest: INDEX inside the
+// archive lists them, one per line, and <line number>.sql.gz is each one's
+// dump. The archive is written when there is none too -- an empty INDEX is
+// the record that it was looked at.
+//
+// Each database is dumped as the provisioned one is, at one instant of its
+// own; across them the export relies on the app being paused, as it does
+// across an app's database and its files. A name with a control character
+// in it cannot be listed one per line, and fails the export rather than
+// being left out of it.
+func MariaDBOwnedDumpJob(p JobParams, user, database string) *batchv1.Job {
+	artefact := MariaDBOwnedArtefact(database)
+	script := mariadbRefusal(database, user)
+	if script == "" {
+		script = fmt.Sprintf(`set -euo pipefail
+MARIADB=(%[4]s)
+# Anyone's: the pack step runs as another user and removes what is in it.
+mkdir -p -m 0777 %[2]s/owned
+unlistable="$("${MARIADB[@]}" -N -s <<'SQL'
+SELECT COUNT(*) FROM (%[3]s) o WHERE o.schema_name REGEXP '[[:cntrl:]]';
+SQL
+)"
+if [ "${unlistable}" != "0" ]; then
+  echo "ERROR: ${unlistable} database(s) of %[1]s have a control character in their name and cannot be carried" >&2; exit 1
+fi
+"${MARIADB[@]}" -N -s --raw > %[2]s/owned/INDEX <<'SQL'
+%[3]s ORDER BY s.schema_name;
+SQL
+n=0
+while IFS= read -r name; do
+  [ -n "${name}" ] || continue
+  %[5]s \
+    --result-file="%[2]s/owned/${n}.sql" "${name}"
+  gzip "%[2]s/owned/${n}.sql"
+  echo "dumped ${name}"
+  n=$((n + 1))
+done < %[2]s/owned/INDEX
+echo "dumped ${n} database(s) that are %[1]s's besides itself"`,
+			database, workDir, mariadbOwnedSQL(database, user), mariadbClient, mariadbDump)
+	}
+	dump := corev1.Container{
+		Name:         "mariadb-dump-owned",
+		Image:        kernel.MariaDBProvisionerImage(),
+		Command:      []string{"/bin/bash", "-c"},
+		Args:         []string{script},
+		Env:          MariaDBAdminEnv(),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	// A separate container, as for PostgreSQL: one image packs every archive.
+	pack := toolsContainer("pack-owned", fmt.Sprintf(`set -eu
+tar czf %[1]s/owned.tar.gz -C %[1]s/owned .
+rm -rf %[1]s/owned
+echo "archived the databases that are %[2]s's besides itself"`, workDir, database))
+	return uploadJob(p, "owned.tar.gz", artefact, []corev1.Container{dump, pack}, nil)
 }
 
 // VolumeArchiveJob captures one PersistentVolumeClaim as a compressed archive.
@@ -205,30 +348,22 @@ echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
 // spec.backup.volumes.excludePaths and are the app author's statement about
 // which bytes are derived; they are applied as tar patterns, so a pattern that
 // matched a config directory would silently drop the key an app's data is
-// encrypted with — which is why the catalogue rejects such patterns rather
-// than trusting this layer to notice.
+// encrypted with — which is why the catalog rejects such patterns rather
+// than trusting this layer to notice. A pattern is a glob: its * does not
+// match a /, and it matches at the start of any of a path's components.
 func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1.Job {
-	artefact := "volumes/" + claim + ".tar.gz"
+	artefact := VolumeArtefact(claim)
 	var excludes strings.Builder
 	for _, pattern := range sortedUnique(excludePaths) {
 		fmt.Fprintf(&excludes, " --exclude=%s", shellSingleQuote(pattern))
 	}
-	// Alpine, not the mc image: this container only tars, and the mc image —
-	// a minimal UBI — ships no tar at all. Every container that runs tar must
-	// use an image that has it; the first live volume capture exited 127 on
-	// its first command.
-	archive := corev1.Container{
-		Name:    "archive",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-tar czf %s/volume.tar.gz -C /source%s .
-echo "archived %s"`, workDir, excludes.String(), claim)},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "source", MountPath: "/source", ReadOnly: true},
-			{Name: "work", MountPath: workDir},
-		},
-	}
+	// Every container that runs tar must use an image that has it; the first
+	// live volume capture ran a client image without one and exited 127 on
+	// its first command. Root, as only root reads every file of the volume.
+	archive := volumeToolsContainer("archive", fmt.Sprintf(`set -eu
+tar czf %s/volume.tar.gz -C /source --no-wildcards-match-slash%s .
+echo "archived %s"`, workDir, excludes.String(), claim))
+	archive.VolumeMounts = append(archive.VolumeMounts, corev1.VolumeMount{Name: "source", MountPath: "/source", ReadOnly: true})
 	source := corev1.Volume{
 		Name: "source",
 		VolumeSource: corev1.VolumeSource{
@@ -244,7 +379,7 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // S3ArchiveJob captures one app bucket into the bundle.
 //
 // It copies the bucket to disk and archives it rather than mirroring object to
-// object. Mirroring was the obvious shape and the wrong one: bundle artefacts
+// object. Mirroring was the obvious shape and the wrong one: bundle artifacts
 // are encrypted individually, and a mirrored bucket would have landed as
 // plaintext objects — leaving the largest part of most tenants' data readable
 // by anyone who could list the bundle, in a bundle whose whole premise is that
@@ -253,42 +388,28 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // Object keys are preserved inside the archive, which is what lets a restore
 // put each object back under the name the app's database refers to.
 func S3ArchiveJob(p JobParams, sourceBucket string) *batchv1.Job {
-	artefact := "s3/" + sourceBucket + ".tar.gz"
-	// The app's bucket is in the platform's own MinIO, always — it is where the
+	artefact := S3Artefact(sourceBucket)
+	// The app's bucket is in the platform's own object store, always — it is where the
 	// app writes. The bundle may be somewhere else entirely, and the two are the
 	// same system only when bundles go to platform storage.
 	//
 	// Sharing bundleEnv here pointed the source read at the destination: with an
 	// external bundle store this went looking for the tenant's bucket in someone
 	// else's account, and failed in fetch-bucket before a byte was captured. It
-	// worked for as long as it did because every bundle went to the same MinIO
+	// worked for as long as it did because every bundle went to the same store
 	// the apps use, which made one set of credentials look like enough for both.
 	// The restore path already carries this distinction; capture did not.
-	fetch := corev1.Container{
-		Name:    "fetch-bucket",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-mc alias set platform "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+	fetch := storageTools("fetch-bucket", "set -eu\n"+rcloneRemote(platformRemote)+fmt.Sprintf(`
 mkdir -p %[1]s/bucket
-# An empty bucket is normal (an app may never have written), so mirror into a
+# An empty bucket is normal (an app may never have written), so copy into a
 # directory that already exists and let the pack step archive it empty too.
-mc mirror --preserve "platform/%[2]s" %[1]s/bucket
-echo "fetched bucket %[2]s"`, workDir, sourceBucket)},
-		Env:          PlatformStorageEnv(),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
-	// A separate container because the mc image has no tar.
-	pack := corev1.Container{
-		Name:    "pack-bucket",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
+# Each object's modification time comes with it, as a file's.
+rclone copy "%[3]s:%[2]s" %[1]s/bucket
+echo "fetched bucket %[2]s"`, workDir, sourceBucket, platformRemote), PlatformStorageEnv())
+	pack := toolsContainer("pack-bucket", fmt.Sprintf(`set -eu
 tar czf %[1]s/bucket.tar.gz -C %[1]s/bucket .
 rm -rf %[1]s/bucket
-echo "archived bucket %[2]s"`, workDir, sourceBucket)},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+echo "archived bucket %[2]s"`, workDir, sourceBucket))
 	return uploadJob(p, "bucket.tar.gz", artefact, []corev1.Container{fetch, pack}, nil)
 }
 
@@ -307,27 +428,11 @@ echo "archived bucket %[2]s"`, workDir, sourceBucket)},
 // decision hiding in an API limitation, not an oversight.
 func RealmExportJob(p JobParams, realm string) *batchv1.Job {
 	quoted := shellSingleQuote(realm)
-	export := corev1.Container{
-		Name:    "realm-export",
-		Image:   kernel.KeycloakProvisionerImage(),
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{keycloak.ProvisionerBootstrap + fmt.Sprintf(`set -eu
-REALM=%[1]s
+	export := toolsContainer("realm-export", realmScriptPrelude+fmt.Sprintf(`REALM=%[1]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
+new_token
 
-token() {
-  curl -sf --max-time 30 -X POST \
-    "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-    | jq -r .access_token
-}
-TOKEN=$(token)
-[ -n "${TOKEN}" ] && [ "${TOKEN}" != "null" ] || { echo "ERROR: no admin token" >&2; exit 1; }
-AUTH="Authorization: Bearer ${TOKEN}"
-
-curl -sf --max-time 120 -X POST -H "${AUTH}" -H "Content-Type: application/json" \
-  "${API}/partial-export?exportGroupsAndRoles=true&exportClients=true" > %[2]s/realm.json
+kc POST "${API}/partial-export?exportGroupsAndRoles=true&exportClients=true" > %[2]s/realm.json
 
 # Users are paged: Keycloak caps a single response, so a realm larger than one
 # page would otherwise be captured half-empty with no error anywhere.
@@ -335,38 +440,90 @@ first=0
 page_size=100
 : > %[2]s/users.ndjson
 while : ; do
-  page=$(curl -sf --max-time 60 -H "${AUTH}" \
-    "${API}/users?briefRepresentation=false&first=${first}&max=${page_size}")
-  count=$(printf '%%s' "${page}" | jq 'length')
+  new_token
+  kc GET "${API}/users?briefRepresentation=false&first=${first}&max=${page_size}" > %[2]s/page.json
+  count=$(jq 'length' %[2]s/page.json)
   [ "${count}" -eq 0 ] && break
-  printf '%%s' "${page}" | jq -c '.[]' >> %[2]s/users.ndjson
+  jq -c '.[]' %[2]s/page.json >> %[2]s/users.ndjson
   first=$((first + page_size))
   [ "${count}" -lt "${page_size}" ] && break
 done
+rm -f %[2]s/page.json
 
 # Group membership lives on the user, not in the realm export, so it is
 # collected per user. Restoring people without their groups would restore
 # accounts that can sign in and reach nothing.
+#
+# A read that fails fails the export. It used to be recorded as "no groups":
+# a token that expired half-way through a large realm left every later
+# person without memberships, in a bundle that said it was complete.
 : > %[2]s/memberships.ndjson
-while read -r line; do
+n=0
+while IFS= read -r line; do
+  [ $((n %% 50)) -ne 0 ] || new_token
+  n=$((n + 1))
   uid=$(printf '%%s' "${line}" | jq -r .id)
-  groups=$(curl -sf --max-time 30 -H "${AUTH}" "${API}/users/${uid}/groups" || echo '[]')
-  jq -cn --arg id "${uid}" --argjson g "${groups}" '{userId:$id, groups:$g}' >> %[2]s/memberships.ndjson
+  kc GET "${API}/users/${uid}/groups" > %[2]s/groups.json
+  jq -c --arg id "${uid}" '{userId:$id, groups:.}' %[2]s/groups.json >> %[2]s/memberships.ndjson
 done < %[2]s/users.ndjson
+rm -f %[2]s/groups.json
+[ "$(wc -l < %[2]s/memberships.ndjson)" -eq "$(wc -l < %[2]s/users.ndjson)" ] \
+  || { echo "ERROR: the memberships of some people were not recorded" >&2; exit 1; }
 
 tar czf %[2]s/realm.tar.gz -C %[2]s realm.json users.ndjson memberships.ndjson
-echo "exported realm ${REALM} ($(wc -l < %[2]s/users.ndjson) users)"`, quoted, workDir)},
-		Env:          keycloakAdminEnv(),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
-	return uploadJob(p, "realm.tar.gz", "identity/realm.tar.gz", []corev1.Container{export}, nil)
+echo "exported realm ${REALM} (${n} users)"`, quoted, workDir))
+	export.Env = keycloakAdminEnv()
+	return uploadJob(p, "realm.tar.gz", IdentityArtefact, []corev1.Container{export}, nil)
 }
 
-// uploadJob wires a producing container to an uploader that puts the artefact
+// realmScriptPrelude is what the realm export and the realm import begin
+// with: the administrator's token, and the one way either talks to the
+// identity provider. curl and jq are the storage tools image's.
+//
+// kc answers with the body on success and fails, saying what was refused and
+// how, on anything else -- these scripts used curl -sf, which says nothing,
+// and several call sites then discarded the failure. A token lasts about a
+// minute and a realm takes longer: kc asks for a new one when the provider
+// answers 401, and the loops ask for one as they go.
+//
+// Not passed through fmt: it holds curl's own %{http_code}.
+const realmScriptPrelude = `set -eu
+new_token() {
+  TOKEN=$(curl -sS --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+    --data-urlencode "client_id=${KEYCLOAK_CLIENT_ID}" \
+    --data-urlencode "client_secret=${KEYCLOAK_CLIENT_SECRET}" \
+    --data-urlencode "grant_type=client_credentials" | jq -r '.access_token // empty')
+  [ -n "${TOKEN}" ] || { echo "ERROR: the identity provider gave no administrator token" >&2; exit 1; }
+}
+# kc METHOD URL [FILE]: the answer's body, or an error that says what was refused.
+kc() {
+  _method="$1"; _url="$2"; _body="${3:-}"; _again=1
+  while : ; do
+    if [ -n "${_body}" ]; then
+      _code=$(curl -sS --max-time 120 -o /tmp/kc.answer -w '%{http_code}' -X "${_method}" \
+        -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" --data @"${_body}" "${_url}") \
+        || { echo "ERROR: ${_method} ${_url}: the identity provider did not answer" >&2; return 1; }
+    else
+      _code=$(curl -sS --max-time 120 -o /tmp/kc.answer -w '%{http_code}' -X "${_method}" \
+        -H "Authorization: Bearer ${TOKEN}" "${_url}") \
+        || { echo "ERROR: ${_method} ${_url}: the identity provider did not answer" >&2; return 1; }
+    fi
+    case "${_code}" in
+      2*) cat /tmp/kc.answer; return 0 ;;
+      401) if [ "${_again}" -eq 1 ]; then _again=0; new_token; continue; fi ;;
+    esac
+    echo "ERROR: ${_method} ${_url} answered ${_code}: $(head -c 300 /tmp/kc.answer)" >&2
+    return 1
+  done
+}
+`
+
+// uploadJob wires a producing container to an uploader that puts the artifact
 // in the bundle and records its checksum next to it.
 //
 // localFile and artefact are separate on purpose: producers write a fixed
-// filename into the scratch mount, while the artefact carries the database or
+// filename into the scratch mount, while the artifact carries the database or
 // claim name it should be filed under in the bundle. Deriving one from the
 // other looks tidy and silently uploads nothing.
 //
@@ -377,21 +534,22 @@ echo "exported realm ${REALM} ($(wc -l < %[2]s/users.ndjson) users)"`, quoted, w
 // bucketPreparation returns the commands that ready the destination bucket,
 // which differ by who owns it.
 //
-// The platform's own MinIO is administered by this operator with the kernel's
+// The platform's own object store is administered by this operator with the kernel's
 // admin credential, and the bundle bucket may not exist yet — creating it here
 // is what keeps tenant provisioning from depending on backup infrastructure.
 //
 // An external destination is the opposite on every count. The bucket was
 // created by whoever owns the account, and the credential the policy carries is
 // deliberately scoped to objects, so create-bucket and put-bucket-policy are
-// denied. mc's --ignore-existing does not cover a denial; it covers a bucket
-// you already own. Issuing these against someone else's bucket failed on the
-// upload container's first command, before a single artefact was sent:
+// denied. "Make it if it is not there" does not cover a denial; it covers a
+// bucket you already own. Issuing these against someone else's bucket failed
+// on the upload container's first command, before a single artefact was
+// sent:
 //
 //	mc: <ERROR> Unable to make bucket gentian/<bucket>.
 //	    You are not authorized to perform create-bucket on bucket <bucket>
 //
-// A bucket that genuinely is not there still fails, on the mc cp below, with
+// A bucket that genuinely is not there still fails, on the copy below, with
 // the S3 error that says so. Prechecking instead would mean asking for a
 // listing permission we have equally little right to assume.
 func bucketPreparation(p JobParams) string {
@@ -400,10 +558,11 @@ func bucketPreparation(p JobParams) string {
 	}
 	return `# The bundle bucket is created here rather than during tenant provisioning.
 # Gating a tenant's readiness on backup infrastructure would couple every
-# install to a bucket only exports need; --ignore-existing makes this
-# idempotent, and anonymous access is denied on every pass.
-mc mb --ignore-existing "gentian/${BUNDLE_BUCKET}"
-mc anonymous set none "gentian/${BUNDLE_BUCKET}"`
+# install to a bucket only exports need. rclone makes a bucket only when it is
+# not there, and only when it is told to check (the remote is told not to).
+# No bucket of the store is readable without a key: it has no anonymous
+# identity.
+RCLONE_S3_NO_CHECK_BUCKET=false rclone mkdir "` + bundleRemote + `:${BUNDLE_BUCKET}"`
 }
 
 func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
@@ -411,23 +570,16 @@ func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Conta
 	// only ever see ciphertext: the plaintext is removed before it starts.
 	producers = append(producers, encryptContainer(p.Encryption, localFile))
 	local := workDir + "/" + localFile + EncryptedSuffix
-	target := fmt.Sprintf("gentian/%s/%s/%s%s", p.Bucket, p.Prefix, artefact, EncryptedSuffix)
-	upload := corev1.Container{
-		Name:    "upload",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+	target := fmt.Sprintf("%s:%s/%s/%s%s", bundleRemote, p.Bucket, p.Prefix, artefact, EncryptedSuffix)
+	upload := storageTools("upload", "set -eu\n"+rcloneRemote(bundleRemote)+fmt.Sprintf(`
 %[4]s
-mc cp "%[1]s" "%[2]s"
+rclone copyto "%[1]s" "%[2]s"
 # The checksum is written after the artefact and read before any restore, so a
 # bundle whose upload was cut short fails verification instead of restoring
-# quietly truncated data.
-sha256sum "%[1]s" | cut -d' ' -f1 | mc pipe "%[2]s.sha256"
-echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p))},
-		Env:          bundleEnv(p),
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+# quietly truncated data. One line, the hex digest and a newline: what every
+# bundle has carried, and what a restore of an older one reads.
+sha256sum "%[1]s" | cut -d' ' -f1 | rclone rcat "%[2]s.sha256"
+echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p)), bundleEnv(p))
 	return newJob(p, []corev1.Container{upload}, producers, extraVolumes)
 }
 
@@ -439,24 +591,38 @@ echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p))},
 // --recursive on the bare bucket is exactly the command the guard exists to
 // make unwritable.
 func BundleDeleteJob(p JobParams) *batchv1.Job {
-	del := corev1.Container{
-		Name:    "bundle-delete",
-		Image:   mcImage,
-		Command: []string{"/bin/sh", "-c"},
-		Args: []string{`set -eu
+	del := storageTools("bundle-delete", `set -eu
 [ -n "${BUNDLE_PREFIX}" ] || { echo "refusing to delete: empty bundle prefix" >&2; exit 1; }
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+`+rcloneRemote(bundleRemote)+`
 # Nothing there is success, not failure: the bundle may never have been
 # written (a capture that failed before its first upload), the bucket may not
-# exist yet, or a previous attempt already removed the objects.
-if ! mc stat "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" >/dev/null 2>&1; then
+# exist yet, or a previous attempt already removed the objects. But "nothing
+# there" is what the store's listing says, not what a failed question means:
+# a store that cannot be reached fails this Job. A failing "mc stat" used to
+# be read as "nothing to delete", and the bundle was reported deleted.
+#
+# rclone says a bucket is not there by its exit status, 3; under a bucket
+# that is there, a prefix with nothing below it lists empty.
+status=0
+listing="$(rclone lsf -R "bundle:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" 2>/tmp/lsf.err)" || status=$?
+if [ "${status}" -eq 3 ]; then
+  echo "no bucket ${BUNDLE_BUCKET} - nothing to delete"
+  exit 0
+fi
+if [ "${status}" -ne 0 ]; then
+  echo "ERROR: could not list ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}: $(cat /tmp/lsf.err)" >&2
+  exit 1
+fi
+if [ -z "${listing}" ]; then
   echo "no objects under ${BUNDLE_BUCKET}/${BUNDLE_PREFIX} - nothing to delete"
   exit 0
 fi
-mc rm --recursive --force "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/"
-echo "deleted bundle ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`},
-		Env: append(bundleEnv(p), corev1.EnvVar{Name: "BUNDLE_PREFIX", Value: p.Prefix}),
-	}
+# The prefix as a directory: everything below BUNDLE_PREFIX/, and nothing of
+# a bundle whose name merely begins the same way.
+rclone purge "bundle:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
+echo "deleted bundle ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`,
+		append(bundleEnv(p), corev1.EnvVar{Name: "BUNDLE_PREFIX", Value: p.Prefix}))
+	del.VolumeMounts = nil
 	return newJob(p, []corev1.Container{del}, nil, nil)
 }
 
@@ -491,17 +657,21 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 		})
 	}
 
+	labels := map[string]string{
+		meta.TenantLabel:    p.Tenant,
+		meta.AppLabel:       p.App,
+		meta.ManagedByLabel: meta.ManagedByValue,
+		meta.ComponentLabel: "tenant-export",
+		ExportLabel:         p.Export,
+	}
+	if p.RunKind != "" {
+		labels[RunKindLabel] = p.RunKind
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      p.Name,
 			Namespace: p.Namespace,
-			Labels: map[string]string{
-				meta.TenantLabel:    p.Tenant,
-				meta.AppLabel:       p.App,
-				meta.ManagedByLabel: meta.ManagedByValue,
-				meta.ComponentLabel: "tenant-export",
-				ExportLabel:         p.Export,
-			},
+			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
@@ -512,8 +682,8 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 						meta.TenantLabel:    p.Tenant,
 						meta.ManagedByLabel: meta.ManagedByValue,
 						// On the pod, not only the Job: the tenant-namespace
-						// NetworkPolicy that lets a capture pod reach MinIO
-						// selects on this.
+						// NetworkPolicy that lets a capture pod reach the
+						// object store selects on this.
 						meta.ComponentLabel: "tenant-export",
 						ExportLabel:         p.Export,
 					},
@@ -535,7 +705,7 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 					// a coin flip.
 					NodeSelector: nodeSelectorFor(p.Node),
 					// Never Always: a capture is a one-shot, and a restarting
-					// pod would re-dump into an artefact already uploaded.
+					// pod would re-dump into an artifact already uploaded.
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					// Volume Jobs run in tenant namespaces, where Kyverno
 					// enforces the pod-security baseline that platform-kernel
@@ -561,6 +731,16 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 // flight instead of starting it again.
 const ExportLabel = "gentianos.io/tenant-export"
 
+// RunKindLabel says which kind of run a Job's ExportLabel names: an export
+// and a restore may share a name, and their Jobs then share ExportLabel.
+const RunKindLabel = "gentianos.io/run-kind"
+
+// The values of RunKindLabel.
+const (
+	RunKindExport  = "export"
+	RunKindRestore = "restore"
+)
+
 func needsWorkDir(groups ...[]corev1.Container) bool {
 	for _, group := range groups {
 		for _, c := range group {
@@ -578,79 +758,90 @@ func needsWorkDir(groups ...[]corev1.Container) bool {
 // the name of the bucket it must ensure exists before writing.
 //
 // The endpoint comes from a different place depending on where bundles go, and
-// that asymmetry is the point. The platform's own MinIO records its address
+// that asymmetry is the point. The platform's own store records its address
 // alongside its keys, so all three read from one Secret. A destination the
 // operator configured has its address in the policy — a fact, not a
-// credential — while only the keys come from the credential manager. Reading
+// credential — while only the keys come from the custodian. Reading
 // the endpoint from the credential Secret in that case would mean an admin
 // could change where every tenant's backups go by editing a secret.
 func bundleEnv(p JobParams) []corev1.EnvVar {
 	env := []corev1.EnvVar{{Name: "BUNDLE_BUCKET", Value: p.Bucket}}
 
 	if p.Endpoint == "" {
-		secret := p.uploadSecretName()
-		env = append(env,
-			meta.SecretEnv("MINIO_ENDPOINT", secret, "endpoint"),
-			meta.SecretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
-			meta.SecretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
-		)
-		return env
+		return append(env, storageEnv(p.uploadSecretName())...)
 	}
 
 	secret := p.uploadSecretName()
 	env = append(env,
-		corev1.EnvVar{Name: "MINIO_ENDPOINT", Value: p.Endpoint},
-		meta.SecretEnv("MINIO_ACCESS_KEY", secret, DestinationAccessKeyField),
-		meta.SecretEnv("MINIO_SECRET_KEY", secret, DestinationSecretKeyField),
+		corev1.EnvVar{Name: "S3_ENDPOINT", Value: p.Endpoint},
+		meta.SecretEnv("S3_ACCESS_KEY", secret, DestinationAccessKeyField),
+		meta.SecretEnv("S3_SECRET_KEY", secret, DestinationSecretKeyField),
 	)
 	if p.Region != "" {
-		// mc derives a bucket's location from the endpoint, so this changes
-		// nothing for the capture path. It is set because every other S3 tool
-		// reads it, and a destination that works for mc and fails for the next
-		// thing pointed at it would be a trap.
-		env = append(env, corev1.EnvVar{Name: "AWS_REGION", Value: p.Region})
+		// The destination's region: rclone signs every request with it, and a
+		// provider that requires one (AWS, Exoscale SOS) refuses a request
+		// signed for another.
+		env = append(env, corev1.EnvVar{Name: "S3_REGION", Value: p.Region})
+	}
+	if p.AddressingStyle.VirtualHost() {
+		// A provider that serves a bucket only by its own host name.
+		env = append(env, corev1.EnvVar{Name: "S3_ADDRESSING_STYLE", Value: string(p.AddressingStyle)})
 	}
 	return env
 }
 
-// PlatformStorageEnv addresses the platform's own MinIO, whose address travels
-// with its credentials.
+// PlatformStorageEnv addresses the platform's own object store, whose address
+// travels with its credentials.
 //
 // Distinct from bundleEnv, which addresses wherever the bundle lives. The two
 // are the same place only when bundles go to platform storage; with an external
 // destination they are different systems with different credentials, and a Job
 // that needs both must not assume one covers the other.
 func PlatformStorageEnv() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MINIO_ENDPOINT", MinIOAdminSecret, "endpoint"),
-		meta.SecretEnv("MINIO_ACCESS_KEY", MinIOAdminSecret, "accessKey"),
-		meta.SecretEnv("MINIO_SECRET_KEY", MinIOAdminSecret, "secretKey"),
-	}
+	return storageEnv(StorageAdminSecret)
 }
 
-func postgresAdminEnv() []corev1.EnvVar {
+// PostgresTLS makes a psql, pg_dump or pg_restore client refuse an unencrypted
+// connection.
+var PostgresTLS = corev1.EnvVar{Name: "PGSSLMODE", Value: "require"}
+
+// PostgresAdminEnv, MariaDBAdminEnv and CacheAdminEnv are how a Job reaches
+// a shared store as its administrator: the store's admin Secret, in the
+// store's own namespace. Provisioning, capture, restore and destruction all
+// connect this way, and each used to spell the block out for itself.
+func PostgresAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("PGHOST", PostgresAdminSecret, "host"),
 		meta.SecretEnv("PGPORT", PostgresAdminSecret, "port"),
 		meta.SecretEnv("PGUSER", PostgresAdminSecret, "username"),
 		meta.SecretEnv("PGPASSWORD", PostgresAdminSecret, "password"),
+		PostgresTLS,
 	}
 }
 
 func keycloakAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("KEYCLOAK_URL", KeycloakAdminSecret, "url"),
-		meta.SecretEnv("KEYCLOAK_ADMIN_USERNAME", KeycloakAdminSecret, "username"),
-		meta.SecretEnv("KEYCLOAK_ADMIN_PASSWORD", KeycloakAdminSecret, "password"),
+		meta.SecretEnv("KEYCLOAK_CLIENT_ID", KeycloakAdminSecret, "client_id"),
+		meta.SecretEnv("KEYCLOAK_CLIENT_SECRET", KeycloakAdminSecret, "client_secret"),
 	}
 }
 
-func mariadbAdminEnv() []corev1.EnvVar {
+func MariaDBAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("MYSQL_HOST", MariaDBAdminSecret, "host"),
 		meta.SecretEnv("MYSQL_TCP_PORT", MariaDBAdminSecret, "port"),
 		meta.SecretEnv("MYSQL_PWD", MariaDBAdminSecret, "password"),
 		meta.SecretEnv("MYSQL_ADMIN_USER", MariaDBAdminSecret, "username"),
+	}
+}
+
+// CacheAdminEnv addresses the shared cache as its administrator.
+func CacheAdminEnv() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		meta.SecretEnv("REDIS_HOST", RedisAdminSecret, "host"),
+		meta.SecretEnv("REDIS_PORT", RedisAdminSecret, "port"),
+		meta.SecretEnv("REDIS_PASSWORD", RedisAdminSecret, "password"),
 	}
 }
 

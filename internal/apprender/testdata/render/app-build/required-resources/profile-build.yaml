@@ -1,0 +1,40 @@
+# A verified build of demo-app at another chart version: what the claim names
+# in spec.profileRef.build, whose status.profileSpec the Composition renders from.
+apiVersion: gentianos.io/v1alpha1
+kind: ProfileBuild
+metadata:
+  name: demo-app-0123456789ab
+  labels:
+    gentianos.io/profile-name: demo-app
+    gentianos.io/profile-build: demo-app-0123456789ab
+spec:
+  profile: demo-app
+  digest: sha256:0123456789ab0123456789ab0123456789ab0123456789ab0123456789ab0123
+  origin: cluster/gentian
+  bundle: Zm9v
+status:
+  profileSpec:
+    classes:
+    - app
+    launch: none
+    trustTier: certified
+    version: 1.0.0
+    package:
+      chart:
+        repository: oci://example.invalid/demo-app
+        name: demo-app
+        version: 9.9.9-build
+      valueMapping:
+        oidc:
+          clientSecretKey: demo-app.oidc.secret
+    requires:
+      services:
+        identity:
+          oidc:
+            clientId: catalogue-test-client
+            name: Demo App
+            accessType: CONFIDENTIAL
+            redirectUris:
+            - https://demo.${TENANT_DOMAIN}/oidc/callback
+            postLogoutRedirectUris:
+            - https://demo.${TENANT_DOMAIN}/

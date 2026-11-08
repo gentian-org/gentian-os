@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -20,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// AppPackage is a named preset that pre-selects a set of addons for a family.
+// AppPackage is a named preset that preselects a set of addons for a family.
 //
 // It is deliberately **not deployable**. Nothing reconciles an AppPackage and it
 // owns no workload, namespace or credential: it exists only so the App Store can
@@ -33,11 +35,11 @@ import (
 // combinations. Making the curated set a preset rather than an artifact keeps the
 // curation benefit without constraining what a tenant can actually install.
 //
-// See gentian-os/docs/app-customization.md §4.2.
+// See gentian-os/docs/guides/app-customization.md §4.2.
 
 // AppPackageSpec is the desired state of an AppPackage.
 type AppPackageSpec struct {
-	// Family is the app family this preset belongs to (matches AppProfile.spec.family).
+	// Family is the app family this preset belongs to (a ComponentProfile's gentianos.io/profile-family label).
 	// The App Store only offers the preset while installing an app of that family.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -55,20 +57,19 @@ type AppPackageSpec struct {
 	// +kubebuilder:validation:MaxLength=512
 	Description string `json:"description,omitempty"`
 
-	// Addons lists the AppProfile names this preset pre-selects. Each must name an
+	// Addons lists the ComponentProfile names this preset preselects. Each must name an
 	// addon profile (gentianos.io/deployment-role: addon) in the same family.
 	//
 	// Entries are a starting point, not a constraint: the user may untick any of
-	// them, and may add addons the preset does not list. A preset that names an
-	// addon the tenant is not entitled to still renders — with a Buy button rather
-	// than a tick — so a package can advertise an ee addon without gating install.
+	// them, and may add addons the preset does not list. A preset may name an
+	// ee addon like any other: nothing here gates it.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
 	// +listType=set
 	Addons []string `json:"addons"`
 
-	// Author is who supplies this preset — a company, an organisation, or an
-	// individual. Same meaning as AppProfile.spec.author.
+	// Author is who supplies this preset — a company, an organization, or an
+	// individual.
 	// +optional
 	// +kubebuilder:validation:MaxLength=128
 	Author string `json:"author,omitempty"`

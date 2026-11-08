@@ -1,0 +1,70 @@
+# The registration flow's resources, marked Ready so function-sequencer emits
+# the ones ordered after them: the form after the flow, the executions after
+# the form, the binding of the realm after the executions. Without this the
+# render shows the flow alone, held back is not rendered, and nothing could
+# assert what the sign-up composes.
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Flow
+metadata:
+  name: render-fixture-registration-flow
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-registration-flow
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Subflow
+metadata:
+  name: render-fixture-registration-form
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-registration-form
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-registration-exec-registration-user-creation
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-registration-exec-registration-user-creation
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-registration-exec-registration-password-action
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-registration-exec-registration-password-action
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-registration-exec-gentian-pow-captcha
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-registration-exec-gentian-pow-captcha
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

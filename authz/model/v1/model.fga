@@ -1,0 +1,230 @@
+model
+  schema 1.1
+
+# Authorization model, v1. The single vocabulary every document is checked
+# against — see docs/concepts/authorization.md for the rules behind it.
+#
+# Conventions
+#   type            one per CRD kind; object id = the CR's name, namespaced
+#                   kinds as <tenant>/<name>
+#   ids             OpenFGA ids may contain neither ':' nor '#'. A Keycloak group
+#                   gentian:tenant:demo:admins is therefore the object
+#                   group:gentian/tenant/demo/admins — ':' becomes '/', nothing
+#                   else changes, and the mapping is reversible because tenant
+#                   and profile names are DNS labels and contain no '/'.
+#   role            a noun, assigned through group#member — one Keycloak
+#                   group per role. The exception is a role the Cluster claim
+#                   gives a person by name (spec.platformAccess.roleHolders):
+#                   security_officer, auditor, service_admin,
+#                   shared_apps_admin, perimeter_approver and a
+#                   tenant's auditor take
+#                   user:<realm>/<sub>, the account qualified by the realm
+#                   that holds it, which a token from any other realm can
+#                   never name
+#   permission      can_<verb>, one per verb an enforcement point exposes;
+#                   PEPs check permissions, never roles
+#   hierarchy       one parent relation per type (cluster, tenant), derived
+#                   with "<relation> from <parent>"
+#   exclusion       "but not" only for least-privilege invariants
+#   membership      STORED, like everything else. group:<g>#member@user:<sub>
+#                   is written by the operator from Keycloak's event stream and
+#                   reconciled with a read-only client (AD-12, R7). It is never
+#                   taken from a token's groups and never edited in place: the
+#                   store is a projection of Keycloak, so an access review is
+#                   a ListUsers against stored tuples rather than a guess about
+#                   who might present which claim.
+#   contextual      runtime facts only — task TTL, acting_for, device posture.
+#                   Never identity, never membership.
+#   structure       everything else is stored, written only by the operator
+
+type user
+
+type group
+  relations
+    define member: [user]
+
+type cluster
+  relations
+    # roles — admin and break_glass from the Cluster claim's role-to-group
+    # assignments (spec.platformRoles); the rest from its role holders
+    # (spec.platformAccess.roleHolders), each user:<realm>/<sub>
+    define admin: [group#member]              # gentian:platform:admin
+    define security_officer: [user]
+    define auditor: [user]
+    define service_admin: [user]              # a person of the platform tenant
+    define shared_apps_admin: [user]          # a person of the platform tenant
+    define perimeter_approver: [user]         # a person of the platform tenant; approves for every tenant
+    define break_glass: [user, group#member]  # gentian:platform:break-glass, no standing membership; or a person, with a reason, until a time
+
+    # permissions — the director's cluster-level verbs
+    define can_configure: admin               # Cluster claim, plans, ceilings, network intent
+    define can_deploy_tenant: admin
+    define can_operate_system: service_admin  # the claim's system section
+    define can_install_shared: shared_apps_admin
+    define can_grant_shared: shared_apps_admin
+    define can_approve: security_officer      # waivers, egress beyond baseline, exposure policy, trustTier platform
+    define can_set_admission: break_glass     # PolicyException, admission overlays (kernel tier)
+    define can_edit_raw: break_glass          # /v1/files
+    define can_audit: auditor or security_officer or admin
+    define can_open_kernel_tools: can_configure or can_operate_system   # Headlamp: the cluster as Kubernetes sees it
+    define can_approve_perimeter: perimeter_approver   # public addresses and egress, on every tenant
+
+    # Kernel and system credentials, asked by the custodian before OpenBao
+    # sees the request. Writing one is administering the cluster. Reading is
+    # never reading the VALUE -- the custodian returns none -- it is seeing
+    # that a credential is required, whether it is set, and who set it, which
+    # is what an auditor is for.
+    define can_write_credential: admin
+    define can_read_credential: can_write_credential or can_audit
+
+type tenant
+  relations
+    define cluster: [cluster]
+
+    # roles. A platform administrator acts inside a tenant through the
+    # derivation, never by holding the tenant's group: authority comes down the
+    # chain (R4, principle 5), so there is no tuple to forget to remove.
+    #
+    # operated_by is CONSENT, not structure: this tenant lets the cluster's
+    # administrators act inside it. The operator writes it when it first
+    # attaches a tenant to the cluster, and always for tenant:platform; a tenant that administers itself removes
+    # that one tuple, and every platform-admin verb in it — users, secrets,
+    # installs — goes with it. `cluster` above stays: it is what audit and
+    # approval derive through, and it is not removable.
+    define operated_by: [cluster]
+    define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
+    # A role holder of scope tenant:<t> (an administrator of this tenant), or
+    # the cluster's perimeter approver.
+    define perimeter_approver: [user] or perimeter_approver from cluster
+    # A person of the platform tenant the cluster's administrator named to
+    # read this tenant's evidence and nothing else's: commonly the tenant's
+    # own administrator, given an account of the platform's realm for it. It
+    # grants no entry to the tenant (can_enter).
+    define auditor: [user]
+    define member: [group#member]              # gentian:tenant:<t>:members
+
+    # reach — the desktop host at L2. An admin account must get in to
+    # administer, and in tenant-platform the console's own users are the
+    # security officer and the auditor, who are members of no tenant.
+    define can_enter: member or admin or perimeter_approver or can_audit from cluster or can_approve from cluster
+
+    # permissions — the director's tenant-level verbs
+    define can_install_app: admin
+    define can_set_policy: admin          # backup, grants, export schedules, tenant network intent
+    define can_grant: admin               # AppGrant: integration consent
+    define can_manage_users: admin
+    # The perimeter, both directions, is its own grant, asked as its own
+    # relation and never as admin: publishing to the internet (can_expose)
+    # and egress beyond the baseline (can_approve_privilege, the tenant-scope
+    # privilege requests of component-profile 3.1). Held by
+    #
+    #   - the tenant's perimeter approver: an administrator of this tenant the
+    #     cluster's administrator named, or the cluster's perimeter approver;
+    #   - the cluster's administrators, on every tenant. It derives through
+    #     `cluster`, not `operated_by`: the perimeter is the cluster's, so a
+    #     tenant that administers itself still has its perimeter answered for
+    #     by the cluster. It grants nothing else in the tenant.
+    define can_expose: perimeter_approver or admin from cluster
+    define can_approve_privilege: can_expose
+    define can_view: member or admin or perimeter_approver or can_audit from cluster
+    # The tenant's audit records in the evidence store, read from the platform
+    # tenant's console: the tenant's auditor, and the cluster's, whose
+    # can_audit reads every tenant's.
+    define can_read_evidence: auditor or can_audit from cluster
+
+    # Admin tiles on the desktop. Not an app permission: app#can_use excludes
+    # admin accounts by design, so an admin account can reach no app object —
+    # which in tenant-platform would be every tile the console has.
+    define can_administer: admin
+
+    # The tenant's own credentials, asked by the custodian. A platform
+    # administrator writes them only through `admin from operated_by`, so a
+    # tenant that withdraws that consent withdraws this with it; the cluster's
+    # auditors still see that they exist and who set them, never what they are.
+    define can_write_credential: admin
+    define can_read_credential: can_write_credential or can_audit from cluster
+
+# There is no type for a catalogue source and no relation for a tenant's
+# right to an app. A source named on the Cluster claim is offered to every
+# tenant. Installing is asked of the person (tenant#can_install_app); whether
+# the app then arrives is decided where its artefacts are pulled, by the
+# credential the tenant holds for their repository. The platform does no
+# license gating.
+type app
+  relations
+    define tenant: [tenant]
+    # Administration INSIDE one app, and only for profiles that declare a
+    # privilegedRole to map onto — no role, no group. Per app, not per tenant:
+    # a cross-app group made a Nextcloud administrator an Odoo administrator,
+    # which is not what a tenant delegating one app intends.
+    define admin: [group#member]                  # gentian:tenant:<t>:app:<p>:admins
+
+    # Per-app entitlement. This is NOT new behaviour — it is the rule
+    # gentian-ui already enforces in shell_apps.py ("entitlement is membership
+    # of the app's own group, and nothing else"), expressed where a second
+    # enforcement point can read it. Today the tile list is the only thing
+    # applying it, so knowing an app's hostname bypasses it (G3).
+    #
+    # Which groups entitle is the director's to compute, exactly as the portal
+    # computes it from the catalogue:
+    #   base with no activated addons → its own group
+    #   base with activated addons    → the activated addons' groups, and NOT
+    #                                   the base's own: a base is entered for
+    #                                   the addons inside it, so someone
+    #                                   entitled to none of them has nothing to
+    #                                   do there
+    # Writing the base group in the second case would widen access past what
+    # the portal grants today.
+    define entitled: [group#member]               # gentian:tenant:<t>:app:<profile>
+
+    # least privilege per account: an admin account launches nothing
+    define can_use: entitled but not admin from tenant
+    define can_launch: can_use                    # app tiles; also L2 on the app's own route
+                                                  # admin tiles are tenant#can_administer
+    define can_administer: admin
+
+    # Secret writes for this component, asked by the custodian before OpenBao
+    # sees the request: OpenBao's policy then bounds the PATH, it does not
+    # make the decision (principle 2). Reads follow the tenant's, and are of
+    # a credential's state, never its value.
+    define can_write_credential: admin from tenant
+    define can_read_credential: can_read_credential from tenant
+
+type contract
+  relations
+    define tenant: [tenant]
+    # The app that declared this contract in `provides`.
+    define provider: [app]
+    # Apps the tenant has allowed to consume it, from AppGrant.
+    define consumer: [app]
+    define can_consume: consumer
+
+    # No enforcement point asks this yet. Until workloads carry identity
+    # (G8) there is nothing sitting on an app-to-app call, so the tuple
+    # records the tenant's consent and bounds what the director will bind —
+    # it does not intercept traffic. What revoking therefore costs today is
+    # in design/authorization.md §3 and design/security.md §3.4; the one thing
+    # it is not is free.
+
+type shared_instance
+  relations
+    define cluster: [cluster]
+    # Tenants the platform administrator has made this instance available to.
+    # Availability is not visibility: a tenant sees the app only once its own
+    # administrator installs it, which creates the tenant's own app object
+    # bound to this backend (component-profile.md §6.1).
+    define offered_to: [tenant]
+    define can_bind: offered_to
+
+# Wave 2 adds, without changing anything above:
+#
+#   type task
+#     relations
+#       define valid: [agent with task_live]
+#   type agent
+#     relations
+#       define acting_for: [user]
+#       define can_act: acting_for and valid from task
+#
+# and every app permission gains "or can_act from agent" bounded by the
+# delegating human's own permission (principle 5).

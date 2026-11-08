@@ -1,0 +1,658 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package controller
+
+import (
+	"context"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+func platformTenantFixture() *gentianov1alpha1.Tenant {
+	t := &gentianov1alpha1.Tenant{}
+	t.Name = "platform"
+	t.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
+	return t
+}
+
+func acmeTenantFixture() *gentianov1alpha1.Tenant {
+	t := &gentianov1alpha1.Tenant{}
+	t.Name = "acme"
+	return t
+}
+
+// The platform tenant's desktop is in the kernel zone: kernel realm, the
+// kernel zone's client and cookie (AD-10), at platform.<kernel>, with its
+// other components one label below. Every other tenant's desktop is in that
+// tenant's own zone, at desktop.<its domain>.
+func TestTheDesktopsZoneFollowsTheTenantsRealm(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi"}
+	comp := &gentianov1alpha1.Component{}
+	comp.Name = "desktop"
+	e := &gentianov1alpha1.ExposureSpec{Name: "web", SubDomain: "desktop"}
+
+	platform := r.zoneOf(platformTenantFixture())
+	if !platform.kernel || platform.clientID != edgeKernelClientID || platform.cookie != edgeKernelAccessTokenCookie || platform.realm != "kernel" {
+		t.Fatalf("platform zone = %+v", platform)
+	}
+	if got := exposureHost(platform, comp, e); got != "platform.k.example" {
+		t.Fatalf("platform desktop host = %q", got)
+	}
+	acme := r.zoneOf(acmeTenantFixture())
+	if acme.kernel || acme.clientID != "gentian-edge-acme" || acme.realm != "acme" || acme.sectionName != tenantGatewayListenerName("acme") {
+		t.Fatalf("acme zone = %+v", acme)
+	}
+	if got := exposureHost(acme, comp, e); got != "desktop.acme.k.example" {
+		t.Fatalf("acme desktop host = %q", got)
+	}
+}
+
+// What the platform tells the desktop, and nothing a profile author could
+// know: behind the edge, which tenant, which zone client, where the director
+// is, and no authority of its own.
+func TestPlatformValuesLandWhereTheProfileSays(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{
+			IssuerKey: "auth.issuer", ZoneClientIDKey: "auth.clientId", AudienceKey: "auth.audience",
+			DirectorURLKey: "director.url", ClusterKey: "director.cluster",
+			TenantKey: "tenant", ZoneKindKey: "zoneKind",
+		},
+	}
+	tenant := platformTenantFixture()
+	v := r.platformValues(profile, tenant, r.zoneOf(tenant))
+	auth := v["auth"].(map[string]interface{})
+	if auth["clientId"] != edgeKernelClientID || auth["audience"] != directorAudience {
+		t.Fatalf("auth = %v", auth)
+	}
+	if auth["issuer"] != "https://id.k.example/auth/realms/kernel" {
+		t.Fatalf("issuer = %v, want the zone's realm on the identity provider", auth["issuer"])
+	}
+	if v["tenant"] != "platform" || v["zoneKind"] != "kernel" {
+		t.Fatalf("tenant/zoneKind = %v %v", v["tenant"], v["zoneKind"])
+	}
+	if v["director"].(map[string]interface{})["cluster"] != "c1" {
+		t.Fatalf("director = %v", v["director"])
+	}
+	// A key the profile did not name is not set: the chart is told only what
+	// it asked to be told.
+	if _, present := v["kernelDomain"]; present {
+		t.Fatal("kernelDomain was set without being asked for")
+	}
+}
+
+// A profile naming countryKey is told the tenant's country, and the empty
+// string while the tenant names none: the key is always set, so a value a
+// country left behind is replaced rather than kept.
+func TestTheTenantsCountryLandsWhereTheProfileSays(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{CountryKey: "api.env.TENANT_COUNTRY"},
+	}
+	tenant := platformTenantFixture()
+	country := func() interface{} {
+		v := r.platformValues(profile, tenant, r.zoneOf(tenant))
+		return v["api"].(map[string]interface{})["env"].(map[string]interface{})["TENANT_COUNTRY"]
+	}
+	if got := country(); got != "" {
+		t.Fatalf("TENANT_COUNTRY = %v for a tenant naming none, want \"\"", got)
+	}
+	tenant.Spec.Country = "CH"
+	if got := country(); got != "CH" {
+		t.Fatalf("TENANT_COUNTRY = %v, want CH", got)
+	}
+}
+
+// A console that manages people asks where the registrar is. It is told the
+// Service the chart creates in the control namespace, on the port the chart
+// gives it, and asking is what opens its egress there -- the registrar alone
+// is enough, a component need not also name the director.
+func TestAProfileThatNamesTheRegistrarIsToldWhereItIsAndMayReachIt(t *testing.T) {
+	t.Setenv("GENTIAN_NS_CONTROL", "kernel-control")
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{RegistrarURLKey: "registrar.url"},
+	}
+	tenant := platformTenantFixture()
+	v := r.platformValues(profile, tenant, r.zoneOf(tenant))
+	got := v["registrar"].(map[string]interface{})["url"]
+	if got != "http://gentian-os-registrar.kernel-control.svc.cluster.local:9445" {
+		t.Fatalf("registrar.url = %v", got)
+	}
+	if _, present := v["director"]; present {
+		t.Fatal("the director's address was set without being asked for")
+	}
+	egress := r.componentEgressNamespaces(profile, tenant)
+	if len(egress) != 1 || egress[0] != "kernel-control" {
+		t.Fatalf("egress namespaces = %v, want the control namespace", egress)
+	}
+
+	r.RegistrarURL = "http://elsewhere:1"
+	v = r.platformValues(profile, tenant, r.zoneOf(tenant))
+	if got := v["registrar"].(map[string]interface{})["url"]; got != "http://elsewhere:1" {
+		t.Fatalf("an override was not used: %v", got)
+	}
+}
+
+// The database Secret's name lands as a string where the profile asks for
+// the name: a chart that consumes the Secret with envFrom needs exactly that.
+// The keys one by one are not release values at all: they are set entries
+// reading the component's sensitive Secret, the database the tenant made for
+// this app, as it is rendered for every installed chart.
+func TestTheDatabaseSecretNameIsAStringWhereAskedFor(t *testing.T) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Database: &gentianov1alpha1.DatabaseValueMapping{
+			SecretNameKey: "existingSecret.name",
+			HostKey:       "database.host",
+			ReadNameKey:   "replica.name",
+			PasswordKey:   "database.password",
+		},
+	}
+	v := databaseValues(profile, "store-database")
+	if got := v["existingSecret"].(map[string]interface{})["name"]; got != "store-database" {
+		t.Fatalf("existingSecret.name = %#v, want the plain name", got)
+	}
+	if _, ok := v["database"]; ok {
+		t.Fatalf("database.host is a release value: %#v", v["database"])
+	}
+	// What the chart is rendered with: the keys read from the tenant's
+	// store into the component's sensitive Secret, and a set entry each.
+	profile.Name = "store"
+	profile.Spec.Package.Chart = &gentianov1alpha1.ChartRef{Repository: "oci://x", Name: "store", Version: "1.0.0"}
+	objs := renderApp(t, chartRenderInput("store", profile))
+	var keys, names []string
+	if es := renderedNamed(objs, "ExternalSecret", "store-sensitive-values"); es != nil {
+		data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+		for _, d := range data {
+			e := d.(map[string]interface{})
+			keys = append(keys, e["secretKey"].(string)+"<-"+e["remoteRef"].(map[string]interface{})["key"].(string))
+		}
+	}
+	for _, release := range renderedOfKind(objs, "Release") {
+		set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
+		for _, e := range set {
+			names = append(names, e.(map[string]interface{})["name"].(string))
+		}
+	}
+	path := "gentian-os/tenants/acme/apps/store/database"
+	if want := []string{"db-host<-" + path, "db-name<-" + path, "db-password<-" + path}; !reflect.DeepEqual(keys, want) {
+		t.Errorf("read = %v, want %v", keys, want)
+	}
+	if want := []string{"database.host", "replica.name", "database.password"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("set = %v, want %v", names, want)
+	}
+	// The desktop's database is the one made for it, by the Secret's name.
+	profile.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
+	if es := renderedNamed(renderApp(t, chartRenderInput("store", profile)), "ExternalSecret", "store-sensitive-values"); es != nil {
+		t.Errorf("a placed component's database is read key by key: %v", es.Object["spec"])
+	}
+}
+
+// Every set entry a release is rendered with reads a key the component's
+// sensitive Secret is rendered to hold: one that reads a key ESO never
+// writes fails the release. A database's read-replica name is told from
+// db-name, so db-name has to be read whenever it is told.
+func TestEverySetEntryReadsAKeyTheSensitiveSecretHolds(t *testing.T) {
+	profile := chartProfileFixture("oci://x")
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Database: &gentianov1alpha1.DatabaseValueMapping{HostKey: "database.host", ReadNameKey: "replica.name"},
+	}
+	data, set := sensitiveOf(t, renderApp(t, chartRenderInput("store", profile)), "store")
+	held := map[string]bool{}
+	for _, d := range data {
+		held[d["secretKey"].(string)] = true
+	}
+	for _, e := range set {
+		key, _, _ := unstructured.NestedString(e, "valueFrom", "secretKeyRef", "key")
+		if !held[key] {
+			t.Errorf("set entry %v reads %s, which the Secret does not hold (%v)", e["name"], key, held)
+		}
+	}
+}
+
+// A profile with no platform mapping receives nothing, and one that does not
+// ask where the director is gets no egress to it.
+func TestAProfileThatAsksForNothingGetsNothing(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	tenant := platformTenantFixture()
+	if v := r.platformValues(profile, tenant, r.zoneOf(tenant)); len(v) != 0 {
+		t.Fatalf("values = %v", v)
+	}
+	if wantsDirector(profile) {
+		t.Fatal("no mapping, no director")
+	}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{DirectorURLKey: "director.url"},
+	}
+	if !wantsDirector(profile) {
+		t.Fatal("naming the director key is asking for the director")
+	}
+}
+
+// A component's route carries its L2 question for the table, attaches to
+// the authenticated Gateway on the zone's listener, and names its backend in
+// its own namespace.
+func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "desktop", "tenant-platform"
+	zone := edgeZone{zoneNames: zoneNames{domain: "platform.k.example", kernel: true, apex: "k.example"}, realm: "kernel", cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, sectionName: tenantGatewayListenerName("platform")}
+	e := &gentianov1alpha1.ExposureSpec{
+		Name: "api", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
+		SubDomain: "desktop", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
+		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
+	}
+	route := buildExposureRoute(comp, defaultTenantName(comp), "desktop-api", "desktop.k.example", zone, e, exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", e.ForwardToken), "k.example", []string{"platform.k.example"})
+	if route.Labels[bouncerRouteLabel] != "true" || route.Annotations[bouncerRelationAnnotation] != "can_enter" ||
+		route.Annotations[bouncerObjectAnnotation] != "tenant:platform" || route.Annotations[bouncerForwardAnnotation] != "true" {
+		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
+	}
+	if string(route.Spec.ParentRefs[0].Name) != AuthenticatedGatewayName || string(*route.Spec.ParentRefs[0].SectionName) != wildcardListenerName {
+		t.Fatalf("parent = %+v", route.Spec.ParentRefs[0])
+	}
+	// Its two paths, and the code flow's landing path, which an entry that
+	// does not cover the whole host would otherwise leave unroutable.
+	if len(route.Spec.Rules) != 3 || string(route.Spec.Rules[0].BackendRefs[0].Name) != "desktop-gentian-portal-api" ||
+		*route.Spec.Rules[2].Matches[0].Path.Value != edgeOAuth2Prefix {
+		t.Fatalf("rules = %+v", route.Spec.Rules)
+	}
+	// A second route on the same host folds into the same table entry.
+	web := buildExposureRoute(comp, defaultTenantName(comp), "desktop-web", "desktop.k.example", zone,
+		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "desktop",
+			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
+		exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", false), "k.example", []string{"platform.k.example"})
+
+	// Every rule admits embedding by the framers it was given and nothing
+	// else: the zone's desktop opens components in frames, and nobody else
+	// may.
+	for _, rule := range route.Spec.Rules {
+		if len(rule.Filters) != 1 || rule.Filters[0].ResponseHeaderModifier == nil ||
+			rule.Filters[0].ResponseHeaderModifier.Set[0].Value != "frame-ancestors 'self' https://platform.k.example" {
+			t.Fatalf("rule %v carries no frame policy", rule.Matches)
+		}
+	}
+
+	// And the table reads it back, from any namespace.
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(route, web).Build()
+	entries, err := componentRouteTableEntries(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Host != "desktop.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	// A route whose entry was not approved to keep the app's own
+	// Authorization header keeps nothing, so it needs no client to hold an
+	// ID token against (entry_types_test.go has the ones that were).
+	if entries[0].KeepClientToken || entries[0].IDTokenAudience != "" {
+		t.Fatalf("a component's route: %+v", entries[0])
+	}
+}
+
+// denyPaths reaches the enforcement point. The CRD described the control for
+// a while and no code read the field, so a component author could list an
+// administrative path, believe it kept off the edge, and have it served.
+//
+// It is carried on the route and unioned per host, because two exposures
+// share a host and deny wins: an entry that denies a path denies it for
+// everything on that host.
+func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "odoo", "tenant-acme"
+	zone := edgeZone{zoneNames: zoneNames{domain: "k.example"}, cookie: edgeKernelAccessTokenCookie, sectionName: wildcardListenerName}
+	build := func(name, sub string, deny []string) *gatewayv1.HTTPRoute {
+		e := &gentianov1alpha1.ExposureSpec{
+			Name: name, Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
+			SubDomain: sub, DenyPaths: deny,
+			Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 80},
+		}
+		return buildExposureRoute(comp, defaultTenantName(comp), "odoo-"+name, sub+".k.example", zone, e,
+			exposureAuthz(platformTenantFixture(), comp, launcherProfile(), "c1", false), "k.example", nil)
+	}
+	web := build("web", "shop", []string{"/web/database"})
+	api := build("api", "shop", []string{"/admin"})
+	other := build("wiki", "wiki", nil)
+
+	if web.Annotations[bouncerDenyPathsAnnotation] != "/web/database" {
+		t.Fatalf("annotation = %q", web.Annotations[bouncerDenyPathsAnnotation])
+	}
+	if _, has := other.Annotations[bouncerDenyPathsAnnotation]; has {
+		t.Fatal("an exposure that denies nothing must not carry the annotation")
+	}
+
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(web, api, other).Build()
+	entries, err := componentRouteTableEntries(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byHost := map[string][]string{}
+	for _, e := range entries {
+		byHost[e.Host] = e.DenyPaths
+	}
+	// Both exposures' entries, in the order the routes list: stable across
+	// reconciles, which is what keeps the bouncer's ConfigMap from churning.
+	got := append([]string(nil), byHost["shop.k.example"]...)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "/admin" || got[1] != "/web/database" {
+		t.Fatalf("shop denyPaths = %v, want both exposures' union", got)
+	}
+	if len(byHost["wiki.k.example"]) != 0 {
+		t.Fatalf("wiki denyPaths = %v, want none", byHost["wiki.k.example"])
+	}
+}
+
+// A policy in a component's namespace names the edge namespace for the
+// zone's Secret and the bouncer, which the ReferenceGrant there admits.
+func TestAZonePolicyOutsideTheEdgeNamesIt(t *testing.T) {
+	zone := edgeZone{zoneNames: zoneNames{domain: "platform.k.example", kernel: true}, realm: "kernel", clientID: edgeKernelClientID, secretName: edgeKernelSecretName, cookie: "c", idCookie: "i"}
+	spec := zoneSecurityPolicySpec("k.example", zone, "desktop-api", routeAuthz{forwardToken: true}, "kernel-edge", "gentian-os-bouncer")
+	// The secret is named without a namespace and copied beside the policy;
+	// the bouncer is reached across namespaces under the grant.
+	secret := spec["oidc"].(map[string]interface{})["clientSecret"].(map[string]interface{})
+	if _, has := secret["namespace"]; has || secret["name"] != edgeKernelSecretName {
+		t.Fatalf("clientSecret = %v", secret)
+	}
+	backend := spec["extAuth"].(map[string]interface{})["grpc"].(map[string]interface{})["backendRef"].(map[string]interface{})
+	if backend["namespace"] != "kernel-edge" {
+		t.Fatalf("backend = %v", backend)
+	}
+	// The kernel's own policies live in the edge namespace and name none.
+	kernel := kernelSecurityPolicySpec("k.example", "kernel", "kernel-argocd", routeAuthz{}, "s")
+	if _, has := kernel["oidc"].(map[string]interface{})["clientSecret"].(map[string]interface{})["namespace"]; has {
+		t.Fatal("a policy in the edge namespace must not name it")
+	}
+	_ = metav1.Now()
+}
+
+// A route that already exists takes a new annotation. The edge's table is
+// built from a route's annotations, and the upsert compared only the spec, so
+// an annotation a later build added never reached a route an earlier build
+// had made -- the cluster kept the old answer while every test of the new one
+// passed. What something else put on the route stays.
+func TestAnExistingRouteTakesANewAnnotation(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	existing := &gatewayv1.HTTPRoute{}
+	existing.Name, existing.Namespace = "desktop-web", "tenant-platform"
+	existing.Annotations = map[string]string{bouncerRelationAnnotation: "can_enter", "someone/else": "kept"}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+
+	desired := existing.DeepCopy()
+	desired.ResourceVersion = ""
+	desired.Annotations = map[string]string{
+		bouncerRelationAnnotation:  "can_enter",
+		bouncerDenyPathsAnnotation: "/admin",
+	}
+	if err := ensureHTTPRouteResource(ctx, c, desired); err != nil {
+		t.Fatal(err)
+	}
+	got := &gatewayv1.HTTPRoute{}
+	if err := c.Get(ctx, types.NamespacedName{Name: existing.Name, Namespace: existing.Namespace}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[bouncerDenyPathsAnnotation] != "/admin" || got.Annotations["someone/else"] != "kept" {
+		t.Fatalf("annotations = %v", got.Annotations)
+	}
+}
+
+// Only an oidc entry is routed on the authenticated Gateway. Any other mode
+// would be a route there with no policy in front of it -- no session and no
+// authorization question. The schema refuses such an entry; this is the
+// second line, for a profile admitted before it did.
+func TestOnlySessionBackedEntriesAreRoutedOnTheGateway(t *testing.T) {
+	comp := &gentianov1alpha1.Component{}
+	comp.Name = "notes"
+	profile := &gentianov1alpha1.ComponentProfile{}
+	entry := func(name string, surface gentianov1alpha1.SurfaceKind, mode gentianov1alpha1.AuthMode) gentianov1alpha1.ExposureSpec {
+		return gentianov1alpha1.ExposureSpec{Name: name, Surface: surface, AuthMode: mode, Backend: gentianov1alpha1.BackendRef{Service: "x", Port: 80}}
+	}
+	profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		entry("web", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeOIDC),
+		entry("open", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeNone),
+		entry("api", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeBearer),
+		entry("hook", gentianov1alpha1.SurfaceGateway, gentianov1alpha1.AuthModeSignature),
+		entry("share", gentianov1alpha1.SurfacePerimeter, gentianov1alpha1.AuthModeNone),
+	}
+	routable, refused := routableExposures(comp, profile)
+	if len(routable) != 1 || routable[0].Name != "web" {
+		t.Fatalf("routed %d entries, want only the oidc one", len(routable))
+	}
+	if len(refused) != 3 {
+		t.Fatalf("refused %d entries, want the three gateway entries with no session", len(refused))
+	}
+}
+
+// launcherProfile is a profile that is part of the tenant itself: nothing
+// opens it, because it is what things are opened from.
+func launcherProfile() *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{}
+	p.Spec.Launch = gentianov1alpha1.ComponentLaunchNone
+	return p
+}
+
+// The question at a component's routes follows from what its profile says it
+// is. The desktop and a console whose tile is held on the tenant are entered
+// with the tenant; an app is asked about as the app, by the relation its tile
+// asks, so that knowing its hostname is not a way in.
+func TestAnAppsRouteAsksWhatItsTileAsks(t *testing.T) {
+	tenant := acmeTenantFixture()
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "xwiki-ce", "tenant-acme"
+	comp.Spec.ProfileRef.Name = "xwiki-ce"
+
+	app := &gentianov1alpha1.ComponentProfile{}
+	app.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	app.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Tile: &gentianov1alpha1.ExposureTile{Relation: "can_launch"}}}
+	if got := exposureAuthz(tenant, comp, app, "c1", false); got.relation != "can_use" || got.object != "app:acme/xwiki-ce" {
+		t.Fatalf("an app's route asks %s on %s", got.relation, got.object)
+	}
+
+	console := &gentianov1alpha1.ComponentProfile{}
+	console.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	console.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "web", Tile: &gentianov1alpha1.ExposureTile{
+		Relation: "can_administer", Object: gentianov1alpha1.TileObjectTenant}}}
+	for name, profile := range map[string]*gentianov1alpha1.ComponentProfile{"the launcher": launcherProfile(), "a console": console} {
+		if got := exposureAuthz(tenant, comp, profile, "c1", true); got.relation != "can_enter" || got.object != "tenant:acme" || !got.forwardToken {
+			t.Fatalf("%s asks %s on %s", name, got.relation, got.object)
+		}
+	}
+}
+
+// A component whose tile is held on the cluster -- the cluster's one
+// operations console -- is for whoever holds that relation on the cluster:
+// its routes ask the tile's relation on cluster:<cluster>, so neither a member
+// nor an administrator of the tenant it runs in gets past the edge, and its
+// tile is asked on the same object.
+func TestAClusterHeldTileIsAskedOnTheClusterAtTheRouteToo(t *testing.T) {
+	tenant := platformTenantFixture()
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "operations-console", "tenant-platform"
+	comp.Spec.ProfileRef.Name = "operations-console"
+
+	console := &gentianov1alpha1.ComponentProfile{}
+	console.Spec.Launch = gentianov1alpha1.ComponentLaunchTile
+	console.Spec.Expose = []gentianov1alpha1.ExposureSpec{
+		{Name: "api"},
+		{Name: "web", Tile: &gentianov1alpha1.ExposureTile{
+			Relation: "can_configure", Object: gentianov1alpha1.TileObjectCluster}},
+	}
+	got := exposureAuthz(tenant, comp, console, "c1", true)
+	if got.relation != "can_configure" || got.object != "cluster:c1" || !got.forwardToken {
+		t.Fatalf("a cluster-held console's route asks %s on %s", got.relation, got.object)
+	}
+	if obj := tileObject(console.Spec.Expose[1].Tile, "platform", "operations-console", "c1"); obj != "cluster:c1" {
+		t.Fatalf("a cluster-held tile is asked on %s", obj)
+	}
+}
+
+// A release waiting for a secret External Secrets has not written yet says
+// that it clears by itself; one the tenant's quota refused warns what is
+// missing; any other failure is passed on as it is.
+func TestReleaseFailureSaysWhenItResolvesItself(t *testing.T) {
+	t.Parallel()
+	release := func(msg string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{"status": map[string]interface{}{
+			"conditions": []interface{}{map[string]interface{}{"type": "Synced", "status": "False", "message": msg}},
+		}}}
+	}
+	missing := `create failed: failed to install release: failed to compose values: failed to get value from source: ` +
+		`failed to get data from secret ref: failed to get secret from namespace "tenant-test": Secret "nextcloud-base-ce-sensitive-values" not found`
+	if got := releaseFailureOf(release(missing)); !strings.Contains(got, "resolves itself") || !strings.HasPrefix(got, "Synced: "+missing) {
+		t.Fatalf("got %q", got)
+	}
+	quota := `update failed: failed to upgrade release: failed to create resource: persistentvolumeclaims "paperless-ngx-ce-media" ` +
+		`is forbidden: exceeded quota: tenant-quota, requested: requests.storage=20Gi, used: requests.storage=37Gi, limited: requests.storage=50Gi`
+	got := releaseFailureOf(release(quota))
+	for _, want := range []string{"warning", "20Gi more storage", "37Gi of the plan's 50Gi", "larger plan"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the quota warning lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "resolves itself") {
+		t.Fatalf("a full quota does not resolve itself: %q", got)
+	}
+	other := "create failed: failed to install release: chart not found"
+	if got := releaseFailureOf(release(other)); got != "Synced: "+other {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// A release whose pods the cluster's allowlist refuses says which waiver the
+// cluster has to allow, ahead of what the provider said; one the allowlist
+// permits is passed on as it is.
+func TestAReleaseNamesTheWaiverTheClusterDoesNotAllow(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(s)
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
+		PodSecurity: []gentianov1alpha1.PodSecurityWaiver{
+			{Name: "seccomp", Policy: "gentian-require-seccomp", Scope: "collabora"},
+			{Name: "caps", Policy: "gentian-restrict-capabilities", Scope: "collabora"},
+		},
+	}}
+	comp := &gentianov1alpha1.Component{}
+	comp.Spec.ProfileRef.Name = "nextcloud-base-ce"
+	ctx := context.Background()
+
+	r := &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build()}
+	got := r.withWaiverHint(ctx, comp, profile, "Synced: context deadline exceeded")
+	for _, want := range []string{"gentian-require-seccomp for collabora", "gentian-restrict-capabilities for collabora",
+		"Platform security", "; Synced: context deadline exceeded"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("without an allowlist the hint lacks %q: %q", want, got)
+		}
+	}
+
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
+	psp.Name = gentianov1alpha1.PlatformSecurityPolicyName
+	psp.Spec.AllowedMacWaivers = []gentianov1alpha1.AllowedMacWaiver{
+		{Profile: "nextcloud-base-ce", Policy: "gentian-require-seccomp", Scope: "collabora"},
+	}
+	r = &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).WithObjects(psp).Build()}
+	got = r.withWaiverHint(ctx, comp, profile, "Synced: context deadline exceeded")
+	if strings.Contains(got, "gentian-require-seccomp") || !strings.Contains(got, "gentian-restrict-capabilities for collabora") {
+		t.Fatalf("the hint names what is allowed or misses what is not: %q", got)
+	}
+
+	psp.Spec.AllowedMacWaivers = append(psp.Spec.AllowedMacWaivers,
+		gentianov1alpha1.AllowedMacWaiver{Profile: "nextcloud-base-ce", Policy: "gentian-restrict-capabilities", Scope: "collabora"})
+	r = &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).WithObjects(psp).Build()}
+	if got := r.withWaiverHint(ctx, comp, profile, "Synced: x"); got != "Synced: x" {
+		t.Fatalf("everything allowed and still a hint: %q", got)
+	}
+}
+
+// A release waiting on a credential a person supplies names it and where it
+// is set, and no longer says the wait ends by itself; a profile that asks
+// for none is passed on as it is.
+func TestAReleaseNamesTheCredentialItWaitsFor(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(s)
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Secrets = &gentianov1alpha1.ComponentSecrets{Supplied: []gentianov1alpha1.SuppliedSecret{
+		{Name: "metering", DisplayName: "Usage reporting", Fields: []gentianov1alpha1.SuppliedField{{Key: "key", ValuePath: "metering.key"}}},
+	}}
+	comp := &gentianov1alpha1.Component{}
+	comp.Name = "fellwort-ee"
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "test"
+	msg := "Synced: create failed: Secret \"fellwort-ee-sensitive-values\" not found" + secretsOutlook
+	r := &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build()}
+
+	got := r.withCredentialHint(context.Background(), comp, tenant, profile, msg)
+	for _, want := range []string{"Usage reporting (metering)", "Credentials in the tenant's Admin Console", "fellwort-ee-sensitive-values"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the hint lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "resolves itself") {
+		t.Fatalf("a wait for a person says it ends by itself: %q", got)
+	}
+	if got := r.withCredentialHint(context.Background(), comp, tenant, &gentianov1alpha1.ComponentProfile{}, msg); got != msg {
+		t.Fatalf("a profile asking for nothing: %q", got)
+	}
+}
+
+// A profile naming organizationKey is told who the tenant is as one object,
+// every field present and complete only once the required ones are given;
+// timeZoneKey is told the zone alone, and nothing while there is none.
+func TestTheTenantsOrganizationLandsWhereTheProfileSays(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{OrganizationKey: "tenantProfile", TimeZoneKey: "env.TZ"},
+	}
+	tenant := platformTenantFixture()
+	org := func() map[string]interface{} {
+		return r.platformValues(profile, tenant, r.zoneOf(tenant))["tenantProfile"].(map[string]interface{})
+	}
+	if _, set := r.platformValues(profile, tenant, r.zoneOf(tenant))["env"]; set {
+		t.Fatal("timeZoneKey was set for a tenant naming no zone")
+	}
+	if got := org(); got["complete"] != false || got["legalName"] != "" || got["fiscalYearStartMonth"] != int64(1) ||
+		got["address"].(map[string]interface{})["city"] != "" {
+		t.Fatalf("an empty organisation: %v", got)
+	}
+	tenant.Spec.Country = "CH"
+	tenant.Spec.Locales = []string{"de", "en"}
+	tenant.Spec.Organization = &gentianov1alpha1.TenantOrganization{
+		LegalName: "Acme AG", Currency: "CHF", TimeZone: "Europe/Zurich", FiscalYearStartMonth: 7,
+		Address: &gentianov1alpha1.TenantAddress{City: "Zürich"},
+	}
+	got := org()
+	if got["complete"] != true || got["currency"] != "CHF" || got["fiscalYearStartMonth"] != int64(7) ||
+		got["address"].(map[string]interface{})["city"] != "Zürich" || got["languages"].([]interface{})[0] != "de" {
+		t.Fatalf("a complete organisation: %v", got)
+	}
+	if tz := r.platformValues(profile, tenant, r.zoneOf(tenant))["env"].(map[string]interface{})["TZ"]; tz != "Europe/Zurich" {
+		t.Fatalf("TZ = %v", tz)
+	}
+}

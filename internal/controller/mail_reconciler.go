@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -40,7 +34,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -223,14 +219,73 @@ func resolveRoleAliasTarget(contact string, hosted map[string]bool) (target, rej
 	if contact == "" {
 		return "", ""
 	}
-	at := strings.LastIndex(contact, "@")
-	if at < 0 || at == len(contact)-1 {
-		return "", "MAIL_ADMIN_CONTACT is not an e-mail address; abuse@ and postmaster@ stay unreadable"
-	}
-	if hosted[strings.ToLower(contact[at+1:])] {
-		return "", "MAIL_ADMIN_CONTACT is inside a domain this cluster hosts, so it would alias into a mailbox nobody can open; set it to an address off this cluster"
+	if problem := aliasTargetProblem(contact, hosted); problem != "" {
+		return "", "MAIL_ADMIN_CONTACT " + problem + "; abuse@ and postmaster@ stay unreadable"
 	}
 	return contact, ""
+}
+
+// aliasTargetProblem says why target may not be aliased to, or "" when it may:
+// it is not an address, or it is inside a domain this cluster hosts and would
+// alias into a mailbox nobody can open.
+func aliasTargetProblem(target string, hosted map[string]bool) string {
+	at := strings.LastIndex(target, "@")
+	if at < 1 || at == len(target)-1 {
+		return "is not an e-mail address"
+	}
+	if hosted[strings.ToLower(target[at+1:])] {
+		return "is inside a domain this cluster hosts, so it would alias into a mailbox nobody can open; set it to an address off this cluster"
+	}
+	return ""
+}
+
+// mailAlias is one configured forward: an address of a hosted domain and the
+// off-cluster address it is delivered to.
+type mailAlias struct {
+	address, to string
+}
+
+// parseMailAliases reads MAIL_ALIASES, "address=target" pairs separated by
+// commas, into the aliases to write per hosted domain, and the entries it
+// refused with the reason. An address is lower-cased, as Postfix compares
+// it; a target is kept as written. An entry whose domain this cluster does
+// not host is refused rather than written, because Postfix never asks the
+// alias map about a domain it does not accept, so the line could never
+// match. Duplicates of one address keep the first target.
+func parseMailAliases(raw string, hosted map[string]bool) (byDomain map[string][]mailAlias, refused []string) {
+	byDomain = map[string][]mailAlias{}
+	seen := map[string]bool{}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		address, to, ok := strings.Cut(entry, "=")
+		address, to = strings.ToLower(strings.TrimSpace(address)), strings.TrimSpace(to)
+		at := strings.LastIndex(address, "@")
+		switch {
+		case !ok || address == "" || to == "":
+			refused = append(refused, fmt.Sprintf("%q is not address=target", entry))
+			continue
+		case at < 1 || at == len(address)-1:
+			refused = append(refused, fmt.Sprintf("%q: the address is not an e-mail address", entry))
+			continue
+		case !hosted[address[at+1:]]:
+			refused = append(refused, fmt.Sprintf("%q: this cluster does not accept mail for %s", entry, address[at+1:]))
+			continue
+		}
+		if problem := aliasTargetProblem(to, hosted); problem != "" {
+			refused = append(refused, fmt.Sprintf("%q: the target %s", entry, problem))
+			continue
+		}
+		if seen[address] {
+			continue
+		}
+		seen[address] = true
+		domain := address[at+1:]
+		byDomain[domain] = append(byDomain[domain], mailAlias{address: address, to: to})
+	}
+	return byDomain, refused
 }
 
 const (
@@ -274,14 +329,15 @@ const (
 // Override with MAIL_SMTP_HOST. Without a kernel domain there is no public name
 // to use, and the Service name remains the only option.
 func mailSharedPostfixHost(kernelDomain string) string {
-	if v := envOrDefault("MAIL_SMTP_HOST", ""); v != "" {
+	if v := envvar.Or("MAIL_SMTP_HOST", ""); v != "" {
 		return v
 	}
 	if kernelDomain != "" {
 		return "mail." + kernelDomain
 	}
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, servicesNamespace)
+	stage := envvar.Or("GENTIAN_STAGE", envvar.Or("ENV", "dev"))
+	// Postfix runs in the mail namespace; its DMZ holds a proxy and no Postfix.
+	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, postfixNamespace)
 }
 
 // dovecotDeployed reports whether this cluster runs the IMAP server that the
@@ -302,8 +358,21 @@ func mailSharedPostfixHost(kernelDomain string) string {
 // cluster whose claim said kernel — so Dovecot ran, unprovisioned, and the
 // ApplicationSet that would have managed it was never rendered. The field
 // remains as the fallback for a cluster whose ConfigMap cannot answer yet.
+// mailFunctionPresent reports whether the mail function's namespace exists.
+func (r *TenantReconciler) mailFunctionPresent(ctx context.Context) (bool, error) {
+	ns := &corev1.Namespace{}
+	err := r.Get(ctx, types.NamespacedName{Name: mailNamespace}, ns)
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return ns.DeletionTimestamp == nil, nil
+}
+
 func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
-	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == "kernel"
+	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == mailServiceModeSystem
 }
 
 // defaultTenantMailMode — what a tenant gets when it does not say.
@@ -330,12 +399,57 @@ func (r *TenantReconciler) defaultTenantMailMode(ctx context.Context) gentianov1
 	return gentianov1alpha1.MailModeTransportOnly
 }
 
+// tenantMailMode is the mode a tenant's mail is provisioned in: what it
+// states, or the cluster's default when it states nothing.
+func (r *TenantReconciler) tenantMailMode(ctx context.Context, tenant *gentianov1alpha1.Tenant) gentianov1alpha1.MailMode {
+	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
+		return tenant.Spec.Mail.Mode
+	}
+	return r.defaultTenantMailMode(ctx)
+}
+
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	mode := r.defaultTenantMailMode(ctx)
-	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
-		mode = tenant.Spec.Mail.Mode
+	// Mail is a function the Cluster claim composes (system-mail and its
+	// DMZ, kernel.md §6.1). A cluster that has not composed it has
+	// no relay to register a tenant in and no store to give it a mailbox in;
+	// the tenant is not held for a function the cluster does not run.
+	if present, err := r.mailFunctionPresent(ctx); err != nil {
+		return ctrl.Result{}, err
+	} else if !present {
+		tenant.Status.MailboxDomain = ""
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
+			"NoMailFunction", "This cluster composes no mail function; nothing to register")
+		return ctrl.Result{}, nil
+	}
+	mode := r.tenantMailMode(ctx, tenant)
+	// Whether this tenant's people have mailboxes here, for whoever removes
+	// one of them and has to say what becomes of the mailbox.
+	tenant.Status.MailboxDomain = r.mailboxDomainOf(ctx, tenant)
+
+	// An opt-in this cluster cannot honor is refused, not attempted.
+	//
+	// selfhosted means "register in the shared kernel Postfix and Dovecot".
+	// A cluster relaying through a provider has neither, and v5 has no step
+	// that deploys them at all. Registering anyway produced a tenant whose
+	// mail was silently undeliverable: the condition said Provisioning, the
+	// Keycloak client it waits for is Dovecot's and Dovecot is not there, and
+	// nothing in the message said the cluster was the reason.
+	//
+	// Only an EXPLICIT selfhosted reaches this. defaultTenantMailMode already
+	// answers transport-only on such a cluster, so a tenant that did not ask
+	// is unaffected -- what is refused is a statement the cluster cannot
+	// satisfy, and the refusal names who has to change what.
+	if mode == gentianov1alpha1.MailModeSelfhosted && !r.dovecotDeployed(ctx) {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse,
+			"ClusterCannotHost",
+			"spec.mail.mode is selfhosted, and this cluster runs no kernel mail stack "+
+				"(Cluster spec.mail.serviceMode is not 'kernel'), so there is no Postfix or "+
+				"Dovecot to register this tenant in. Use mode 'transport-only' for outbound "+
+				"only, 'external' with an SMTP relay secret, or ask a platform administrator "+
+				"to run the cluster's mail function.")
+		return ctrl.Result{}, nil
 	}
 
 	switch mode {
@@ -353,6 +467,9 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 		if err := r.seedPerAppMailSecrets(ctx, tenant); err != nil {
 			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
 			return ctrl.Result{}, err
+		}
+		if held, err := r.holdUntilPostfixAcceptsDomain(ctx, tenant); held || err != nil {
+			return resultUnlessError(ctrl.Result{RequeueAfter: mailRequeueAfter}, err)
 		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"Selfhosted", "Tenant registered in shared Postfix and Dovecot infrastructure")
@@ -393,6 +510,9 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 			r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
 			return ctrl.Result{}, err
 		}
+		if held, err := r.holdUntilPostfixAcceptsDomain(ctx, tenant); held || err != nil {
+			return resultUnlessError(ctrl.Result{RequeueAfter: mailRequeueAfter}, err)
+		}
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
 			"TransportOnly", "Tenant registered in shared Postfix relay")
 		return ctrl.Result{}, nil
@@ -407,6 +527,34 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 			"UnknownMode", fmt.Sprintf("unknown mail mode %q", mode))
 		return ctrl.Result{}, nil
 	}
+}
+
+// holdUntilPostfixAcceptsDomain keeps a tenant's mail from reporting ready
+// while the map Postfix mounts does not name its domain.
+//
+// Registering the domain and writing that map are one call, so this holds
+// only when something is wrong -- and that is the case it is for. A tenant
+// reported ready for as long as the map was written to a namespace Postfix
+// does not run in: registered, with credentials, and every message to it
+// refused. The condition now says what Postfix would.
+func (r *TenantReconciler) holdUntilPostfixAcceptsDomain(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
+	if domain == "" {
+		// No domain, no line to look for: the registry skips it as well.
+		return false, nil
+	}
+	accepted, err := r.postfixAcceptsDomain(ctx, domain)
+	if err != nil {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
+		return true, err
+	}
+	if accepted {
+		return false, nil
+	}
+	r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "PostfixMapMissing",
+		fmt.Sprintf("ConfigMap %s/%s, which Postfix mounts, does not name the domain %q: mail to it would be refused",
+			postfixNamespace, postfixVirtualMailboxMapsConfigMap, domain))
+	return true, nil
 }
 
 // ensureMailSelfhosted provisions full mail capability for the tenant by registering
@@ -440,7 +588,7 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// egress A record instead of having to be edited in two places whenever the
 	// address changes; the one that gets forgotten fails closed and silently.
 	tenant.Status.Mail.SPFRecord = mailSPFRecord(
-		clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))
+		clusterMailEgressHost(ctx, r.Client, envvar.Or("MAIL_EGRESS_HOST", "")))
 	tenant.Status.Mail.DMARCRecord = mailDMARCRecord(domain)
 
 	// 2. Register the tenant domain in the shared Postfix virtual-domains ConfigMap.
@@ -532,11 +680,11 @@ func (r *TenantReconciler) ensureMailExternal(ctx context.Context, tenant *genti
 
 	// Fetch the source Secret from the kernel namespace.
 	src := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: srcName, Namespace: kernelNamespace}, src); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: srcName, Namespace: mailNamespace}, src); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil // source not yet available — requeue
 		}
-		return false, fmt.Errorf("get SMTP credentials secret %s/%s: %w", kernelNamespace, srcName, err)
+		return false, fmt.Errorf("get SMTP credentials secret %s/%s: %w", mailNamespace, srcName, err)
 	}
 
 	// Create the Secret in the tenant namespace if it does not already exist.
@@ -581,6 +729,23 @@ func (r *TenantReconciler) ensureMailTransportOnly(ctx context.Context, tenant *
 		return fmt.Errorf("ensure SMTP credentials Secret: %w", err)
 	}
 
+	// A tenant people sign up to has a realm that sends mail -- the message
+	// that confirms an address -- and the realm's Composition names the
+	// submission credential this mints, which selfhosted mail mints with the
+	// app passwords and transport-only mail did not. Only where the cluster
+	// runs its own mail: that credential is verified by Dovecot, and a
+	// cluster that relays configures the realm from the relay's instead.
+	if tenant.SignUpEnabled() && r.dovecotDeployed(ctx) {
+		domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
+		seed, err := r.tenantMailSeed(ctx, tenant.Name)
+		if err != nil {
+			return fmt.Errorf("mail seed for the realm's submission credential: %w", err)
+		}
+		if err := r.syncMailSubmissionCredential(ctx, tenant, domain, seed); err != nil {
+			return fmt.Errorf("ensure the realm's submission credential: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -590,12 +755,12 @@ func (r *TenantReconciler) ensureMailTransportOnly(ctx context.Context, tenant *
 func (r *TenantReconciler) ensurePostfixVirtualDomain(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	cm := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace}, cm)
+	err := r.Get(ctx, types.NamespacedName{Name: mailPostfixVirtualDomainsConfigMap, Namespace: mailNamespace}, cm)
 	if errors.IsNotFound(err) {
 		cm = &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      mailPostfixVirtualDomainsConfigMap,
-				Namespace: kernelNamespace,
+				Namespace: mailNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
 			Data: map[string]string{tenant.Name: domain},
@@ -653,7 +818,7 @@ func (r *TenantReconciler) ensurePostfixVirtualDomain(ctx context.Context, tenan
 func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) error {
 	registry := &corev1.ConfigMap{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace,
+		Name: mailPostfixVirtualDomainsConfigMap, Namespace: mailNamespace,
 	}, registry); client.IgnoreNotFound(err) != nil {
 		return err
 	}
@@ -692,6 +857,10 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		log.FromContext(ctx).Error(nil, reject, "contact", r.MailAdminContact)
 	case aliasTarget == "":
 		log.FromContext(ctx).Info("no MAIL_ADMIN_CONTACT set: abuse@ and postmaster@ are accepted but unreadable. RFC 5321 and RFC 2142 require them to work, and Microsoft's JMRP/SNDS enrolment mails them")
+	}
+	configuredAliases, refusedAliases := parseMailAliases(r.MailAliases, hostedDomains)
+	for _, why := range refusedAliases {
+		log.FromContext(ctx).Error(nil, "MAIL_ALIASES entry not written", "reason", why)
 	}
 
 	var domainsFile, mapsFile, aliasFile strings.Builder
@@ -771,8 +940,20 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 				fmt.Fprintf(&aliasFile, "%s@%s %s\n", lp, d, aliasTarget)
 			}
 		}
+		// The configured forwards of this domain, after the role addresses
+		// and in the order configured: a role address named here as well
+		// keeps the admin contact, since Postfix takes the first match.
+		for _, a := range configuredAliases[d] {
+			fmt.Fprintf(&aliasFile, "%s %s\n", a.address, a.to)
+		}
 	}
 	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
+	// The addresses of removed people, refused whatever the recipient policy
+	// (mail_removed_recipients.go). Postfix asks the domains file about a
+	// recipient before anything else and asks for the whole address first,
+	// so the lines go there, beside the domains -- and not into the copy
+	// that decides who may send, where an address would match a sender.
+	recipientAccess := desiredDomains + r.removedRecipients(ctx, emitted)
 
 	// The same domains, space-separated, for the image's ALLOWED_SENDER_DOMAINS.
 	//
@@ -793,7 +974,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	//
 	// One derivation for both directions: a domain that may receive may send.
 	desired := map[string]string{
-		postfixVirtualMailboxDomainsKey: desiredDomains,
+		postfixVirtualMailboxDomainsKey: recipientAccess,
 		postfixVirtualMailboxMapsKey:    desiredMaps,
 		postfixSenderAccessKey:          desiredDomains,
 		postfixAllowedSenderDomainsKey:  desiredAllowed,
@@ -812,19 +993,24 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	if err := r.List(ctx, nodes); err != nil {
 		return err
 	}
-	if nets := podNetworks(ctx, nodes); nets != "" {
+	if nets := podNetworks(nodes); nets != "" {
 		desired[postfixMyNetworksKey] = nets
 	}
 
+	// Beside Postfix, which mounts it: a pod mounts a ConfigMap from its own
+	// namespace and no other. It was written to the mail DMZ, where no
+	// Postfix runs, and the mount is optional -- so Postfix started with no
+	// map and refused every tenant domain while each tenant reported its
+	// mail as ready.
 	maps := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name: postfixVirtualMailboxMapsConfigMap, Namespace: servicesNamespace,
+		Name: postfixVirtualMailboxMapsConfigMap, Namespace: postfixNamespace,
 	}, maps)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      postfixVirtualMailboxMapsConfigMap,
-				Namespace: servicesNamespace,
+				Namespace: postfixNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
 			Data: desired,
@@ -866,11 +1052,11 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 // table over the image's own replaces the whole file — so a table that named
 // only tenants would silently stop the kernel domain signing.
 func (r *TenantReconciler) syncPostfixDKIMTables(ctx context.Context) error {
-	kernelNamespace := defaultServicesNamespace()
+	ns := mailNamespace
 
 	registry := &corev1.ConfigMap{}
 	if err := r.Get(ctx, types.NamespacedName{
-		Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace,
+		Name: mailPostfixVirtualDomainsConfigMap, Namespace: ns,
 	}, registry); client.IgnoreNotFound(err) != nil {
 		return err
 	}
@@ -934,7 +1120,7 @@ func (r *TenantReconciler) syncPostfixDKIMTables(ctx context.Context) error {
 		// signing for every domain rather than just this one.
 		keySecret := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name: "dkim-" + name, Namespace: kernelNamespace,
+			Name: "dkim-" + name, Namespace: ns,
 		}, keySecret); err != nil {
 			if errors.IsNotFound(err) {
 				continue
@@ -958,12 +1144,12 @@ func (r *TenantReconciler) syncPostfixDKIMTables(ctx context.Context) error {
 	data[postfixDKIMSignTableKey] = []byte(signTable.String())
 
 	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: postfixDKIMSecret, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: postfixDKIMSecret, Namespace: ns}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      postfixDKIMSecret,
-				Namespace: kernelNamespace,
+				Namespace: ns,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
 			Data: data,
@@ -1063,10 +1249,11 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 		return nil
 	}
 
-	// 2. The introspection client in the kernel realm. Returns false while its Job
-	//    is still running; the next operator start or tenant event picks it up.
-	if ready, err := r.ensureKernelDovecotOIDCClientJob(ctx); err != nil {
-		return fmt.Errorf("ensure kernel Dovecot OIDC client: %w", err)
+	// 2. The introspection client in the kernel realm, which cluster-default
+	//    composes. Not Ready yet is not an error; the next operator start or
+	//    tenant event picks it up.
+	if ready, err := r.kernelDovecotClientReady(ctx); err != nil {
+		return fmt.Errorf("check kernel Dovecot OIDC client: %w", err)
 	} else if !ready {
 		return nil
 	}
@@ -1081,12 +1268,12 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 // ensureRegistryDomain upserts one key in the shared tenant domain registry.
 func (r *TenantReconciler) ensureRegistryDomain(ctx context.Context, key, domain string) error {
 	cm := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace}, cm)
+	err := r.Get(ctx, types.NamespacedName{Name: mailPostfixVirtualDomainsConfigMap, Namespace: mailNamespace}, cm)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      mailPostfixVirtualDomainsConfigMap,
-				Namespace: kernelNamespace,
+				Namespace: mailNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
 			Data: map[string]string{key: domain},
@@ -1112,12 +1299,12 @@ func (r *TenantReconciler) ensureRegistryDomain(ctx context.Context, key, domain
 func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	cm := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: mailDovecotDomainsConfigMap, Namespace: kernelNamespace}, cm)
+	err := r.Get(ctx, types.NamespacedName{Name: mailDovecotDomainsConfigMap, Namespace: mailNamespace}, cm)
 	if errors.IsNotFound(err) {
 		cm = &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      mailDovecotDomainsConfigMap,
-				Namespace: kernelNamespace,
+				Namespace: mailNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
 			Data: map[string]string{tenant.Name: domain},
@@ -1143,7 +1330,7 @@ func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant
 // authenticate IMAP.
 //
 // Dovecot's oauth2 passdb takes a single introspection URL, so multi-realm support
-// is multiple passdb blocks rather than one parameterised block. Each realm gets a
+// is multiple passdb blocks rather than one parameterized block. Each realm gets a
 // `<realm>.conf` holding the passdb and a `<realm>.oauth2.ext` holding its
 // settings; dovecot.conf includes only *.conf, so the .ext files are read via the
 // passdb args and never included as configuration themselves.
@@ -1152,6 +1339,13 @@ func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant
 // stops at the first passdb that answers definitively, so without it a token from
 // the second realm would be rejected by the first realm's introspection and never
 // reach its own.
+//
+// scope is the second of two gates. Keycloak answers active only for a token
+// whose audience names gentian-dovecot, and the mail server then also wants
+// the scope "mailbox" among the token's scopes: both arrive only on a token
+// that an app with the scope asked for by name (mailbox_token_signin.go). The
+// mailbox opened is the one of the token's email claim, and the name the mail
+// program gave has to be that address -- neither changed here.
 func dovecotRealmAuthFiles(realmName, keycloakURL, clientSecret string) (passdbConf string, ext string) {
 	passdbConf = fmt.Sprintf(`# Realm %[1]s — generated by the gentian-os mail reconciler. Do not edit.
 passdb {
@@ -1170,7 +1364,8 @@ client_secret = %s
 username_attribute = email
 active_attribute = active
 active_value = true
-`, strings.TrimSuffix(keycloakURL, "/"), realmName, dovecotOIDCClientID, clientSecret)
+scope = %s
+`, strings.TrimSuffix(keycloakURL, "/"), realmName, dovecotOIDCClientID, clientSecret, mailboxScopeName)
 	return passdbConf, ext
 }
 
@@ -1189,11 +1384,11 @@ func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName
 		return fmt.Errorf("realm name is empty")
 	}
 
-	keycloakURL, err := r.secretValue(ctx, keycloakAdminSecret, kernelNamespace, "url")
+	keycloakURL, err := r.secretValue(ctx, keycloakAdminSecret, identityNamespace, "url")
 	if err != nil {
 		return fmt.Errorf("read Keycloak URL: %w", err)
 	}
-	clientSecret, err := r.secretValue(ctx, dovecotAdminSecretName, kernelNamespace, "oidc_client_secret")
+	clientSecret, err := r.secretValue(ctx, dovecotAdminSecretName, mailNamespace, "oidc_client_secret")
 	if err != nil {
 		return fmt.Errorf("read Dovecot OIDC client secret: %w", err)
 	}
@@ -1203,12 +1398,12 @@ func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName
 	extKey := realmName + ".oauth2.ext"
 
 	secret := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: servicesNamespace}, secret)
+	err = r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: mailNamespace}, secret)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      dovecotRealmAuthSecret,
-				Namespace: servicesNamespace,
+				Namespace: mailNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
 			StringData: map[string]string{confKey: passdbConf, extKey: ext},
@@ -1242,7 +1437,7 @@ func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName
 // stamp and the two would fight indefinitely.
 func (r *TenantReconciler) ensureDovecotAuthReload(ctx context.Context) error {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: servicesNamespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: mailNamespace}, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -1261,10 +1456,9 @@ func (r *TenantReconciler) ensureDovecotAuthReload(ctx context.Context) error {
 	}
 	want := hex.EncodeToString(h.Sum(nil))[:16]
 
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
 	deploy := &appsv1.Deployment{}
-	name := fmt.Sprintf("dovecot-%s", stage)
-	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: servicesNamespace}, deploy); err != nil {
+	name := mailServerName()
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: mailNamespace}, deploy); err != nil {
 		// Not an error: on a cluster where kernel mail is not deployed there is no
 		// Dovecot to reload, and tenant reconcile must not block on its absence.
 		if errors.IsNotFound(err) {
@@ -1392,12 +1586,12 @@ func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, 
 	// and schedules the next one.
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+		Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
 	}, sec)
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
-	if argon2idLineMatches(string(sec.Data[file+".users"]), user, password) &&
+	if argon2idLineMatches(string(sec.Data[file+".users"]), password) &&
 		string(sec.Data[file+".conf"]) == string(passdbInclude(file)) {
 		return nil
 	}
@@ -1405,7 +1599,7 @@ func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, 
 	if err != nil {
 		return err
 	}
-	return r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+	return r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
 		file + ".users": []byte(line + "\n"),
 		file + ".conf":  passdbInclude(file),
 	})
@@ -1429,7 +1623,7 @@ func (r *TenantReconciler) syncKernelRealmSubmissionIdentity(ctx context.Context
 	}
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{
-		Name: keycloakSMTPCredentialsSecret, Namespace: defaultServicesNamespace(),
+		Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace,
 	}, sec)
 	if errors.IsNotFound(err) {
 		return nil
@@ -1454,28 +1648,9 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 	if r.Seeder == nil {
 		return nil
 	}
-
-	// Collect the set of apps that need SMTP and/or IMAP.
-	type need struct{ smtp, imap bool }
-	needs := map[string]need{}
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
-		}
-		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Mail == nil {
-			continue
-		}
-		needs[app.Profile] = need{
-			smtp: profile.Spec.KernelRequirements.Mail.SMTP != nil,
-			imap: profile.Spec.KernelRequirements.Mail.IMAP != nil,
-		}
-	}
-	if len(needs) == 0 {
-		return nil
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil || len(needs) == 0 {
+		return err
 	}
 
 	// Pull the per-tenant SMTP secret so we can copy the same credentials into
@@ -1526,6 +1701,151 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 	return nil
 }
 
+// appMailNeed is what an app's profile declares of mail.
+type appMailNeed struct{ smtp, imap bool }
+
+// appMailNeeds lists the tenant's apps whose profile declares mail, by the
+// name their records are kept under.
+func (r *TenantReconciler) appMailNeeds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (map[string]appMailNeed, error) {
+	needs := map[string]appMailNeed{}
+	// The installed apps: a component the platform places is given mail by
+	// its own Component.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range installed {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
+		}
+		if profile.Services() == nil || profile.Services().Mail == nil {
+			continue
+		}
+		needs[app.Profile] = appMailNeed{
+			smtp: profile.Services().Mail.SMTP != nil,
+			imap: profile.Services().Mail.IMAP != nil,
+		}
+	}
+	return needs, nil
+}
+
+// seedPerAppMailRecords writes the per-app mail records that need no mail
+// stack of the tenant's own: an empty SMTP and IMAP record for every app that
+// declares them, and, on a cluster that composes no mail function, the
+// external relay's login in each SMTP record. ensureMail writes the real ones
+// where the tenant has mail, and they replace the empty ones.
+//
+// It runs before the tenant's apps are reconciled, not with the rest of the
+// mail in the shared-kernel stage: an app that declares mail installs only
+// once its records exist, and a stage that stops on any one app's failure
+// would otherwise keep every other app from installing as well.
+func (r *TenantReconciler) seedPerAppMailRecords(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	// The empty ones never replace a record that holds values.
+	err := r.seedPerAppEmptyMailSecrets(ctx, tenant)
+	if err == nil {
+		var present bool
+		if present, err = r.mailFunctionPresent(ctx); err == nil && !present {
+			err = r.seedPerAppRelaySMTP(ctx, tenant)
+		}
+	}
+	if err != nil {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse, "SeedFailed", err.Error())
+		return fmt.Errorf("seed the apps' mail records: %w", err)
+	}
+	return nil
+}
+
+// seedPerAppEmptyMailSecrets writes an empty SMTP and IMAP record for each
+// app that declares them and has none yet, so an app installs on a tenant
+// without mail and sends none. seedPerAppMailSecrets replaces them once the
+// tenant has mail.
+func (r *TenantReconciler) seedPerAppEmptyMailSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.Seeder == nil {
+		return nil
+	}
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	for appName, n := range needs {
+		if n.smtp {
+			if err := r.Seeder.SeedEmptySMTP(ctx, tenant.Name, appName); err != nil {
+				return fmt.Errorf("seed empty smtp for %s: %w", appName, err)
+			}
+		}
+		if n.imap {
+			if err := r.Seeder.SeedEmptyIMAP(ctx, tenant.Name, appName); err != nil {
+				return fmt.Errorf("seed empty imap for %s: %w", appName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// seedPerAppRelaySMTP fills the SMTP record of each app that declares one
+// with the cluster's external relay, on a cluster that relays (mail.serviceMode
+// external) and composes no mail function, so there is no per-tenant login
+// to give the app. Every app sends as the relay's one login.
+//
+// The relay is read from keycloak-smtp-credentials, which the operator already
+// reads for the tenant realms' mail: the ExternalSecret that writes it is the
+// projection of the smtp-relay credential (gentian-os/kernel/mail/postfix,
+// relay_username and relay_password) with the claim's host, port and TLS
+// settings beside it. Until the credential is supplied, smtp_configure is not
+// true and the records stay as they are: empty, or the values they hold.
+// Once it is, the records follow it, a changed login included.
+func (r *TenantReconciler) seedPerAppRelaySMTP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.Seeder == nil || r.dovecotDeployed(ctx) {
+		return nil
+	}
+	relay, err := r.clusterRelaySMTP(ctx)
+	if err != nil || relay == nil {
+		return err
+	}
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	for appName, n := range needs {
+		if !n.smtp {
+			continue
+		}
+		if err := r.Seeder.SyncSMTP(ctx, tenant.Name, appName, *relay); err != nil {
+			return fmt.Errorf("seed relay smtp for %s: %w", appName, err)
+		}
+	}
+	return nil
+}
+
+// clusterRelaySMTP is the external relay's address and login, or nil while
+// the relay credential has not been supplied.
+func (r *TenantReconciler) clusterRelaySMTP(ctx context.Context) (*secrets.SMTPCreds, error) {
+	sec := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, sec)
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s: %w", identityNamespace, keycloakSMTPCredentialsSecret, err)
+	}
+	d := sec.Data
+	if !smtpCredentialsUsable(d) || len(d["smtp_host"]) == 0 || len(d["smtp_user"]) == 0 || len(d["smtp_password"]) == 0 {
+		return nil, nil
+	}
+	port := string(d["smtp_port"])
+	if port == "" {
+		port = "587"
+	}
+	return &secrets.SMTPCreds{
+		Host: string(d["smtp_host"]), Port: port,
+		User: string(d["smtp_user"]), Password: string(d["smtp_password"]),
+	}, nil
+}
+
 // deleteMail removes the tenant's registration from the shared mail infrastructure.
 //
 // The tenant domain is always removed from the shared Postfix and Dovecot ConfigMaps so
@@ -1538,8 +1858,16 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 		mode = tenant.Spec.Mail.Mode
 	}
 
+	// A cluster that composes no mail function registered nothing (ensureMail),
+	// and has no namespace to rewrite the shared maps in: writing them there
+	// fails on every pass, and the tenant's deletion never ends.
+	present, err := r.mailFunctionPresent(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Remove domain entries from shared ConfigMaps (always — these affect live routing).
-	if mode == gentianov1alpha1.MailModeSelfhosted || mode == gentianov1alpha1.MailModeTransportOnly {
+	if present && (mode == gentianov1alpha1.MailModeSelfhosted || mode == gentianov1alpha1.MailModeTransportOnly) {
 		if err := r.removeFromMailConfigMap(ctx, mailPostfixVirtualDomainsConfigMap, tenant.Name); err != nil {
 			return fmt.Errorf("remove Postfix virtual domain for tenant %s: %w", tenant.Name, err)
 		}
@@ -1550,10 +1878,21 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 			return fmt.Errorf("sync Postfix virtual mailbox maps for tenant %s: %w", tenant.Name, err)
 		}
 	}
-	if mode == gentianov1alpha1.MailModeSelfhosted {
+	if present && mode == gentianov1alpha1.MailModeSelfhosted {
 		if err := r.removeFromMailConfigMap(ctx, mailDovecotDomainsConfigMap, tenant.Name); err != nil {
 			return fmt.Errorf("remove Dovecot domain config for tenant %s: %w", tenant.Name, err)
 		}
+	}
+
+	// The tenant's mail records, removed whatever the deletion policy says,
+	// for the reason the routing above is. The DNSEndpoint is in the mail
+	// perimeter's namespace, not the tenant's, and carries no tenant label, so
+	// neither the namespace's deletion nor the sweep of labeled objects took
+	// it: the domain of a deleted tenant went on publishing an MX for this
+	// cluster, an SPF record authorizing it and a DKIM key, for a domain
+	// Postfix had stopped accepting.
+	if err := r.deleteTenantMailDNS(ctx, tenant, mailEdgeNamespace); err != nil {
+		return fmt.Errorf("remove the mail DNS records of tenant %s: %w", tenant.Name, err)
 	}
 
 	// The tenant's SASL credentials, removed whatever the deletion policy says.
@@ -1566,7 +1905,7 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 	//
 	// Domain routing above is already gone by this point, so what is left is
 	// exactly a credential with nothing to reach.
-	if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+	if err := r.deleteSecretKeys(ctx, dovecotAppPasswordsSecret, dovecotNamespace,
 		mailPasswdFileKeys(tenant.Name)...); err != nil {
 		return fmt.Errorf("remove mail passdb entries for tenant %s: %w", tenant.Name, err)
 	}
@@ -1589,7 +1928,7 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 	if mode == gentianov1alpha1.MailModeSelfhosted {
 		// DKIM key Secret in kernel namespace.
 		dkimSec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Name: dkimSecretName(tenant.Name), Namespace: kernelNamespace,
+			Name: dkimSecretName(tenant.Name), Namespace: mailNamespace,
 		}}
 		if err := r.Delete(ctx, dkimSec); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete DKIM secret for tenant %s: %w", tenant.Name, err)
@@ -1610,7 +1949,7 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 // It is a no-op when the ConfigMap or key does not exist.
 func (r *TenantReconciler) removeFromMailConfigMap(ctx context.Context, cmName, tenantName string) error {
 	cm := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: kernelNamespace}, cm)
+	err := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: mailNamespace}, cm)
 	if errors.IsNotFound(err) {
 		return nil
 	}
@@ -1649,24 +1988,24 @@ func (r *TenantReconciler) ensureDKIMSecret(ctx context.Context, tenant *gentian
 // failed verification — a state strictly worse than not signing at all.
 func (r *TenantReconciler) ensureDKIMKeyPair(ctx context.Context, secretName string, labels map[string]string) (string, []byte, error) {
 	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: mailNamespace}, existing)
 	if err == nil {
 		// Secret already exists — derive the public key from the stored private key.
 		privPEM, ok := existing.Data["tls.key"]
 		if !ok {
-			return "", nil, fmt.Errorf("DKIM secret %s/%s is missing key tls.key", kernelNamespace, secretName)
+			return "", nil, fmt.Errorf("DKIM secret %s/%s is missing key tls.key", mailNamespace, secretName)
 		}
 		block, _ := pem.Decode(privPEM)
 		if block == nil {
-			return "", nil, fmt.Errorf("DKIM secret %s/%s: tls.key is not valid PEM", kernelNamespace, secretName)
+			return "", nil, fmt.Errorf("DKIM secret %s/%s: tls.key is not valid PEM", mailNamespace, secretName)
 		}
 		priv, parseErr := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if parseErr != nil {
-			return "", nil, fmt.Errorf("parse DKIM private key in %s/%s: %w", kernelNamespace, secretName, parseErr)
+			return "", nil, fmt.Errorf("parse DKIM private key in %s/%s: %w", mailNamespace, secretName, parseErr)
 		}
 		pubDER, marshalErr := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 		if marshalErr != nil {
-			return "", nil, fmt.Errorf("marshal DKIM public key for %s/%s: %w", kernelNamespace, secretName, marshalErr)
+			return "", nil, fmt.Errorf("marshal DKIM public key for %s/%s: %w", mailNamespace, secretName, marshalErr)
 		}
 		return base64.StdEncoding.EncodeToString(pubDER), privPEM, nil
 	}
@@ -1689,7 +2028,7 @@ func (r *TenantReconciler) ensureDKIMKeyPair(ctx context.Context, secretName str
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
-			Namespace: kernelNamespace,
+			Namespace: mailNamespace,
 			Labels:    labels,
 		},
 		Data: map[string][]byte{
@@ -1697,20 +2036,17 @@ func (r *TenantReconciler) ensureDKIMKeyPair(ctx context.Context, secretName str
 		},
 	}
 	if err := r.Create(ctx, secret); err != nil {
-		return "", nil, fmt.Errorf("create DKIM secret %s/%s: %w", kernelNamespace, secretName, err)
+		return "", nil, fmt.Errorf("create DKIM secret %s/%s: %w", mailNamespace, secretName, err)
 	}
 	return base64.StdEncoding.EncodeToString(pubDER), privPEM, nil
 }
 
 // --- Name helpers ------------------------------------------------------------
 
-// mailDomain returns the effective mail domain for a tenant: spec.mail.domain
-// if set, otherwise the tenant's effective ingress domain (vanity or
-// <tenant>.<kernel_domain> fallback). See architecture §2.5.
+// mailDomain returns the mail domain for a tenant, which is its effective
+// ingress domain: a tenant's mail lives where the tenant does. See
+// architecture §2.5.
 func mailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode string) string {
-	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Domain != "" {
-		return tenant.Spec.Mail.Domain
-	}
 	return tenant.EffectiveDomain(kernelDomain, tenancyMode)
 }
 
@@ -1739,7 +2075,7 @@ func mailSPFRecord(egressHost string) string {
 // p=none: report, do not reject. The reports are what say whether a stricter
 // policy would bounce legitimate mail, and publishing quarantine or reject
 // before reading any is how a domain silences its own invites. Tighten it once
-// rua has been arriving for a while and shows only sources you recognise.
+// rua has been arriving for a while and shows only sources you recognize.
 //
 // rua needs a mailbox that can actually receive, which is why the kernel
 // domain's MX is published alongside this rather than left to chance.

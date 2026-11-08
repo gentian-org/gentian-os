@@ -1,0 +1,37 @@
+{{- /*
+  The arbiter's one cluster-wide permission: to ask the API server whose a
+  token is (TokenReview). The arbiter admits the operator to its platform
+  path by the operator's projected ServiceAccount token, and only the API
+  server can say a token is that.
+
+  Bound here, in the operator's chart, rather than made by the operator: the
+  operator deploys the arbiter in system-authorization when a component
+  declares an authorization store, and making a ClusterRole is a power it
+  does not otherwise need. A binding to a ServiceAccount that does not exist
+  yet grants nothing until it does.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gentian-arbiter-tokenreview
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gentian-arbiter-tokenreview
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gentian-arbiter-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: arbiter
+    namespace: system-authorization

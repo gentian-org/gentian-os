@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 // Package v1alpha1 contains API Schema definitions for the gentianos.io v1alpha1 API group.
@@ -20,8 +22,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
@@ -29,8 +32,24 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "gentianos.io", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add functions to this group's scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	SchemeBuilder = &schemeBuilder{}
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// schemeBuilder collects the types each *_types.go file registers in its
+// init, all under GroupVersion. It needs only apimachinery, so importing this
+// package does not pull in controller-runtime.
+type schemeBuilder struct {
+	runtime.SchemeBuilder
+}
+
+// Register adds objects to GroupVersion when AddToScheme runs.
+func (b *schemeBuilder) Register(objects ...runtime.Object) {
+	b.SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(GroupVersion, objects...)
+		metav1.AddToGroupVersion(s, GroupVersion)
+		return nil
+	})
+}

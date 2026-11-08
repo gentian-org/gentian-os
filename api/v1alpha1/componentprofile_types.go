@@ -1,0 +1,1240 @@
+/*
+Copyright The Gentian OS Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package v1alpha1
+
+import (
+	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+// ComponentClass is who a component serves, and therefore who is responsible
+// for it. It was called ComponentTenancy, with the values system, shared and
+// tenant: a placement word, a bare adjective and a scope word for one
+// question. "system" named the namespace rather than the role, while its own
+// description -- serves contracts to other components, serves no human -- is
+// the definition of a service.
+//
+// +kubebuilder:validation:Enum=service;app;shared-app;adapter
+type ComponentClass string
+
+const (
+	// ComponentClassService serves other components over contracts, and
+	// operators at its own console. One instance, in system-<function>,
+	// the platform administrator's.
+	ComponentClassService ComponentClass = "service"
+	// ComponentClassApp serves the people of one tenant, from a dedicated
+	// release in tenant-<t>.
+	ComponentClassApp ComponentClass = "app"
+	// ComponentClassSharedApp is one backend in shared-<app> serving several
+	// tenants, each of which still installs the app for itself.
+	ComponentClassSharedApp ComponentClass = "shared-app"
+	// ComponentClassAdapter turns one app's abilities into tools for a
+	// program that acts for a person. It runs in tenant-<t> beside the app,
+	// nobody opens it, and only a component of the tenant that may speak as
+	// a person reaches it (adapter_types.go).
+	ComponentClassAdapter ComponentClass = "adapter"
+)
+
+// ComponentLaunch is how a person reaches a component. It exists because the
+// schema could not otherwise tell a component that is deliberately
+// unadvertised from one whose tile was forgotten, and an app nobody can open
+// is installed and lost rather than refused.
+//
+// +kubebuilder:validation:Enum=tile;from;none
+type ComponentLaunch string
+
+const (
+	// ComponentLaunchTile means at least one exposure carries a tile.
+	ComponentLaunchTile ComponentLaunch = "tile"
+	// ComponentLaunchFrom means another component opens it: Collabora from
+	// Nextcloud, a viewer from a file manager.
+	ComponentLaunchFrom ComponentLaunch = "from"
+	// ComponentLaunchNone means nothing opens it: either it is the launcher
+	// itself, which is the desktop, or it has no human surface at all.
+	ComponentLaunchNone ComponentLaunch = "none"
+)
+
+// PlacementTenants are the tenants a placeable component goes to.
+//
+// +kubebuilder:validation:Enum=every;platform;users
+type PlacementTenants string
+
+const (
+	// PlacementEvery is every tenant, the platform tenant included.
+	PlacementEvery PlacementTenants = "every"
+	// PlacementPlatform is the platform tenant alone: something the cluster
+	// has one of and that runs with a tenant's authority rather than the
+	// kernel's.
+	PlacementPlatform PlacementTenants = "platform"
+	// PlacementUsers is every tenant except the platform tenant, where
+	// nobody installs apps.
+	PlacementUsers PlacementTenants = "users"
+)
+
+// PlacementCondition is what a placement lasts for.
+//
+// +kubebuilder:validation:Enum=storeOffered;llm;credentialSet
+type PlacementCondition string
+
+const (
+	// PlacementWhileStoreOffered is for as long as the cluster offers an App
+	// Store: usage statistics are on and the Cluster claim names a store
+	// (`spec.catalogue.storeUrl`).
+	PlacementWhileStoreOffered PlacementCondition = "storeOffered"
+	// PlacementWhileLLM is for as long as the cluster serves models
+	// (spec.llm.enabled). The catalog's index repeats it as placedWith: llm,
+	// which is how the platform finds the entry before it is on the cluster.
+	PlacementWhileLLM PlacementCondition = "llm"
+	// PlacementWhileCredentialSet is from the moment the platform tenant
+	// holds a set credential of a repository declared for this component
+	// (the Repository's spec.app). It is one way: a component placed under
+	// it stays when the credential goes, as what it keeps may not be taken
+	// away by a credential lapsing.
+	PlacementWhileCredentialSet PlacementCondition = "credentialSet"
+)
+
+// PinnedImage is one image repository and the build of it a component runs.
+type PinnedImage struct {
+	// Repository is the image's address without a tag.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$`
+	Repository string `json:"repository"`
+
+	// Digest is the build.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest"`
+}
+
+// ComponentPlacement is where the platform places a component.
+type ComponentPlacement struct {
+	// Tenants are the tenants that get the component.
+	Tenants PlacementTenants `json:"tenants"`
+
+	// While names the condition the placement lasts for; absent, it lasts
+	// for the life of each tenant. A conditional placement is also taken
+	// away, so a profile placed under one must own no data; credentialSet,
+	// which never takes it away, is the exception.
+	// +optional
+	While PlacementCondition `json:"while,omitempty"`
+}
+
+// ComponentProfileSpec is one catalog entry: what a component is, what it
+// needs from the platform, and what it may expose. The presentation of a
+// catalog listing stays the store's, outside the cluster. The one piece of
+// presentation an entry carries here is the tile on an exposure, because the
+// portal has to be able to show what the cluster routes without asking the
+// store, and because an app that cannot appear on the portal until a service
+// outside the cluster answers is an app a person cannot reach. Nothing in it
+// grants anything: every permissive statement here is a request that a named
+// person answers on the Component.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || self.classes.size() == 1",message="service is exclusive: a component may not be both a service and an app"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('shared-app' in self.classes) || self.trustTier == 'platform'",message="shared-app requires trustTier platform"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
+// One policy carries a component's session on every host it has, and that
+// policy either hands the edge's token over in the Authorization header or
+// leaves the header to the app. It cannot do both.
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !self.expose.exists(e, (has(e.forwardToken) && e.forwardToken) || (has(e.exchangeToken) && e.exchangeToken)) || !self.expose.exists(e, has(e.clientAuthorization))",message="clientAuthorization excludes forwardToken and exchangeToken across a component's entries: the Authorization header toward the app is either the app's own or a token the platform puts there, and one policy carries the session for all of a component's entries"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.clientAuthorization))",message="a service does not declare clientAuthorization: it is approved in a tenant's registry by that tenant's perimeter approver, and a service runs in no tenant"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.rights) || self.trustTier == 'platform'",message="requires.services.rights requires trustTier platform: the answer says who in the tenant may use what"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken) && e.exchangeToken) || (e.surface == 'gateway' && e.authMode == 'oidc'))",message="exchangeToken is for a gateway entry behind a session (authMode oidc): there is a session's token to exchange only there"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken) && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) && e.exchangeToken))",message="a component asks for forwardToken or for exchangeToken, not both: its entries share one host, and a host's backends are handed one token or the other"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.logDestination) || self.trustTier == 'platform'",message="requires.services.logDestination requires trustTier platform: the component is sent every record the platform writes"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching) || self.trustTier == 'platform'",message="requires.services.vouching requires trustTier platform: the component can obtain a person's token for any app of the tenant"
+// A service may expose -- a console is not a contract surface -- but only on
+// the gateway. The perimeter has no session, and a service console published
+// there is never what anybody meant.
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, e.surface == 'gateway')",message="a service exposes on the gateway only: the perimeter has no session"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.tile) || e.tile.object == 'cluster')",message="a service's tile asks on the cluster: it has no app object and runs in no tenant"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultForTenants) || !self.defaultForTenants",message="defaultForTenants is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultWhereStoreOffered) || !self.defaultWhereStoreOffered",message="defaultWhereStoreOffered is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || !has(self.__package__.valueMapping.platform.storeUrlKey) || self.__package__.valueMapping.platform.storeUrlKey.size() == 0 || self.trustTier == 'platform'",message="storeUrlKey requires trustTier platform: naming it opens the component a way out of the cluster"
+// +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || self.trustTier == 'platform' || [has(self.__package__.valueMapping.platform.directorUrlKey) ? self.__package__.valueMapping.platform.directorUrlKey : '', has(self.__package__.valueMapping.platform.usherUrlKey) ? self.__package__.valueMapping.platform.usherUrlKey : '', has(self.__package__.valueMapping.platform.custodianUrlKey) ? self.__package__.valueMapping.platform.custodianUrlKey : '', has(self.__package__.valueMapping.platform.registrarUrlKey) ? self.__package__.valueMapping.platform.registrarUrlKey : ''].all(k, k.size() == 0)",message="directorUrlKey, usherUrlKey, custodianUrlKey and registrarUrlKey require trustTier platform: naming one opens the component a way into the control namespace"
+// +kubebuilder:validation:XValidation:rule="!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform) || !has(self.__package__.valueMapping.platform.desktopUrlKey) || self.__package__.valueMapping.platform.desktopUrlKey.size() == 0 || self.trustTier == 'platform'",message="desktopUrlKey requires trustTier platform: naming it opens the component a way to the desktop's API"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database) || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)",message="requires.services.identity.sidecar.database needs requires.services.database: the database the handler is given is the app's own"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail) || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn) || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity) && has(self.requires.services.identity.oidc))",message="requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc: the sign-in client whose tokens the mail server is to accept"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)) || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
+// The address the realm posts a logout token to is built from an entry's
+// backend, so the entry has to be this profile's, has to route to this
+// component's own Service, and that Service's name has to be a name and
+// nothing else: it becomes the host of the address.
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity) || !has(self.requires.services.identity.oidc) || !has(self.requires.services.identity.oidc.backchannelLogout) || (has(self.expose) && self.expose.exists(e, e.name == self.requires.services.identity.oidc.backchannelLogout.exposure && (!has(e.backend.component) || e.backend.component.size() == 0) && e.backend.service.matches('^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$')))",message="requires.services.identity.oidc.backchannelLogout.exposure must name an entry of this profile that routes to this component's own Service (no backend.component), whose backend.service is a plain Service name: the realm is told to call that Service and no other address"
+// An extension's client is not told of a sign-out: nothing builds an address
+// for it, and a declaration that did nothing would read as one that works.
+// +kubebuilder:validation:XValidation:rule="!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements) || !has(x.kernelRequirements.identity) || !has(x.kernelRequirements.identity.oidc) || !has(x.kernelRequirements.identity.oidc.backchannelLogout))",message="backchannelLogout is served for the component's own client (requires.services.identity.oidc), not for an extension's"
+// +kubebuilder:validation:XValidation:rule="!has(self.extensions) || self.extensions.all(x, !has(x.kernelRequirements) || !has(x.kernelRequirements.authorization))",message="an authorization store is the component's own (requires.services.authorization), not an extension's"
+// One delivery, and nothing outside package to reach for. The OR this replaces
+// admitted a chart beside an API integration, and deploymentMethod could
+// contradict whichever was set.
+//
+// chart and composition together are the one legal pair, because they answer
+// different halves of one question: the chart is WHAT is installed, and the
+// composition is WHAT ELSE is created beside it. Two catalog entries are
+// like this -- Odoo and Element each render their chart through a
+// Composition that also emits an SSO sidecar or a stable service alias.
+// Refusing the pair sent that fact into an annotation, where nothing
+// validated it.
+//
+// Every other pairing is still refused, and composition alone is still a
+// delivery of its own: a component the Composition creates entirely.
+// +kubebuilder:validation:XValidation:rule="[has(self.__package__.chart) || (has(self.__package__.composition) && self.__package__.composition.size() > 0), has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is a chart, a composition, the two together, an api, or an addon -- and nothing else beside them"
+// +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
+// A tile is on an exposure, or on package.api for a component that is only a
+// link to a service hosted elsewhere -- it has no exposure to carry one, and
+// counting exposures alone refused every such profile. `package` is a CEL
+// reserved word, so the API server names the field __package__.
+// +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile))) || (has(self.__package__.api) && has(self.__package__.api.tile))",message="launch tile needs a tile on an exposure or on package.api: an app nobody can open is installed and lost"
+// +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e, has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))",message="a tile means launch tile: say how a person reaches this"
+// An adapter is reached by the platform's component that speaks as a person,
+// and by nothing else: no person opens it, nothing is exposed, no other app is
+// handed a contract to call it, and it holds no credential of an app of its
+// own -- vouching would be one for every app, a contract key one for its app.
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('adapter' in self.classes) || self.classes.size() == 1",message="adapter is exclusive: an adapter is a component of its own, never also the app it adapts"
+// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'adapter' in self.classes) == has(self.adapter)",message="spec.adapter is for class adapter, and class adapter needs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || self.launch == 'none'",message="an adapter has launch none: nobody opens it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.expose) || self.expose.size() == 0",message="an adapter exposes nothing: only the component that speaks as a person reaches it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.provides) || self.provides.size() == 0",message="an adapter provides no contract: another app reaching it through one would call a tool past the component that checks every call"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.integrations) || self.integrations.size() == 0",message="an adapter declares no integrations: it reaches the app it adapts (spec.adapter.adapts), and a contract key would be a credential of its own at that app"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)",message="an adapter does not vouch for people: it speaks as the person with the credential it is handed for one call"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.__package__.addon)",message="an adapter is deployed or reached: a chart, a composition, or an api -- not an addon inside another component"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, adapts none"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.classes) || ('app' in self.classes)",message="placement is for class app: a service and a shared-app have one instance"
+// +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.placement.while) || self.placement.while != 'credentialSet' || (self.placement.tenants == 'platform' && self.trustTier == 'platform' && has(self.__package__.images) && self.__package__.images.size() > 0)",message="placement while credentialSet is for the platform tenant, at trustTier platform, with package.images naming what may be pulled"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !has(self.placement) || (has(self.placement.while) && self.placement.while == 'llm') || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
+type ComponentProfileSpec struct {
+	// Classes lists the modes this component may be deployed under. It is a
+	// certification claim, not a choice: whether a component *can* serve
+	// several tenants safely is reviewed with the entry, while running it
+	// shared is a decision a named person makes on the Component.
+	// "service" is exclusive.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=2
+	// +listType=set
+	Classes []ComponentClass `json:"classes"`
+
+	// Launch is how a person reaches this component. Required, with no
+	// default, for the reason authMode, surface and trustTier are: an app
+	// nobody can open should be refused at admission, and "nobody opens this"
+	// has to be a word somebody wrote rather than a field they omitted.
+	Launch ComponentLaunch `json:"launch"`
+
+	// TrustTier is the review level of this entry. "platform" is required
+	// before "shared-app" may appear in Classes. Required, with no default:
+	// the tier is a statement a reviewer made, not an absence.
+	TrustTier TrustTier `json:"trustTier"`
+
+	// Version is the catalog entry's version, not the upstream project's.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	Version string `json:"version"`
+
+	// Package is how the component is deployed.
+	Package PackageSpec `json:"package"`
+
+	// Requires is what the platform is obliged to provide before this component
+	// may run. Unmet means it does not start, and the platform is at fault.
+	// +optional
+	Requires *RequirementSpec `json:"requires,omitempty"`
+
+	// Integrations are opportunistic relationships with peer components. An
+	// absent peer is normal. Each binding is subject to the tenant's grant.
+	// +optional
+	Integrations []IntegrationRef `json:"integrations,omitempty"`
+
+	// Provides lists the contracts this component supplies. The class decides
+	// the audience: cluster-wide for a service and a shared-app, within the
+	// tenant otherwise.
+	// +optional
+	Provides []ContractRef `json:"provides,omitempty"`
+
+	// Adapter is what an adapter adapts. Present exactly when the class is
+	// adapter.
+	// +optional
+	Adapter *AdapterSpec `json:"adapter,omitempty"`
+
+	// Secrets are values the platform generates and holds that have no external
+	// counterparty. Credentials that arrive with a granted requirement are not
+	// declared here; they come with the grant.
+	// +optional
+	Secrets *ComponentSecrets `json:"secrets,omitempty"`
+
+	// Expose declares entry points. A service may have them -- a console is
+	// not a contract surface -- but only on the gateway, never the perimeter,
+	// which has no session. Every entry states its authMode; there is no
+	// default.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
+	Expose []ExposureSpec `json:"expose,omitempty"`
+
+	// SessionMaxAge caps, at the realm, how long a sign-in through the app's
+	// own OIDC clients lasts: the operator sets it as the clients' session
+	// lifespan, and past that age from sign-in the realm refuses their
+	// refresh, so the app cannot renew its tokens for that person without a
+	// new sign-in, which reads the person's groups again. It does not end a
+	// session the app keeps in its own cookie: an app that does not go back
+	// to the realm once a person is signed in keeps that session for as long
+	// as the app itself allows. Unset, the clients keep the realm's limits.
+	// +optional
+	SessionMaxAge *metav1.Duration `json:"sessionMaxAge,omitempty"`
+
+	// Extensions are containers shipped inside the component's own pod: the
+	// only escape hatch, and one that cannot create a cluster-scoped object.
+	// +optional
+	Extensions []AppSidecarSpec `json:"extensions,omitempty"`
+
+	// Hooks are lifecycle actions at install, upgrade and resync.
+	// +optional
+	Hooks *HookSpec `json:"hooks,omitempty"`
+
+	// Backup declares what a consistent copy of this component consists of.
+	// +optional
+	Backup *BackupSpec `json:"backup,omitempty"`
+
+	// Customization declares what a tenant may change about this component.
+	// +optional
+	Customization *CustomizationSurface `json:"customization,omitempty"`
+
+	// Placement makes this a component the platform places, and says where.
+	// A profile with a placement is placeable: the platform writes it into
+	// the tenants it names, as an entry of their spec.apps, and takes it out
+	// again when they no longer qualify; no tenant installs, moves or removes
+	// it. A profile without one is installable: a tenant's administrator
+	// installs it, and the platform never places it.
+	// Only a profile of class "app" is placed: a service and a shared-app
+	// have one instance, so there is nothing to give each tenant.
+	// +optional
+	Placement *ComponentPlacement `json:"placement,omitempty"`
+
+	// DefaultForTenants is placement {tenants: every}.
+	//
+	// Superseded by placement: read for one release so that catalogs
+	// published before it keep working.
+	// +optional
+	DefaultForTenants bool `json:"defaultForTenants,omitempty"`
+
+	// DefaultForPlatform is placement {tenants: platform}.
+	//
+	// Superseded by placement: read for one release so that catalogs
+	// published before it keep working.
+	// +optional
+	DefaultForPlatform bool `json:"defaultForPlatform,omitempty"`
+
+	// DefaultWhereStoreOffered is placement {tenants: users, while:
+	// storeOffered}.
+	//
+	// Superseded by placement: read for one release so that catalogs
+	// published before it keep working.
+	// +optional
+	DefaultWhereStoreOffered bool `json:"defaultWhereStoreOffered,omitempty"`
+}
+
+// PackageSpec is the chart, the deployment method, and the mapping from granted
+// requirements onto chart values.
+// PackageSpec is what this entry is made of, and it is exactly one thing.
+// Delivery -- whether the platform runs the component or only routes to it --
+// is read from here rather than stated beside it, because a second statement
+// of one fact is a second statement that can be wrong. There was one:
+// deploymentMethod could say "api" beside a chart, and nothing refused it.
+type PackageSpec struct {
+	// Chart is the Helm chart or OCI artifact. Delivery: workload.
+	// +optional
+	Chart *ChartRef `json:"chart,omitempty"`
+
+	// Images are the private images the component runs, each at the one
+	// build it may run. Admission refuses a pod in the component's namespace
+	// that names one of these repositories at any other build, whoever asks.
+	// +optional
+	// +listType=map
+	// +listMapKey=repository
+	Images []PinnedImage `json:"images,omitempty"`
+
+	// Composition names a Crossplane composition, for a component that is not
+	// a single chart. Used only when the install is pinned to a bundle that
+	// brings it as app-<profile>, and only for a profile of trustTier
+	// platform: below that the component is held. Otherwise the operator
+	// renders the chart. Delivery: workload.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Composition string `json:"composition,omitempty"`
+
+	// API describes a component the platform routes to rather than runs. It
+	// does not mean external: the catalog's own example points at a Service
+	// inside the cluster. Delivery: api.
+	// +optional
+	API *APIIntegration `json:"api,omitempty"`
+
+	// Addon describes a component the platform does not deploy at all: it
+	// flips a switch inside another component's own addon system. Delivery:
+	// addon. It lived under customization.addon, which is why the one-of rule
+	// had to reach out of this struct to finish itself.
+	// +optional
+	Addon *PackageAddon `json:"addon,omitempty"`
+
+	// ValueMapping places what the platform granted into the chart's values.
+	// +optional
+	ValueMapping *ValueMapping `json:"valueMapping,omitempty"`
+
+	// ExtraValues are static chart values.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
+}
+
+// PackageAddon is a component that rides on another component's addon system.
+type PackageAddon struct {
+	// ID is what the hosting component's own addon system calls this addon:
+	// an Odoo module name, a Nextcloud app id, an XWiki extension.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
+	ID string `json:"id"`
+
+	// Of is the ComponentProfile this addon activates into.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Of string `json:"of"`
+}
+
+// RequirementSpec is everything the platform must provide or permit.
+type RequirementSpec struct {
+	// Services are what the platform must fulfill before this component runs:
+	// identity, database, object storage, cache, mail, MCP. Each is fulfilled
+	// by a component of class "service", or by something outside the cluster
+	// entirely -- a relay, a bucket at a cloud provider. It was called
+	// kernelRequirements, which named a fulfiller that is not the fulfiller,
+	// and then contracts, which is the word the open named set in Provides
+	// already holds.
+	// +optional
+	Services *ServiceRequirements `json:"services,omitempty"`
+
+	// Platform is the oldest platform version line this build runs on, as a
+	// floor: ">=0.5", or "0.5" which means the same. It is compared with the
+	// line of the platform that would install it -- the major and minor of
+	// the release, never a patch -- and a cluster on an older line refuses
+	// the install and lists the entry with the reason. There is no upper
+	// bound: what a later platform stops reading, the platform says, by
+	// deprecating it one line ahead. Absent means ">=0.0", a build that
+	// claims nothing.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^(>=)?v?[0-9]+\.[0-9]+$`
+	// +kubebuilder:validation:MaxLength=16
+	Platform string `json:"platform,omitempty"`
+
+	// Privileges escape the default posture. Declaring one is asking, never
+	// receiving: each is granted per install, by a named person, and recorded
+	// on the Component.
+	// +optional
+	Privileges *PrivilegeRequest `json:"privileges,omitempty"`
+}
+
+// PrivilegeRequest is what a profile asks for beyond the default posture. Who
+// approves follows from the kind of privilege, never from a field, or a profile
+// could ask for the cheaper approver.
+type PrivilegeRequest struct {
+	// PodSecurity waives a named admission policy for a named part of the
+	// component. Cluster scope: it weakens a rule that protects the node.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
+	PodSecurity []PodSecurityWaiver `json:"podSecurity,omitempty"`
+
+	// Egress opens outbound network beyond the tenant baseline. Tenant scope:
+	// the traffic leaves the tenant's own namespace.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
+	Egress []EgressRequest `json:"egress,omitempty"`
+
+	// ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
+	// rarest: an app that needs the Kubernetes API is most of the way to being
+	// a controller. Each entry asks, by name, for one of the roles the
+	// platform defines; a profile never states the rules of a role.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
+	ClusterRoles []ClusterRoleRequest `json:"clusterRoles,omitempty"`
+
+	// APIExtensions are resource types the component adds to the cluster's
+	// API. Cluster scope, and approved by break-glass alone: a type is there
+	// for every tenant, and outlives the install that brought it.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=4
+	APIExtensions []APIExtensionRequest `json:"apiExtensions,omitempty"`
+}
+
+// PodSecurityWaiver asks for one admission policy to be waived.
+type PodSecurityWaiver struct {
+	// Name is what a PrivilegeGrant refers to. Unique within the profile.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+	// Policy is the ClusterPolicy this waives.
+	// +kubebuilder:validation:MinLength=1
+	Policy string `json:"policy"`
+	// Scope is the container or composition part it is waived for.
+	// +kubebuilder:validation:MinLength=1
+	Scope string `json:"scope"`
+	// Reason is what the approver reads.
+	// +kubebuilder:validation:MinLength=10
+	Reason string `json:"reason"`
+}
+
+// EgressRequest asks for outbound network beyond the tenant baseline.
+type EgressRequest struct {
+	// Name is what a PrivilegeGrant refers to. Unique within the profile.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+	// Rule is the egress to allow.
+	Rule networkingv1.NetworkPolicyEgressRule `json:"rule"`
+	// Reason is what the approver reads.
+	// +kubebuilder:validation:MinLength=10
+	Reason string `json:"reason"`
+}
+
+// ClusterRoleRequest asks for one of the cluster roles the platform defines.
+//
+// The role is bound to ServiceAccount, in the component's own namespace, when
+// three things hold: Name is one of the platform's roles, the cluster's
+// PlatformSecurityPolicy permits it for this profile, and it was granted on
+// the install. Otherwise nothing is bound and the Component says why.
+type ClusterRoleRequest struct {
+	// Name is the platform's name of the role, and what a PrivilegeGrant
+	// refers to (clusterRoles/<name>). Unique within the profile.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+	// ServiceAccount is the ServiceAccount the component's chart runs its
+	// pods under, in the component's namespace. The role is bound to it and
+	// to nothing else. An entry without one binds nothing, and so does one
+	// that names "default", which every pod without an account of its own
+	// runs under.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+	// Rules is not used. A profile used to state the rules of the role it
+	// wanted; no role is ever made from them. An entry that still carries
+	// rules stays installable, binds nothing, and the Component says so.
+	// +optional
+	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
+	// Reason is what the approver reads.
+	// +kubebuilder:validation:MinLength=10
+	Reason string `json:"reason"`
+}
+
+// APIExtensionRequest asks for resource types of the component's own.
+//
+// The definitions are the CustomResourceDefinitions themselves, so that what
+// an approver reads is what is installed: a chart's CRDs are never installed
+// (app charts render with skipCRDs, and a tenant chart may not write one).
+// The operator installs them once a live grant for apiExtensions/<name> is on
+// the install, and only as new types of a group no other definition on the
+// cluster is in: every definition is in Group, names a resource of its own,
+// and has no conversion webhook. They are never removed by the operator --
+// removing a type deletes every object of it -- and the component's
+// ServiceAccount reads them, and writes their status, only while the grant
+// lives.
+type APIExtensionRequest struct {
+	// Name is what a PrivilegeGrant refers to (apiExtensions/<name>). Unique
+	// within the profile.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// Group is the API group every definition is in: the add-on's own,
+	// never one of Kubernetes' or the platform's.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:XValidation:rule="!(self == 'gentianos.io' || self.endsWith('.gentianos.io') || self == 'k8s.io' || self.endsWith('.k8s.io') || self == 'kubernetes.io' || self.endsWith('.kubernetes.io'))",message="the group is the add-on's own, never Kubernetes' or the platform's"
+	Group string `json:"group"`
+	// ServiceAccount is the account the component's chart runs its pods
+	// under, in the component's namespace: the one that reads the types and
+	// writes their status. Not "default", which every pod without an account
+	// of its own runs under.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self != 'default'",message="the component's own ServiceAccount, not default"
+	ServiceAccount string `json:"serviceAccount"`
+	// Definitions are the CustomResourceDefinitions, apiextensions.k8s.io/v1,
+	// as they are installed.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Definitions []runtime.RawExtension `json:"definitions"`
+	// Reason is what the approver reads.
+	// +kubebuilder:validation:MinLength=10
+	Reason string `json:"reason"`
+}
+
+// ComponentSecrets are the secrets a component declares.
+type ComponentSecrets struct {
+	// Generated secrets are random, created once and held in the vault. The
+	// robust default.
+	// +optional
+	Generated []AppSecret `json:"generated,omitempty"`
+
+	// Derived secrets are keys the platform adds to the credentials Secret it
+	// manages for the component, under the names given. Each is made once per
+	// tenant, component and key, the way the cluster's secretMode says, and
+	// kept in the vault.
+	// +optional
+	Derived []DerivedSecretKey `json:"derived,omitempty"`
+
+	// Supplied secrets are credentials only a person can provide. Each is
+	// asked for in the tenant's Admin Console once the app is installed,
+	// and the app waits for it.
+	// +optional
+	Supplied []SuppliedSecret `json:"supplied,omitempty"`
+}
+
+// SurfaceKind is where an exposure entry is published.
+// +kubebuilder:validation:Enum=gateway;perimeter
+type SurfaceKind string
+
+const (
+	// SurfaceGateway is the authenticated tenant gateway. Always on: the entry
+	// carries the session.
+	SurfaceGateway SurfaceKind = "gateway"
+	// SurfacePerimeter is a publishing proxy in tenant-<t>-dmz with its own
+	// credential. Off until a perimeter approver enables it on the Component.
+	SurfacePerimeter SurfaceKind = "perimeter"
+)
+
+// AuthMode is how a caller of an exposure entry is authenticated.
+//
+// The values the platform acts on are three. oidc is the zone's session, on a
+// gateway entry. none and app are for a perimeter entry: none publishes the
+// declared paths to anyone and passes no credential on; app passes the
+// caller's own Authorization header to the app, which alone checks it.
+//
+// jwt, bearer, basic and signature remain values of the field, and no
+// perimeter entry may declare them: there they named a check at the edge
+// that nothing makes.
+// +kubebuilder:validation:Enum=oidc;app;jwt;bearer;basic;signature;none
+type AuthMode string
+
+const (
+	AuthModeOIDC AuthMode = "oidc"
+	// AuthModeApp is a perimeter entry whose callers present a credential
+	// the app itself issued -- an app password, an API key, a token of the
+	// app's own -- in the Authorization header. The publishing proxy passes
+	// that one header on and checks nothing; the app checks every caller.
+	// It takes effect once the tenant's perimeter approver has approved the
+	// entry as that.
+	AuthModeApp       AuthMode = "app"
+	AuthModeJWT       AuthMode = "jwt"
+	AuthModeBearer    AuthMode = "bearer"
+	AuthModeBasic     AuthMode = "basic"
+	AuthModeSignature AuthMode = "signature"
+	// AuthModeNone is explicit so that it is a word someone wrote and a
+	// reviewer can find.
+	AuthModeNone AuthMode = "none"
+)
+
+// ClientAuthorization says whose the Authorization header is on an entry
+// behind the zone's session.
+// +kubebuilder:validation:Enum=app
+type ClientAuthorization string
+
+const (
+	// ClientAuthorizationApp: the header is the app's own. Its pages put a
+	// token the app issued there, and the edge neither replaces nor removes
+	// it. Sign-in and the question who may use the app stay as on any entry
+	// behind the session.
+	ClientAuthorizationApp ClientAuthorization = "app"
+)
+
+// ExposureKind is what approving one entry of a profile allows. The registry
+// records it with the approval, and an approval is in force only for an entry
+// that still declares the kind it was approved as.
+// +kubebuilder:validation:Enum=public;publicAppCredential;signInAppAuthorization
+type ExposureKind string
+
+const (
+	// ExposureKindPublic is a public address: the declared paths of a
+	// perimeter entry, reachable by anyone, with no credential passed on
+	// (authMode none). An approval that names no kind is this one.
+	ExposureKindPublic ExposureKind = "public"
+	// ExposureKindPublicAppCredential is a public address that passes the
+	// caller's Authorization header to the app (authMode app).
+	ExposureKindPublicAppCredential ExposureKind = "publicAppCredential"
+	// ExposureKindSignInAppAuthorization is no public address. It is an
+	// entry behind sign-in on which the Authorization header is the app's
+	// own (clientAuthorization app).
+	ExposureKindSignInAppAuthorization ExposureKind = "signInAppAuthorization"
+)
+
+// Normalized reads an approval that names no kind as the one every approval
+// was before kinds existed: a public address.
+func (k ExposureKind) Normalized() ExposureKind {
+	if k == "" {
+		return ExposureKindPublic
+	}
+	return k
+}
+
+// RequestKind is what this entry asks a perimeter approver for, or "" for an
+// entry that asks for nothing: one behind the session that leaves the
+// Authorization header to the platform, and any entry in a mode the platform
+// does not act on.
+func (e *ExposureSpec) RequestKind() ExposureKind {
+	if e == nil {
+		return ""
+	}
+	switch e.Surface {
+	case SurfacePerimeter:
+		switch e.AuthMode {
+		case AuthModeNone:
+			return ExposureKindPublic
+		case AuthModeApp:
+			return ExposureKindPublicAppCredential
+		}
+	case SurfaceGateway:
+		if e.AuthMode == AuthModeOIDC && e.ClientAuthorization == ClientAuthorizationApp {
+			return ExposureKindSignInAppAuthorization
+		}
+	}
+	return ""
+}
+
+// ApprovedAs reports whether an approval recorded as approved covers what
+// this entry declares now. An entry whose profile changed what it asks for
+// after the approval is not covered until it is approved again.
+func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
+	want := e.RequestKind()
+	return want != "" && want == approved.Normalized()
+}
+
+// ExposureSpec declares one entry point.
+//
+// +kubebuilder:validation:XValidation:rule="!(self.surface == 'perimeter' && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter entry: it has no session"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode != 'oidc'",message="a perimeter entry cannot use authMode oidc: the session lives on the gateway"
+// +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || (self.surface == 'perimeter' && !has(self.subDomain))",message="apex is for a perimeter entry and names the whole host: it takes no subDomain"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode in ['none', 'app', 'oidc']",message="authMode jwt, bearer, basic and signature are not available on a perimeter entry yet: the platform verifies no token, password or signature there. Declare authMode app if the app itself checks the credential its callers send in the Authorization header, or authMode none if the paths are for anyone"
+// +kubebuilder:validation:XValidation:rule="self.authMode != 'app' || self.surface == 'perimeter'",message="authMode app is for a perimeter entry: it passes the caller's Authorization header to the app with no sign-in in front. Behind sign-in, declare authMode oidc with clientAuthorization app"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || (self.surface == 'gateway' && self.authMode == 'oidc')",message="clientAuthorization is for a gateway entry behind the session (authMode oidc): it says whose the Authorization header is once a person has signed in"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))",message="clientAuthorization excludes forwardToken and exchangeToken: the Authorization header toward the app is either the app's own or a token the platform puts there"
+// +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || self.authMode == 'none'",message="an apex entry is a website for anyone (authMode none): the cluster's main address passes no credential to an app"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc'",message="a gateway entry is behind the zone's session (authMode oidc). What needs no session is a perimeter surface"
+type ExposureSpec struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	Name string `json:"name"`
+
+	// Surface selects where this entry is published.
+	Surface SurfaceKind `json:"surface"`
+
+	// AuthMode is mandatory and has no default.
+	AuthMode AuthMode `json:"authMode"`
+
+	// SubDomain is the host label of this entry in the tenant's zone. Empty
+	// means the component's own name.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	SubDomain string `json:"subDomain,omitempty"`
+
+	// Apex publishes this entry on the cluster's bare domain -- its main
+	// address -- instead of a host under the zone's domain. Only a perimeter
+	// entry may say it. The operator honors it for the platform tenant,
+	// and for the one tenant that may hold the main address -- the tenant
+	// the Cluster claim names (mainAddress.tenant), or the user tenant of a
+	// single-tenancy cluster -- when that tenant's approver published the
+	// entry for the main address (apex on the enablement) and no other
+	// surface holds it. Everywhere else an
+	// apex entry has no host and is not published: the bare domain is the
+	// first thing anybody typing the cluster's address meets.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
+
+	// Paths this entry serves. Empty means the whole host.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	Paths []string `json:"paths,omitempty"`
+
+	// DenyPaths are refused even where Paths admits them. Deny wins regardless
+	// of specificity, so a broad allow with narrow denials stays readable.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	DenyPaths []string `json:"denyPaths,omitempty"`
+
+	// ForwardToken asks the gateway to pass the edge access token to this
+	// backend. A backend otherwise gets identity headers, not a bearer that is
+	// also valid at the director and at every sibling.
+	// +optional
+	ForwardToken bool `json:"forwardToken,omitempty"`
+
+	// ExchangeToken asks the front door to hand this backend a token of the
+	// person that is valid at this app and nowhere else: the session's token
+	// exchanged at the tenant's realm for one whose audience is the app. The
+	// backend verifies it -- signature, issuer, audience, expiry -- and need
+	// not trust the identity headers, which anything that can reach it could
+	// set.
+	//
+	// Not forwardToken: that passes the session's own token, which is valid
+	// at the director and at every sibling, and so is for a component of
+	// platform trust. An exchanged token is worth nothing outside the app it
+	// names, and any app may ask for it.
+	// +optional
+	ExchangeToken bool `json:"exchangeToken,omitempty"`
+
+	// ClientAuthorization says whose the Authorization header is on this
+	// entry. Unset, it is the platform's: the edge replaces whatever a
+	// client sent there and removes it before the app. "app" says the app's
+	// pages send a token of the app's own in that header, and asks that it
+	// be left alone.
+	//
+	// It is a request. It takes effect once the tenant's perimeter approver
+	// has approved this entry; until then the entry is served like any other
+	// behind sign-in and the header is removed. Approved, a person still has
+	// to be signed in and still has to be allowed to use the app, exactly as
+	// before; the edge puts no token of its own in the header and removes
+	// none, and no platform token reaches the app.
+	//
+	// The session's cookies belong to a host, so what one entry declares
+	// holds for every entry of the component on the same host.
+	// +optional
+	ClientAuthorization ClientAuthorization `json:"clientAuthorization,omitempty"`
+
+	// Annotations are gateway policy for this host. The one key read is
+	// gentianos.io/gateway-escaped-slashes-action: KeepUnchanged passes
+	// percent-encoded slashes in a path through to the backend unaltered.
+	//
+	// Here rather than on the object, because they are per HOST and a profile
+	// may publish several. Who may embed this host in a frame is not set
+	// here: the operator gives every exposure the same frame policy, its
+	// tenant's desktop and the component's own other hosts.
+	//
+	// Not a free-form passthrough: body size, read and send timeouts are the
+	// gateway's own policy and are not read from here.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// Tile is how this entry appears on the portal, for an entry a person is
+	// meant to open. An entry that declares none is reachable and unadvertised,
+	// which is what an API or a callback endpoint should be, so the absence is
+	// the default and nothing has to opt out.
+	// +optional
+	Tile *ExposureTile `json:"tile,omitempty"`
+
+	// Backend is the Service the entry routes to.
+	Backend BackendRef `json:"backend"`
+}
+
+// ExposureTile is what a component says about itself on the portal.
+//
+// It is here rather than in the store because the portal must be able to show
+// an app the moment the cluster routes it, and because the operator already
+// holds everything else a tile needs: the host it wrote the route for, and the
+// tenant the component runs in. What the store adds is the catalog listing a
+// person browses before installing, which is a different page with a different
+// audience.
+//
+// Nothing here grants anything. Relation names the question the director asks
+// the graph about the caller before the tile is put on their page, so a tile
+// nobody may open is a tile nobody is shown.
+type ExposureTile struct {
+	// DisplayName is the label under the icon. A few words, in the language of
+	// the person using it rather than of the chart that installs it.
+	//
+	// Required, and it is also the fallback: a viewer whose locale is not in
+	// DisplayNames below sees this. A profile that ships no translations needs
+	// nothing else.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	DisplayName string `json:"displayName"`
+
+	// DisplayNames are translations of DisplayName, keyed by locale
+	// ("de_DE", "en_US").
+	//
+	// Optional and additive, which is the shape this needs: the common case is
+	// one language and stays one line, and a profile that has translations does
+	// not have to restate the fallback in a map.
+	//
+	// Thirty tiles across the catalog are genuinely translated --
+	// "Automatisierung", "Dateien", "Präsentation", every Odoo module -- and
+	// this map is where those strings live.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=32
+	DisplayNames map[string]string `json:"displayNames,omitempty"`
+
+	// Description is the sentence the portal shows beside the label.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Description string `json:"description,omitempty"`
+
+	// Logo is the tile's default image: a square PNG, 128x128, inline as a
+	// data URI. Every component brings its own -- an app, an API entry and an
+	// addon alike -- because a tile is how a person recognizes the thing
+	// before they can read the label. Where a component has no art of its
+	// own, it is a rendering of a platform glyph.
+	//
+	// It is the default and nothing more: the desktop shows a tile the tenant
+	// chose, or one the person uploaded, in its place. Those are the
+	// desktop's to keep, not the profile's.
+	//
+	// PNG and nothing else. An SVG is a document a browser runs, with
+	// scripts, links and fetches of its own; a PNG is pixels. An SVG is only
+	// ever the template a PNG is rendered from before commit. The schema
+	// checks the media type and the PNG signature.
+	//
+	// Inline rather than a URL: the portal renders the desktop from one
+	// ConfigMap and must not fetch an image per tile from wherever a profile
+	// pointed, which is a request per tile to a third party on every login.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=65536
+	// +kubebuilder:validation:Pattern=`^data:image/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*=*$`
+	Logo string `json:"logo"`
+
+	// Image is the profile-relative path the PNG lives at in git, e.g.
+	// assets/tile.png. It is the author's copy: gentian-apps'
+	// scripts/sync-profile-tile.py inlines it into Logo before commit, so the
+	// cluster reads one field and a reviewer still sees a real file in the
+	// diff rather than a wall of base64.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Image string `json:"image,omitempty"`
+
+	// Path is where within the host the tile leads. Empty means the front page.
+	// It exists because an app's front page is not always its entry: a tool
+	// whose front page is a login form is better entered past it, since the
+	// person following the tile already holds the zone's session.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^/`
+	Path string `json:"path,omitempty"`
+
+	// Relation is what the caller must hold, on the object Object names, for the
+	// tile to be on their page: a permission of the authorization model
+	// (authz/model/v1/model.fga). It is required: a tile with no question is a
+	// link shown to everyone, and the portal is not where that is decided.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^can_[a-z0-9_]+$`
+	Relation string `json:"relation"`
+
+	// Object is what Relation is checked against. "app", the default, is
+	// this component's own app object, app:<tenant>/<profile>, where an
+	// installed app's permissions live. "tenant" is the tenant the component
+	// runs in, tenant:<tenant>, which is where the model keeps the permissions
+	// that are about administering the tenant rather than using an app in it.
+	// The model says it in one line: admin tiles are tenant#can_administer.
+	// A component that exists to administer the tenant it runs in has no app
+	// object worth asking about, and asking one would be answered no.
+	//
+	// "cluster" is the third, for a service's own console: a service has no
+	// app object and runs in no tenant, and the relations that govern it --
+	// can_operate_system, can_configure, can_audit -- are all on cluster.
+	// An app whose tile is held there is the cluster's, wherever it runs:
+	// its routes ask the same relation on the cluster, not on the tenant.
+	//
+	// Not called "on": YAML 1.1 reads a bare on as the boolean true, so a
+	// profile written by hand would carry a key named true and be refused by
+	// the schema, and the same goes for off, yes and no.
+	// +optional
+	// +kubebuilder:default=app
+	// +kubebuilder:validation:Enum=app;tenant;cluster
+	Object TileObject `json:"object,omitempty"`
+}
+
+// TileObject is the kind of object a tile's relation is checked against.
+type TileObject string
+
+const (
+	// TileObjectApp checks the relation on app:<tenant>/<profile>.
+	TileObjectApp TileObject = "app"
+	// TileObjectTenant checks the relation on tenant:<tenant>.
+	TileObjectTenant TileObject = "tenant"
+	// TileObjectCluster checks the relation on cluster:<cluster>, which is
+	// where a service's console is governed from.
+	TileObjectCluster TileObject = "cluster"
+)
+
+// BackendRef is the Service an exposure routes to. It defaults to this
+// component's own namespace, and may name another component's instead.
+//
+// Three cases need the second form and only one of them is new: an addon has
+// no Service of its own and its tile points into its base; a shared-app
+// binding routes into shared-<app>, which is required today and is implied by
+// fulfilment rather than declared; and everything else routes to itself.
+type BackendRef struct {
+	// Component names another component whose Service this entry routes to.
+	// Empty means this component's own. Admission bounds it to a component
+	// this one is already bound to -- its addon base, or the shared instance
+	// it is bound to -- so publishing is never a way to reach a component
+	// there is no relationship with.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Component string `json:"component,omitempty"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Service string `json:"service"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+}
+
+// HookSpec are lifecycle actions.
+type HookSpec struct {
+	// PostInstall runs once after the component is first ready.
+	// +optional
+	PostInstall *AppPostInstallJob `json:"postInstall,omitempty"`
+
+	// Provisioning configures the component through its own API after install
+	// and on resync.
+	// +optional
+	Provisioning *ProvisioningSpec `json:"provisioning,omitempty"`
+}
+
+// ComponentProfileStatus is the observed state of a ComponentProfile.
+type ComponentProfileStatus struct {
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Delivery is read from the package: workload for a chart or a
+	// composition, api for a component the platform routes to, addon for one
+	// it does not deploy at all. It is status and not spec on purpose -- a
+	// second settable statement of one fact is a second statement that can be
+	// wrong, and deploymentMethod was exactly that. Here so a person can see
+	// at a glance which entries the platform runs and which it merely routes
+	// to, which is the question behind the exposure register.
+	// +optional
+	Delivery ComponentDelivery `json:"delivery,omitempty"`
+}
+
+// ComponentDelivery is how the platform realizes a component, derived from
+// which member of the package union is set.
+// +kubebuilder:validation:Enum=workload;api;addon
+type ComponentDelivery string
+
+const (
+	// ComponentDeliveryWorkload is a chart or a composition: the platform runs it.
+	ComponentDeliveryWorkload ComponentDelivery = "workload"
+	// ComponentDeliveryAPI is a component already running elsewhere, which the
+	// platform routes to. It does not mean external: the catalog's own
+	// example points at a Service inside the cluster.
+	ComponentDeliveryAPI ComponentDelivery = "api"
+	// ComponentDeliveryAddon is a switch inside another component's own addon
+	// system. Nothing is run and nothing is routed.
+	ComponentDeliveryAddon ComponentDelivery = "addon"
+)
+
+// Delivery reads the package union. It is the one place that mapping lives.
+func (s ComponentProfileSpec) Delivery() ComponentDelivery {
+	switch {
+	case s.Package.API != nil:
+		return ComponentDeliveryAPI
+	case s.Package.Addon != nil:
+		return ComponentDeliveryAddon
+	default:
+		return ComponentDeliveryWorkload
+	}
+}
+
+// ComponentProfile is a catalog entry for a system service, an app or an
+// agent. The cluster holds only the profiles something installed refers to.
+//
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster,shortName=cprof
+// +kubebuilder:printcolumn:name="Classes",type=string,JSONPath=`.spec.classes`
+// +kubebuilder:printcolumn:name="Delivery",type=string,JSONPath=`.status.delivery`
+// +kubebuilder:printcolumn:name="Tier",type=string,JSONPath=`.spec.trustTier`
+// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.requires) || !has(self.spec.requires.services) || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc) || !has(self.spec.requires.services.identity.oidc.audiences) || self.spec.requires.services.identity.oidc.audiences.all(a, a.startsWith(self.metadata.name + '-') && size(a) > size(self.metadata.name) + 1)",message="an audience of requires.services.identity.oidc is the profile's own: its name, a dash and a label"
+type ComponentProfile struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   ComponentProfileSpec   `json:"spec,omitempty"`
+	Status ComponentProfileStatus `json:"status,omitempty"`
+}
+
+// ComponentProfileList contains a list of ComponentProfile.
+//
+// +kubebuilder:object:root=true
+type ComponentProfileList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ComponentProfile `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&ComponentProfile{}, &ComponentProfileList{})
+}
+
+// Services are the platform services this component requires, or nil.
+//
+// An accessor because `requires` is optional and `requires.services` is
+// optional within it, so every reader would otherwise write the same two nil
+// checks — and the one that forgets panics on a profile that asks for
+// nothing, which is most of them.
+func (p *ComponentProfile) Services() *ServiceRequirements {
+	if p == nil || p.Spec.Requires == nil {
+		return nil
+	}
+	return p.Spec.Requires.Services
+}
+
+// Privileges are what this component asks for beyond the default posture, or
+// nil. Asking is not receiving: each is granted per install (AD-5).
+func (p *ComponentProfile) Privileges() *PrivilegeRequest {
+	if p == nil || p.Spec.Requires == nil {
+		return nil
+	}
+	return p.Spec.Requires.Privileges
+}
+
+// GeneratedSecrets are the secrets this component has created for it, or nil.
+func (p *ComponentProfile) GeneratedSecrets() []AppSecret {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Generated
+}
+
+// Chart is the chart this component is delivered as, or nil when it is
+// delivered some other way — a composition, an API entry, or an addon that
+// runs nothing of its own.
+func (p *ComponentProfile) Chart() *ChartRef {
+	if p == nil {
+		return nil
+	}
+	return p.Spec.Package.Chart
+}
+
+// Provisioning is what this component needs done inside itself after install,
+// or nil. On this kind it lives under hooks, beside the post-install job it
+// sits with.
+func (p *ComponentProfile) Provisioning() *ProvisioningSpec {
+	if p == nil || p.Spec.Hooks == nil {
+		return nil
+	}
+	return p.Spec.Hooks.Provisioning
+}
+
+// PostInstall is the job to run once the release is up, or nil.
+func (p *ComponentProfile) PostInstall() *AppPostInstallJob {
+	if p == nil || p.Spec.Hooks == nil {
+		return nil
+	}
+	return p.Spec.Hooks.PostInstall
+}
+
+// DerivedSecrets are the keys the profile declares under secrets.derived, or
+// nil.
+func (p *ComponentProfile) DerivedSecrets() []DerivedSecretKey {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Derived
+}
+
+// SuppliedSecrets are the credentials the profile asks a person for under
+// secrets.supplied, or nil.
+func (p *ComponentProfile) SuppliedSecrets() []SuppliedSecret {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Supplied
+}
+
+// IsAPI reports whether this entry is delivered as an external API rather than
+// something the platform runs. Read from the package, which is the one place
+// that says how a component is delivered — spec.deploymentMethod is gone, so
+// delivery can no longer contradict it.
+func (p *ComponentProfile) IsAPI() bool {
+	return p != nil && p.Spec.Package.API != nil
+}
+
+// RequiresCapabilityAnnotation is how a catalog published before placement
+// said a profile comes with a capability of the cluster.
+//
+// Superseded by placement: read for one release, with the flags
+// PlacementOf reads.
+const RequiresCapabilityAnnotation = "gentianos.io/requires-capability"
+
+// PlacementOf is where the platform places this component, or nil for one a
+// tenant installs. spec.placement when the profile has one; otherwise what a
+// catalog published before it said with the deprecated flags, or with the
+// requires-capability annotation.
+func (p *ComponentProfile) PlacementOf() *ComponentPlacement {
+	if p == nil {
+		return nil
+	}
+	s := &p.Spec
+	switch {
+	case s.Placement != nil:
+		return s.Placement
+	case s.DefaultForTenants:
+		return &ComponentPlacement{Tenants: PlacementEvery}
+	case s.DefaultForPlatform:
+		return &ComponentPlacement{Tenants: PlacementPlatform}
+	case s.DefaultWhereStoreOffered:
+		return &ComponentPlacement{Tenants: PlacementUsers, While: PlacementWhileStoreOffered}
+	case p.Annotations[RequiresCapabilityAnnotation] == string(PlacementWhileLLM):
+		return &ComponentPlacement{Tenants: PlacementUsers, While: PlacementWhileLLM}
+	}
+	return nil
+}
+
+// Placeable reports whether the platform places this component, rather than
+// a tenant installing it.
+func (p *ComponentProfile) Placeable() bool { return p.PlacementOf() != nil }
+
+// DeploysWorkload reports whether installing this creates something that runs.
+// An API entry contributes a tile and an integration; an addon flips a switch
+// inside another component. Neither is a workload of its own.
+func (p *ComponentProfile) DeploysWorkload() bool {
+	return p != nil && !p.IsAPI() && p.Spec.Package.Addon == nil
+}
+
+// GatewayExposures are the entries published on the tenant gateway, in the
+// profile's own order.
+//
+// The first is what spec.ingress was — the component's own host — and any
+// further one is what an additionalIngress was. A perimeter entry is not here:
+// it is reached through the tenant's DMZ and has no route in the tenant zone.
+func (p *ComponentProfile) GatewayExposures() []*ExposureSpec {
+	if p == nil {
+		return nil
+	}
+	var out []*ExposureSpec
+	for i := range p.Spec.Expose {
+		if p.Spec.Expose[i].Surface == SurfaceGateway {
+			out = append(out, &p.Spec.Expose[i])
+		}
+	}
+	return out
+}

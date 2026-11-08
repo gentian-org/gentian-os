@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -24,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	dto "github.com/prometheus/client_model/go"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -87,7 +82,7 @@ func gaugeValue(t *testing.T, labels ...string) float64 {
 func dnsEndpointObject(name string, endpoints ...map[string]interface{}) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(dnsEndpointGVK)
-	obj.SetNamespace("platform-kernel")
+	obj.SetNamespace(layout.Namespace(layout.Edge))
 	obj.SetName(name)
 	items := make([]interface{}, 0, len(endpoints))
 	for _, e := range endpoints {
@@ -165,10 +160,10 @@ func TestDNSVerifierReportsRecordMissingPastGrace(t *testing.T) {
 	if strings.Contains(ev[0], "mail.gentian.cloud A") || strings.Contains(ev[0], "A mail.gentian.cloud") {
 		t.Fatalf("event %q names a record that IS published", ev[0])
 	}
-	if got := gaugeValue(t, "platform-kernel", "mail-kernel", "gentian.cloud", "TXT"); got != 0 {
+	if got := gaugeValue(t, layout.Namespace(layout.Edge), "mail-kernel", "gentian.cloud", "TXT"); got != 0 {
 		t.Fatalf("gauge for the missing SPF = %v, want 0", got)
 	}
-	if gaugeValue(t, "platform-kernel", "mail-kernel", "mail.gentian.cloud", "A") != 1 {
+	if gaugeValue(t, layout.Namespace(layout.Edge), "mail-kernel", "mail.gentian.cloud", "A") != 1 {
 		t.Fatalf("gauge for the published A record should be 1")
 	}
 }

@@ -1,92 +1,26 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
-const (
-	gatewayFrameAncestorsOriginPortal  = "portal"
-	gatewayFrameAncestorsOriginMainApp = "mainApp"
-)
-
-func ingressFrameAncestorsPolicy(
-	kernelDomain, effectiveDomain, mainIngressSubDomain string,
-	ingress *gentianov1alpha1.IngressSpec,
-) (gatewayFrameAncestorsPolicy, bool, error) {
-	spec, err := gentianov1alpha1.IngressGatewayFrameAncestors(ingress)
-	if err != nil {
-		return gatewayFrameAncestorsPolicy{}, false, fmt.Errorf("parse %s: %w", gentianov1alpha1.AnnotationIngressGatewayFrameAncestors, err)
-	}
-	if spec == nil || len(spec.Origins) == 0 {
-		return gatewayFrameAncestorsPolicy{}, false, nil
-	}
-	mode := strings.TrimSpace(spec.Mode)
-	if mode == "" {
-		mode = gatewayFrameAncestorsReplace
-	}
-	seen := make(map[string]struct{})
-	var origins []string
-	add := func(origin string) {
-		if origin == "" {
-			return
-		}
-		if _, dup := seen[origin]; dup {
-			return
-		}
-		seen[origin] = struct{}{}
-		origins = append(origins, origin)
-	}
-	for _, token := range spec.Origins {
-		switch strings.TrimSpace(token) {
-		case gatewayFrameAncestorsOriginPortal:
-			for _, origin := range portalOrigins(kernelDomain, effectiveDomain) {
-				add(origin)
-			}
-		case gatewayFrameAncestorsOriginMainApp:
-			if effectiveDomain != "" && mainIngressSubDomain != "" {
-				if mainIngressSubDomain == "@" {
-					add(fmt.Sprintf("https://%s", effectiveDomain))
-				} else {
-					add(fmt.Sprintf("https://%s.%s", mainIngressSubDomain, effectiveDomain))
-				}
-			}
-		default:
-			add(strings.ReplaceAll(token, "${TENANT_DOMAIN}", effectiveDomain))
-		}
-	}
-	if len(origins) == 0 {
-		return gatewayFrameAncestorsPolicy{}, false, nil
-	}
-	return gatewayFrameAncestorsPolicy{
-		Mode:    mode,
-		Origins: strings.Join(origins, " "),
-	}, true, nil
-}
-
-func ingressNeedsEscapedSlashesKeepUnchanged(ingress *gentianov1alpha1.IngressSpec) bool {
-	return gentianov1alpha1.IngressGatewayEscapedSlashesAction(ingress) == "KeepUnchanged"
+func ingressNeedsEscapedSlashesKeepUnchanged(exposure *gentianov1alpha1.ExposureSpec) bool {
+	return gentianov1alpha1.GatewayEscapedSlashesAction(exposure.Annotations) == "KeepUnchanged"
 }
 
 func anyIntentNeedsEscapedSlashesKeepUnchanged(intents []ingressIntent) bool {
@@ -99,18 +33,27 @@ func anyIntentNeedsEscapedSlashesKeepUnchanged(intents []ingressIntent) bool {
 }
 
 func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant) ([]ingressIntent, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, c)
+	profileIndex, err := loadComponentProfileIndex(ctx, c)
 	if err != nil {
 		return nil, err
 	}
 	var intents []ingressIntent
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+	// The installed apps: a component the platform places routes its hosts
+	// through its own Component.
+	installed, err := placement.Installed(ctx, c, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range installed {
+		profile, ok := profileForApp(profileIndex, app)
 		if !ok {
 			continue
 		}
-		if profile.Spec.Ingress != nil {
-			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})
+		// The FIRST gateway exposure is what spec.ingress was: the app's own
+		// host. Any further gateway entry is what additionalIngresses were.
+		gateways := profile.GatewayExposures()
+		if len(gateways) > 0 {
+			intents = append(intents, ingressIntent{component: servingComponent(app.Profile, gateways[0]), profile: profile, ingress: gateways[0]})
 		}
 		intents = append(intents, additionalIngressIntents(app.Profile, profile)...)
 
@@ -125,7 +68,7 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 		// inside its base and does not get a primary host of its own; what it
 		// may do is add a hostname, pointed at whichever Service it names.
 		for _, addonProfile := range app.Addons {
-			addon, ok := appProfileFromIndex(profileIndex, addonProfile)
+			addon, ok := profileFor(profileIndex, addonProfile, app.PinOf(addonProfile))
 			if !ok {
 				continue
 			}
@@ -135,21 +78,35 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 	return intents, nil
 }
 
-// additionalIngressIntents turns a profile's AdditionalIngresses into intents.
-// The name carries the profile the ingress was declared on, so an addon's host
-// is named for the addon rather than for the base it is activated inside.
+// additionalIngressIntents turns a profile's AdditionalIngresses into intents,
+// each for the component that serves it: the one the entry routes into, or
+// the profile's own -- an addon's, not the base it is activated inside.
 func additionalIngressIntents(
-	profileName string, profile *gentianov1alpha1.AppProfile,
+	profileName string, profile *gentianov1alpha1.ComponentProfile,
 ) []ingressIntent {
-	intents := make([]ingressIntent, 0, len(profile.Spec.AdditionalIngresses))
-	for i := range profile.Spec.AdditionalIngresses {
+	gateways := profile.GatewayExposures()
+	if len(gateways) > 0 {
+		gateways = gateways[1:] // the first is the app's own host, above
+	}
+	intents := make([]ingressIntent, 0, len(gateways))
+	for i := range gateways {
 		intents = append(intents, ingressIntent{
-			appProfile: additionalIngressProfile(profileName, i),
-			profile:    profile,
-			ingress:    &profile.Spec.AdditionalIngresses[i],
+			component: servingComponent(profileName, gateways[i]),
+			profile:   profile,
+			ingress:   gateways[i],
 		})
 	}
 	return intents
+}
+
+// servingComponent is the component whose routes serve an entry of the
+// profile an install is named after: the component the entry routes into,
+// where it names one.
+func servingComponent(profileName string, e *gentianov1alpha1.ExposureSpec) string {
+	if e.Backend.Component != "" {
+		return e.Backend.Component
+	}
+	return profileName
 }
 
 func clusterNeedsEscapedSlashesKeepUnchanged(ctx context.Context, c client.Client) (bool, error) {

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -19,6 +13,8 @@ package controller
 import (
 	"strings"
 	"testing"
+
+	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
 // The rule this exists for: an alias into a domain the cluster hosts is refused
@@ -173,7 +169,7 @@ func TestDomainRecipients(t *testing.T) {
 		}
 	})
 
-	t.Run("case is normalised so one address is one line", func(t *testing.T) {
+	t.Run("case is normalized so one address is one line", func(t *testing.T) {
 		t.Parallel()
 		lines, _ := domainRecipients("finnor.example", []string{
 			"Sibylle@Finnor.Example",
@@ -222,33 +218,33 @@ func TestKeycloakRealmUserMailAddress(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		u    keycloakRealmUser
+		u    authz.KeycloakUser
 		want string
 	}{
 		{
 			name: "tenant realm: the username is the address",
-			u:    keycloakRealmUser{Username: "sibylle@finnor.example", Email: "sibylle@finnor.example", Enabled: true},
+			u:    authz.KeycloakUser{Username: "sibylle@finnor.example", Email: "sibylle@finnor.example", Enabled: true},
 			want: "sibylle@finnor.example",
 		},
 		{
 			name: "kernel realm: the login has no domain, the email does",
-			u:    keycloakRealmUser{Username: "administrator", Email: "administrator@gentian.cloud", Enabled: true},
+			u:    authz.KeycloakUser{Username: "administrator", Email: "administrator@gentian.cloud", Enabled: true},
 			want: "administrator@gentian.cloud",
 		},
 		{
 			name: "the username wins when both are addresses",
-			u:    keycloakRealmUser{Username: "a@x.example", Email: "b@y.example", Enabled: true},
+			u:    authz.KeycloakUser{Username: "a@x.example", Email: "b@y.example", Enabled: true},
 			want: "a@x.example",
 		},
 		{
 			name: "a service account with neither is not a recipient",
-			u:    keycloakRealmUser{Username: "service-account-odoo-cb", Enabled: true},
+			u:    authz.KeycloakUser{Username: "service-account-odoo-cb", Enabled: true},
 			want: "",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.u.mailAddress(); got != tc.want {
+			if got := mailAddress(tc.u); got != tc.want {
 				t.Errorf("mailAddress() = %q, want %q", got, tc.want)
 			}
 		})

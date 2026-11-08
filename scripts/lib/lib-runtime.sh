@@ -3,11 +3,11 @@
 # lib-runtime.sh — Shared CRI / kubelet runtime helpers
 # =============================================================================
 # Sourced by install.sh. Keeps the sudo-prompt logic and the
-# microk8s/containerd state-recovery helpers in one place so behaviour stays
+# microk8s/containerd state-recovery helpers in one place so behavior stays
 # consistent between bootstrap and teardown (step destroy()).
 #
 # Required globals (must be defined by the caller before sourcing):
-#   info(), success(), warn(), error()    — colourised log helpers
+#   info(), success(), warn(), error()    — colorized log helpers
 #
 # Public functions:
 #   ensure_sudo [REASON]
@@ -126,7 +126,7 @@ cri_cleanup() {
         if [[ -n "$ctr_bin" ]]; then
             info "CRI cleanup: removing stopped containerd tasks (via ctr)..."
             local stopped raw
-            # Use long-form --namespace because some snap shims mis-parse
+            # Use long-form --namespace because some snap bouncers mis-parse
             # the short -n flag (it gets confused with sudo's -n or ctr's
             # own global options and prints help instead of the task list).
             raw=$(sudo "$ctr_bin" --namespace k8s.io tasks ls 2>/dev/null || true)

@@ -9,269 +9,135 @@
 [[ -n "${GENTIAN_TEARDOWN_LOADED:-}" ]] && return 0
 GENTIAN_TEARDOWN_LOADED=1
 
-# ProviderConfigs must be deleted individually — kubectl delete -f fails if
-# a CRD is not registered (e.g. provider-helm was never installed).
-# Add --wait=false so deletion doesn't block if a stale usage reference lingers.
-_delete_provider_config() {
-    local resource="$1"   # e.g. providerconfig.kubernetes.crossplane.io/kubernetes
-    local label="$2"
-    local group usages u deadline
-    if ! kubectl get "${resource}" >/dev/null 2>&1; then
-        info "  ProviderConfig ${label} not found or CRD absent; skipping."
-        return 0
-    fi
+# =============================================================================
+# Namespaces — removed only once nothing is left in them
+# =============================================================================
+#
+# A namespace used to be removed like this: delete it, wait thirty seconds,
+# strip the finalizers of a fixed list of custom resource kinds, then clear the
+# namespace's own finalizer through /finalize. That last call is what lets the
+# API server drop the namespace object; it does not delete one thing inside it.
+# Whatever the namespace controller had not yet removed — because it was still
+# working, or because discovery of an aggregated API had failed and it had
+# stopped — stayed in the datastore under a namespace that no longer existed,
+# and reappeared in the next namespace of that name. A purge on MicroK8s left
+# forty objects in kernel-edge that way: cert-manager's Deployments and Helm
+# release record, external-dns, an Envoy proxy, letsencrypt account keys.
+#
+# So the contents are deleted explicitly, every namespaced kind discovery
+# lists, while the namespace is Terminating and nothing can create anything new
+# in it; what still carries a finalizer after a wait has it stripped; and the
+# namespace is finalized only once a fresh listing finds it empty. A namespace
+# that cannot be emptied is left Terminating and reported, never finalized
+# over its contents.
 
-    # This used to strip the finalizers once, delete --wait=false, and print
-    # "removed" — a lie whenever the provider was still running: the in-use
-    # finalizer belongs to the provider's usage tracker, which re-adds it as
-    # long as any ProviderConfigUsage references this config. The object then
-    # sat Terminating, destroy() went on to delete the provider — the only
-    # controller that could ever finish the job — and the corpse survived the
-    # purge indefinitely. A reinstall four hours later applied "over" it,
-    # passed its exists-check, and lost the object minutes later when the old
-    # deletion finally completed. So: kill the usages (the actual finalizer
-    # holders) and confirm this object is GONE, here, while the provider is
-    # still alive — order is what makes this terminate.
-    group="${resource%%/*}"
-    group="${group#providerconfig.}"
-    usages="providerconfigusages.${group}"
+# Seconds to wait for the contents to go before stripping their finalizers,
+# and again after. Both waits are overridable for the tests.
+GENTIAN_NS_DRAIN_WAIT="${GENTIAN_NS_DRAIN_WAIT:-90}"
+# Seconds an emptied namespace is given to finish Terminating on its own.
+GENTIAN_NS_FINALIZE_WAIT="${GENTIAN_NS_FINALIZE_WAIT:-30}"
 
-    kubectl delete "${resource}" --ignore-not-found=true --wait=false 2>/dev/null || true
+# Every namespace a teardown removed in this run, for purge_verify_namespaces_gone.
+_GENTIAN_REMOVED_NAMESPACES=""
 
-    deadline=$(( SECONDS + 60 ))
-    while kubectl get "${resource}" >/dev/null 2>&1; do
-        if (( SECONDS >= deadline )); then
-            warn "  ProviderConfig ${label} is STILL Terminating after 60s. Left like"
-            warn "  this it outlives the purge, and the next install's ProviderConfig"
-            warn "  vanishes mid-run when the pending deletion finally completes."
-            warn "    kubectl get ${resource} -o yaml    # see what holds the finalizers"
-            return 1
-        fi
-        # Every round, not once: the provider re-adds the finalizer while any
-        # usage exists, so a single strip is a race it can win. Usages are
-        # pure tracking objects — deleting them is the documented escape
-        # hatch, and in a purge every config of this group is going anyway.
-        while IFS= read -r u; do
-            [[ -n "${u}" ]] || continue
-            kubectl patch "${u}" --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
-            kubectl delete "${u}" --ignore-not-found=true --wait=false 2>/dev/null || true
-        done <<< "$(kubectl get "${usages}" -o name 2>/dev/null || true)"
-        kubectl patch "${resource}" --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
-        sleep 2
-    done
-    success "  ProviderConfig ${label} removed."
+# strip_finalizers <object...> [kubectl patch flags...] — clear the finalizers
+# of an object whose controller will not: it is gone, or it is about to be.
+# Never fails; kubectl's errors are dropped, what it prints is the caller's.
+strip_finalizers() {
+    kubectl patch "$@" --type=merge -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
 }
 
-# Explicitly delete all provider-installed CRDs.  When providers are removed
-# (Step 3), Crossplane's package manager normally GCs their CRDs.  But if
-# Crossplane core is already gone (re-entrant uninstall), the package manager
-# is not running and CRDs become orphaned.  Belt-and-suspenders: always
-# sweep these groups after helm uninstall so the next install gets clean CRDs.
-_delete_crossplane_crds() {
-    local pattern='crossplane\.io|upbound\.io'
-    local crds left deadline last_report=0 left_count=0 aggressive_done=0
+# wait_until_empty <seconds> <poll> <command...> — run the command every <poll>
+# seconds until it prints nothing, for at most <seconds>. 0 once it printed
+# nothing, 1 when the time ran out first. Its errors are dropped: a listing
+# that fails lists nothing.
+wait_until_empty() {
+    local deadline=$((SECONDS + $1)) poll="$2"
+    shift 2
+    while [[ -n "$("$@" 2>/dev/null || true)" ]]; do
+        (( SECONDS < deadline )) || return 1
+        sleep "${poll}"
+    done
+    return 0
+}
 
-    crds=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-        | grep -E "${pattern}" || true)
-
-    if [[ -z "${crds}" ]]; then
-        info "No Crossplane/Upbound CRDs found; skipping CRD sweep."
-        return 0
-    fi
-
-    info "Deleting Crossplane/Upbound CRDs..."
-    while IFS= read -r crd; do
-        [[ -z "${crd}" ]] && continue
-        kubectl patch crd "${crd}" \
-            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
-        kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
-    done <<< "${crds}"
-
-    deadline=$((SECONDS + 180))
+# Poll until the namespace holds nothing, for at most $2 seconds. 0 = empty.
+_ns_wait_empty() {
+    local ns="$1" wait="$2" end left rc
+    end=$((SECONDS + wait))
     while :; do
-        left=$(kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-            | grep -E "${pattern}" || true)
-        [[ -z "${left}" ]] && break
-        left_count=$(printf '%s\n' "${left}" | wc -l | tr -d ' ')
-        if (( SECONDS - last_report >= 10 )); then
-            info "Waiting for Crossplane/Upbound CRDs to terminate (${left_count} remaining)..."
-            info "  Remaining: $(printf '%s' "${left}" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
-            last_report=${SECONDS}
-        fi
-
-        if (( aggressive_done == 0 && SECONDS - (deadline - 180) >= 45 )); then
-            warn "Crossplane CRD deletion stalled; forcing cleanup of remaining CR instances/finalizers..."
-            while IFS= read -r crd; do
-                [[ -z "${crd}" ]] && continue
-
-                # Clear any remaining custom resources that block CRD cleanup.
-                _strip_and_delete_crd_instances "${crd}"
-
-                kubectl patch crd "${crd}" \
-                    --type=merge -p='{"metadata":{"finalizers":[]}}' \
-                    2>/dev/null || true
-                kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
-            done <<< "${left}"
-            aggressive_done=1
-        fi
-
-        if (( SECONDS > deadline )); then
-            # Not a shrug: whatever is Terminating here has no controller left
-            # to finish it, so it survives the purge as-is, and the next
-            # install inherits it — applying "over" a Terminating object
-            # passes every exists-check and then loses the object when the
-            # old deletion completes. That exact sequence cost a full install
-            # once. Name the corpses so the operator can see them before the
-            # next run does.
-            error "Crossplane/Upbound CRDs still Terminating after 180s — the purge is"
-            error "leaving them behind, and the next install WILL collide with them:"
-            while IFS= read -r crd; do
-                [[ -z "${crd}" ]] && continue
-                error "    ${crd}"
-                kubectl patch crd "${crd}" \
-                    --type=merge -p='{"metadata":{"finalizers":[]}}' \
-                    2>/dev/null || true
-            done <<< "${left}"
-            error "  Inspect with: kubectl get crd <name> -o yaml (finalizers), and"
-            error "  re-run the purge once they are gone."
-            break
-        fi
+        rc=0
+        left="$(ns_objects "${ns}")" || rc=$?
+        [[ "${rc}" == "0" && -z "${left}" ]] && return 0
+        (( SECONDS >= end )) && return 1
         sleep 3
     done
-
-    success "Crossplane/Upbound CRD sweep completed."
-
-    # Deliberately no restart here. Crossplane recreates its CRDs at startup, so
-    # restarting it immediately after deleting them puts all twenty-one straight
-    # back — and this runs from A-02's destroy(), before A-01 removes the
-    # deployment, so they then outlive the Crossplane that owns them. A purge
-    # left exactly that behind.
-    #
-    # The install side is where a missing CRD has to be repaired, and A-01's
-    # apply() does it: it checks for them after helm and restarts only if they
-    # are absent.
 }
 
-
-# _delete_argocd_application — delete one Application, bounded.
-#
-# `kubectl delete application` has no timeout by default and the Application
-# carries resources-finalizer.argocd.argoproj.io, which Argo clears only once
-# every resource the Application manages is gone. When one of those cannot
-# finalize, the delete does not slow down — it stops, and takes the teardown
-# with it.
-#
-# Seen in practice: gentian-appsets and crossplane-xrds each waited on XRDs held
-# by foregroundDeletion, which waited on a Cluster claim whose finalizer nothing
-# would ever remove, because Crossplane's composite controllers had tripped
-# their circuit breaker. Two purges sat on the same command for half an hour,
-# and would have sat there indefinitely.
-#
-# The finalizer strip is the fallback, not the first move. Removing it up front
-# would orphan whatever the Application still manages; letting Argo do its
-# cascade is right, and only a cascade that has demonstrably stalled is worth
-# cutting.
-_delete_argocd_application() {
-    local app="$1" ns="${2:-argocd}" timeout="${3:-120}"
-
-    kubectl get application "${app}" -n "${ns}" >/dev/null 2>&1 || return 0
-
-    if kubectl delete application "${app}" -n "${ns}" \
-        --ignore-not-found=true --timeout="${timeout}s" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    warn "  Application ${app} did not finalize in ${timeout}s — clearing its finalizer."
-    kubectl patch application "${app}" -n "${ns}" --type=merge \
-        -p='{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
-    kubectl delete application "${app}" -n "${ns}" \
-        --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
-}
-
-# Helper: strip finalizers via kubectl patch (standard CRD API path).
-# Works reliably while the CRD is still registered.
-_argocd_strip_kubectl() {
-    local _crd="${1}"
-    kubectl get "${_crd}" -n argocd -o name 2>/dev/null \
-        | xargs_r -I{} kubectl patch {} -n argocd \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
-}
-
-# Helper: strip finalizers via raw REST PUT.
-# The Kubernetes API server deregisters CRD API endpoints asynchronously after
-# CRD deletion, so this path remains reachable for a window after the CRD is
-# gone.  It also catches objects missed by the kubectl path due to timing.
-_argocd_strip_raw() {
-    local _api_path="${1}"
-    local _list _obj _name _clean
-    _list=$(kubectl get --raw "${_api_path}" 2>/dev/null) || return 0
-    printf '%s' "${_list}" \
-        | jq -c '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length) > 0)' \
-        2>/dev/null \
-        | while IFS= read -r _obj; do
-            _name=$(printf '%s' "${_obj}" | jq -r '.metadata.name')
-            _clean=$(printf '%s' "${_obj}" | jq '.metadata.finalizers = []')
-            printf '%s\n' "${_clean}" \
-                | kubectl replace --raw "${_api_path}/${_name}" -f - 2>/dev/null || true
-        done
-}
-
-_has_pvc() {
-    local ns="$1"
-    [[ "$(kubectl get pvc -n "${ns}" --no-headers 2>/dev/null | wc -l)" -gt 0 ]]
-}
-
-# Strip all custom resource finalizers in a namespace so it can terminate.
-# Uses kubectl get all + any remaining resources from a targeted list rather
-# than iterating every api-resource (which hangs when CRDs are mid-deletion).
-_clear_ns_finalizers() {
-    local ns="$1"
-    info "  Clearing finalizers in namespace ${ns}..."
-    # Patch everything returned by 'kubectl get all' first (fast, covers core types).
-    kubectl get all -n "${ns}" -o name 2>/dev/null \
-        | xargs_r -I%% kubectl patch %% -n "${ns}" \
-            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
-    # Then try a fixed list of custom resource types we know may linger.
-    for rt in \
-        externalsecrets.external-secrets.io \
-        clusterexternalsecrets.external-secrets.io \
-        secretstores.external-secrets.io \
-        terraforms.infra.contrib.fluxcd.io \
-        releases.helm.crossplane.io \
-        objects.kubernetes.crossplane.io \
-        providerconfigs.kubernetes.crossplane.io \
-        providerconfigs.helm.crossplane.io \
-        providerconfigs.vault.upbound.io \
-        managedresources.crossplane.io \
-        certificates.cert-manager.io \
-        issuers.cert-manager.io; do
-        kubectl get "${rt}" -n "${ns}" -o name 2>/dev/null \
-            | xargs_r -I%% kubectl patch %% -n "${ns}" \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                2>/dev/null || true
+# Delete a list of object references in a namespace. In one call first; one by
+# one when that fails, because one reference whose kind has gone fails them all.
+_ns_delete_refs() {
+    local ns="$1" refs="$2" ref
+    [[ -n "${refs}" ]] || return 0
+    # shellcheck disable=SC2086 # one reference per word, by construction
+    kubectl delete -n "${ns}" --ignore-not-found=true --wait=false ${refs} >/dev/null 2>&1 && return 0
+    for ref in ${refs}; do
+        kubectl delete -n "${ns}" --ignore-not-found=true --wait=false "${ref}" >/dev/null 2>&1 || true
     done
+}
+
+# _ns_purge_contents <namespace> — delete everything in it; 0 once it is empty.
+_ns_purge_contents() {
+    local ns="$1" refs rc=0 ref
+    refs="$(ns_objects "${ns}" | cut -f1)" || rc=$?
+    if [[ "${rc}" != "0" ]]; then
+        error "  ${ns}: the API server listed no namespaced kinds, so its contents cannot be checked."
+        return 1
+    fi
+    [[ -n "${refs}" ]] || return 0
+    info "  Deleting $(printf '%s\n' "${refs}" | wc -l | tr -d ' ') object(s) in ${ns}..."
+    _ns_delete_refs "${ns}" "${refs}"
+    _ns_wait_empty "${ns}" "${GENTIAN_NS_DRAIN_WAIT}" && return 0
+
+    # What is still there waits on a finalizer whose controller an earlier
+    # step removed. Strip it from each, and delete again.
+    refs="$(ns_objects "${ns}" | cut -f1 || true)"
+    warn "  ${ns}: $(printf '%s\n' "${refs}" | sed '/^$/d' | wc -l | tr -d ' ') object(s) still present — stripping their finalizers..."
+    for ref in ${refs}; do
+        strip_finalizers "${ref}" -n "${ns}" >/dev/null
+    done
+    _ns_delete_refs "${ns}" "${refs}"
+    _ns_wait_empty "${ns}" "${GENTIAN_NS_DRAIN_WAIT}"
 }
 
 _delete_namespace() {
-    local ns="$1"
-    # IMPORTANT: --wait=false is required.  Without it, `kubectl delete namespace`
-    # blocks indefinitely if the namespace has resources with stuck finalizers
-    # (e.g. terraforms.infra.contrib.fluxcd.io after tf-controller is gone),
-    # which prevents the polling loop below from ever running to strip them.
+    local ns="$1" left
+    _GENTIAN_REMOVED_NAMESPACES="${_GENTIAN_REMOVED_NAMESPACES} ${ns}"
+    # --wait=false: a namespace with a stuck finalizer would otherwise block
+    # here for ever, before the code below could strip it. Deleted first, so
+    # it is Terminating and nothing is created in it while it is emptied.
     kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=5 --wait=false 2>/dev/null || true
-    # Wait up to 30s; if still Terminating, strip finalizers and retry.
-    local deadline=$((SECONDS + 30))
+
+    if ! _ns_purge_contents "${ns}"; then
+        left="$(ns_objects "${ns}" | cut -f1 || true)"
+        error "  ${ns} still holds objects, so it is NOT force-finalized (that would leave them"
+        error "  stored, to reappear in the next ${ns}). Left:"
+        printf '%s\n' "${left}" | sed '/^$/d; s/^/      /' >&2
+        return 1
+    fi
+
+    # Empty: the namespace controller finishes on its own, normally at once.
+    local deadline=$((SECONDS + GENTIAN_NS_FINALIZE_WAIT))
     while kubectl get namespace "${ns}" --request-timeout=5s >/dev/null 2>&1; do
         if (( SECONDS > deadline )); then
-            warn "  ${ns} stuck in Terminating — stripping remaining finalizers..."
-            _clear_ns_finalizers "${ns}"
-            # Also clear the namespace-level finalizer itself.
-            kubectl get namespace "${ns}" -o json --request-timeout=10s 2>/dev/null \
-              | jq '.spec.finalizers=[]' \
-              | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - 2>/dev/null || true
+            # Only now, and only after a fresh listing finds nothing, may the
+            # namespace's own finalizer be cleared: what it was guarding is gone.
+            if _ns_wait_empty "${ns}" 0; then
+                warn "  ${ns} is empty but still Terminating — clearing its finalizer..."
+                kubectl get namespace "${ns}" -o json --request-timeout=10s 2>/dev/null \
+                  | jq '.spec.finalizers=[]' \
+                  | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+            fi
             break
         fi
         sleep 3
@@ -281,6 +147,41 @@ _delete_namespace() {
     else
         success "  Deleted namespace: ${ns}"
     fi
+}
+
+# purge_verify_namespaces_gone — the purge's own proof, before it says it worked.
+#
+# Every namespace this run removed, and every kernel namespace, must be gone,
+# and listing its contents by name must find nothing: objects stored under a
+# namespace that does not exist are what the next install would find in the
+# namespace it creates. 1, with each survivor named, otherwise.
+purge_verify_namespaces_gone() {
+    banner "Purge — verifying the removed namespaces are gone"
+    local ns seen="" left rc bad=0
+    for ns in ${_GENTIAN_REMOVED_NAMESPACES} $(ns_kernel_all); do
+        case " ${seen} " in *" ${ns} "*) continue ;; esac
+        seen="${seen} ${ns}"
+        if kubectl get namespace "${ns}" --request-timeout=10s >/dev/null 2>&1; then
+            error "  namespace ${ns} still exists."
+            bad=1
+        fi
+        rc=0
+        left="$(ns_objects "${ns}")" || rc=$?
+        if [[ "${rc}" != "0" ]]; then
+            error "  ${ns}: no namespaced kinds could be listed, so nothing can be vouched for."
+            bad=1
+        elif [[ -n "${left}" ]]; then
+            error "  ${ns} still holds $(printf '%s\n' "${left}" | wc -l | tr -d ' ') object(s); a new ${ns} would find them:"
+            printf '%s\n' "${left}" | cut -f1 | sed 's/^/      /' >&2
+            error "    kubectl delete -n ${ns} --wait=false $(printf '%s\n' "${left}" | cut -f1 | paste -sd' ' -)"
+            bad=1
+        fi
+    done
+    if [[ "${bad}" == "1" ]]; then
+        error "The purge did not finish: the objects above survived it. Remove them and purge again."
+        return 1
+    fi
+    success "No removed namespace exists any more, and none has objects left behind."
 }
 
 # Delete all PVCs in a namespace and wait for the backing PVs to be Released/Deleted.
@@ -312,10 +213,11 @@ _drain_pvcs() {
 
     # Belt-and-suspenders: strip any lingering pvc-protection finalizers so
     # that a timed-out delete doesn't block namespace termination.
-    kubectl get pvc -n "${ns}" -o name 2>/dev/null \
-        | xargs_r -I%% kubectl patch %% -n "${ns}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
+    local pvc
+    while IFS= read -r pvc; do
+        [[ -n "${pvc}" ]] || continue
+        strip_finalizers "${pvc}" -n "${ns}"
+    done < <(kubectl get pvc -n "${ns}" -o name 2>/dev/null || true)
 }
 
 # Delete PVs that were previously bound to PVCs in a namespace.
@@ -412,7 +314,7 @@ _delete_pvs_for_namespace() {
 
 # _reclaim_orphaned_pvs — every Gentian PV the per-namespace pass did not reach.
 #
-# The pass above walks gentian_kernel_namespaces, which does not include
+# The pass above walks the kernel namespaces, which do not include
 # tenant-<name>. So a tenant's volumes were never reclaimed: on one cluster the
 # leftovers included two tenant-<name>/nextcloud-nextcloud PVs, and three for
 # platform-kernel/postgres-1 — one per rebuild, because each cycle leaked a
@@ -433,26 +335,21 @@ _delete_pvs_for_namespace() {
 #   every Released volume it can see would take that with it.
 #
 #   That last case is not hypothetical: a bare ^gentian- prefix matched
-#   gentian-server and gentian-corp on a real machine — an unrelated product's
+#   gentian-server and one other namespace on a real machine — an unrelated product's
 #   namespaces that happen to share the string, not anything this installer
 #   ever created — and force-patched their live, Bound Postgres PVs to
 #   persistentVolumeReclaimPolicy: Delete before pv-protection blocked the
-#   deletes. gentian-infra-<env> (stage-suffixed) and gentian-system (exact)
-#   are the only gentian-* namespaces this installer actually creates, so
-#   those are what the regex matches now — not everything spelled the same
-#   way by coincidence.
+#   deletes. The kernel and system namespaces kernel/namespaces.yaml names
+#   are the ones this installer or the Cluster claim creates, so those are
+#   what the regex matches, each exactly — not everything spelled the same
+#   way by coincidence. tenant-<name> is dynamic and has no list to be read
+#   from, so it is covered by its prefix.
 _gentian_pv_namespaces_regex() {
     local ns out=""
-    for ns in $(gentian_kernel_namespaces); do
-        # gentian-infra-<env> is stage-suffixed, so matching it exactly would
-        # miss a volume left by an install at a different stage — exactly the
-        # kind of leftover this exists to collect. tenant-<name> is dynamic
-        # and never appears in gentian_kernel_namespaces at all. Both are
-        # covered by the prefixes below instead of an exact anchor.
-        case "${ns}" in gentian-infra-*|tenant-*) continue ;; esac
+    for ns in $(ns_kernel_all) $(ns_system_all); do
         out="${out}|^${ns}$"
     done
-    printf '%s' "^tenant-|^gentian-infra-${out}"
+    printf '%s' "^tenant-${out}"
 }
 
 _reclaim_orphaned_pvs() {
@@ -499,13 +396,11 @@ _strip_and_delete_one() {
     # Branching rather than an array of flags: bash 3.2 errors on an empty
     # array expansion under `set -u`, and macOS ships 3.2.
     if [[ -n "${ns}" ]]; then
-        kubectl patch "${kind}" "${name}" -n "${ns}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        strip_finalizers "${kind}" "${name}" -n "${ns}"
         kubectl delete "${kind}" "${name}" -n "${ns}" \
             --ignore-not-found=true --wait=false 2>/dev/null || true
     else
-        kubectl patch "${kind}" "${name}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        strip_finalizers "${kind}" "${name}"
         kubectl delete "${kind}" "${name}" \
             --ignore-not-found=true --wait=false 2>/dev/null || true
     fi
@@ -536,112 +431,10 @@ _delete_crds_matching() {
     while IFS= read -r crd; do
         [[ -z "${crd}" ]] && continue
         _strip_and_delete_crd_instances "${crd}"
-        kubectl patch crd "${crd}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
+        strip_finalizers crd "${crd}"
         kubectl delete crd "${crd}" --ignore-not-found=true --wait=false 2>/dev/null || true
     done <<< "${crds}"
     success "${label} removal queued."
-}
-
-_delete_envoy_gateway_scaffold() {
-    local ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
-    local gateway_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
-
-    info "Removing Gentian Gateway API edge scaffold..."
-
-    # --all -A, not `get -o name | xargs delete`: -o name drops the namespace,
-    # so every object outside `default` was left in place while the delete
-    # reported success. That is what held gateway-exists-finalizer on the
-    # GatewayClass, and the gatewayclass delete below then blocked forever.
-    for rt in \
-        backendtrafficpolicies.gateway.envoyproxy.io \
-        clienttrafficpolicies.gateway.envoyproxy.io \
-        securitypolicies.gateway.envoyproxy.io \
-        envoyextensionpolicies.gateway.envoyproxy.io \
-        envoypatchpolicies.gateway.envoyproxy.io \
-        backendtlspolicies.gateway.networking.k8s.io \
-        httproutes.gateway.networking.k8s.io \
-        gateways.gateway.networking.k8s.io; do
-        kubectl delete "${rt}" --all -A --ignore-not-found=true --wait=false 2>/dev/null || true
-    done
-
-    # The GatewayClass carries gateway-exists-finalizer, which Envoy Gateway
-    # clears only once no Gateway references the class. So the Gateways have to
-    # be gone first, and the controller has to still be running to notice —
-    # which it is, until the helm uninstall below.
-    local deadline=$(( SECONDS + 120 ))
-    while kubectl get gateways.gateway.networking.k8s.io -A --no-headers 2>/dev/null | grep -q .; do
-        if (( SECONDS >= deadline )); then
-            warn "Gateways still present after 120s; stripping their finalizers."
-            _strip_and_delete_crd_instances gateways.gateway.networking.k8s.io
-            break
-        fi
-        sleep 3
-    done
-
-    kubectl delete gatewayclass "${gateway_class}" \
-        --ignore-not-found=true --wait=false 2>/dev/null || true
-
-    if helm status eg -n "${ns}" >/dev/null 2>&1; then
-        info "Uninstalling Envoy Gateway Helm release (eg) in ${ns}..."
-        helm uninstall eg -n "${ns}" --wait --timeout=3m 2>/dev/null || true
-        success "Envoy Gateway Helm release uninstalled."
-    else
-        info "Envoy Gateway Helm release not found in ${ns}; skipping helm uninstall."
-    fi
-
-    _delete_namespace "${ns}"
-    _delete_crds_matching 'gateway\.envoyproxy\.io$' 'Envoy Gateway extension CRDs'
-    _delete_crds_matching 'gateway\.networking\.k8s\.io$' 'Gateway API CRDs'
-}
-
-# Called from A-09-argocd's destroy(), after Argo CD is gone.
-#
-# Not from C-04-mac-admission, which is where it lived: that step waits on
-# Kyverno, it does not own it, and running there deleted Argo-owned objects
-# while Argo was still reconciling them. A normal uninstall never needs this —
-# C-02 removing gentian-appsets cascades through the Application finalizer and
-# takes the chart with it. This is the fallback for a cluster whose Argo CD was
-# already broken, and the only thing that removes the kyverno namespace and CRDs
-# in that case.
-_delete_kyverno_scaffold() {
-    local policy
-
-    info "Removing Gentian Kyverno admission scaffold..."
-    for policy in \
-        gentian-disallow-privileged \
-        gentian-disallow-host-namespaces \
-        gentian-require-non-root; do
-        kubectl patch clusterpolicy "${policy}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
-        kubectl delete clusterpolicy "${policy}" --ignore-not-found=true --wait=false 2>/dev/null || true
-    done
-    success "Gentian Kyverno ClusterPolicies removed."
-
-    # No helm uninstall. There has never been a release to uninstall: Kyverno is
-    # an Argo CD Application, and Argo renders the chart and applies the
-    # manifests rather than calling Helm. `helm status kyverno` missed every
-    # time, and the branch logged "not found" as if that were a state worth
-    # reporting.
-
-    _delete_namespace "kyverno"
-    _delete_crds_matching 'kyverno\.io$' 'Kyverno CRDs'
-    # PolicyReport/ClusterPolicyReport live under wgpolicyk8s.io, not kyverno.io,
-    # so the pattern above never matched them.
-    _delete_crds_matching 'wgpolicyk8s\.io$' 'Policy report CRDs'
-
-    # The part that matters most. Argo CD's cascade removes these webhook
-    # configurations as chart resources on a healthy uninstall; when it did not
-    # run, they outlive everything else here. They are cluster-scoped and fail
-    # closed, so one left pointing at a service that no longer exists rejects
-    # the creates the next install issues — and blocks the namespace deletes
-    # A-03 is about to make.
-    kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration -o name 2>/dev/null \
-        | grep 'kyverno-' \
-        | xargs_r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
-    success "Kyverno webhook configurations removed."
 }
 
 _delete_gentianos_api_scaffold() {
@@ -650,8 +443,8 @@ _delete_gentianos_api_scaffold() {
     kubectl delete validatingwebhookconfiguration gentian-os-tenant-validator \
         --ignore-not-found=true 2>/dev/null || true
 
-    if helm status gentian-os -n gentian-system >/dev/null 2>&1; then
-        helm uninstall gentian-os -n gentian-system --wait --timeout=3m 2>/dev/null || true
+    if helm status gentian-os -n "$(ns_kernel control)" >/dev/null 2>&1; then
+        helm uninstall gentian-os -n "$(ns_kernel control)" --wait --timeout=3m 2>/dev/null || true
         success "gentian-os Helm release uninstalled."
     fi
 
@@ -667,9 +460,14 @@ _delete_gentianos_api_scaffold() {
         | grep -E 'gentian-portal' \
         | xargs_r kubectl delete --ignore-not-found=true 2>/dev/null || true
 
+    # componentprofiles is the live one; appprofiles is kept because a
+    # cluster installed before AD-4 still carries that ClusterRole and a
+    # purge that left it behind would leave a grant for a kind nothing
+    # serves. Removing a name from a teardown is how orphans are made.
     kubectl delete clusterrole \
         gentian-os \
         gentian-job-gc \
+        'crossplane:extra-resources:componentprofiles.gentianos.io' \
         'crossplane:extra-resources:appprofiles.gentianos.io' \
         'crossplane:extra-resources:oidcpackcatalogs.gentianos.io' \
         'crossplane:extra-resources:externalsecrets.external-secrets.io' \
@@ -688,7 +486,7 @@ _delete_gentianos_api_scaffold() {
 #
 # `--uninstall` reverses the steps: it removes what the installer created on the
 # cluster and stops there. OpenBao's KV survives, which is the documented and
-# usually correct behaviour — reinstalling onto the same cluster then recovers
+# usually correct behavior — reinstalling onto the same cluster then recovers
 # the credentials instead of re-prompting.
 #
 # `--purge` is for when that is exactly wrong: handing a cluster back, or
@@ -701,10 +499,12 @@ _delete_gentianos_api_scaffold() {
 # is why they are collected after the reverse pass rather than during it.
 # =============================================================================
 
-# purge_release_volumes — drain PVCs while their namespaces still exist.
+# purge_release_volumes — what a purge clears before the reverse pass.
 #
-# Runs before the reverse pass: a PVC whose pods are gone releases cleanly,
-# and pvc-protection finalizers are the usual reason a namespace delete hangs.
+# No kernel namespace's PVCs are drained here: the vault and the kernel's
+# database stay up through the reverse pass. Their claims go with their
+# namespaces (A-01's destroy), and purge_delete_volumes reclaims the volumes
+# afterwards.
 # =============================================================================
 # Crossplane's finalizers, cleared before anything that waits on them
 # =============================================================================
@@ -713,7 +513,7 @@ _delete_gentianos_api_scaffold() {
 #
 #   Cluster claim <cluster>-prod  finalizer.apiextensions.crossplane.io
 #     -> clusters.gentianos.io CRD        customresourcecleanup
-#       -> XRDs xclusters / xsuze        offered + foregroundDeletion
+#       -> XRD xclusters                 offered + foregroundDeletion
 #         -> Argo Applications crossplane-xrds, gentian-appsets
 #           -> kubectl delete application, blocking with no timeout
 #
@@ -747,8 +547,7 @@ _purge_strip_crossplane_finalizers() {
         info "Clearing finalizers on ${count} Crossplane managed resource(s)..."
         kubectl get managed -o name 2>/dev/null | while IFS= read -r obj; do
             [[ -n "${obj}" ]] || continue
-            kubectl patch "${obj}" --type=merge \
-                -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+            strip_finalizers "${obj}"
         done
         success "Managed resource finalizers cleared."
     else
@@ -766,48 +565,122 @@ _purge_strip_crossplane_finalizers() {
     #    is gone, which is why the three steps above come first.
     local xrd
     for xrd in $(kubectl get compositeresourcedefinitions -o name 2>/dev/null || true); do
-        kubectl patch "${xrd}" --type=merge \
-            -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        strip_finalizers "${xrd}"
     done
     success "Crossplane finalizers cleared."
 }
 
 
-# _purge_guard_single_instance — refuse a second concurrent purge.
+# teardown_start — take the teardown lock, then confirm a purge.
+#
+# What install.sh runs before an uninstall or a purge touches anything. Every
+# teardown takes the lock, however a purge is confirmed: at the prompt or by
+# GENTIAN_PURGE_CONFIRM. A dry run calls neither, because the lock is a file.
+teardown_start() {
+    teardown_guard_single_instance || return 1
+    if [[ "${GENTIAN_PURGE:-0}" == "1" ]]; then
+        purge_confirm || return 1
+    fi
+    return 0
+}
+
+# teardown_guard_single_instance — refuse a second concurrent teardown.
 #
 # Two purges ran against this cluster at once and nothing objected; both then
 # blocked on the same `kubectl delete application`, each making the other's
-# wait longer. Nothing about the teardown is safe to interleave with itself.
-_purge_guard_single_instance() {
-    local lock="${TMPDIR:-/tmp}/gentian-purge-${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-cluster}.lock"
+# wait longer. Nothing about the teardown is safe to interleave with itself,
+# and an uninstall is the same reverse pass as a purge.
+#
+# The lock file is created with noclobber, so two runs starting together
+# cannot both see it absent and both take it. One left by a process that is
+# gone is taken over. It is removed on exit through gentian_on_exit, next to
+# the port-forward cleanup.
+teardown_guard_single_instance() {
+    local lock="${TMPDIR:-/tmp}/gentian-teardown-${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-cluster}.lock"
     local holder
-    if [[ -e "${lock}" ]]; then
+    if ! (set -C; echo "$$" > "${lock}") 2>/dev/null; then
         holder=$(cat "${lock}" 2>/dev/null || echo "")
         if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
-            error "A purge is already running for this cluster (pid ${holder})."
+            error "A teardown is already running for this cluster (pid ${holder})."
             error "  Two teardowns interleaved is not a state this can reason about."
             error "  Wait for it, or remove ${lock} if that process is gone."
             return 1
         fi
-        info "Stale purge lock from pid ${holder:-unknown}; taking it over."
+        info "Stale teardown lock from pid ${holder:-unknown}; taking it over."
+        rm -f "${lock}"
+        if ! (set -C; echo "$$" > "${lock}") 2>/dev/null; then
+            error "Could not take the teardown lock ${lock}; another run took it first."
+            return 1
+        fi
     fi
-    echo "$$" > "${lock}" 2>/dev/null || true
-    # shellcheck disable=SC2064
-    trap "rm -f '${lock}'" EXIT
+    gentian_on_exit "rm -f '${lock}'"
     return 0
 }
 
+# purge_tenant_namespaces — the namespaces the installer never created.
+#
+# Every namespace this teardown deletes is one a step made: A-01 creates the
+# kernel set and its destroy() removes the same list. A tenant's namespaces are
+# not on that list, because nothing in the installer made them -- the tenant
+# Composition did, when somebody provisioned a tenant. So a purge stripped and
+# deleted the Tenant object and left tenant-<name>, tenant-<name>-dmz and any
+# shared-<app> or system-<function> behind it standing, with no owner left to
+# finalize them and nothing that names them.
+#
+# S8 is a purge followed by a reinstall, and a reinstall onto a cluster still
+# holding a tenant's namespace does not fail cleanly: the Composition adopts
+# whatever is there, including PVCs bound to the previous install's data.
+#
+# Ordered before the kernel namespaces and after the gentianos.io sweep, which
+# is where the operator and Crossplane are already gone: nothing can recreate
+# what this removes, and nothing is still holding a finalizer it would need to
+# answer.
+#
+# By label first, because that is what the Composition writes and it is the
+# only thing that is true of a namespace whose name nobody can predict. By
+# prefix as well, for one written before the label existed and for one whose
+# tier label was lost with the object that set it.
+purge_tenant_namespaces() {
+    banner "Purge — tenant, shared and system namespaces"
+    local ns seen found
+    seen=""
+    found=0
+    for ns in $(kubectl get namespaces \
+        -l 'gentianos.io/tier in (tenant,tenant-dmz,shared,system,system-dmz)' \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
+        [[ -n "${ns}" ]] || continue
+        seen="${seen} ${ns}"
+    done
+    # The prefixes the layout reserves. A namespace matching one of these is
+    # the platform's whatever label it is or is not carrying.
+    for ns in $(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
+        case "${ns}" in
+            tenant-*|shared-*|system-*) ;;
+            *) continue ;;
+        esac
+        case " ${seen} " in *" ${ns} "*) continue ;; esac
+        seen="${seen} ${ns}"
+    done
+
+    for ns in ${seen}; do
+        found=$((found + 1))
+        info "Removing ${ns}..."
+        # PVCs first, or the NFS directories behind them are never reclaimed
+        # and a reinstall binds new StatefulSets to the old data.
+        _drain_pvcs "${ns}"
+        # A namespace that will not empty is reported here and again by
+        # purge_verify_namespaces_gone; the others still go.
+        _delete_namespace "${ns}" || true
+    done
+    if [[ "${found}" -eq 0 ]]; then
+        info "No tenant, shared or system namespaces; nothing to remove."
+    fi
+}
+
 purge_release_volumes() {
-    local ns
     # Before the volumes, because the reverse pass that follows deletes the Argo
     # Applications that these finalizers block.
     _purge_strip_crossplane_finalizers
-    banner "Purge — releasing volumes"
-    for ns in $(gentian_kernel_namespaces); do
-        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
-        _has_pvc "${ns}" || continue
-        _drain_pvcs "${ns}"
-    done
 }
 
 # purge_delete_volumes — delete the PVs the drain released.
@@ -817,7 +690,7 @@ purge_release_volumes() {
 purge_delete_volumes() {
     local ns
     banner "Purge — deleting released volumes"
-    for ns in $(gentian_kernel_namespaces); do
+    for ns in $(ns_kernel_all); do
         _delete_pvs_for_namespace "${ns}"
     done
     # Then everything the namespace list does not cover — tenant namespaces
@@ -877,12 +750,12 @@ purge_sweep_api_scaffold() {
 # resolving. Scaled rather than deleted, so a teardown that stops halfway
 # leaves an object Argo CD can restore rather than a missing Deployment.
 teardown_freeze_edge_dns() {
-    kubectl get deploy external-dns -n external-dns >/dev/null 2>&1 || return 0
+    kubectl get deploy external-dns -n "$(ns_kernel edge)" >/dev/null 2>&1 || return 0
     info "Stopping external-dns before its sources are removed, so published"
     info "  records survive this teardown. Certificate issuance is rate-limited"
     info "  per domain, so deleting and recreating them has a cost that outlives"
     info "  the cluster. --purge --cluster-infra removes them deliberately."
-    kubectl scale deploy external-dns -n external-dns --replicas=0 >/dev/null 2>&1 ||
+    kubectl scale deploy external-dns -n "$(ns_kernel edge)" --replicas=0 >/dev/null 2>&1 ||
         warn "  Could not scale external-dns down; records may be pruned as sources go."
 }
 
@@ -898,6 +771,11 @@ purge_local_state() {
         [[ -e "${f}" ]] || continue
         rm -f "${f}" && success "Removed ${f}."
     done
+    # The kept kernel wildcard outlives a purge for the reason the DNS records
+    # do (rate limits outlive the cluster), and goes with them.
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" == "1" ]]; then
+        purge_kernel_wildcard_cache
+    fi
 }
 
 # purge_report_remaining — what a purge does not touch, said out loud.
@@ -967,10 +845,10 @@ _cluster_infra_namespaces() {
         # teardown no longer has.
         ns="$(awk '/^  destination:/{f=1; next} f && /namespace:/{print $2; exit}' "${tmpl}")"
         [[ -n "${ns}" ]] || continue
-        # Namespaces owned by a step are that step's to remove, and A-03 already
+        # Namespaces owned by a step are that step's to remove, and A-01 already
         # does. Only the ones nothing else claims belong here.
         case "${ns}" in
-            argocd|openbao|platform-kernel|gentian-system|gentian-*) continue ;;
+            kernel-*) continue ;;
         esac
         echo "${ns}"
     done | sort -u
@@ -997,7 +875,7 @@ purge_cluster_infra() {
     fi
 
     for ns in $(_cluster_infra_namespaces); do
-        _delete_namespace "${ns}"
+        _delete_namespace "${ns}" || true
     done
 
     for pattern in $(_cluster_infra_crd_patterns); do
@@ -1063,6 +941,12 @@ purge_report_remaining() {
     info "  clusters/${cluster}/kernel in gentian-deployments — this cluster's"
     info "    configuration. Remove it with a commit if the cluster is gone for good."
     info "  Anything another workload put on this cluster."
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" != "1" && -n "${KERNEL_DOMAIN:-}" \
+          && -f "$(gentian_wildcard_cache_file)" ]]; then
+        info "  $(gentian_wildcard_cache_file) — the kernel wildcard, so the next"
+        info "    install reuses it instead of spending a Let's Encrypt order."
+        info "    --purge --cluster-infra removes it."
+    fi
 }
 
 # purge_confirm — the one prompt in the teardown path.
@@ -1074,8 +958,17 @@ purge_report_remaining() {
 # password then produces different credentials, and a rebuild is a migration
 # rather than a restore. `--export-recovery-kit` is what closes that gap, so
 # whether one exists decides how bad this is.
+#
+# GENTIAN_PURGE_CONFIRM set to the cluster id answers it without a prompt, for
+# an unattended run; set to anything else, it refuses.
 purge_confirm() {
-    _purge_guard_single_instance || return 1
+    if [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
+        if [[ "${GENTIAN_PURGE_CONFIRM}" != "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
+            error "GENTIAN_PURGE_CONFIRM does not match GENTIAN_DEPLOYMENTS_CLUSTER_ID."
+            return 1
+        fi
+        return 0
+    fi
     echo ""
     warn "PURGE removes what an uninstall keeps:"
     warn "  • OpenBao's storage — every credential, and the derivation salt"

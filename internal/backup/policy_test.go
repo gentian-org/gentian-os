@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -30,7 +24,8 @@ func policyTenant() *gentianov1alpha1.Tenant {
 	return &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Isolation: &gentianov1alpha1.TenantIsolation{S3Prefix: "demo-"},
+			DisplayName: "Test Tenant",
+			Isolation:   &gentianov1alpha1.TenantIsolation{S3Prefix: "demo-"},
 		},
 	}
 }
@@ -71,17 +66,22 @@ func TestResolveEffectiveWithNoPolicies(t *testing.T) {
 	}
 }
 
+// tenantKey is an age recipient a tenant states as its own.
+const tenantKey = "age17lr9cmnutfg66r92rwc20umdz82sgx3wq86c5lmht8d7sm8dlqpqr3d4zw"
+
 // A tenant policy with no cluster policy is ordinary on a fresh cluster.
 // Reaching through the absent cluster policy to ask whether overrides are
 // allowed panicked the reconciler on exactly this input.
 func TestResolveEffectiveOverrideWithoutClusterPolicy(t *testing.T) {
 	eff, err := ResolveEffective(policyTenant(), nil,
-		tenantPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *"}))
+		tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+			Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}},
+		}))
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
-	if eff.Schedule != "0 3 * * *" {
-		t.Errorf("schedule = %q, want the tenant's", eff.Schedule)
+	if len(eff.Recipients) != 1 || eff.Recipients[0] != tenantKey {
+		t.Errorf("recipients = %v, want the tenant's key", eff.Recipients)
 	}
 }
 
@@ -93,11 +93,11 @@ func TestTenantInheritsClusterDefaults(t *testing.T) {
 			Bucket:   "platform-bundles",
 			Region:   "ch-gva-2",
 		},
-		Schedule:  "0 3 * * *",
-		Retention: &gentianov1alpha1.BackupRetention{KeepLast: 7},
 	})
-	// States only the schedule: the destination must still be the cluster's.
-	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "30 1 * * *"})
+	// States only its key: the destination must still be the cluster's.
+	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+		Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}},
+	})
 
 	eff, err := ResolveEffective(policyTenant(), cluster, override)
 	if err != nil {
@@ -112,14 +112,11 @@ func TestTenantInheritsClusterDefaults(t *testing.T) {
 	if eff.CredentialName != "backup-destination" {
 		t.Errorf("credential = %q, want the cluster's requirement", eff.CredentialName)
 	}
-	if eff.Schedule != "30 1 * * *" {
-		t.Errorf("schedule = %q, want the tenant's", eff.Schedule)
-	}
-	if eff.Retention.KeepLast != 7 {
-		t.Errorf("keepLast = %d, want the inherited 7", eff.Retention.KeepLast)
+	if len(eff.Recipients) != 1 || eff.Recipients[0] != tenantKey {
+		t.Errorf("recipients = %v, want the tenant's key", eff.Recipients)
 	}
 	if eff.Overridden {
-		t.Error("stating only a schedule must not mark the destination overridden")
+		t.Error("stating only a key must not mark the destination overridden")
 	}
 }
 
@@ -158,7 +155,7 @@ func TestTenantDestinationDerivesItsOwnCredential(t *testing.T) {
 }
 
 // Renaming the bucket within the platform's own storage needs no credential:
-// the platform already has keys for its own MinIO.
+// the platform already has keys for its own object store.
 func TestBucketOnlyChangeNeedsNoCredential(t *testing.T) {
 	eff, err := ResolveEffective(policyTenant(),
 		clusterPolicy(gentianov1alpha1.BackupPolicySpec{
@@ -191,21 +188,6 @@ func TestForbiddenOverrideIsRefusedNotIgnored(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "allowTenantOverride") {
 		t.Errorf("error does not name the setting that refused it: %v", err)
-	}
-}
-
-// Suspending is distinct from inheriting: without it a tenant could not opt
-// out of a cluster-wide schedule, because "" already means "not stated".
-func TestSuspendScheduleOptsOutOfTheClusterDefault(t *testing.T) {
-	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *"})
-	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{SuspendSchedule: true})
-
-	eff, err := ResolveEffective(policyTenant(), cluster, override)
-	if err != nil {
-		t.Fatalf("ResolveEffective: %v", err)
-	}
-	if eff.Schedule != "" {
-		t.Errorf("schedule = %q, want none after suspending", eff.Schedule)
 	}
 }
 
@@ -262,14 +244,14 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 		if got.Endpoint != "https://sos-ch-gva-2.exo.io" || got.Bucket != "one-off" {
 			t.Errorf("endpoint/bucket not taken from the export: %+v", got)
 		}
-		// The whole point of managed: the Secret ESO already materialised is
+		// The whole point of managed: the Secret ESO already materialized is
 		// used where it stands. A staged copy here would be a second copy of a
 		// live credential for no gain.
 		if got.CredentialSecret != policy.CredentialSecret {
 			t.Errorf("CredentialSecret = %q, want the workspace's own %q",
 				got.CredentialSecret, policy.CredentialSecret)
 		}
-		if got.CredentialSecret == ExportCredentialSecretName("manual-3") {
+		if got.CredentialSecret == ExportCredentialSecretName(tenant.Name, "manual-3") {
 			t.Error("managed source staged a copy; nothing should have been copied")
 		}
 	})
@@ -282,7 +264,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 			CredentialSecretRef: "someone-elses-secret",
 		}, tenant, "manual-4")
 
-		want := ExportCredentialSecretName("manual-4")
+		want := ExportCredentialSecretName(tenant.Name, "manual-4")
 		if got.CredentialSecret != want {
 			t.Errorf("CredentialSecret = %q, want %q", got.CredentialSecret, want)
 		}
@@ -306,7 +288,6 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 // alongside would grant exactly the access that was refused — while every
 // screen still said the tenant's key was in force.
 func TestResolveEffectiveTenantKeyReplacesTheClusters(t *testing.T) {
-	const tenantKey = "age17lr9cmnutfg66r92rwc20umdz82sgx3wq86c5lmht8d7sm8dlqpqr3d4zw"
 	const platformKey = "age1rvkgylm0264jym5vpu7lmczsxerc8wwzfv8sv34h2yqlhgaqs56qk80dp8"
 
 	t.Run("unset inherits, and inheriting to the top means the cluster's key", func(t *testing.T) {
@@ -368,4 +349,63 @@ func TestResolveEffectiveTenantKeyReplacesTheClusters(t *testing.T) {
 			t.Fatal("a tenant key was accepted on a cluster that forbids overrides")
 		}
 	})
+}
+
+// A destination's addressing style travels with its endpoint: from the
+// policy, from one export's own destination, and not at all to the
+// platform's own storage.
+func TestTheAddressingStyleTravelsWithTheEndpoint(t *testing.T) {
+	tenant := policyTenant()
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{
+			Endpoint:        "https://s3.example.org",
+			AddressingStyle: gentianov1alpha1.S3AddressingVirtualHost,
+		},
+	})
+	eff, err := ResolveEffective(tenant, cluster, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eff.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
+		t.Errorf("the policy's style is not resolved: %q", eff.AddressingStyle)
+	}
+	// A tenant's destination replaces the cluster's wholesale, style and all.
+	own := tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{Endpoint: "https://other.example.org"},
+	})
+	allow := true
+	cluster.Spec.AllowTenantOverride = &allow
+	if eff, err := ResolveEffective(tenant, cluster, own); err != nil || eff.AddressingStyle != "" {
+		t.Errorf("the cluster's style outlived its endpoint (%v): %q", err, eff.AddressingStyle)
+	}
+	local := ApplyExportDestination(eff,
+		&gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationPlatform}, tenant, "m")
+	if local.AddressingStyle != "" {
+		t.Errorf("the platform's storage is given a style: %q", local.AddressingStyle)
+	}
+	custom := ApplyExportDestination(Effective{}, &gentianov1alpha1.ExportDestination{
+		Mode: gentianov1alpha1.ExportDestinationCustom, Endpoint: "https://s3.example.org",
+		AddressingStyle: gentianov1alpha1.S3AddressingVirtualHost,
+	}, tenant, "m")
+	if custom.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
+		t.Errorf("one export's style is not taken: %q", custom.AddressingStyle)
+	}
+}
+
+func TestBundlesInASharedBucketGoUnderTheirTenant(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "team"}}
+	own := Effective{Bucket: BackupBucket(tenant)}
+	if got := BundlePrefix(own, tenant, "policy-20261106-0300"); got != "policy-20261106-0300" {
+		t.Fatalf("the tenant's own bucket: %q", got)
+	}
+	shared := Effective{Bucket: "new-bucket", Endpoint: "https://sos-ch-dk-2.exo.io"}
+	if got := BundlePrefix(shared, tenant, "policy-20261106-0300"); got != "team/policy-20261106-0300" {
+		t.Fatalf("a shared bucket: %q", got)
+	}
+	// A bucket elsewhere that happens to carry the tenant's own bucket's name
+	// is still not the platform's storage.
+	elsewhere := Effective{Bucket: BackupBucket(tenant), Endpoint: "https://s3.example.org"}
+	if got := BundlePrefix(elsewhere, tenant, "x"); got != "team/x" {
+		t.Fatalf("an external bucket of the same name: %q", got)
+	}
 }

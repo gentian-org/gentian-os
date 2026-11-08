@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -47,6 +41,10 @@ func quiesceScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("add client-go scheme: %v", err)
 	}
+	// The helpers find a tenant's namespace by reading the Tenant.
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
 	return s
 }
 
@@ -73,6 +71,7 @@ func getDeployment(t *testing.T, c client.Client, name string) *appsv1.Deploymen
 func quiesceReconciler(objs ...client.Object) *TenantReconciler {
 	s := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(s)
+	_ = gentianov1alpha1.AddToScheme(s)
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 	return &TenantReconciler{Client: c, Scheme: s}
 }
@@ -100,8 +99,8 @@ func TestQuiesceRemembersReplicaCountAndResumeRestoresIt(t *testing.T) {
 		t.Errorf("memo = %q, want 3", paused.Annotations[replicaMemoAnnotation])
 	}
 
-	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-		t.Fatalf("resumeApp: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
 	}
 	resumed := getDeployment(t, r.Client, "nextcloud")
 	if *resumed.Spec.Replicas != 3 {
@@ -128,8 +127,8 @@ func TestPausingTwiceDoesNotDestroyTheMemo(t *testing.T) {
 		t.Fatalf("memo after repeated pauses = %q, want 2", got)
 	}
 
-	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-		t.Fatalf("resumeApp: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
 	}
 	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 2 {
 		t.Errorf("replicas after resume = %d, want 2", got)
@@ -143,8 +142,8 @@ func TestResumeIsSafeWhenNothingWasPaused(t *testing.T) {
 	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 4))
 	ctx := context.Background()
 
-	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-		t.Fatalf("resumeApp on unpaused app: %v", err)
+	if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp on unpaused app: %v", err)
 	}
 	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 4 {
 		t.Errorf("resume rescaled an unpaused workload to %d", got)
@@ -154,8 +153,8 @@ func TestResumeIsSafeWhenNothingWasPaused(t *testing.T) {
 		t.Fatalf("quiesceApp: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
-			t.Fatalf("resumeApp pass %d: %v", i, err)
+		if err := r.unquiesceApp(ctx, "demo", "nextcloud-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+			t.Fatalf("unquiesceApp pass %d: %v", i, err)
 		}
 	}
 	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 4 {
@@ -177,10 +176,47 @@ func TestQuiesceLeavesOtherAppsRunning(t *testing.T) {
 	}
 
 	if got := *getDeployment(t, r.Client, "openproject").Spec.Replicas; got != 5 {
-		t.Errorf("neighbour was scaled to %d", got)
+		t.Errorf("neighbor was scaled to %d", got)
 	}
 	if _, memoed := getDeployment(t, r.Client, "openproject").Annotations[replicaMemoAnnotation]; memoed {
-		t.Error("neighbour was memoed, so a later resume would rescale it")
+		t.Error("neighbor was memoed, so a later resume would rescale it")
+	}
+}
+
+// Odoo's chart labels its Deployment only with its own name and puts the
+// platform's app label on the pods. Matched by the Deployment alone, a restore
+// replaced Odoo's database under the running pod and called it done.
+func TestQuiesceFindsAWorkloadByItsPodsAppLabel(t *testing.T) {
+	odoo := deployment("odoo", "", 1)
+	odoo.Labels = map[string]string{"app.kubernetes.io/name": "odoo"}
+	odoo.Spec.Template.Labels = map[string]string{"gentianos.io/app": "odoo-base-ce"}
+	r := quiesceReconciler(odoo)
+	ctx := context.Background()
+
+	if _, err := r.quiesceApp(ctx, "demo", "odoo-base-ce", nil); err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if got := *getDeployment(t, r.Client, "odoo").Spec.Replicas; got != 0 {
+		t.Fatalf("odoo still runs %d replica(s) after the pause", got)
+	}
+	if err := r.unquiesceApp(ctx, "demo", "odoo-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
+	}
+	if got := *getDeployment(t, r.Client, "odoo").Spec.Replicas; got != 1 {
+		t.Errorf("replicas after resume = %d, want 1", got)
+	}
+}
+
+// A pause that reaches nothing must not pass for one: the caller goes on to
+// capture or replace the app's data while it keeps running.
+func TestQuiesceThatFindsNoWorkloadFails(t *testing.T) {
+	r := quiesceReconciler(deployment("openproject", "openproject-ce", 1))
+
+	if _, err := r.quiesceApp(context.Background(), "demo", "odoo-base-ce", nil); err == nil {
+		t.Fatal("quiesceApp reported a pause for an app it found no workload of")
+	}
+	if err := r.unquiesceApp(context.Background(), "demo", "odoo-base-ce", nil, gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Errorf("resuming an app with nothing paused: %v", err)
 	}
 }
 
@@ -245,16 +281,16 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
 		Status: gentianov1alpha1.TenantExportStatus{
-			Quiesced: []string{"app-store-me"},
+			Quiesced: []string{"notes"},
 			Apps: []gentianov1alpha1.AppExportStatus{{
-				Name:         "app-store-me",
+				Name:         "notes",
 				Phase:        gentianov1alpha1.TenantExportPhaseRunning,
 				QuiesceStart: &start,
 			}},
 		},
 	}
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	paused := deployment("app-store-me", "app-store-me", 0)
+	paused := deployment("notes", "notes", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "2"}
 
 	c := fake.NewClientBuilder().WithScheme(s).
@@ -263,11 +299,11 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
 
-	if _, err := r.failApp(context.Background(), export, tenant, "app-store-me", "boom"); err != nil {
+	if _, err := r.failApp(context.Background(), export, tenant, "notes", "boom"); err != nil {
 		t.Fatalf("failApp: %v", err)
 	}
 
-	entry := appStatus(&export.Status.Apps, "app-store-me")
+	entry := appStatus(&export.Status.Apps, "notes")
 	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed {
 		t.Fatalf("app phase = %q, want Failed", entry.Phase)
 	}
@@ -277,7 +313,7 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	if len(export.Status.Quiesced) != 0 {
 		t.Fatalf("status.quiesced = %v, want empty", export.Status.Quiesced)
 	}
-	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 2 {
+	if got := *getDeployment(t, c, "notes").Spec.Replicas; got != 2 {
 		t.Fatalf("replicas = %d, want the memoed 2", got)
 	}
 }
@@ -302,19 +338,19 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 		},
 		Status: gentianov1alpha1.TenantExportStatus{
 			Phase:    gentianov1alpha1.TenantExportPhaseRunning,
-			Quiesced: []string{"app-store-me"},
+			Quiesced: []string{"notes"},
 			Bundle: &gentianov1alpha1.BundleRef{
 				Bucket: "demo-gentian-backup",
 				Prefix: "export-x",
 			},
 		},
 	}
-	paused := deployment("app-store-me", "app-store-me", 0)
+	paused := deployment("notes", "notes", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
 	captureJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name:      "tx-export-x-app-store-me-pg",
-		Namespace: kernelNamespace,
-		Labels:    map[string]string{backup.ExportLabel: "export-x"},
+		Name:      "tx-demo-export-x-notes-pg",
+		Namespace: postgresNamespace,
+		Labels:    map[string]string{backup.ExportLabel: "export-x", tenantLabel: "demo"},
 	}}
 	// A live namespace and tenant: this is someone deleting one backup, which
 	// is the only case that may remove a bundle.
@@ -337,15 +373,15 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatalf("reconcile 1: %v", err)
 	}
-	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 1 {
+	if got := *getDeployment(t, c, "notes").Spec.Replicas; got != 1 {
 		t.Fatalf("replicas = %d, want resumed 1", got)
 	}
-	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: kernelNamespace}, &batchv1.Job{}); err == nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: captureJob.Namespace}, &batchv1.Job{}); err == nil {
 		t.Fatal("capture Job survived deletion; it would upload into the prefix being removed")
 	}
 	cleanup := &batchv1.Job{}
-	cleanupName := bundleDeleteJobName("export-x")
-	if err := c.Get(ctx, types.NamespacedName{Name: cleanupName, Namespace: kernelNamespace}, cleanup); err != nil {
+	cleanupName := bundleDeleteJobName("demo", "export-x")
+	if err := c.Get(ctx, types.NamespacedName{Name: cleanupName, Namespace: s3Namespace}, cleanup); err != nil {
 		t.Fatalf("cleanup Job not created: %v", err)
 	}
 
@@ -370,9 +406,8 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	}
 }
 
-// The status is the record that a unit finished — the Job is not. The kernel
-// Job GC and the Job's own TTL can both remove a completed Job while a
-// sibling unit still runs, and recreating it re-ran a dump that had already
+// The status is the record that a unit finished — the Job is not. The Job's
+// own TTL can remove a completed Job while a sibling unit still runs, and recreating it re-ran a dump that had already
 // been uploaded.
 func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 	s := runtime.NewScheme()
@@ -383,12 +418,12 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 		t.Fatalf("add gentian scheme: %v", err)
 	}
 
-	const jobName = "tx-export-x-app-store-me-pg"
+	const jobName = "tx-demo-export-x-notes-pg"
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
 		Status: gentianov1alpha1.TenantExportStatus{
 			Apps: []gentianov1alpha1.AppExportStatus{{
-				Name:           "app-store-me",
+				Name:           "notes",
 				CompletedUnits: []string{jobName},
 			}},
 		},
@@ -400,8 +435,8 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 
 	unit := captureUnit{JobName: jobName, Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name:      jobName,
-		Namespace: kernelNamespace,
-		Labels:    map[string]string{meta.AppLabel: "app-store-me"},
+		Namespace: s3Namespace,
+		Labels:    map[string]string{meta.AppLabel: "notes"},
 	}}}
 	done, err := r.ensureCaptureJob(context.Background(), export, unit)
 	if err != nil {
@@ -410,7 +445,7 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 	if !done {
 		t.Fatal("recorded-complete unit reported not done")
 	}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: s3Namespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("the Job was recreated for an already-completed unit: %v", err)
 	}
 }
@@ -442,9 +477,14 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		Namespace: "tenant-demo",
 		Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
 	}}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
-		Spec:       gentianov1alpha1.AppProfileSpec{Family: "nextcloud"},
+		// The chart's name, which is what PVC matching uses now that family
+		// has moved to the store's listing.
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{Name: "nextcloud"}},
+		},
 	}
 
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(tenant, export, pvc).Build()
@@ -453,7 +493,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 
 	enc := backup.Encryption{
 		Mode:             gentianov1alpha1.ExportEncryptionPassphrase,
-		PassphraseSecret: "tx-nightly-passphrase",
+		PassphraseSecret: "tx-demo-nightly-passphrase",
 		PassphraseKey:    "passphrase",
 	}
 	units, err := r.captureUnits(context.Background(), tenant, "nextcloud-base-ce", profile, export, enc)
@@ -466,7 +506,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		u := &units[i]
 		if u.Kind == "volume" {
 			volume = u
-		} else if u.Job.Namespace != kernelNamespace {
+		} else if u.Job.Namespace != s3Namespace {
 			t.Errorf("%s unit runs in %q, want the kernel namespace", u.Kind, u.Job.Namespace)
 		}
 	}
@@ -476,8 +516,8 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 	if volume.Job.Namespace != "tenant-demo" {
 		t.Fatalf("volume Job namespace = %q, want tenant-demo", volume.Job.Namespace)
 	}
-	staged := volumeUploadSecretName(export.Name)
-	var minioFromStaged, passphraseFromStaged bool
+	staged := stagedSecretName("demo", export.Name)
+	var storeFromStaged, passphraseFromStaged bool
 	containers := append(append([]corev1.Container{},
 		volume.Job.Spec.Template.Spec.InitContainers...),
 		volume.Job.Spec.Template.Spec.Containers...)
@@ -487,16 +527,16 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 				continue
 			}
 			from := env.ValueFrom.SecretKeyRef.Name
-			if env.Name == "MINIO_ENDPOINT" && from == staged {
-				minioFromStaged = true
+			if env.Name == "S3_ENDPOINT" && from == staged {
+				storeFromStaged = true
 			}
 			if env.Name == backup.PassphraseEnvVar && from == staged {
 				passphraseFromStaged = true
 			}
 		}
 	}
-	if !minioFromStaged {
-		t.Error("volume Job does not read MinIO credentials from the staged copy")
+	if !storeFromStaged {
+		t.Error("volume Job does not read the object store's credentials from the staged copy")
 	}
 	if !passphraseFromStaged {
 		t.Error("volume Job does not read the passphrase from the staged copy")
@@ -515,18 +555,18 @@ func (f *fakeExecer) Exec(_ context.Context, _, _, _ string, argv []string) (str
 // forbiddenReader is the API server refusing a request the ServiceAccount has
 // no rule for. The cached client does not do this — it starts an informer that
 // cannot sync and blocks the caller instead — which is exactly why appVolumes
-// reads uncached and why this double models the uncached behaviour.
+// reads uncached and why this double models the uncached behavior.
 type forbiddenReader struct{ client.Reader }
 
 func (forbiddenReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
 	return apierrors.NewForbidden(
 		schema.GroupResource{Resource: "persistentvolumeclaims"}, "",
-		errors.New(`User "system:serviceaccount:gentian-system:gentian-os" cannot list `+
+		errors.New(`User "system:serviceaccount:kernel-control:gentian-os" cannot list `+
 			`resource "persistentvolumeclaims" in API group "" at the cluster scope`))
 }
 
 // On 2026-08-30 this permission was missing on corp and the export did not fail.
-// It paused app-store-me, blocked on a cache that could never sync, and left the
+// It paused an app, blocked on a cache that could never sync, and left the
 // app scaled to zero with `Running` on the CR and nothing in the log. Failing is
 // the requirement; that the app comes back is the reason it matters.
 //
@@ -556,12 +596,18 @@ func TestAListThatCannotSeePVCsFailsTheExportAndResumesTheApp(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
 		},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
-		Spec:       gentianov1alpha1.AppProfileSpec{Family: "nextcloud"},
+		// The chart's name, which is what PVC matching uses now that family
+		// has moved to the store's listing.
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{Name: "nextcloud"}},
+		},
 	}
 	paused := deployment("nextcloud", "nextcloud-base-ce", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
@@ -600,7 +646,7 @@ func TestAppVolumesReportsAFailedListRatherThanNoVolumes(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s, VolumeReader: forbiddenReader{}}
 
-	claims, err := r.appVolumes(context.Background(), "demo", "nextcloud-base-ce", nil, nil)
+	claims, err := r.appVolumes(context.Background(), &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}, "nextcloud-base-ce", nil, nil)
 	if err == nil {
 		t.Fatalf("appVolumes returned %v and no error", claims)
 	}
@@ -625,12 +671,14 @@ func TestCommandModeResumeRunsTheResumeHook(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
 		},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
-		Spec: gentianov1alpha1.AppProfileSpec{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
 			Backup: &gentianov1alpha1.BackupSpec{
 				Quiesce: &gentianov1alpha1.BackupQuiesce{
 					Mode: gentianov1alpha1.BackupQuiesceCommand,
@@ -844,7 +892,7 @@ func TestTenantTeardownKeepsTheBundle(t *testing.T) {
 
 			// No cleanup Job: the bundle's objects stay in the bucket.
 			if err := c.Get(ctx, types.NamespacedName{
-				Name: bundleDeleteJobName("keep-me"), Namespace: kernelNamespace,
+				Name: bundleDeleteJobName("demo", "keep-me"), Namespace: s3Namespace,
 			}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
 				t.Fatalf("a cleanup Job was created during teardown: %v", err)
 			}
@@ -934,7 +982,7 @@ func (f *fakeTailer) Tail(_ context.Context, _, _, container string, _ int64) (s
 
 func failedPod(name, jobName string, initFailed, mainFailed string) *corev1.Pod {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name: name, Namespace: kernelNamespace,
+		Name: name, Namespace: s3Namespace,
 		Labels: map[string]string{"job-name": jobName},
 	}}
 	if initFailed != "" {
@@ -971,7 +1019,7 @@ func TestACaptureFailureSaysWhatTheContainerSaid(t *testing.T) {
 	}}
 	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
 
-	got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-docmost-s3")
+	got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-docmost-s3")
 
 	if !strings.Contains(got, "Insufficient permissions") {
 		t.Fatalf("the container's error is missing from %q", got)
@@ -1000,7 +1048,7 @@ func TestTheFirstFailedContainerIsTheOneReported(t *testing.T) {
 	}}
 	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
 
-	got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-docmost-s3")
+	got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-docmost-s3")
 
 	if !strings.Contains(got, "fetch-bucket") || !strings.Contains(got, "Access Denied") {
 		t.Fatalf("the failing init container was not reported: %q", got)
@@ -1021,13 +1069,13 @@ func TestAnUnreadableLogIsNotItselfAFailure(t *testing.T) {
 
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		LogTailer: &fakeTailer{err: errors.New("pod is gone")}}
-	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
+	if got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-x"); got != "" {
 		t.Errorf("an unreadable log produced %q instead of nothing", got)
 	}
 
 	// And with no tailer at all, which is how every unit suite builds this.
 	r = &TenantExportReconciler{Client: c, Scheme: s}
-	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
+	if got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-x"); got != "" {
 		t.Errorf("no tailer produced %q instead of nothing", got)
 	}
 }
@@ -1157,15 +1205,15 @@ func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
 	}
 
 	platform := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio-prod:9000"),
+			"endpoint":  []byte("http://s3.system-s3:9000"),
 			"accessKey": []byte("platform-key"),
 			"secretKey": []byte("platform-secret"),
 		},
 	}
 	destination := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "backup-destination-demo", Namespace: kernelNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-destination-demo", Namespace: s3Namespace},
 		Data: map[string][]byte{
 			backup.DestinationAccessKeyField: []byte("EXO-key"),
 			backup.DestinationSecretKeyField: []byte("EXO-secret"),
@@ -1187,14 +1235,14 @@ func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
 		WithObjects(platform, destination, export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s}
 
-	if err := r.ensureVolumeUploadSecret(context.Background(), export, "demo",
+	if err := r.ensureStagedSecret(context.Background(), export, "tenant-demo",
 		backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}); err != nil {
-		t.Fatalf("ensureVolumeUploadSecret: %v", err)
+		t.Fatalf("ensureStagedSecret: %v", err)
 	}
 
 	staged := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: volumeUploadSecretName("export-x"), Namespace: "tenant-demo"}, staged); err != nil {
+		Name: stagedSecretName("demo", "export-x"), Namespace: "tenant-demo"}, staged); err != nil {
 		t.Fatalf("get staged secret: %v", err)
 	}
 
@@ -1221,9 +1269,9 @@ func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
 		t.Fatalf("add gentian scheme: %v", err)
 	}
 	platform := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio-prod:9000"),
+			"endpoint":  []byte("http://s3.system-s3:9000"),
 			"accessKey": []byte("platform-key"),
 			"secretKey": []byte("platform-secret"),
 		},
@@ -1237,13 +1285,13 @@ func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(platform, export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s}
 
-	if err := r.ensureVolumeUploadSecret(context.Background(), export, "demo",
+	if err := r.ensureStagedSecret(context.Background(), export, "tenant-demo",
 		backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}); err != nil {
-		t.Fatalf("ensureVolumeUploadSecret: %v", err)
+		t.Fatalf("ensureStagedSecret: %v", err)
 	}
 	staged := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
-		Name: volumeUploadSecretName("export-y"), Namespace: "tenant-demo"}, staged); err != nil {
+		Name: stagedSecretName("demo", "export-y"), Namespace: "tenant-demo"}, staged); err != nil {
 		t.Fatalf("get staged secret: %v", err)
 	}
 	if string(staged.Data["accessKey"]) != "platform-key" {
@@ -1273,8 +1321,10 @@ func TestTheTenantWideEntryIsReadyWhenItsJobsAre(t *testing.T) {
 	}
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
+	store := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: backup.StorageAdminSecret, Namespace: s3Namespace},
+		Data: map[string][]byte{"endpoint": []byte("http://s3:9000"), "accessKey": []byte("a"), "secretKey": []byte("s")}}
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(export, tenant).WithStatusSubresource(export).Build()
+		WithObjects(export, tenant, store).WithStatusSubresource(export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
 
@@ -1341,9 +1391,10 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 	// A Job that has not failed yet — it is retrying — with a pod whose upload
 	// container has already died. This is the window that used to be missed.
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name: "tx-e-nextcloud-vol0", Namespace: kernelNamespace}}
+		Name: "tx-e-nextcloud-vol0", Namespace: s3Namespace,
+		Labels: map[string]string{tenantLabel: "demo", backup.ExportLabel: "e"}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name: "tx-e-nextcloud-vol0-abc", Namespace: kernelNamespace,
+		Name: "tx-e-nextcloud-vol0-abc", Namespace: s3Namespace,
 		Labels: map[string]string{"job-name": "tx-e-nextcloud-vol0"},
 	}}
 	pod.Status.Phase = corev1.PodRunning
@@ -1370,7 +1421,7 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 	unit := captureUnit{
 		Kind: "volume", Name: "nextcloud-nextcloud", JobName: job.Name,
 		Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-			Name: job.Name, Namespace: kernelNamespace,
+			Name: job.Name, Namespace: s3Namespace,
 			Labels: map[string]string{meta.AppLabel: "nextcloud-base-ce"},
 		}},
 	}
@@ -1396,7 +1447,7 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 //
 // The pod that was running through a command-mode quiesce holds two things a
 // restore invalidates and cannot reach: its caches, and every ConfigMap mounted
-// with subPath, which Kubernetes materialises once at pod start and never
+// with subPath, which Kubernetes materializes once at pod start and never
 // refreshes. A Nextcloud pod carrying an empty copy of its session config could
 // not write a session at all — logins failed at the OIDC callback with 403 —
 // and no restore could clear it, because nothing restarted the pod.

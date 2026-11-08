@@ -1,0 +1,147 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package authz
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+)
+
+// pinRetry is how long Pinned waits between looks while the model it was
+// built with is not in the store yet.
+var pinRetry = 5 * time.Second
+
+// pinPages bounds how far back Pinned searches the store's models. The one
+// it wants is the newest or close to it; a handful of pages is plenty.
+const pinPages = 5
+
+// ErrNotPinned is a reader started without the store and model the operator
+// recorded. It is a refusal to start, never a cue to look the store up: a
+// store found by its name is whichever store carries the name.
+var ErrNotPinned = errors.New("authz: no pinned authorization store; the operator records it in the ConfigMap " + PinConfigMap)
+
+// Pinned checks the store and model the operator recorded, without writing
+// either: for a reader such as the ext-auth bouncer, which must decide
+// against what the operator established and never establish anything of its
+// own. Both o.StoreID and o.ModelID must be set.
+//
+// The model returned is the stored one equal to the embedded model.json,
+// which is the recorded one except across an upgrade or a rollback. On an
+// upgrade a reader starts alongside the operator and may read the record
+// before the operator has written the new model; deciding against the
+// recorded one would leave it on the old model until restarted. On a
+// rollback the recorded model is the one the rolled-back binary does not
+// know. So the recorded model is taken when it is this binary's, and
+// otherwise the pinned store is searched for this binary's model -- never
+// another store -- and Pinned waits for it, up to ctx's deadline.
+func Pinned(ctx context.Context, o Options) (storeID, modelID string, err error) {
+	if o.StoreID == "" || o.ModelID == "" {
+		return "", "", ErrNotPinned
+	}
+	c, err := newClient(o)
+	if err != nil {
+		return "", "", err
+	}
+	var want map[string]any
+	if err := json.Unmarshal(modelV1, &want); err != nil {
+		return "", "", fmt.Errorf("embedded model: %w", err)
+	}
+	// reason is why Pinned is still waiting. A look the deadline cut off
+	// half-way says only that the deadline came, so it does not replace the
+	// reason an earlier look found.
+	var reason error
+	for {
+		modelID, err = c.pinnedOnce(ctx, o, want)
+		if err == nil {
+			return o.StoreID, modelID, nil
+		}
+		if reason == nil {
+			c.log.InfoContext(ctx, "waiting for the operator to write the authorization model this service was built with",
+				"store", o.StoreID, "reason", err.Error())
+		}
+		if reason == nil || ctx.Err() == nil {
+			reason = err
+		}
+		select {
+		case <-ctx.Done():
+			return "", "", fmt.Errorf("%w (gave up waiting: %v)", reason, ctx.Err())
+		case <-time.After(pinRetry):
+		}
+	}
+}
+
+func (c *OpenFGA) pinnedOnce(ctx context.Context, o Options, want map[string]any) (string, error) {
+	var recorded map[string]any
+	if err := c.fga.Do(ctx, http.MethodGet, "/stores/"+o.StoreID+"/authorization-models/"+url.PathEscape(o.ModelID), nil, &recorded); err == nil {
+		if m, ok := recorded["authorization_model"].(map[string]any); ok && sameModel(m, want) {
+			return o.ModelID, nil
+		}
+	} else if !isNotFound(err) {
+		return "", fmt.Errorf("read model %s: %w", o.ModelID, err)
+	}
+	// OpenFGA lists a store's models newest first.
+	token := ""
+	for range pinPages {
+		models, next, err := c.fga.ReadModels(ctx, o.StoreID, 50, token)
+		if err != nil {
+			return "", fmt.Errorf("read models: %w", err)
+		}
+		for _, m := range models {
+			if sameModel(m, want) {
+				id, _ := m["id"].(string)
+				return id, nil
+			}
+		}
+		if token = next; token == "" {
+			break
+		}
+	}
+	return "", fmt.Errorf("authz: store %s does not hold the model this service was built with yet; the operator writes it", o.StoreID)
+}
+
+// pinWait is how long OpenPinned waits for the operator's model.
+const pinWait = 5 * time.Minute
+
+// OpenPinned opens the store the operator established and recorded, for a
+// process that only reads the graph: the store and the model in
+// OPENFGA_STORE_ID and OPENFGA_MODEL_ID, at baseURL with OPENFGA_API_TOKEN,
+// as Pinned finds them within five minutes. Without the record it refuses,
+// rather than find a store by its name.
+func OpenPinned(baseURL string, log *slog.Logger) (*OpenFGA, error) {
+	o := Options{
+		BaseURL:  baseURL,
+		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
+		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
+		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
+		Logger:   log,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), pinWait)
+	defer cancel()
+	storeID, modelID, err := Pinned(ctx, o)
+	if err != nil {
+		return nil, fmt.Errorf("authorization store: %w", err)
+	}
+	o.StoreID, o.ModelID = storeID, modelID
+	return NewOpenFGA(o)
+}
+
+// StoreID is the store every question is asked of.
+func (c *OpenFGA) StoreID() string { return c.storeID }
+
+// ModelID is the model every question is decided against.
+func (c *OpenFGA) ModelID() string { return c.modelID }

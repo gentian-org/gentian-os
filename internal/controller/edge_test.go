@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -80,8 +74,8 @@ func TestIngressWritesNoDNSRecords(t *testing.T) {
 	ing, fake := newFakeTunnel()
 	ctx := context.Background()
 
-	for _, h := range []string{"id.example.test", "portal.example.test"} {
-		if err := ing.EnsureRoute(ctx, h, "http://gw.platform-kernel.svc:80"); err != nil {
+	for _, h := range []string{"id.example.test", "desktop.example.test"} {
+		if err := ing.EnsureRoute(ctx, h, "http://gw.kernel-edge.svc:80"); err != nil {
 			t.Fatalf("EnsureRoute(%s): %v", h, err)
 		}
 	}
@@ -115,8 +109,8 @@ func TestIngressProgramsRoutes(t *testing.T) {
 }
 
 // TestTunnelDeclaresItsDNSTarget pins the seam between the two halves. This
-// annotation is the only thing that tells external-dns where a tunnelled
-// hostname points, since a tunnelled Gateway has no address of its own.
+// annotation is the only thing that tells external-dns where a tunneled
+// hostname points, since a tunneled Gateway has no address of its own.
 //
 // Proxied is not a preference: cfargotunnel.com resolves to nothing a client
 // could connect to, so an unproxied record answers and then refuses.
@@ -230,7 +224,7 @@ func TestEdgeRecordCarriesProviderSettingsPerRecord(t *testing.T) {
 	}
 }
 
-// TestEdgeRecordIsStableAcrossCalls: Go randomises map iteration, and this
+// TestEdgeRecordIsStableAcrossCalls: Go randomizes map iteration, and this
 // record set is compared field by field on every reconcile. An unstable order
 // would rewrite the object on roughly every pass, forever.
 func TestEdgeRecordIsStableAcrossCalls(t *testing.T) {

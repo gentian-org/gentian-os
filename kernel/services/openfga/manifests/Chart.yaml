@@ -1,7 +1,8 @@
 apiVersion: v2
 name: openfga
 description: |
-  Per-stage manifests for openfga, rendered from a single source.
-  The ApplicationSet passes env; adding a stage needs no new files.
+  The kernel's OpenFGA: the openfga chart as a vendored subchart (charts/),
+  its values under `openfga` in values.yaml, and beside it the ExternalSecret
+  it reads. The ApplicationSet passes env; adding a stage needs no new files.
 type: application
-version: 0.1.0
+version: 0.2.0

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -23,16 +17,16 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
+
+	"github.com/gentian-org/gentian-os/internal/keycloak"
+
+	"github.com/gentian-org/gentian-os/internal/authz"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,9 +40,9 @@ import (
 // therefore gets a credential per client application — the pattern Google and
 // Fastmail use — rather than one credential that opens every mailbox.
 //
-// Two artefacts per tenant, deliberately on opposite sides of the boundary:
+// Two artifacts per tenant, deliberately on opposite sides of the boundary:
 //
-//	the hashes, in the kernel namespace, for Dovecot to verify against;
+//	the hashes, in Dovecot's namespace, for Dovecot to verify against;
 //	the plaintexts, in the TENANT namespace, for that tenant's mail client.
 //
 // A tenant therefore holds its own users' credentials and nobody else's, which
@@ -114,115 +108,50 @@ func argon2idPasswdLine(address, password string) (string, error) {
 		address, m, t, p, b64(salt), b64(sum)), nil
 }
 
-// keycloakRealmUsers lists usernames in a realm.
+// keycloakRealmUsers lists the logins of a realm's enabled users.
 //
 // Read from Keycloak rather than from the mail system, because Keycloak is
 // where a user comes into existence — a mailbox derived from anywhere else is a
 // second registry that drifts the first time someone is added or removed.
-// keycloakAdminHTTP is used for both calls below.
-//
-// http.DefaultClient has no timeout. A Keycloak that accepts the connection and
-// then never answers — a wedged pod, a NetworkPolicy that blackholes rather than
-// rejects — would block a controller-runtime worker forever, and the tenant
-// whose reconcile owned that worker would simply stop being reconciled with
-// nothing logged.
-var keycloakAdminHTTP = &http.Client{Timeout: 30 * time.Second}
-
-// keycloakAdminBase returns the admin API base URL and a bearer token for it.
-//
-// Extracted so the two realm readers below share one way of authenticating
-// rather than two that can drift.
-func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token string, err error) {
-	ns := defaultServicesNamespace()
-	if base, err = r.secretValue(ctx, keycloakAdminSecret, ns, "url"); err != nil {
-		return "", "", err
-	}
-	user, err := r.secretValue(ctx, keycloakAdminSecret, ns, "username")
-	if err != nil {
-		return "", "", err
-	}
-	pass, err := r.secretValue(ctx, keycloakAdminSecret, ns, "password")
-	if err != nil {
-		return "", "", err
-	}
-	base = strings.TrimSuffix(base, "/")
-
-	form := url.Values{
-		"client_id":  {"admin-cli"},
-		"username":   {user},
-		"password":   {pass},
-		"grant_type": {"password"},
-	}
-	// NewRequestWithContext, not http.PostForm: PostForm takes no context, so
-	// this call could not be cancelled when the reconcile was.
-	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		base+"/realms/master/protocol/openid-connect/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", "", err
-	}
-	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := keycloakAdminHTTP.Do(tokenReq)
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return "", "", err
-	}
-	if tok.AccessToken == "" {
-		return "", "", fmt.Errorf("keycloak returned no admin token (status %d)", resp.StatusCode)
-	}
-	return base, tok.AccessToken, nil
-}
-
 func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string) ([]string, error) {
-	base, token, err := r.keycloakAdminBase(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
-
-	// Paged: a realm with more than the default page of users would otherwise
-	// have the tail silently omitted, and a missing mailbox reads as a mail
-	// fault rather than a truncated list.
+	users, err := kc.ListRealmUsers(ctx, realm)
+	if err != nil {
+		return nil, err
+	}
 	var names []string
-	for first := 0; ; first += 100 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, realm, first), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		page, err := keycloakAdminHTTP.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var users []keycloakRealmUser
-		err = json.NewDecoder(page.Body).Decode(&users)
-		_ = page.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range users {
-			if u.Enabled && u.Username != "" {
-				names = append(names, u.Username)
-			}
-		}
-		if len(users) < 100 {
-			break
+	for _, u := range users {
+		if u.Username != "" {
+			names = append(names, u.Username)
 		}
 	}
 	sort.Strings(names)
 	return names, nil
 }
 
-// keycloakRealmUser is the part of a realm user this file reads.
-type keycloakRealmUser struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Enabled  bool   `json:"enabled"`
+// keycloakTenantMembers is the enabled members of the tenant's members group,
+// by username: what keycloakRealmUsers answers, for a realm that also holds
+// accounts people made themselves.
+func (r *TenantReconciler) keycloakTenantMembers(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("load keycloak-admin: %w", err)
+	}
+	members, err := kc.ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, m := range members {
+		if m.Username != "" {
+			names = append(names, m.Username)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // mailAddress is where this user receives, which is not always the login.
@@ -235,7 +164,7 @@ type keycloakRealmUser struct {
 //
 // Returns "" for a user with no usable address, which the caller skips rather
 // than counting as an owner.
-func (u keycloakRealmUser) mailAddress() string {
+func mailAddress(u authz.KeycloakUser) string {
 	if strings.Contains(u.Username, "@") {
 		return u.Username
 	}
@@ -252,39 +181,18 @@ func (u keycloakRealmUser) mailAddress() string {
 // and changing what it returns would silently re-derive every password a tenant
 // has already configured in a mail client.
 func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm string) ([]string, error) {
-	base, token, err := r.keycloakAdminBase(ctx)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
-
+	users, err := kc.ListRealmUsers(ctx, realm)
+	if err != nil {
+		return nil, err
+	}
 	var addrs []string
-	for first := 0; ; first += 100 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, realm, first), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		page, err := keycloakAdminHTTP.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		var users []keycloakRealmUser
-		err = json.NewDecoder(page.Body).Decode(&users)
-		_ = page.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range users {
-			if !u.Enabled {
-				continue
-			}
-			if a := u.mailAddress(); a != "" {
-				addrs = append(addrs, a)
-			}
-		}
-		if len(users) < 100 {
-			break
+	for _, u := range users {
+		if a := mailAddress(u); a != "" {
+			addrs = append(addrs, a)
 		}
 	}
 	sort.Strings(addrs)
@@ -296,8 +204,13 @@ func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm str
 // Never rotated automatically: rotating it changes every password the tenant's
 // clients already hold, which logs everyone out of their mail at once with no
 // signal as to why.
+//
+// Kept in the mail namespace, beside the hashes derived from it. Only the
+// operator reads it, so no mount decides where it goes; what decides it is
+// that every mail password of the tenant follows from this value, and the
+// edge namespace is the one that faces the internet.
 func (r *TenantReconciler) tenantMailSeed(ctx context.Context, tenant string) ([]byte, error) {
-	ns := defaultServicesNamespace()
+	ns := mailSeedNamespace
 	name := mailAppPasswordSeedName + "-" + tenant
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec)
@@ -337,7 +250,15 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err != nil {
 		return err
 	}
-	users, err := r.keycloakRealmUsers(ctx, name)
+	// Everyone in the realm -- unless people sign up to it themselves: an
+	// account made on the registration page has no mailbox here and gets
+	// no mail identity.
+	var users []string
+	if tenant.SignUpEnabled() {
+		users, err = r.keycloakTenantMembers(ctx, tenant)
+	} else {
+		users, err = r.keycloakRealmUsers(ctx, name)
+	}
 	if err != nil {
 		return err
 	}
@@ -349,7 +270,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	{
 		sec := &corev1.Secret{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+			Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace,
 		}, sec); err == nil {
 			for _, l := range strings.Split(string(sec.Data[mailAppPasswordFile(mailAppPasswordApp, name)+".users"]), "\n") {
 				if addr, _, ok := strings.Cut(strings.TrimSpace(l), ":"); ok {
@@ -375,7 +296,7 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 		}
 		pw := deriveMailPassword(seed, mailAppPasswordApp, addr)
 		line := existing[addr]
-		if !argon2idLineMatches(line, addr, pw) {
+		if !argon2idLineMatches(line, pw) {
 			var err error
 			if line, err = argon2idPasswdLine(addr, pw); err != nil {
 				return err
@@ -392,7 +313,14 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err := r.upsertSecret(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
 		return err
 	}
-	// The hashes, in the kernel namespace, for Dovecot — one pair of files per
+	// And nobody else's: upsertSecret merges, so the password of a person who
+	// was removed or switched off stayed in the tenant's copy for as long as
+	// the tenant existed -- and it is derived from the address, so it is also
+	// the password the next person given that address would be handed.
+	if err := r.keepOnlySecretKeys(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
+		return err
+	}
+	// The hashes, in Dovecot's namespace, for Dovecot — one pair of files per
 	// tenant, NOT one pair shared by all of them.
 	//
 	// The shared key this replaces held only the lines of whichever tenant
@@ -403,58 +331,13 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	// nothing logged beyond an auth failure. Dovecot includes the directory by
 	// glob and the passdbs chain with result_failure = continue, so a file per
 	// tenant needs no configuration change and cannot overwrite another's.
-	if err := r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+	if err := r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
 		mailAppPasswordFile(mailAppPasswordApp, name) + ".users": []byte(lines.String()),
 		mailAppPasswordFile(mailAppPasswordApp, name) + ".conf":  passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
 	}); err != nil {
 		return err
 	}
-	// The pre-split shared file — but ONLY once every tenant has its own.
-	//
-	// Removing it as soon as the first tenant reconciled is what broke this in
-	// production: the shared file held the users of whichever tenant wrote it
-	// last, so deleting it took away the credentials of every tenant that had not
-	// yet reconciled under the new scheme. Their logins failed as wrong passwords
-	// until their own reconcile happened to come round, which for a Tenant that
-	// reconciles on a timer can be a long time to be unable to read mail.
-	//
-	// Checking first costs one List and makes the migration order-independent:
-	// whichever tenant reconciles last is the one that clears it away.
-	migrated, err := r.allTenantsHaveOwnPasswdFile(ctx)
-	if err != nil {
-		return err
-	}
-	if migrated {
-		if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
-			mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
-			return err
-		}
-	}
 	return r.syncMailSubmissionCredential(ctx, tenant, domain, seed)
-}
-
-// allTenantsHaveOwnPasswdFile reports whether every Tenant now has its own
-// per-tenant passwd-file, which is the condition for retiring the shared one.
-func (r *TenantReconciler) allTenantsHaveOwnPasswdFile(ctx context.Context) (bool, error) {
-	sec := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
-	}, sec); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	tenants := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenants); err != nil {
-		return false, err
-	}
-	for i := range tenants.Items {
-		if _, ok := sec.Data[mailAppPasswordFile(mailAppPasswordApp, tenants.Items[i].Name)+".users"]; !ok {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // mailPasswdFileKeys lists every passdb key one tenant owns, across apps.
@@ -494,8 +377,10 @@ func passdbInclude(file string) []byte {
 //
 // Both halves again, and for the same reason as the app passwords: the hash
 // where Dovecot verifies it, the plaintext where the consumer reads it. The
-// consumer here is the SMTP configuration Job, which runs in the kernel
-// namespace, so the plaintext goes there rather than into the tenant's.
+// consumers here are the SMTP configuration Job and the realm the tenant's
+// Composition declares, both of which read beside Keycloak, so the plaintext
+// goes there rather than into the tenant's namespace. It was written to the
+// edge namespace instead: the Job found no Secret and sent unauthenticated.
 func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant, domain string, seed []byte) error {
 	addr := mailSubmissionLocalPart + "@" + domain
 	pw := deriveMailPassword(seed, mailSubmissionApp, addr)
@@ -505,10 +390,155 @@ func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, ten
 	if err := r.registerSubmissionIdentity(ctx, mailSubmissionApp, tenant.Name, addr, pw); err != nil {
 		return err
 	}
-	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, defaultServicesNamespace(), map[string][]byte{
+	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, mailSubmissionNamespace, map[string][]byte{
 		"smtp_user":     []byte(addr),
 		"smtp_password": []byte(pw),
 	})
+}
+
+// realmMail is the mail server a tenant realm sends through: what the tenant's
+// Composition declares and what the SMTP Job writes. The password is named,
+// never held.
+type realmMail struct {
+	Host, Port, From, Username string
+	SSL, StartTLS              bool
+	// The Secret beside Keycloak that holds the password, and its key.
+	SecretName, SecretKey string
+}
+
+// realmHasOwnMailLogin reports whether the operator mints a mail login for
+// this tenant's realm: a cluster that runs its own mail, and a tenant
+// registered in it -- with mailboxes, or outbound only where people sign up
+// to it, whose realm has to confirm their addresses. The tenant that adopts
+// the kernel realm declares no realm, and the installer gives that realm its
+// own login.
+func (r *TenantReconciler) realmHasOwnMailLogin(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	if r.adoptsKernelRealm(tenant) || !r.dovecotDeployed(ctx) {
+		return false, nil
+	}
+	if present, err := r.mailFunctionPresent(ctx); err != nil || !present {
+		return false, err
+	}
+	if mailDomain(tenant, r.KernelDomain, r.TenancyMode) == "" {
+		return false, nil
+	}
+	switch r.tenantMailMode(ctx, tenant) {
+	case gentianov1alpha1.MailModeSelfhosted:
+		return true, nil
+	case gentianov1alpha1.MailModeTransportOnly:
+		return tenant.SignUpEnabled(), nil
+	}
+	return false, nil
+}
+
+// ensureRealmMailCredential mints the login a tenant realm sends its mail
+// with BEFORE the realm is declared, so that the realm's first write already
+// carries the password.
+//
+// The credential used to be minted only by the mail stage, which runs after
+// the identity stage -- so always after the realm existed. Both writers of the
+// realm's mail server read it by reference and neither waits for it: the
+// provider behind the Composition writes the realm with authentication on, the
+// login and no password, and reports it synced. Keycloak then answers every
+// invitation with "no password specified". The provider does not put that
+// right on its own either: it cannot read a password back, so once it holds
+// the Secret's value it sees no difference from a realm that never received it.
+//
+// Same derivation, same Secret, same passwd-file line as the mail stage, which
+// keeps calling syncMailSubmissionCredential and finds nothing to change.
+func (r *TenantReconciler) ensureRealmMailCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	own, err := r.realmHasOwnMailLogin(ctx, tenant)
+	if err != nil || !own {
+		return err
+	}
+	seed, err := r.tenantMailSeed(ctx, tenant.Name)
+	if err != nil {
+		return err
+	}
+	return r.syncMailSubmissionCredential(ctx, tenant, mailDomain(tenant, r.KernelDomain, r.TenancyMode), seed)
+}
+
+// tenantRealmMail is the mail server this tenant's realm is to have, or nil
+// when it is to have none.
+//
+// The cluster's mail mode decides. Where the cluster runs its own mail, a
+// realm the operator mints a login for sends as that login, and any other
+// realm has no mail server. Where the cluster relays, every realm sends as
+// the relay's login, from keycloak-smtp-credentials.
+//
+// Nil until the Secret that holds the password exists and holds one. The
+// provider does not wait for a Secret it is pointed at: a realm declared
+// before it is written with the login and no password, and that realm cannot
+// send. So a cluster whose relay has not been supplied yet gets its realms
+// without a mail server, and the mail server on the reconcile after it has.
+//
+// The relay's host and login are read from the Secret because that is the one
+// place they are: the relay is supplied once, into the vault, and projected
+// here. They are settings, and they go onto the XTenant; the password does
+// not leave the Secret.
+func (r *TenantReconciler) tenantRealmMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*realmMail, error) {
+	if r.KernelRealm == "" || r.KernelDomain == "" || r.adoptsKernelRealm(tenant) {
+		return nil, nil
+	}
+	if r.dovecotDeployed(ctx) {
+		own, err := r.realmHasOwnMailLogin(ctx, tenant)
+		if err != nil || !own {
+			return nil, err
+		}
+		name := mailSubmissionSecretPrefix + tenant.Name
+		sec := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: mailSubmissionNamespace}, sec); err != nil {
+			if errors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if len(sec.Data["smtp_user"]) == 0 || len(sec.Data["smtp_password"]) == 0 {
+			return nil, nil
+		}
+		return &realmMail{
+			Host: "mail." + r.KernelDomain, Port: "587", StartTLS: true,
+			From:       mailSubmissionLocalPart + "@" + r.KernelDomain,
+			Username:   string(sec.Data["smtp_user"]),
+			SecretName: name, SecretKey: "smtp_password",
+		}, nil
+	}
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	d := sec.Data
+	if !smtpCredentialsUsable(d) || len(d["smtp_host"]) == 0 || len(d["smtp_user"]) == 0 || len(d["smtp_password"]) == 0 {
+		return nil, nil
+	}
+	port := string(d["smtp_port"])
+	if port == "" {
+		port = "587"
+	}
+	from := string(d["smtp_from"])
+	if from == "" {
+		from = mailSubmissionLocalPart + "@" + r.KernelDomain
+	}
+	return &realmMail{
+		Host: string(d["smtp_host"]), Port: port, From: from, Username: string(d["smtp_user"]),
+		// As the SMTP Job reads them: only an explicit "true" turns either on.
+		SSL: string(d["smtp_ssl"]) == "true", StartTLS: string(d["smtp_starttls"]) == "true",
+		SecretName: keycloakSMTPCredentialsSecret, SecretKey: "smtp_password",
+	}, nil
+}
+
+// xtenantRealmMail projects it onto the XTenant spec. Every key here is in
+// the realmMail schema of crossplane/xrds/tenant.yaml: an XRD prunes what it
+// does not declare, silently.
+func xtenantRealmMail(m *realmMail) map[string]interface{} {
+	return map[string]interface{}{
+		"host": m.Host, "port": m.Port, "from": m.From, "username": m.Username,
+		"ssl": m.SSL, "starttls": m.StartTLS,
+		"passwordSecretRef": map[string]interface{}{"name": m.SecretName, "key": m.SecretKey},
+	}
 }
 
 // secretKeySafe maps a username onto the charset a Secret key permits.
@@ -538,7 +568,7 @@ func secretKeySafe(s string) string {
 //
 // A line that cannot be parsed reports false, so a malformed or foreign entry is
 // replaced rather than trusted.
-func argon2idLineMatches(line, address, password string) bool {
+func argon2idLineMatches(line, password string) bool {
 	_, encoded, ok := strings.Cut(strings.TrimSpace(line), ":")
 	if !ok || !strings.HasPrefix(encoded, "{ARGON2ID}$argon2id$v=19$") {
 		return false
@@ -592,26 +622,89 @@ func (r *TenantReconciler) deleteSecretKeys(ctx context.Context, name, ns string
 	return r.Update(ctx, sec)
 }
 
-func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
+// keepOnlySecretKeys removes every key of a Secret that is not in keep.
+func (r *TenantReconciler) keepOnlySecretKeys(ctx context.Context, name, ns string, keep map[string][]byte) error {
 	sec := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name, Namespace: ns,
-				Labels: map[string]string{managedByLabel: managedByValue},
-			},
-			Data: data,
-		})
-	}
-	if err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
+	var stale []string
+	for k := range sec.Data {
+		if _, ok := keep[k]; !ok {
+			stale = append(stale, k)
+		}
 	}
-	for k, v := range data {
-		sec.Data[k] = v
+	if len(stale) == 0 {
+		return nil
 	}
-	return r.Update(ctx, sec)
+	return r.deleteSecretKeys(ctx, name, ns, stale...)
+}
+
+// mailSignInListed reports whether any passwd-file the mail server verifies
+// against still holds a line for an address: whether somebody could still
+// sign in to that mailbox, or send as it, with a mail password.
+func (r *TenantReconciler) mailSignInListed(ctx context.Context, address string) (bool, error) {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dovecotAppPasswordsSecret, Namespace: dovecotNamespace}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for key, file := range sec.Data {
+		if !strings.HasSuffix(key, ".users") {
+			continue
+		}
+		for _, line := range strings.Split(string(file), "\n") {
+			if who, _, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && strings.EqualFold(who, address) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// keycloakRealmHolders lists every address a realm's people hold, as a login
+// or as their address, whether or not they may sign in at the moment: a
+// person who was switched off is still a person, and their mailbox is theirs.
+func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm string) (map[string]bool, error) {
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
+	users, err := kc.ListRealmAccounts(ctx, realm)
+	if err != nil {
+		return nil, fmt.Errorf("listing the people of realm %s: %w", realm, err)
+	}
+	held := map[string]bool{}
+	for _, u := range users {
+		for _, a := range []string{u.Username, u.Email} {
+			if strings.Contains(a, "@") {
+				held[strings.ToLower(a)] = true
+			}
+		}
+	}
+	return held, nil
+}
+
+func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: ns,
+			Labels: map[string]string{managedByLabel: managedByValue},
+		},
+		Data: data,
+	}
+	return ensureObject(ctx, r.Client, desired, func(sec *corev1.Secret) bool {
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+		for k, v := range data {
+			sec.Data[k] = v
+		}
+		return true
+	})
 }

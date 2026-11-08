@@ -9,18 +9,34 @@ ignore: |
   # made the lint fail on a directory nobody edits and nothing ships.
   .claude/
   config/crd/
+  # Envoy Gateway's own CRDs, copied from its chart for the operator's tests
+  # (scripts/gen/gen-envoy-gateway-crds.py). Upstream's text, not ours.
+  internal/controller/testdata/envoy-gateway-crds/
   charts/gentian-os/crds/
+  # Profile bundles as gentian-apps' build wrote them, copied byte for byte:
+  # their digests are over these bytes, Compositions and inline tile art
+  # included.
+  internal/profilebundle/testdata/bundles/
+  # And both binaries' embedded copy of all of them, written by the same
+  # target (scripts/gen/gen-definitions.py). The XRDs beside them are copies
+  # of crossplane/xrds/, which is linted, so they are too.
+  internal/schemacheck/definitions/crds/
   charts/gentian-os/templates/
-  kernel/services/llm/chart/templates/
   # Every chart under kernel/manifests/, by pattern rather than by name, for the
   # reason spelled out below: a chart added here must not be able to break CI by
   # being forgotten in this list.
   kernel/manifests/*/chart/templates/
   kernel/bootstrap/chart/templates/
+  kernel/bootstrap/chart/templates/
+  kernel/appsets/templates/
+  kernel/data/*/templates/
   charts/infra/
   kernel/manifests/flux-crds/
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml
+  # What `crossplane render` printed, compared byte for byte; its line
+  # lengths are the in-cluster URLs', not anyone's style.
+  crossplane/tests/unit/render/**/expected.yaml
   # The appset-managed kernel services are Helm charts; everything under their
   # templates/ is Go-templated and unparseable by yamllint, exactly like
   # charts/gentian-os/templates/ above. The per-service dev/ and prod/ entries
@@ -31,6 +47,10 @@ ignore: |
   # job on every commit and, because the docker job depends on it, meant no
   # operator image was ever published.
   kernel/services/*/manifests/templates/
+  # Upstream charts vendored as subcharts (keycloakx, openfga): upstream's
+  # text, templates and values alike, kept byte for byte so UPSTREAM.md's
+  # account of them stays true. Ours is the service chart around them.
+  kernel/services/*/manifests/charts/
   kernel/appsets/templates/
 
 

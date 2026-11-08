@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -25,6 +19,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,6 +28,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/provisioning/privilege"
 )
 
@@ -52,16 +48,22 @@ const (
 )
 
 // ensureAppPrivileges maps gentian:tenant:<t>:app-admins members into each
-// installed app's declared privileged role (AppProfile.spec.provisioning).
+// installed app's declared privileged role (ComponentProfile.spec.hooks.provisioning).
 func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	if len(tenant.Spec.Apps) == 0 {
+	// The installed apps: a component the platform places is not among
+	// the apps whose privileged role app-admins are mapped into.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(installed) == 0 {
 		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionTrue,
 			"NoAppsConfigured", "No application privileged roles to reconcile")
 		return ctrl.Result{}, nil
 	}
 
-	identityReady := tenantConditionTrue(tenant, conditionIdentityReady)
-	appsReady := tenantConditionTrue(tenant, conditionAppsReady)
+	identityReady := apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionIdentityReady)
+	appsReady := apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionAppsReady)
 	if !identityReady || !appsReady {
 		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
 			"WaitingForPrerequisites", "Waiting for identity and app deployment before privileged role sync")
@@ -72,11 +74,10 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("apply app privilege reconcile request: %w", err)
 	}
 
-	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("load keycloak admin: %w", err)
 	}
-	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	members, err := kc.ListGroupMembers(ctx, tenant.Name, gentianTenantAppAdminsGroup(tenant.Name))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list app-admins members: %w", err)
@@ -86,17 +87,17 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 	var privilegedApps []string
 	syncFailed := false
 	syncPending := false
-	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+	for _, app := range installed {
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, profileName, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+			return ctrl.Result{}, fmt.Errorf("get ComponentProfile %s: %w", profileName, err)
 		}
 		role := profilePrivilegedRole(profile)
 		if role == nil {
@@ -104,7 +105,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		}
 		privilegedApps = append(privilegedApps, profileName)
 
-		ready, err := r.waitForAppClaimReady(ctx, tenant, profileName)
+		ready, err := r.appComponentReady(ctx, tenant, profileName)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -114,11 +115,19 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
 		}
 
-		if r.appPrivilegeSynced(tenant, profileName, fingerprint) {
+		// Everyone the tenant entitled to the app, beside its administrators:
+		// the script may give them the app's ordinary roles.
+		users, err := kc.ListGroupMembers(ctx, tenant.Name, gentianTenantAppGroup(tenant.Name, profileName))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("list %s users: %w", profileName, err)
+		}
+		appFingerprint := fingerprint + "@" + privilege.UsersFingerprint(users) +
+			"@" + privilege.DeclarationFingerprint(profile.Provisioning())
+		if r.appPrivilegeSynced(tenant, profileName, appFingerprint) {
 			continue
 		}
 
-		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, fingerprint)
+		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, users, appFingerprint)
 		if err != nil {
 			syncFailed = true
 			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
@@ -133,7 +142,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 				"Syncing", fmt.Sprintf("Applying app administrators to %s", profileName))
 			continue
 		}
-		if err := r.persistAppPrivilegeFingerprint(ctx, tenant, profileName, fingerprint); err != nil {
+		if err := r.persistAppPrivilegeFingerprint(ctx, tenant, profileName, appFingerprint); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -216,11 +225,11 @@ func (r *TenantReconciler) markAppPrivilegeRequestProcessed(ctx context.Context,
 	return r.Patch(ctx, tenant, client.MergeFrom(orig))
 }
 
-func profilePrivilegedRole(profile *gentianov1alpha1.AppProfile) *gentianov1alpha1.PrivilegedRoleSpec {
-	if profile == nil || profile.Spec.Provisioning == nil {
+func profilePrivilegedRole(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.PrivilegedRoleSpec {
+	if profile == nil || profile.Provisioning() == nil {
 		return nil
 	}
-	return profile.Spec.Provisioning.PrivilegedRole
+	return profile.Provisioning().PrivilegedRole
 }
 
 // syncAppPrivilegedRole applies app-admins membership to one app by running
@@ -228,16 +237,16 @@ func profilePrivilegedRole(profile *gentianov1alpha1.AppProfile) *gentianov1alph
 // membership; the script decides what that means for its own application.
 //
 // Nothing here may branch on a profile name, family or protocol: an app the
-// kernel has to recognise by name is an app the kernel would have to be
+// kernel has to recognize by name is an app the kernel would have to be
 // modified to support, which is precisely what the platform boundary in
 // gentian-apps/docs/app-profile-guide.md forbids.
 func (r *TenantReconciler) syncAppPrivilegedRole(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	profileName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	role *gentianov1alpha1.PrivilegedRoleSpec,
-	members []authz.KeycloakUser,
+	members, users []authz.KeycloakUser,
 	fingerprint string,
 ) (done bool, err error) {
 	switch role.Kind {
@@ -245,7 +254,7 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	default:
 		return false, fmt.Errorf("unsupported privileged role kind %q", role.Kind)
 	}
-	jobSpec := profile.Spec.Provisioning.SyncJob
+	jobSpec := profile.Provisioning().SyncJob
 	if jobSpec == nil {
 		return false, fmt.Errorf(
 			"profile %q declares provisioning.privilegedRole but no provisioning.syncJob, "+
@@ -257,11 +266,15 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	if err != nil {
 		return false, fmt.Errorf("encode app-admins members: %w", err)
 	}
+	usersJSON, err := privilege.MembersJSON(users)
+	if err != nil {
+		return false, fmt.Errorf("encode app users: %w", err)
+	}
 
 	// Script and member list travel in one Secret so they are always mounted as
 	// a matched pair; a Job cannot end up running last reconcile's script
 	// against this reconcile's membership.
-	secret := privilege.MembersSecret(tenant.Name, profileName, ns, membersJSON)
+	secret := privilege.MembersSecret(tenant.Name, profileName, ns, membersJSON, usersJSON)
 	secret.StringData = map[string]string{"run.sh": jobSpec.Script}
 	if err := r.applySecret(ctx, secret); err != nil {
 		return false, fmt.Errorf("publish app-admins members: %w", err)
@@ -302,20 +315,11 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 
 // applySecret creates or updates a Secret the operator owns.
 func (r *TenantReconciler) applySecret(ctx context.Context, desired *corev1.Secret) error {
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.Labels = desired.Labels
-	existing.Type = desired.Type
-	existing.Data = desired.Data
-	existing.StringData = desired.StringData
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.Secret) bool {
+		existing.Labels, existing.Type = desired.Labels, desired.Type
+		existing.Data, existing.StringData = desired.Data, desired.StringData
+		return true
+	})
 }
 
 // pruneAppPrivilegeFingerprints drops the recorded fingerprint of every app
@@ -369,13 +373,4 @@ func (r *TenantReconciler) persistAppPrivilegeFingerprint(ctx context.Context, t
 
 func appPrivilegeAnnotationKey(profileName string) string {
 	return appPrivilegeSyncAnnotationPrefix + profileName
-}
-
-func tenantConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bool {
-	for _, cond := range tenant.Status.Conditions {
-		if cond.Type == condType {
-			return cond.Status == metav1.ConditionTrue
-		}
-	}
-	return false
 }

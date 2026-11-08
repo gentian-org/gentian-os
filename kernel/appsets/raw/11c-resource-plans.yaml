@@ -1,0 +1,53 @@
+---
+# The cluster's resource plans, from the deployments repository.
+#
+# The director writes one ResourcePlan per file under
+# clusters/<cluster>/resource-plans/ and lists it in that directory's
+# kustomization: first from the deployment's values (usage.plans.catalogue),
+# then as the cluster's administrators change them. Step 0 writes the empty
+# kustomization, so the path exists from the first install.
+#
+# Wave 11, beside the claims: after the operator's CRDs, before the tenants
+# whose ceilings are resolved against the plans.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-resource-plans
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - list:
+      elements:
+      - env: dev
+  template:
+    metadata:
+      name: 'gentian-resource-plans-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "11"
+    spec:
+      project: gentian
+      source:
+        repoURL: deployments.repo.placeholder
+        targetRevision: deployments.revision.placeholder
+        path: clusters/deployments.cluster.placeholder/resource-plans
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ns.provisioning.placeholder
+      syncPolicy:
+        automated:
+          # Pruned: a plan leaves the cluster when its file goes, and the
+          # director removes one only while no tenant is on it.
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+        - ServerSideApply=true

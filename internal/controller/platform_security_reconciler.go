@@ -1,35 +1,30 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -44,6 +39,10 @@ const (
 
 // PlatformSecurityPolicyReconciler syncs cluster MAC waiver allowlist to a ConfigMap.
 type PlatformSecurityPolicyReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	OperatorNamespace string
 }
@@ -60,19 +59,21 @@ func (r *PlatformSecurityPolicyReconciler) Reconcile(ctx context.Context, req ct
 			if err := r.ensureDefaultPolicy(ctx); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
 	if err := security.SyncPlatformSecurityConfigMap(ctx, r.Client, psp.Spec.AllowedMacWaivers); err != nil {
-		setPSPCondition(psp, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
-		_ = r.Status().Update(ctx, psp)
-		return ctrl.Result{RequeueAfter: platformSecurityRequeue}, err
+		setStatusCondition(&psp.Status.Conditions, psp.Generation, conditionPlatformSecurityReady, metav1.ConditionFalse, "SyncFailed", err.Error())
+		if updateErr := r.Status().Update(ctx, psp); updateErr != nil {
+			return ctrl.Result{}, errors.Join(err, fmt.Errorf("record the sync failure on the policy: %w", updateErr))
+		}
+		return ctrl.Result{}, err
 	}
 
 	psp.Status.AllowedMacWaiverCount = len(psp.Spec.AllowedMacWaivers)
-	setPSPCondition(psp, conditionPlatformSecurityReady, metav1.ConditionTrue, "Synced",
+	setStatusCondition(&psp.Status.Conditions, psp.Generation, conditionPlatformSecurityReady, metav1.ConditionTrue, "Synced",
 		"Platform security ConfigMap updated")
 	if err := r.Status().Update(ctx, psp); err != nil {
 		return ctrl.Result{}, err
@@ -96,32 +97,5 @@ func (r *PlatformSecurityPolicyReconciler) SetupWithManager(mgr ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.PlatformSecurityPolicy{}).
 		Owns(&corev1.ConfigMap{}).
-		Complete(r)
-}
-
-func setPSPCondition(psp *gentianov1alpha1.PlatformSecurityPolicy, typ string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.Now()
-	for i := range psp.Status.Conditions {
-		if psp.Status.Conditions[i].Type == typ {
-			psp.Status.Conditions[i].Status = status
-			psp.Status.Conditions[i].Reason = reason
-			psp.Status.Conditions[i].Message = message
-			psp.Status.Conditions[i].LastTransitionTime = now
-			return
-		}
-	}
-	psp.Status.Conditions = append(psp.Status.Conditions, metav1.Condition{
-		Type:               typ,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-	})
-}
-
-// LoadPlatformSecurityPolicy is a test helper accessor.
-func LoadPlatformSecurityPolicy(ctx context.Context, c client.Client) (*gentianov1alpha1.PlatformSecurityPolicy, error) {
-	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
-	err := c.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName}, psp)
-	return psp, err
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.PlatformSecurityPolicy{}, r))
 }

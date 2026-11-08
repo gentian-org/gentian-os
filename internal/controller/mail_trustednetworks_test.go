@@ -1,23 +1,16 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -40,7 +33,7 @@ func TestPodNetworksCoversPodRangeOnly(t *testing.T) {
 		nodeWith("a", "10.64.7.0/24"),
 		nodeWith("b", "10.64.8.0/24"),
 	}}
-	got := podNetworks(context.Background(), nodes)
+	got := podNetworks(nodes)
 	for _, want := range []string{"10.64.7.0/24", "10.64.8.0/24", "127.0.0.0/8"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("podNetworks() = %q, missing %q", got, want)
@@ -57,12 +50,12 @@ func TestPodNetworksCoversPodRangeOnly(t *testing.T) {
 // rewrite the ConfigMap on every reconcile — restarting Postfix each time
 // through the reloader annotation.
 func TestPodNetworksIsStableAndDeduplicated(t *testing.T) {
-	forward := podNetworks(context.Background(), &corev1.NodeList{Items: []corev1.Node{
+	forward := podNetworks(&corev1.NodeList{Items: []corev1.Node{
 		nodeWith("a", "10.64.7.0/24"),
 		nodeWith("b", "10.64.8.0/24"),
 		nodeWith("c", "10.64.7.0/24"),
 	}})
-	reverse := podNetworks(context.Background(), &corev1.NodeList{Items: []corev1.Node{
+	reverse := podNetworks(&corev1.NodeList{Items: []corev1.Node{
 		nodeWith("c", "10.64.7.0/24"),
 		nodeWith("b", "10.64.8.0/24"),
 		nodeWith("a", "10.64.7.0/24"),
@@ -80,7 +73,7 @@ func TestPodNetworksIsStableAndDeduplicated(t *testing.T) {
 // stays in force. Returning "127.0.0.0/8" instead would override that value with
 // one that silently stops every in-cluster sender relaying.
 func TestPodNetworksEmptyWhenClusterDeclaresNone(t *testing.T) {
-	if got := podNetworks(context.Background(), &corev1.NodeList{Items: []corev1.Node{
+	if got := podNetworks(&corev1.NodeList{Items: []corev1.Node{
 		nodeWith("a", ""),
 	}}); got != "" {
 		t.Fatalf("podNetworks() = %q, want empty so the configured fallback applies", got)
@@ -91,7 +84,7 @@ func TestPodNetworksEmptyWhenClusterDeclaresNone(t *testing.T) {
 // mynetworks it cannot parse — taking inbound mail down over a question about
 // who may relay.
 func TestPodNetworksSkipsUnparseableCIDR(t *testing.T) {
-	got := podNetworks(context.Background(), &corev1.NodeList{Items: []corev1.Node{
+	got := podNetworks(&corev1.NodeList{Items: []corev1.Node{
 		nodeWith("a", "not-a-cidr"),
 		nodeWith("b", "10.64.8.0/24"),
 	}})
@@ -106,7 +99,7 @@ func TestPodNetworksSkipsUnparseableCIDR(t *testing.T) {
 // Dual-stack clusters carry the list, and PodCIDR alone would cover only the
 // first family.
 func TestPodNetworksReadsDualStackList(t *testing.T) {
-	got := podNetworks(context.Background(), &corev1.NodeList{Items: []corev1.Node{
+	got := podNetworks(&corev1.NodeList{Items: []corev1.Node{
 		nodeWith("a", "10.64.8.0/24", "10.64.8.0/24", "fd00::/64"),
 	}})
 	if !strings.Contains(got, "fd00::/64") {
@@ -126,7 +119,7 @@ func TestMailSPFRecordNamesTheSendingHostNotTheMX(t *testing.T) {
 	// "mx" would name the inbound load balancer, which never sends, so the
 	// record would fail by construction while looking plausible.
 	if strings.Contains(got, "mx") {
-		t.Fatalf("mailSPFRecord() = %q, must not authorise the MX as a sender", got)
+		t.Fatalf("mailSPFRecord() = %q, must not authorize the MX as a sender", got)
 	}
 }
 
@@ -173,7 +166,7 @@ func TestMailPasswdFileKeysCoverEveryApp(t *testing.T) {
 }
 
 // Apps authenticate only after STARTTLS, and verify the certificate against the
-// name they dialled. The certificate is the public wildcard for the kernel
+// name they dialed. The certificate is the public wildcard for the kernel
 // domain, so the Service name — which no public CA can sign — fails the
 // handshake before AUTH is offered.
 func TestMailSharedPostfixHostIsCoveredByThePublicCertificate(t *testing.T) {

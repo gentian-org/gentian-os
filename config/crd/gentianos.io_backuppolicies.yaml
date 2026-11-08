@@ -29,9 +29,6 @@ spec:
     - jsonPath: .status.effectiveBucket
       name: Bucket
       type: string
-    - jsonPath: .status.effectiveSchedule
-      name: Schedule
-      type: string
     - jsonPath: .status.credentialSatisfied
       name: Credential
       priority: 1
@@ -43,8 +40,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          BackupPolicy is where a tenant's bundles go, how often, and how long they
-          are kept.
+          BackupPolicy is where a tenant's bundles go and who can read them.
 
           Cluster-scoped for both scopes, as CredentialRequirement is: the console
           mediates access by spec.tenant, and the credential itself is governed by the
@@ -84,6 +80,9 @@ spec:
               fields and a tenant's policy is exactly the cluster's with some fields
               restated. Two types meant two schemas, two status shapes and a merge that
               could disagree with itself.
+
+              The emptiness test is size(): see component_types.go for why a pair of
+              straight single quotes in a marker does not survive gofmt.
             properties:
               allowTenantOverride:
                 default: true
@@ -100,6 +99,17 @@ spec:
                   Destination is where bundles are written. Unset inherits: the cluster
                   default for a tenant policy, the platform's own storage for the cluster.
                 properties:
+                  addressingStyle:
+                    description: |-
+                      AddressingStyle is how a bucket is named in a request to Endpoint:
+                      path (https://host/bucket/key, the default when empty) or virtualHost
+                      (https://bucket.host/key), for a provider that serves only the
+                      latter. Recorded on every bundle written here, so that its restore and
+                      its deletion address the bucket as it was written.
+                    enum:
+                    - path
+                    - virtualHost
+                    type: string
                   bucket:
                     description: Bucket holds the bundles. Empty keeps the per-tenant
                       default name.
@@ -109,7 +119,7 @@ spec:
                   endpoint:
                     description: |-
                       Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io or
-                      https://minio.example.org:9000. Empty means the platform's own storage.
+                      https://s3.example.org:9000. Empty means the platform's own storage.
 
                       A scheme is required: "s3.example.org" is ambiguous about TLS, and a
                       backup silently sent in plaintext is worse than one that fails.
@@ -118,8 +128,8 @@ spec:
                     type: string
                   region:
                     description: |-
-                      Region, for providers that require one — Exoscale SOS and AWS do, MinIO
-                      does not.
+                      Region, for providers that require one — Exoscale SOS and AWS do, the
+                      platform's own store does not.
                     maxLength: 64
                     type: string
                 type: object
@@ -148,45 +158,6 @@ spec:
                     maxItems: 8
                     type: array
                 type: object
-              retention:
-                description: Retention decides which bundles survive. Unset inherits.
-                properties:
-                  keepDaily:
-                    description: |-
-                      KeepDaily, KeepWeekly, KeepMonthly and KeepYearly each retain the most
-                      recent export within that many distinct periods. A bundle kept by any
-                      tier survives; the tiers are a union, not a sequence.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepLast:
-                    description: |-
-                      KeepLast retains this many most recent finished exports regardless of
-                      age. Zero relies entirely on the tiers below; with no tiers either,
-                      nothing is deleted — a decision rather than a default, and the right one
-                      only when something else prunes.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepMonthly:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepWeekly:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  keepYearly:
-                    format: int32
-                    minimum: 0
-                    type: integer
-                type: object
-              schedule:
-                description: |-
-                  Schedule is a five-field cron expression, in UTC. Empty inherits; use
-                  SuspendSchedule to mean none.
-                maxLength: 128
-                type: string
               scope:
                 description: |-
                   Scope decides whether this is the cluster default or one tenant's
@@ -196,12 +167,6 @@ spec:
                 - cluster
                 - tenant
                 type: string
-              suspendSchedule:
-                description: |-
-                  SuspendSchedule turns scheduled backups off, distinctly from inheriting.
-                  Without it "no schedule" and "not stated" would be the same value, and a
-                  tenant could not opt out of a cluster-wide schedule.
-                type: boolean
               tenant:
                 description: |-
                   Tenant names the tenant a tenant-scoped policy belongs to. Empty for
@@ -216,8 +181,8 @@ spec:
             x-kubernetes-validations:
             - message: tenant is required when scope is tenant, and must be empty
                 when scope is cluster
-              rule: 'self.scope == ''tenant'' ? (has(self.tenant) && self.tenant !=
-                '''') : (!has(self.tenant) || self.tenant == '''')'
+              rule: 'self.scope == ''tenant'' ? (has(self.tenant) && size(self.tenant)
+                > 0) : (!has(self.tenant) || size(self.tenant) == 0)'
           status:
             description: |-
               BackupPolicyStatus reports what this policy resolved to and whether it can
@@ -288,8 +253,8 @@ spec:
                 description: |-
                   CredentialRequirement names the requirement carrying this destination's
                   keys, and CredentialSatisfied reports whether it has been filled. A
-                  destination whose credential is unsatisfied is a policy that will fail
-                  at 03:00; surfaced here it is a red field in the console instead.
+                  destination whose credential is unsatisfied is a policy whose next
+                  export will fail; surfaced here it is a red field in the console instead.
                 type: string
               credentialSatisfied:
                 type: boolean
@@ -297,9 +262,9 @@ spec:
                 type: string
               effectiveEndpoint:
                 description: |-
-                  EffectiveEndpoint, EffectiveBucket and EffectiveSchedule are the values
-                  in force after inheritance, published so an admin reads what applies
-                  rather than recomputing the merge.
+                  EffectiveEndpoint and EffectiveBucket are the values in force after
+                  inheritance, published so an admin reads what applies rather than
+                  recomputing the merge.
                 type: string
               effectiveRecipients:
                 description: |-
@@ -311,8 +276,6 @@ spec:
                 items:
                   type: string
                 type: array
-              effectiveSchedule:
-                type: string
               observedGeneration:
                 format: int64
                 type: integer

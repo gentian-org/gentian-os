@@ -3,7 +3,7 @@
 # scripts/lint/lint-credential-validators.py — a generated requirement must be
 # one its own CRD will admit
 # =============================================================================
-# The catalogue is generated from credentials.yaml and kernel/platforms.yaml,
+# The catalog is generated from credentials.yaml and kernel/platforms.yaml,
 # and the CRD that admits it is generated from api/v1alpha1. Both generators
 # were correct and disagreed with each other: platforms.yaml declared
 # `validate: cloudflare-tunnel`, the CRD's enum did not carry that value, and
@@ -16,7 +16,7 @@
 #   The CredentialRequirement "edge-ingress-cf-tunnel" is invalid:
 #   spec.validate.type: Unsupported value: "cloudflare-tunnel"
 #
-# This reads the enum out of the CRD and the values out of the catalogue and
+# This reads the enum out of the CRD and the values out of the catalog and
 # asserts the second is a subset of the first — the comparison neither
 # generator can make alone.
 #
@@ -72,7 +72,7 @@ def main() -> int:
         for name, vtype in bad:
             print(f"  {name}: validate.type={vtype!r}")
         print()
-        print("  The catalogue and the CRD are generated from different sources —")
+        print("  The catalog and the CRD are generated from different sources —")
         print("  kernel/platforms.yaml or credentials.yaml, and api/v1alpha1 — so")
         print("  each can be internally correct while disagreeing with the other.")
         print(f"  Add the value to the +kubebuilder:validation:Enum on")

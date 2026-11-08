@@ -1,22 +1,16 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package kernel
 
-import "os"
+import "github.com/gentian-org/gentian-os/internal/envvar"
 
 // Provisioner images for operator-managed data-plane Jobs. Override via env vars
 // on the gentian-os Deployment (see charts/gentian-os/templates/deployment.yaml).
@@ -28,35 +22,109 @@ const (
 	// is not pinned in this repo (the CNPG operator's default applies, 17.x
 	// today), so bump this alongside CNPG operator upgrades.
 	DefaultPostgresProvisionerImage = "postgres:17-alpine"
-	DefaultMariaDBProvisionerImage  = "mariadb:11"
-	DefaultRedisProvisionerImage    = "redis:7-alpine"
-	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
-	DefaultKeycloakProvisionerImage = "alpine:3.20"
+	// The MariaDB client is the server's own image (charts/infra/mariadb
+	// pins it), to the digest. A floating mariadb:11 resolved to an 11.8
+	// client, whose mariadb-dump opens every dump with a statement the 11.1
+	// server refuses (SET ... NOTE_VERBOSITY): each dump was taken and none
+	// could be loaded again. Bump the two together; a test holds them equal.
+	DefaultMariaDBProvisionerImage = "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
+	DefaultRedisProvisionerImage   = "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
+	DefaultMemcachedImage          = "memcached:1.6.38-alpine"
+
+	// The publishing proxy that stands in a tenant's DMZ (AD-6). nginx
+	// because what it does is the one thing nginx is unambiguous about:
+	// forward these exact path prefixes and nothing else, to one upstream,
+	// with the headers this says and no others.
+	//
+	// -alpine rather than a distroless build of our own: this pod is on the
+	// public internet with no session in front of it, so it wants a stream of
+	// upstream security fixes more than it wants a small attack surface we
+	// maintain ourselves.
+	DefaultPerimeterProxyImage = "nginx:1.27-alpine"
+	// DefaultSignInSidecarImage is the platform's sign-in sidecar: the
+	// program that signs people in to an app that can do neither OIDC nor
+	// SAML (internal/controller/signin_sidecar.go).
+	//
+	// One build, named twice: by a tag no later build takes, and by the
+	// digest of what that tag held. This is the program that decides whether
+	// a sign-in is genuine, so the build that was tested is the build that
+	// runs, and neither a registry nor a rebuild can change it.
+	//
+	// It is built by gentian-apps, from images/gentian-sidecar-sso-saml. A
+	// build of that repository's develop branch is develop-<commit>; a
+	// release is its version.
+	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-13056ec@sha256:fdaf2e3941ae77b2095e00dc2e149f14e027c76b5e8b144047f06f605e4662cf"
+
+	// DefaultStorageToolsImage is what every Job that moves a tenant's
+	// objects, packs an archive or talks to the identity provider's
+	// administration runs: rclone, age, tar, coreutils, curl and jq
+	// (kernel/images/storage-tools). CI builds it beside the operator and
+	// tags it as the operator is tagged; the operator's chart names the
+	// build of its own tag (charts/gentian-os/templates/deployment.yaml),
+	// so this default is only what an operator started without the chart
+	// runs.
+	DefaultStorageToolsImage = StorageToolsRepository + ":develop"
+	// DefaultSeaweedFSImage is the platform's object store's own image, which
+	// the Jobs that make and destroy buckets and identities run: weed shell
+	// is the store's administration, and it is in the server's image. The
+	// server's pin is kernel/services/infra-seaweedfs/manifests (a test holds
+	// the two equal), so the Jobs never run an image the cluster does not
+	// already pull, nor a client of another version than the server.
+	DefaultSeaweedFSImage = "docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+	// StorageToolsRepository is where CI publishes that image.
+	StorageToolsRepository = "ghcr.io/gentian-org/storage-tools"
+	// StorageToolsUser is the user the storage tools image runs as (its
+	// Dockerfile's USER). The Jobs name it in their security context, so a
+	// pod runs as it whichever image an override names.
+	StorageToolsUser int64 = 65532
+	// DefaultTURNEdgeImage is the TURN edge's server: STUNner's daemon,
+	// run standalone from a configuration the operator writes
+	// (internal/controller/turn_edge.go). Named by tag and by the digest of
+	// the tag's index, so the build that was tested is the build that faces
+	// the internet.
+	DefaultTURNEdgeImage = "docker.io/l7mp/stunnerd:1.2.1@sha256:a9a06157564d0630a8a95b9eab1307340bc1e710c53c890daff5fd0dfee50617"
 )
 
+// TURNEdgeImage is the TURN edge's server.
+func TURNEdgeImage() string {
+	return envvar.Or("TURN_EDGE_IMAGE", DefaultTURNEdgeImage)
+}
+
 func PostgresProvisionerImage() string {
-	return envOrDefault("POSTGRES_PROVISIONER_IMAGE", DefaultPostgresProvisionerImage)
+	return envvar.Or("POSTGRES_PROVISIONER_IMAGE", DefaultPostgresProvisionerImage)
 }
 
 func MariaDBProvisionerImage() string {
-	return envOrDefault("MARIADB_PROVISIONER_IMAGE", DefaultMariaDBProvisionerImage)
+	return envvar.Or("MARIADB_PROVISIONER_IMAGE", DefaultMariaDBProvisionerImage)
 }
 
 func RedisProvisionerImage() string {
-	return envOrDefault("REDIS_PROVISIONER_IMAGE", DefaultRedisProvisionerImage)
+	return envvar.Or("REDIS_PROVISIONER_IMAGE", DefaultRedisProvisionerImage)
 }
 
 func MemcachedImage() string {
-	return envOrDefault("MEMCACHED_IMAGE", DefaultMemcachedImage)
+	return envvar.Or("MEMCACHED_IMAGE", DefaultMemcachedImage)
 }
 
-func KeycloakProvisionerImage() string {
-	return envOrDefault("KEYCLOAK_PROVISIONER_IMAGE", DefaultKeycloakProvisionerImage)
+// PerimeterProxyImage is the publishing proxy for a tenant's DMZ.
+func PerimeterProxyImage() string {
+	return envvar.Or("PERIMETER_PROXY_IMAGE", DefaultPerimeterProxyImage)
 }
 
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+// SignInSidecarImage is the sign-in sidecar the operator runs beside an app
+// whose profile declares one.
+func SignInSidecarImage() string {
+	return envvar.Or("SIGN_IN_SIDECAR_IMAGE", DefaultSignInSidecarImage)
+}
+
+// StorageToolsImage is the image of the Jobs that capture, upload, fetch,
+// restore and delete a tenant's objects, pack and unpack its archives, and
+// provision, export and import its identity realm.
+func StorageToolsImage() string {
+	return envvar.Or("STORAGE_TOOLS_IMAGE", DefaultStorageToolsImage)
+}
+
+// SeaweedFSImage is the image of the Jobs that administer the object store.
+func SeaweedFSImage() string {
+	return envvar.Or("SEAWEEDFS_IMAGE", DefaultSeaweedFSImage)
 }

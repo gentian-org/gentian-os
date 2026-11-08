@@ -1,0 +1,9 @@
+# The API module is licensed separately from the core, so its files carry a
+# different header and are checked against it here.
+version: "2"
+linters:
+  enable:
+    - goheader
+  settings:
+    goheader:
+      template-path: ${config-path}/hack/header.txt

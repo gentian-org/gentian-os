@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -20,7 +14,6 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,15 +22,11 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ensureGateway handles operator-only gateway edge work when ROUTING_MODE=gateway:
+// ensureGateway handles operator-only gateway edge work:
 // Cloudflare DNS, stale route/policy cleanup, and readiness waits.
 // Kubernetes edge objects (Gateway, HTTPRoutes, ReferenceGrants, BackendTrafficPolicy)
 // are owned by Crossplane via the manifest bridge.
 func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	if !isGatewayRoutingMode(r.RoutingMode) {
-		return ctrl.Result{}, nil
-	}
-
 	nsName := tenantNamespaceName(tenant)
 	intents, err := r.collectTenantIngressIntents(ctx, tenant)
 	if err != nil {
@@ -45,11 +34,17 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	if len(intents) == 0 {
-		if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
-			return ctrl.Result{}, err
-		}
 		if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 			return ctrl.Result{}, err
+		}
+		// No app routes is not no zone. The tenant's components are served
+		// on its listener, so its grants stay and its hosts are published;
+		// deleting the grants here is what left that listener invalid.
+		if r.tenantHasOwnZone(tenant) {
+			r.ensureTenantEdgeRoutes(ctx, tenant, r.tenantEffectiveDomain(tenant))
+			r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue,
+				"ZoneServed", "The tenant's zone is served; no apps require routes of their own")
+			return ctrl.Result{}, nil
 		}
 		if err := deleteTenantReferenceGrants(ctx, r.Client, tenant); err != nil {
 			return ctrl.Result{}, fmt.Errorf("delete tenant ReferenceGrants: %w", err)
@@ -62,39 +57,18 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
 	if effectiveDomain == "" {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse,
-			"NoDomain", "tenant.spec.domain is unset and operator KERNEL_DOMAIN is not configured")
+			"NoDomain", "the tenant has no custom domain and operator KERNEL_DOMAIN is not configured")
 		return ctrl.Result{}, fmt.Errorf("no effective domain available for tenant %s", tenant.Name)
 	}
 
-	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
-		return ctrl.Result{}, err
-	}
-	// Tenant hostnames are served by the kernel Gateway; the tenant namespace
-	// holds no Gateway of its own.
-	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
-		return ctrl.Result{}, err
-	}
 	r.ensureTenantEdgeRoutes(ctx, tenant, effectiveDomain)
 
-	expectedRoutes := make(map[string]struct{}, len(intents))
-	expectedPolicies := make(map[string]struct{})
-	expectedClientPolicies := make(map[string]struct{})
-	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
-		expectedRoutes[route.Name] = struct{}{}
-	}
-	for _, intent := range intents {
-		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
-			expectedPolicies[btp.GetName()] = struct{}{}
-		}
-	}
-
-	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, expectedPolicies); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, expectedClientPolicies); err != nil {
+	// No route is written here. An installed app is a Component, and its
+	// routes are the Component reconciler's: one per exposure the profile
+	// declares, behind the zone's session and the bouncer's question. What
+	// this used to write -- a route per app with nothing asked at it -- is
+	// removed below wherever it is still found, with its traffic policies.
+	if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -112,23 +86,10 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	}
 
 	r.setCondition(tenant, conditionGatewayReady, metav1.ConditionTrue, "Programmed", message)
-	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.RoutingMode); err != nil {
+	if err := ensureCoreDNSHairpin(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.KernelRealm); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile CoreDNS tenant hairpin: %w", err)
 	}
 	return ctrl.Result{}, nil
-}
-
-func (r *TenantReconciler) deleteTenantGateway(ctx context.Context, nsName, tenantName string) error {
-	gw := &gatewayv1.Gateway{}
-	err := r.Get(ctx, client.ObjectKey{Name: tenantGatewayName(tenantName), Namespace: nsName}, gw)
-	if errors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	prop := metav1.DeletePropagationBackground
-	return r.Delete(ctx, gw, &client.DeleteOptions{PropagationPolicy: &prop})
 }
 
 func gatewayProgrammed(ctx context.Context, c client.Client, gw *gatewayv1.Gateway) (bool, string) {

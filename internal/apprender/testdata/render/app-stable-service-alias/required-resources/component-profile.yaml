@@ -1,0 +1,41 @@
+# The edge resolves a gateway entry's backend by name, and the chart names
+# its Services <release>-<chart>-<component>: the composition makes the
+# backend's name, and <app>-api, as stable aliases of the release's pods.
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      backend:
+        service: demo-app-web
+        port: 8080

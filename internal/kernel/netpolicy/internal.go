@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package netpolicy
@@ -20,7 +14,6 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -65,9 +58,13 @@ func appInternalPolicyName(appName string) string {
 
 const appEgressPolicyPrefix = "app-egress-"
 
-// AppEgressNetworkPolicy allows pods carrying gentianos.io/app=<profile>
-// to egress based on the egress rules defined in the AppProfile SecuritySpec.
-func AppEgressNetworkPolicy(tenantName, nsName, appName string, profile *gentianov1alpha1.AppProfile) *networkingv1.NetworkPolicy {
+// AppEgressNetworkPolicy allows pods carrying gentianos.io/app=<profile> to
+// egress by the rules given.
+//
+// The rules are passed in rather than read from the profile, because what a
+// profile DECLARES and what a person GRANTED are different questions and only
+// the caller knows the second (AD-5).
+func AppEgressNetworkPolicy(tenantName, nsName, appName string, rules []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
 	name := appEgressPolicyName(appName)
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
@@ -82,7 +79,7 @@ func AppEgressNetworkPolicy(tenantName, nsName, appName string, profile *gentian
 			PolicyTypes: []networkingv1.PolicyType{
 				networkingv1.PolicyTypeEgress,
 			},
-			Egress: profile.Spec.Security.Egress,
+			Egress: rules,
 		},
 	}
 }

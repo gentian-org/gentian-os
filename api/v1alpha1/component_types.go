@@ -1,0 +1,362 @@
+/*
+Copyright The Gentian OS Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package v1alpha1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// Fulfilment is how a tenant's install of a profile is backed.
+// +kubebuilder:validation:Enum=auto;dedicated
+type Fulfilment string
+
+const (
+	// FulfilmentAuto binds to a shared instance where one has been offered to
+	// the tenant, and installs a dedicated release otherwise.
+	FulfilmentAuto Fulfilment = "auto"
+	// FulfilmentDedicated never binds to a backend other tenants use. There is
+	// no "shared" value: a tenant cannot demand a backend the platform has not
+	// offered.
+	FulfilmentDedicated Fulfilment = "dedicated"
+)
+
+// ComponentSpec is one installed instance of a ComponentProfile. The profile
+// says what may be asked for; this object records what was answered, by whom
+// and until when. Enablements and grants are written only by the director,
+// from the token of the person who approved.
+//
+// class is immutable, with one carve-out: it may be set on an object that
+// does not have it.
+//
+// A Component with no class was never creatable, because the field is
+// required — the only way to hold one is to have been written before
+// spec.tenancy became spec.class. Without the carve-out such an object is
+// stranded in a way that is worse than it sounds: it cannot be repaired,
+// because setting the field is a change the rule refuses, and it cannot be
+// DELETED either, because removing its finalizer is an update of the whole
+// object and the whole object is invalid. Both shipped Components deadlocked
+// exactly there, terminating and un-finalizable, with the reconciler logging
+// "spec.class: Unsupported value" once a minute.
+// The emptiness test is size(), never a comparison against a pair of straight
+// single quotes. gofmt reformats doc comments -- it has since Go 1.19 -- and
+// one of the things it does is turn such a pair into a single typographic
+// closing quote. A kubebuilder marker IS a doc comment, so a rule written that
+// way is silently corrupted the next time anyone runs gofmt -w or saves the
+// file in an editor that does, and the API server then refuses the CRD: every
+// test that installs it panics before its first assertion. That happened twice
+// here before the cause was found. size() gives gofmt nothing to convert.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.class) || size(oldSelf.class) == 0 || self.class == oldSelf.class",message="class is immutable: reinstall to change it"
+// +kubebuilder:validation:XValidation:rule="self.profileRef.name == oldSelf.profileRef.name",message="profileRef.name is immutable"
+// +kubebuilder:validation:XValidation:rule="self.class == 'app' || !has(self.fulfilment) || self.fulfilment == 'auto'",message="fulfilment is a tenant's choice and applies to class app only"
+// A service may have a console, but never on the perimeter: that surface has
+// no session, so there is nothing for an enablement to switch on.
+// +kubebuilder:validation:XValidation:rule="self.class != 'service' || !has(self.exposures) || self.exposures.size() == 0",message="a service switches on no perimeter entry: its console is on the gateway"
+type ComponentSpec struct {
+	// ProfileRef names the catalog entry this is an instance of.
+	ProfileRef ProfileRef `json:"profileRef"`
+
+	// Class is the one mode this instance runs under. It must be a member of
+	// the profile's list, and the namespace must be of the matching tier; both
+	// are admission checks, because neither is visible from here.
+	Class ComponentClass `json:"class"`
+
+	// Fulfilment pins how a tenant install is backed.
+	// +optional
+	// +kubebuilder:default=auto
+	Fulfilment Fulfilment `json:"fulfilment,omitempty"`
+
+	// Addons enabled on this instance, by the profile's own names.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=128
+	// +kubebuilder:validation:items:MaxLength=63
+	Addons []string `json:"addons,omitempty"`
+
+	// AddonPins is the build each pinned addon was installed from, as the
+	// Tenant records it. Nothing is rendered for this instance while a
+	// pinned addon's profile is not shown to be that build: the addon list
+	// reaches the release through this component, so this is where an
+	// unverified addon is kept out of it.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+
+	// MovedAt and MovedBy are the request behind the current pin, as the
+	// tenant's manifest records them (TenantApp.MovedAt, MovedBy): when the
+	// pin was last moved and by whom or what. A move the platform rolled
+	// back is tried again only when a later MovedAt asks.
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	MovedAt string `json:"movedAt,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	MovedBy string `json:"movedBy,omitempty"`
+
+	// Config is what this install overrides of the profile's defaults: the
+	// replica count and chart values the tenant chose. It is the install's
+	// and not the profile's, so two tenants installing one profile may differ
+	// here and nowhere else.
+	// +optional
+	Config *TenantAppConfig `json:"config,omitempty"`
+
+	// Exposures are the entries of the profile a perimeter approver approved:
+	// the perimeter entries that are switched on, and the entries behind
+	// sign-in whose Authorization header is left to the app. Every other
+	// gateway entry needs none: it carries the session and is always on.
+	// +optional
+	// +listType=map
+	// +listMapKey=exposureName
+	// +kubebuilder:validation:MaxItems=32
+	Exposures []ExposureEnablement `json:"exposures,omitempty"`
+
+	// Privileges are the profile's privilege requests that a person granted.
+	// An install with an ungranted request waits; it is neither rejected nor
+	// silently run without it.
+	// +optional
+	// +listType=map
+	// +listMapKey=privilege
+	// +kubebuilder:validation:MaxItems=64
+	Privileges []PrivilegeGrant `json:"privileges,omitempty"`
+}
+
+// ProfileRef names a ComponentProfile.
+type ProfileRef struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Digest pins the profile bundle this instance was installed from. When
+	// set, nothing is rolled out from a profile that is not shown to be that
+	// build: the bundle the profile carries must hash to it, and the profile
+	// must be what the bundle says.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest,omitempty"`
+}
+
+// ExposureEnablement is the approval of one entry of the profile: it switches
+// on a perimeter entry, or lets an entry behind sign-in keep the app's own
+// Authorization header. Which, is Kind.
+//
+// authMode is not repeated here: the profile's entry is the one source, and an
+// enablement cannot weaken it.
+//
+// +kubebuilder:validation:XValidation:rule="self.owner == oldSelf.owner",message="owner is immutable: a renewal by someone else is a new enablement"
+// +kubebuilder:validation:XValidation:rule="!has(self.expiresAt) || self.reviewAt <= self.expiresAt",message="reviewAt must not be later than expiresAt"
+type ExposureEnablement struct {
+	// ExposureName names an entry of the profile's expose list that asks for
+	// approval.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	ExposureName string `json:"exposureName"`
+
+	// Kind is what was approved, copied from the Tenant's entry; empty is a
+	// public address. An approval is in force only for an entry that
+	// declares this kind.
+	// +optional
+	Kind ExposureKind `json:"kind,omitempty"`
+
+	// Owner is the Keycloak subject that enabled the surface, set by the
+	// director from the caller's token.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Owner string `json:"owner"`
+
+	// ExpiresAt ends the exposure, for one that was published for a while:
+	// at expiry the operator treats the enablement as absent, and the entry
+	// stays in git as history. Optional. A surface meant to stay -- a
+	// tenant's website -- has none, because an expiry nobody renewed takes
+	// a production site off the internet with no decision behind it.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// ReviewAt is when the owner and the perimeter approver look at it again,
+	// and it is always set: what is public is known and revisited, whether or
+	// not it ends. A review that is overdue is reported; it takes nothing
+	// down.
+	ReviewAt metav1.Time `json:"reviewAt"`
+
+	// Apex is the approver saying that this surface is for the cluster's
+	// main address (the bare domain), copied from the Tenant's entry.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
+
+	// Alias is the label of a second address for this surface directly
+	// under the cluster's own domain, copied from the Tenant's entry.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Alias string `json:"alias,omitempty"`
+}
+
+// PrivilegeGrant answers one entry of the profile's privilege request.
+//
+// +kubebuilder:validation:XValidation:rule="self.approver == oldSelf.approver && self.approvedAt == oldSelf.approvedAt",message="approver and approvedAt are immutable: a new approval is a new grant"
+type PrivilegeGrant struct {
+	// Privilege names one entry of the profile's request, as <kind>/<name>,
+	// where kind is podSecurity, egress, clusterRoles or apiExtensions.
+	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=80
+	Privilege string `json:"privilege"`
+
+	// Approver is the Keycloak subject who said yes, set by the director from
+	// the caller's token.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Approver string `json:"approver"`
+
+	ApprovedAt metav1.Time `json:"approvedAt"`
+
+	// Reason in the approver's words, not the profile's.
+	// +kubebuilder:validation:MinLength=10
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason"`
+
+	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+	// reviews.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// Digest pins an apiExtensions grant to the definitions it approved:
+	// sha256 of the request as the approver read it
+	// (security.APIExtensionDigest). A request whose definitions changed is
+	// not answered by it, and the install waits for a new approval.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest,omitempty"`
+}
+
+// ComponentStatus is the observed state of a Component.
+type ComponentStatus struct {
+	// Rollout is which build this instance actually runs, and how the last
+	// move to the pinned build went. The pin (spec.profileRef.digest) is what
+	// was asked; this is what is. The two differ while a move is under way,
+	// and after a move the platform rolled back.
+	// +optional
+	Rollout *RolloutStatus `json:"rollout,omitempty"`
+
+	// Fulfilment is "dedicated" or "shared". Availability decided it at install
+	// and a later offer does not move a running instance.
+	// +optional
+	// +kubebuilder:validation:Enum=dedicated;shared
+	Fulfilment string `json:"fulfilment,omitempty"`
+
+	// PendingPrivileges are requests of the profile that nobody has granted
+	// yet, as <kind>/<name>. While any is listed the install waits.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=80
+	PendingPrivileges []string `json:"pendingPrivileges,omitempty"`
+
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// RolloutPhase is where a move stands.
+// +kubebuilder:validation:Enum=Exporting;Rolling;Done;RolledBack;Failed
+type RolloutPhase string
+
+const (
+	// RolloutExporting: the app's data is being exported before the move;
+	// the instance still runs the build it ran.
+	RolloutExporting RolloutPhase = "Exporting"
+	// RolloutRolling: the pinned build is being rolled out and verified.
+	RolloutRolling RolloutPhase = "Rolling"
+	// RolloutDone: the instance runs the pinned build.
+	RolloutDone RolloutPhase = "Done"
+	// RolloutRolledBack: the pinned build did not come up or did not verify,
+	// and the instance was put back on the build it ran. It stays there
+	// until a later move asks again.
+	RolloutRolledBack RolloutPhase = "RolledBack"
+	// RolloutFailed: the move could not start -- the export before it
+	// failed -- and the instance still runs the build it ran.
+	RolloutFailed RolloutPhase = "Failed"
+)
+
+// RolloutStatus is a move: from the build the instance runs to the one it
+// is pinned to.
+type RolloutStatus struct {
+	// Digest is the build the instance runs: the last one that rolled out
+	// and verified. Empty before the first build has.
+	// +optional
+	Digest string `json:"digest,omitempty"`
+	// Target is the build the move under way, or the last move, was to.
+	// +optional
+	Target string `json:"target,omitempty"`
+	// Previous is the build the instance ran before the last move to Digest.
+	// +optional
+	Previous string `json:"previous,omitempty"`
+	// Phase is where the move to Target stands.
+	// +optional
+	Phase RolloutPhase `json:"phase,omitempty"`
+	// Export names the TenantExport taken before the move, in the tenant's
+	// namespace.
+	// +optional
+	Export string `json:"export,omitempty"`
+	// Reason and Message say why a move was rolled back or failed.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
+	// MovedAt and MovedBy are the request this move answers, as the tenant's
+	// manifest records them.
+	// +optional
+	MovedAt string `json:"movedAt,omitempty"`
+	// +optional
+	MovedBy string `json:"movedBy,omitempty"`
+	// StartedAt is when the pinned build began rolling out; FinishedAt when
+	// the move ended, either way.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// +optional
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+}
+
+// Component is an installed instance of a ComponentProfile.
+//
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=comp
+// +kubebuilder:printcolumn:name="Profile",type=string,JSONPath=`.spec.profileRef.name`
+// +kubebuilder:printcolumn:name="Class",type=string,JSONPath=`.spec.class`
+// +kubebuilder:printcolumn:name="Fulfilment",type=string,JSONPath=`.status.fulfilment`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+type Component struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   ComponentSpec   `json:"spec,omitempty"`
+	Status ComponentStatus `json:"status,omitempty"`
+}
+
+// ComponentList contains a list of Component.
+//
+// +kubebuilder:object:root=true
+type ComponentList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Component `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&Component{}, &ComponentList{})
+}

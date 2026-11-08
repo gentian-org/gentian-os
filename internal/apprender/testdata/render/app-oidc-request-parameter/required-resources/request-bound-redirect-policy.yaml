@@ -1,0 +1,19 @@
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: ClientPolicyProfilePolicy
+metadata:
+  name: demo-request-bound-redirect-policy
+  labels:
+    gentianos.io/realm-rule: request-bound-redirect
+    gentianos.io/tenant-namespace: tenant-demo
+spec:
+  forProvider:
+    realmId: demo
+    name: gentian-request-bound-redirect
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Available
+    - type: Synced
+      status: "True"
+      reason: ReconcileSuccess

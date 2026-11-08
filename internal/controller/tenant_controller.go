@@ -1,30 +1,19 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	goerrors "errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -53,12 +42,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
-	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -66,15 +57,14 @@ const (
 	tenantLabel             = meta.TenantLabel
 	managedByLabel          = meta.ManagedByLabel
 	managedByValue          = meta.ManagedByValue
-	kernelNamespace         = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
 // servicesNamespace is read from SERVICES_NAMESPACE at process startup.
 //
-// The fallback is platform-kernel, which is what gentian_services_namespace in
-// scripts/lib/common.sh answers. Kernel services — the Gateway, Keycloak's
-// HTTPRoute, Postfix and Dovecot — are not stage-scoped, so deriving
+// The fallback is the edge namespace, which is what gentian_services_namespace
+// in scripts/lib/common.sh answers. The Gateway and its routes are not
+// stage-scoped, so deriving
 // gentian-{stage} pointed this operator at a namespace nothing creates and
 // nothing tears down. The chart sets SERVICES_NAMESPACE, so the fallback only
 // decides where an operator started without it writes, which is exactly the
@@ -85,7 +75,8 @@ func defaultServicesNamespace() string {
 	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
 		return v
 	}
-	return meta.KernelNamespace
+	// The edge: the Gateway, its routes and its reference grants.
+	return layout.Namespace(layout.Edge)
 }
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been
@@ -94,26 +85,31 @@ func defaultServicesNamespace() string {
 // cleanup Jobs have finished.
 var errDeleteJobPending = provisioner.ErrDeleteJobPending
 
-// deleteProvisioningJobs removes completed provisioning Jobs by name, ignoring
-// not-found and transient errors. Call this after a cleanup Job completes so
-// that the provisioning Jobs are re-created (and the resource re-provisioned)
-// on the next tenant deploy.
-func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) {
+// deleteProvisioningJobs removes completed provisioning Jobs by name. Call
+// this after a cleanup Job completes so that the provisioning Jobs are
+// re-created (and the resource re-provisioned) on the next tenant deploy.
+//
+// A Job that is not there is done. Anything else is returned: this used to
+// discard every error, so a Job that could not be looked up or deleted
+// stayed, and a tenant made again under the same name found a finished realm
+// Job and never provisioned its realm.
+func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) error {
 	prop := metav1.DeletePropagationBackground
+	var errs []error
 	for _, name := range jobNames {
-		job := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, job); err != nil {
+		job, err := r.getProvisioningJob(ctx, name)
+		if errors.IsNotFound(err) {
 			continue
 		}
-		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("look for the provisioning Job %s: %w", name, err))
+			continue
+		}
+		if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); client.IgnoreNotFound(err) != nil {
+			errs = append(errs, fmt.Errorf("delete the provisioning Job %s: %w", name, err))
+		}
 	}
-}
-
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+	return goerrors.Join(errs...)
 }
 
 func EnvBool(key string) bool {
@@ -152,12 +148,13 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/finalizers,verbs=update
+// +kubebuilder:rbac:groups=gentianos.io,resources=tenantdomains,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -217,24 +214,68 @@ var xTenantGVK = schema.GroupVersionKind{
 
 // TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
+	// Authorization is the arbiter's platform path, through which the
+	// deletion of a tenant deletes its authorization stores. Nil on a
+	// cluster that runs none.
+	Authorization AuthorizationStores
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
+	// Rights is the rights store, for the entries of it a backup carries
+	// and a restore puts back (tenant_rights.go). Nil on a cluster that runs
+	// none. ClusterID is the id the cluster has in it and in its deployments
+	// repository, which a bundle records as the cluster it was taken on.
+	Rights    RightsStore
+	ClusterID string
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
+	// execTimeout replaces AppCommandTimeout where a test needs a short one.
+	execTimeout time.Duration
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
-	Scheme    *runtime.Scheme
+	// DefaultGrant gives every member of a tenant access to one of its apps,
+	// for an app entry declaring defaultGrant. Nil when the operator runs
+	// without its app-lifecycle service, which is what holds the means.
+	DefaultGrant AppDefaultGranter
+	// PlanEventStore opens a tenant's usage store for the plan event a landed
+	// plan change is recorded as. Nil opens the tenant's own database.
+	PlanEventStore planEventStoreFor
+	Scheme         *runtime.Scheme
+	// UsageStatisticsEnabled is whether this cluster reports what it runs: half of
+	// whether it offers an App Store, which decides whether a tenant gets the
+	// components that declare defaultWhereStoreOffered.
+	UsageStatisticsEnabled bool
+	// WatchClusterClaim re-runs every tenant when the Cluster claim changes,
+	// so that a store named or withdrawn there places or removes those
+	// components at once. Off where the claim's kind is not installed.
+	WatchClusterClaim bool
+
+	// ServiceAccountIssuer is the issuer of the cluster's service account
+	// tokens (ServiceAccountIssuer in partners.go), which a realm with
+	// partner apps trusts for their clients. Empty: none is composed.
+	ServiceAccountIssuer string
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
+
+	// WithoutVault says, explicitly, that this operator runs without a
+	// vault: a development or test set-up. Only then is a missing Seeder
+	// passed over where a tenant's stored credentials are to be destroyed.
+	// Without it a missing vault there is an error -- an operator that was
+	// meant to have one and silently had none would otherwise report a tenant
+	// deleted with every credential still stored.
+	WithoutVault bool
 	// KernelDomain is the cluster-wide platform domain (e.g. `platform.example.com`)
 	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
-	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
-	// unset. Sourced from KERNEL_DOMAIN at startup.
-	// See docs/design/multi-tenancy.md §3.
+	// Tenant app domains derive from it by tenancy mode unless a
+	// TenantDomain binds a custom one. Sourced from KERNEL_DOMAIN at startup.
+	// See docs/concepts/multi-tenancy.md §3.
 	KernelDomain string
 	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
 	// single → {sub}.{kernel}. Sourced from TENANCY_MODE (default multi).
@@ -249,12 +290,17 @@ type TenantReconciler struct {
 	// today and syncRoleAliasWarning says so; there is no local address worth
 	// defaulting to, because every one of them is just as unreadable.
 	MailAdminContact string
+	// MailAliases are other addresses of hosted domains forwarded to an
+	// address off this cluster, as "address=target" pairs separated by
+	// commas. Sourced from MAIL_ALIASES; parsed by parseMailAliases, which
+	// holds each target to the rule MailAdminContact is held to.
+	MailAliases string
 	// MailRecipientPolicy decides whether an address nobody owns is accepted:
 	// catchall (default), observe, or strict. Sourced from
 	// MAIL_RECIPIENT_POLICY.
 	//
 	// Anything other than observe or strict leaves the catch-all in place, so an
-	// unset or misspelled value keeps today's behaviour rather than rejecting
+	// unset or misspelled value keeps today's behavior rather than rejecting
 	// mail on the strength of a typo.
 	MailRecipientPolicy string
 	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
@@ -279,20 +325,9 @@ type TenantReconciler struct {
 	// where the LoadBalancer already routes and the Gateway's own address is
 	// what external-dns reads.
 	Ingress EdgeIngress
-	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
-	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
 	// so tenant lifecycle is driven by the Crossplane graph alone.
 	CrossplaneOnly bool
-	// CommerceEnabled flags if licensing checks and metering reports are active.
-	CommerceEnabled bool
-	// CommerceAPIURL is the base URL of the commerce backend: the service that
-	// redeems install grants and accepts metering reports. Which service that is
-	// belongs to the deployment, not to this operator — anything implementing the
-	// two endpoints below will do, and with commerce disabled there is none.
-	CommerceAPIURL string
-	// CommerceAPIToken is the bearer token presented to that backend.
-	CommerceAPIToken string
 }
 
 // tenantRateLimiter replaces controller-runtime's default workqueue rate
@@ -346,7 +381,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// mapToTenant maps any labelled object back to a reconcile request for the owning Tenant.
+	// mapToTenant maps any labeled object back to a reconcile request for the owning Tenant.
 	mapToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
 		tenantName := obj.GetLabels()[tenantLabel]
 		if tenantName == "" {
@@ -355,16 +390,16 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenantName}}}
 	}
 
-	// mapAppProfileToTenants maps an AppProfile change to reconcile requests for
+	// mapComponentProfileToTenants maps a ComponentProfile change to reconcile requests for
 	// every Tenant that references the profile in its spec.apps list.
 	//
-	// Resolution has to match catalogue.ResolveTenantAppProfile, which accepts
+	// Resolution has to match catalogue.ResolveTenantComponentProfile, which accepts
 	// EITHER spec.apps[].profile or spec.apps[].profileRef. Comparing only the
 	// literal profile name meant a Tenant selecting its app by catalogue identity
-	// got no event when its AppProfile was created or changed — so the profile it
+	// got no event when its ComponentProfile was created or changed — so the profile it
 	// was waiting for could appear and nothing would notice, leaving the Tenant
 	// Degraded until an unrelated event happened to wake it.
-	mapAppProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
+	mapComponentProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
 		profileName := obj.GetName()
 		tenantList := &gentianov1alpha1.TenantList{}
 		if err := mgr.GetClient().List(ctx, tenantList); err != nil {
@@ -373,7 +408,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		var requests []reconcile.Request
 		for _, t := range tenantList.Items {
 			for _, app := range t.Spec.Apps {
-				resolved, err := catalogue.ResolveTenantAppProfile(ctx, mgr.GetClient(), app)
+				resolved, err := catalogue.ResolveTenantComponentProfile(ctx, mgr.GetClient(), app)
 				if err != nil {
 					// An app that resolves to nothing cannot match. Skipped rather
 					// than dropping the whole Tenant, so one unresolvable entry does
@@ -455,20 +490,28 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return requests
 	}
 
-	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		svc, ok := obj.(*corev1.Service)
-		if !ok {
-			return false
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
+
+	// A grant between two apps is what opens the way between them
+	// (netpolicy.ContractNetworkPolicies), so a grant that is made, changed
+	// or withdrawn has to reach the tenant's policies when it happens and
+	// not when something else next wakes the tenant. A grant carries no
+	// tenant label; it lives in the tenant's namespace.
+	mapGrantToTenant := func(ctx context.Context, obj client.Object) []reconcile.Request {
+		tenant, err := tenantInNamespace(ctx, mgr.GetClient(), obj.GetNamespace())
+		if err != nil || tenant == nil {
+			return nil
 		}
-		if svc.GetNamespace() != envoyGatewayInstallNamespace {
-			return false
-		}
-		return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
-			svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
-	})
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: tenant.Name}}}
+	}
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
+		// A sign-in between two tenants is in both composites, so a change
+		// of either side redoes the other's (tenant_sign_in.go).
+		Watches(&gentianov1alpha1.Tenant{}, tenantsSignInWith(mgr.GetClient()),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&gentianov1alpha1.AppGrant{}, handler.EnqueueRequestsFromMapFunc(mapGrantToTenant)).
 		// One worker is controller-runtime's default, and it is the wrong one
 		// here. A tenant waiting on its provisioning Jobs requeues every two
 		// seconds (see the RequeueAfter below), so every tenant that has not
@@ -492,7 +535,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
-				return hasLabel && obj.GetNamespace() == kernelNamespace
+				return hasLabel && isTenantPlatformNamespace(obj.GetNamespace())
 			})),
 		).
 		Watches(
@@ -504,24 +547,52 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			})),
 		).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
-			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
+			&gentianov1alpha1.ComponentProfile{},
+			handler.EnqueueRequestsFromMapFunc(mapComponentProfileToTenants),
 		).
 		Watches(
 			xTenantObj,
 			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(xTenantStatusChanged),
+		).
+		// Every tenant with a TenantDomain, not only the one named: a domain
+		// two tenants claim passes to the second when the first lets go.
+		Watches(
+			&gentianov1alpha1.TenantDomain{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+				requests := []reconcile.Request{{NamespacedName: types.NamespacedName{Name: obj.GetName()}}}
+				all := &gentianov1alpha1.TenantDomainList{}
+				if err := mgr.GetClient().List(ctx, all); err == nil {
+					for i := range all.Items {
+						if all.Items[i].Name != obj.GetName() {
+							requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: all.Items[i].Name}})
+						}
+					}
+				}
+				return requests
+			}),
 		)
 
-	if isGatewayRoutingMode(r.RoutingMode) {
-		ctrlBuilder = ctrlBuilder.Watches(
-			&corev1.Service{},
-			handler.EnqueueRequestsFromMapFunc(mapAllTenants),
-			builder.WithPredicates(envoyKernelServicePredicate),
-		)
+	ctrlBuilder = ctrlBuilder.Watches(
+		&corev1.Service{},
+		handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+		builder.WithPredicates(envoyKernelServicePredicate),
+	)
+
+	// Entering a tenant (kernel_enter.go): a tenant that opens itself to the
+	// platform's administrators, changes realm, or goes, is the kernel
+	// realm's tenant to recompose.
+	ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, tenantsAdoptingKernelRealm(mgr.GetClient(), r.KernelRealm),
+		builder.WithPredicates(tenantEnterFactsChanged()))
+	if r.WatchClusterClaim {
+		ctrlBuilder = ctrlBuilder.Watches(clusterClaimObject(), handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(claimTenantFactsChanged()))
+		// The verdict also turns on every tenant's domain (store_offer.go).
+		ctrlBuilder = ctrlBuilder.Watches(&gentianov1alpha1.Tenant{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(tenantDomainChanged(r.clusterNames())))
 	}
 
-	return ctrlBuilder.Complete(r)
+	return ctrlBuilder.Complete(r.guarded())
 }
 
 // tenantEffectiveDomain returns the ingress/mail domain for tenant app hostnames.
@@ -580,26 +651,28 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	r.resolveTenantDomain(ctx, tenant)
+
 	return r.runTenantReconcileStages(ctx, &tenantReconcileState{
 		tenant: tenant,
 		start:  start,
 	})
 }
 
-// validateTenantPrerequisites checks that all requested AppProfiles exist.
+// validateTenantPrerequisites checks that all requested ComponentProfiles exist.
 func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
 	missingMap := map[string]struct{}{}
 
 	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := appProfileFromIndex(profileIndex, profileName); !ok {
+		if _, ok := profileFromIndex(profileIndex, profileName); !ok {
 			missingMap[profileName] = struct{}{}
 		}
 	}
@@ -621,7 +694,7 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 // reason a live tenant stops being cleaned up.
 //
 // Answers false when no uncached reader is configured, which keeps the
-// behaviour of a reconciler built without one unchanged.
+// behavior of a reconciler built without one unchanged.
 func (r *TenantReconciler) tenantGoneFromAPI(ctx context.Context, name types.NamespacedName) bool {
 	if r.APIReader == nil {
 		return false
@@ -645,55 +718,33 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return true, ctrl.Result{}, err
 	}
 
-	// Clean up identity resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteIdentity(ctx, tenant)); requeue {
-		return res, err
+	// The tenant's stores and its realm, in the one teardown order the
+	// inventory defines (backup.TeardownOrder: provisioning's, reversed) --
+	// the order the purge of a single app follows too. The cache, the
+	// buckets and the databases go before the realm, which holds every
+	// app's access group and sign-in client. Each step destroys the kind for
+	// every app the tenant ever had, by the same Jobs an app's purge runs,
+	// and a Job that fails stops the deletion here until it has succeeded.
+	teardown := map[backup.Kind][]func(context.Context, *gentianov1alpha1.Tenant) error{
+		backup.KindWorkloads:     {r.deleteAppDeployment},
+		backup.KindModelAccess:   {r.deleteModelAccess},
+		backup.KindAuthorization: {r.deleteAuthorizationStores},
+		backup.KindCache:         {r.deleteCache},
+		backup.KindObjectStorage: {r.deleteStorage},
+		backup.KindDatabase:      {r.deleteMariaDB, r.deleteDatabase},
+		backup.KindAccessGroup:   {r.deleteIdentity},
 	}
-
-	// Clean up database resources before removing the namespace.
-	if err := r.deleteDatabase(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// The portal shell credential goes with the database it addresses.
-	if err := r.deletePortalShellSecret(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Clean up MariaDB resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteMariaDB(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up storage resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteStorage(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up cache resources before removing the namespace.
-	if requeue, res, err := awaitJob(r.deleteCache(ctx, tenant)); requeue {
-		return res, err
-	}
-
-	// Clean up app deployment resources (always, regardless of DeletionPolicy).
-	if err := r.deleteAppDeployment(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	for _, kind := range backup.TeardownOrder() {
+		for _, step := range teardown[kind] {
+			if requeue, res, err := awaitJob(step(ctx, tenant)); requeue {
+				return resultUnlessError(res, err)
+			}
+		}
 	}
 
 	// Clean up edge routing (Ingress or Gateway API), wildcard cert, and DNS.
 	if err := r.deleteEdgeRouting(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	// The tenant's OpenBao auth mount goes whatever the DeletionPolicy says.
-	// Retain protects the tenant's *data*; a mount is not data. Left behind it
-	// trusts a realm that no longer exists, and realm names are reusable — so a
-	// later tenant of the same name would inherit these roles.
-	if err := r.removeTenantOpenBaoAuth(ctx, tenant); err != nil {
-		// Not fatal: OpenBao being unreachable must not strand the finalizer and
-		// with it the whole Tenant. Reported so the residue is known.
-		log.FromContext(ctx).Error(err, "could not remove the tenant's OpenBao auth mount",
-			"tenant", tenant.Name)
 	}
 
 	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
@@ -708,10 +759,14 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	if err := r.deleteMail(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
-
-	// Clean up portal redirect routes.
-	if err := r.deletePortalRedirect(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
+	// And then what the tenant has that is no app's and holds what people
+	// stored (backup.TenantOwned): its mailboxes, now that nothing routes
+	// mail to them, and the desktop's database where it is the kernel's.
+	// Each by a Job that has to succeed, like a store's.
+	for _, step := range []func(context.Context, *gentianov1alpha1.Tenant) error{r.deleteMailboxes, r.deleteKernelDesktop} {
+		if requeue, res, err := awaitJob(step(ctx, tenant)); requeue {
+			return resultUnlessError(res, err)
+		}
 	}
 
 	// Delete the XTenant composite so Crossplane cascades deletion of
@@ -728,10 +783,17 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
 		logger.Info("deletionPolicy=Delete: removing tenant namespace", "namespace", nsName)
 		ns := &corev1.Namespace{}
-		if err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); err == nil {
-			if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
-				return ctrl.Result{}, err
+		switch err := r.Get(ctx, types.NamespacedName{Name: nsName}, ns); {
+		case err == nil:
+			if ns.DeletionTimestamp == nil {
+				if err := r.Delete(ctx, ns); client.IgnoreNotFound(err) != nil {
+					return ctrl.Result{}, err
+				}
 			}
+		case !errors.IsNotFound(err):
+			// Not knowing whether the namespace is there is not the same as
+			// its being gone: every volume of the tenant is in it.
+			return ctrl.Result{}, fmt.Errorf("look for the tenant namespace %s: %w", nsName, err)
 		}
 	} else {
 		// DeletionPolicyRetain: keep namespace, only remove orchestrator-owned sub-resources.
@@ -753,6 +815,23 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
+	// The namespace has to be gone, not merely told to go. Every volume of
+	// the tenant is in it, and a namespace stays Terminating for as long as
+	// anything in it holds a finalizer. The finalizer used to come off the
+	// Tenant as soon as the delete had been sent: the Tenant disappeared, the
+	// deletion read as finished, and the files were still there -- for good,
+	// when the namespace never finished terminating.
+	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {
+		gone, err := r.namespaceGone(ctx, nsName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !gone {
+			logger.Info("waiting for the tenant namespace to be gone", "namespace", nsName)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+	}
+
 	if err := r.purgeTenantKernelResources(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -760,9 +839,33 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	if err := r.deleteTenantProvisioningConfigMap(ctx, tenant.Name); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Last: the record of the stores is what a deletion that stopped half-way
+	// finds them by when it resumes.
+	if err := r.deleteProvisionedRecord(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	controllerutil.RemoveFinalizer(tenant, tenantFinalizer)
 	return ctrl.Result{}, r.Update(ctx, tenant)
+}
+
+// namespaceGone reports whether a namespace no longer exists. It reads the
+// API server when it can: the cache keeps showing a namespace for a moment
+// after it has gone, and, worse, would show "not found" for one it has not
+// seen yet.
+func (r *TenantReconciler) namespaceGone(ctx context.Context, name string) (bool, error) {
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
+	err := reader.Get(ctx, types.NamespacedName{Name: name}, &corev1.Namespace{})
+	if errors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("look for the tenant namespace %s: %w", name, err)
+	}
+	return false, nil
 }
 
 // deleteOwnedResourcesInNamespace removes ResourceQuota, LimitRange, and NetworkPolicy
@@ -793,268 +896,47 @@ func (r *TenantReconciler) deleteOwnedResourcesInNamespace(ctx context.Context, 
 }
 
 // ensureRegistryCredentials replicates the kernel-managed `registry-credentials`
-// Secret from the services namespace into the tenant namespace, and manages
-// scoped registry credentials for proprietary applications.
+// Secret from the services namespace into the tenant namespace. That is the
+// cluster's own pull credential and nothing more: whether an app from a
+// private repository arrives is decided by the credential the tenant holds
+// for that repository, not here.
 func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
 	const defaultSecretName = "registry-credentials"
 
-	// 1. Replicate default registry credentials
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: servicesNamespace}, source); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
-		}
-	} else {
-		desired := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      defaultSecretName,
-				Namespace: nsName,
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Type: source.Type,
-			Data: source.Data,
-		}
-
-		existing := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: nsName}, existing)
 		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, desired); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		} else if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
-			patch := client.MergeFrom(existing.DeepCopy())
-			existing.Type = desired.Type
-			existing.Data = desired.Data
-			if existing.Labels == nil {
-				existing.Labels = map[string]string{}
-			}
-			existing.Labels[tenantLabel] = tenant.Name
-			existing.Labels[managedByLabel] = managedByValue
-			if err := r.Patch(ctx, existing, patch); err != nil {
-				return err
-			}
+			return nil
 		}
+		return fmt.Errorf("failed to read source registry-credentials in %s: %w", servicesNamespace, err)
 	}
-
-	// 2. Fetch scoped credentials for proprietary apps if commerce integration is enabled
-	for _, app := range tenant.Spec.Apps {
-		profileName := app.Profile
-		if profileName == "" {
-			continue
-		}
-
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			return fmt.Errorf("failed to read AppProfile %s: %w", profileName, err)
-		}
-
-		if profile.Spec.License != "proprietary" {
-			continue
-		}
-
-		secretName := "registry-credentials-" + profileName
-		existingSec := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existingSec)
-		if err == nil {
-			// Secret exists already
-			continue
-		}
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to check existing secret %s: %w", secretName, err)
-		}
-
-		// Scoped secret is missing; exchange the grant
-		if !r.CommerceEnabled {
-			return fmt.Errorf("app %s has a proprietary license but commercial integration (GENTIAN_COMMERCE_ENABLED) is disabled", profileName)
-		}
-
-		annoKey := "gentianos.io/install-grant-" + profileName
-		log.FromContext(ctx).Info("checking registry credentials for proprietary app", "profile", profileName, "annoKey", annoKey, "annotations", tenant.Annotations)
-		jwtToken := tenant.Annotations[annoKey]
-		if jwtToken == "" {
-			return fmt.Errorf("app %s has a proprietary license; please purchase a subscription and provide the install grant JWT annotation %s", profileName, annoKey)
-		}
-
-		jti, err := extractJTIFromJWT(jwtToken)
-		if err != nil {
-			return fmt.Errorf("failed to extract token ID from grant for %s: %w", profileName, err)
-		}
-
-		log.FromContext(ctx).Info("exchanging install grant", "profile", profileName, "jti", jti)
-		exchangeRes, err := r.exchangeInstallGrant(ctx, jti, jwtToken)
-		if err != nil {
-			log.FromContext(ctx).Error(err, "failed to exchange install grant", "profile", profileName, "jti", jti)
-			return fmt.Errorf("failed to exchange install grant for %s: %w", profileName, err)
-		}
-		log.FromContext(ctx).Info("exchanged install grant successfully", "profile", profileName, "entitlementId", exchangeRes.EntitlementId)
-
-		dockerConfigJSON, err := buildDockerConfigJSON(
-			exchangeRes.RegistryCredential.Host,
-			exchangeRes.RegistryCredential.Username,
-			exchangeRes.RegistryCredential.Password,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to build dockerconfig JSON for %s: %w", profileName, err)
-		}
-
-		registrySec := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretName,
-				Namespace: nsName,
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Type: corev1.SecretTypeDockerConfigJson,
-			Data: map[string][]byte{
-				corev1.DockerConfigJsonKey: dockerConfigJSON,
-			},
-		}
-		log.FromContext(ctx).Info("creating registry credentials secret", "secret", secretName, "namespace", nsName)
-		if err := r.Create(ctx, registrySec); err != nil {
-			log.FromContext(ctx).Error(err, "failed to create registry credentials secret", "secret", secretName)
-			return fmt.Errorf("failed to create secret %s: %w", secretName, err)
-		}
-		log.FromContext(ctx).Info("created registry credentials secret successfully", "secret", secretName)
-
-		meteringSecName := "metering-secret-" + profileName
-		meteringSec := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      meteringSecName,
-				Namespace: nsName,
-				Labels: map[string]string{
-					tenantLabel:    tenant.Name,
-					managedByLabel: managedByValue,
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"metering-secret": exchangeRes.MeteringSecret,
-				"entitlement-id":  exchangeRes.EntitlementId,
-				"product-sku":     profileName,
-			},
-		}
-		log.FromContext(ctx).Info("creating metering secret", "secret", meteringSecName, "namespace", nsName)
-		if err := r.Create(ctx, meteringSec); err != nil {
-			log.FromContext(ctx).Error(err, "failed to create metering secret", "secret", meteringSecName)
-			return fmt.Errorf("failed to create secret %s: %w", meteringSecName, err)
-		}
-		log.FromContext(ctx).Info("created metering secret successfully", "secret", meteringSecName)
-	}
-
-	return nil
+	return ensureSecretCopy(ctx, r.Client, source, nsName, tenant.Name)
 }
 
-type installExchangeRequest struct {
-	InstallGrantJwt string `json:"installGrantJwt"`
-}
-
-type registryCreds struct {
-	Host      string    `json:"host"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password"`
-	Scopes    []string  `json:"scopes"`
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-
-type installExchangeResponse struct {
-	Ok                 bool          `json:"ok"`
-	Profile            string        `json:"profile"`
-	EntitlementId      string        `json:"entitlementId"`
-	RegistryCredential registryCreds `json:"registryCredential"`
-	MeteringSecret     string        `json:"meteringSecret"`
-}
-
-func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtToken string) (*installExchangeResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CommerceAPIURL, "/"), jti)
-	reqBody, err := json.Marshal(installExchangeRequest{InstallGrantJwt: jwtToken})
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.CommerceAPIToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("exchange failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var out installExchangeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func extractJTIFromJWT(token string) (string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid JWT format")
-	}
-	payloadSegment := parts[1]
-	if l := len(payloadSegment) % 4; l > 0 {
-		payloadSegment += strings.Repeat("=", 4-l)
-	}
-	decoded, err := base64.URLEncoding.DecodeString(payloadSegment)
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(payloadSegment)
-		if err != nil {
-			return "", err
-		}
-	}
-	var claims struct {
-		JTI string `json:"jti"`
-	}
-	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return "", err
-	}
-	if claims.JTI == "" {
-		return "", fmt.Errorf("jti claim not found in JWT")
-	}
-	return claims.JTI, nil
-}
-
-type dockerConfig struct {
-	Auths map[string]dockerAuth `json:"auths"`
-}
-
-type dockerAuth struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Auth     string `json:"auth"`
-}
-
-func buildDockerConfigJSON(host, username, password string) ([]byte, error) {
-	authStr := username + ":" + password
-	encodedAuth := base64.StdEncoding.EncodeToString([]byte(authStr))
-	config := dockerConfig{
-		Auths: map[string]dockerAuth{
-			host: {
-				Username: username,
-				Password: password,
-				Auth:     encodedAuth,
-			},
+// ensureSecretCopy keeps a copy of source, under its name, in namespace,
+// labelled as tenant's: its type and data are source's.
+func ensureSecretCopy(ctx context.Context, c client.Client, source *corev1.Secret, namespace, tenant string) error {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      source.Name,
+			Namespace: namespace,
+			Labels:    map[string]string{tenantLabel: tenant, managedByLabel: managedByValue},
 		},
+		Type: source.Type,
+		Data: source.Data,
 	}
-	return json.Marshal(config)
+	return ensureObject(ctx, c, desired, func(existing *corev1.Secret) bool {
+		if equality.Semantic.DeepEqual(existing.Data, desired.Data) && existing.Type == desired.Type {
+			return false
+		}
+		existing.Type, existing.Data = desired.Type, desired.Data
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		existing.Labels[tenantLabel] = tenant
+		existing.Labels[managedByLabel] = managedByValue
+		return true
+	})
 }
 
 // ensureStagingCaTrust bootstraps gentian-trust-anchor-tls in the services namespace
@@ -1063,7 +945,7 @@ func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gen
 	const secretName = trustanchor.SecretName
 
 	if _, err := trustanchor.EnsureTrustAnchorSecret(ctx, r.Client, servicesNamespace,
-		trustanchor.DefaultCertManagerNS, trustanchor.DefaultLeafSecret); err != nil {
+		layout.Namespace(layout.Edge), trustanchor.DefaultLeafSecret); err != nil {
 		return fmt.Errorf("bootstrap staging CA in %s: %w", servicesNamespace, err)
 	}
 
@@ -1075,82 +957,16 @@ func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gen
 		return fmt.Errorf("failed to read source %s in %s: %w", secretName, servicesNamespace, err)
 	}
 
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: nsName,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Type: source.Type,
-		Data: source.Data,
-	}
-
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Data, desired.Data) || existing.Type != desired.Type {
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Type = desired.Type
-		existing.Data = desired.Data
-		if existing.Labels == nil {
-			existing.Labels = map[string]string{}
-		}
-		existing.Labels[tenantLabel] = tenant.Name
-		existing.Labels[managedByLabel] = managedByValue
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
+	return ensureSecretCopy(ctx, r.Client, source, nsName, tenant.Name)
 }
 
-// setCondition upserts a metav1.Condition on the Tenant status.
+// setCondition sets a condition on the Tenant status (setStatusCondition).
+// Message and observedGeneration are refreshed even when status and reason
+// are unchanged, so a failure that changes its cause reports the cause it
+// has now; lastTransitionTime marks a change of status only, which is what
+// says how long a condition has been what it is.
 func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condType string, status metav1.ConditionStatus, reason, message string) {
-	now := metav1.Now()
-	for i, c := range tenant.Status.Conditions {
-		if c.Type == condType {
-			// Message and observedGeneration are refreshed even when status and
-			// reason are unchanged. Returning early here froze the first
-			// failure's text in place for as long as the condition kept the same
-			// status/reason pair: an app whose sync first failed with
-			// "connection refused" and later failed with a connect timeout went
-			// on reporting the original error indefinitely, pointing whoever was
-			// debugging at a problem that had already been fixed.
-			//
-			// lastTransitionTime still marks a change of *status* only, per the
-			// Kubernetes API conventions — reason and message churn while a
-			// condition legitimately stays False, and treating that as a
-			// transition would destroy the "how long has this been broken"
-			// signal that makes the field worth having.
-			transition := c.LastTransitionTime
-			if c.Status != status {
-				transition = now
-			}
-			tenant.Status.Conditions[i] = metav1.Condition{
-				Type:               condType,
-				Status:             status,
-				Reason:             reason,
-				Message:            message,
-				LastTransitionTime: transition,
-				ObservedGeneration: tenant.Generation,
-			}
-			return
-		}
-	}
-	tenant.Status.Conditions = append(tenant.Status.Conditions, metav1.Condition{
-		Type:               condType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: now,
-		ObservedGeneration: tenant.Generation,
-	})
+	setStatusCondition(&tenant.Status.Conditions, tenant.Generation, condType, status, reason, message)
 }
 
 // tenantNamespaceName returns the namespace name for the tenant.
@@ -1186,6 +1002,12 @@ func (r *TenantReconciler) ensureTenantXR(ctx context.Context, tenant *gentianov
 	if specMap, ok := xr.Object["spec"].(map[string]interface{}); ok {
 		for k, v := range desiredSpec {
 			specMap[k] = v
+		}
+		// Stated or absent, and absent has to arrive too: a merge that only
+		// copies what is there would leave a mail server on the XTenant
+		// after its credential was withdrawn.
+		if _, ok := desiredSpec["realmMail"]; !ok {
+			delete(specMap, "realmMail")
 		}
 	} else {
 		xr.Object["spec"] = desiredSpec
@@ -1237,6 +1059,69 @@ func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1
 // was simply sold something the cluster was never told to enforce.
 //
 // xtenant_quotas_agreement_test.go holds the two ends together.
+// xtenantSecurity projects the realm policy onto the XTenant.
+//
+// Only what is set: a field left out means the realm keeps Keycloak's own
+// default, and writing a zero instead would be this projection inventing a
+// policy the tenant never stated.
+func xtenantSecurity(sec *gentianov1alpha1.TenantSecurity) map[string]interface{} {
+	if sec == nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	if p := sec.Password; p != nil {
+		pw := map[string]interface{}{}
+		if p.MinLength > 0 {
+			pw["minLength"] = int64(p.MinLength)
+		}
+		for key, on := range map[string]bool{
+			"requireDigits":       p.RequireDigits,
+			"requireLowercase":    p.RequireLowercase,
+			"requireUppercase":    p.RequireUppercase,
+			"requireSpecialChars": p.RequireSpecialChars,
+		} {
+			if on {
+				pw[key] = true
+			}
+		}
+		if p.HistoryCount > 0 {
+			pw["historyCount"] = int64(p.HistoryCount)
+		}
+		if p.MaxAgeDays > 0 {
+			pw["maxAgeDays"] = int64(p.MaxAgeDays)
+		}
+		if len(pw) > 0 {
+			out["password"] = pw
+		}
+	}
+	if s := sec.Session; s != nil {
+		session := map[string]interface{}{}
+		if s.IdleMinutes > 0 {
+			session["idleMinutes"] = int64(s.IdleMinutes)
+		}
+		if s.MaxHours > 0 {
+			session["maxHours"] = int64(s.MaxHours)
+		}
+		if s.RememberMe {
+			session["rememberMe"] = true
+		}
+		if len(session) > 0 {
+			out["session"] = session
+		}
+	}
+	if b := sec.BruteForce; b != nil && b.Enabled {
+		bf := map[string]interface{}{"enabled": true}
+		if b.MaxLoginFailures > 0 {
+			bf["maxLoginFailures"] = int64(b.MaxLoginFailures)
+		}
+		if b.LockoutDurationSeconds > 0 {
+			bf["lockoutDurationSeconds"] = int64(b.LockoutDurationSeconds)
+		}
+		out["bruteForce"] = bf
+	}
+	return out
+}
+
 func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q == nil {
 		return nil
@@ -1284,8 +1169,11 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		"adminEmail":   r.tenantAdminEmail(tenant),
 		"kernelDomain": r.KernelDomain,
 	}
-	if tenant.Spec.Domain != "" {
-		spec["domain"] = tenant.Spec.Domain
+	// The domain the tenant is served at, decided here once: the custom
+	// domain a TenantDomain bound, or the tenancy mode's default. The
+	// Composition takes it as given rather than deriving it a second time.
+	if domain := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode); domain != "" {
+		spec["domain"] = domain
 	}
 	if tenant.Spec.DeletionPolicy != "" {
 		spec["deletionPolicy"] = string(tenant.Spec.DeletionPolicy)
@@ -1313,85 +1201,80 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 	}
 
+	// Stated only where it is on: an XTenant that says nothing has the
+	// Composition's default, which is off, and a tenant made before the
+	// field existed composes exactly as it did.
+	if tenant.SignUpEnabled() {
+		spec["signUp"] = map[string]interface{}{"enabled": true}
+	}
+	// The same: only where there is one, so a tenant without composes as it
+	// did.
+	// The sign-ins between this tenant and another of the cluster
+	// (tenant_sign_in.go): the clients it is the source of.
+	signInFrom, signInClients, err := r.tenantSignInProjection(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("read the tenants a sign-in pairs %s with: %w", tenant.Name, err)
+	}
+	if len(signInClients) > 0 {
+		spec["brokeredTo"] = signInClients
+	}
+	if len(signInFrom) > 0 {
+		spec["signInFrom"] = signInFrom
+	}
+	// The platform's administrators entering tenants (kernel_enter.go): the
+	// clients on the tenant that adopts the kernel realm, and on any other
+	// tenant whether they may enter it.
+	kernelEnter, kernelBroker, err := r.kernelEnterProjection(ctx, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("read which tenants the platform's administrators enter, for %s: %w", tenant.Name, err)
+	}
+	if kernelEnter != nil {
+		spec["kernelEnter"] = kernelEnter
+	}
+	if kernelBroker {
+		spec["kernelBroker"] = true
+	}
+	if len(tenant.Spec.Groups) > 0 {
+		groups := make([]interface{}, 0, len(tenant.Spec.Groups))
+		for _, g := range tenant.Spec.Groups {
+			groups = append(groups, g.Name)
+		}
+		spec["groups"] = groups
+	}
+	// The tenant's partners (partners.go), within what the claim allows.
+	claimPartners, err := readClusterPartners(ctx, r.Client)
+	if err != nil {
+		return nil, fmt.Errorf("read the Cluster claim's partners: %w", err)
+	}
+	if partners := tenantPartnerProjection(tenant, claimPartners); len(partners) > 0 {
+		spec["partners"] = partners
+	}
+	if r.ServiceAccountIssuer != "" {
+		spec["serviceAccountIssuer"] = r.ServiceAccountIssuer
+	}
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas
 	}
 
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	if security := xtenantSecurity(tenant.Spec.Security); len(security) > 0 {
+		spec["security"] = security
+	}
+
+	// The realm's mail server, stated only once its password exists; see
+	// tenantRealmMail. Absent, the Composition declares none.
+	mail, err := r.tenantRealmMail(ctx, tenant)
 	if err != nil {
-		return nil, fmt.Errorf("load AppProfile index: %w", err)
+		return nil, fmt.Errorf("the realm's mail server: %w", err)
 	}
-
-	apps := make([]interface{}, 0, len(tenant.Spec.Apps))
-	for _, app := range tenant.Spec.Apps {
-		entry := map[string]interface{}{"profile": app.Profile}
-		profile, exists := appProfileFromIndex(profileIndex, app.Profile)
-		if exists {
-			// ApiProfiles run no workload; keep them out of the XTenant so the
-			// composition creates no App claim / Helm release for them.
-			if gentianov1alpha1.ProfileIsAPI(profile) {
-				continue
-			}
-			if profile.Spec.CompositionRef != "" {
-				variant := strings.TrimPrefix(profile.Spec.CompositionRef, "app-")
-				if variant != "" {
-					entry["variant"] = variant
-				}
-			}
-		} else {
-			log.FromContext(ctx).Info("AppProfile not found in index in buildXTenant", "profile", app.Profile)
-		}
-		if app.Config != nil {
-			cfg := map[string]interface{}{}
-			if app.Config.Replicas != nil {
-				cfg["replicas"] = int64(*app.Config.Replicas)
-			}
-			if app.Config.ExtraValues != nil && len(app.Config.ExtraValues.Raw) > 0 {
-				var extra map[string]interface{}
-				if err := json.Unmarshal(app.Config.ExtraValues.Raw, &extra); err == nil && len(extra) > 0 {
-					cfg["extraValues"] = extra
-				}
-			}
-			if len(cfg) > 0 {
-				entry["config"] = cfg
-			}
-		}
-
-		// Resolve selected addons to the identifiers the hosting app understands, so
-		// the composition renders app-native activation without the operator knowing
-		// anything app-specific. Invalid selections are reported on the Tenant and
-		// dropped rather than failing the whole reconcile — one bad addon must not
-		// block the app itself, or every other app in the tenant.
-		if exists && len(app.Addons) > 0 {
-			resolved, addonErrs := customization.ResolveAddons(profile, app.Addons, profileIndex)
-			for _, addonErr := range addonErrs {
-				log.FromContext(ctx).Error(addonErr, "skipping invalid addon selection",
-					"tenant", tenant.Name, "app", app.Profile)
-			}
-			// Commercial addons are gated on an install grant. The grant source is
-			// roadmap item 2.5 and does not exist yet, so the map is empty and every
-			// addon carrying license: proprietary is withheld. Denying by default is
-			// the only safe posture for a paid feature: silently activating one
-			// because entitlement cannot be checked would give it away.
-			allowed, blocked := customization.EntitledAddons(resolved, nil)
-			for _, b := range blocked {
-				log.FromContext(ctx).Info("withholding commercial addon pending entitlement",
-					"tenant", tenant.Name, "app", app.Profile, "addon", b.Profile)
-			}
-			if ids := customization.AddonIDs(allowed); len(ids) > 0 {
-				entry["addons"] = toInterfaceSlice(ids)
-			}
-		}
-
-		apps = append(apps, entry)
+	if mail != nil {
+		spec["realmMail"] = xtenantRealmMail(mail)
 	}
-	spec["apps"] = apps
 
 	_ = unstructured.SetNestedField(xr.Object, spec, "spec")
 	return xr, nil
 }
 
-// toInterfaceSlice converts a string slice for embedding in an unstructured XR spec,
+// toInterfaceSlice converts a string slice for embedding in an unstructured spec,
 // which requires []interface{} rather than []string.
 func toInterfaceSlice(in []string) []interface{} {
 	out := make([]interface{}, 0, len(in))

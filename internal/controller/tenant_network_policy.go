@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -32,25 +26,30 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-	infraNS := os.Getenv("INFRA_NAMESPACE")
-	if infraNS == "" {
-		infraNS = "gentian-infra-" + stage
-	}
 	cidr := os.Getenv("KUBE_APISERVER_CIDR")
 	if cidr == "" {
 		cidr = "10.0.0.0/8"
 	}
 	return netpolicy.Config{
-		InfraNamespace:    infraNS,
 		ServicesNamespace: servicesNamespace,
-		OpenbaoNamespace:  "openbao",
-		RoutingMode:       r.RoutingMode,
 		KubeAPIServerCIDR: cidr,
+		NarrowEdge:        kernelNetworkPoliciesEnabled(),
 	}
+}
+
+// kernelNetworkPoliciesEnabled reports the cluster's switch for the kernel's
+// network rules, as the operator is told it (KERNEL_NETWORK_POLICIES, from
+// the installer through the chart). The installer applies and removes the
+// kernel namespaces' own policies by it; the operator's two rules that lean
+// on the same fact -- which pods of the edge namespace are the Gateway's --
+// follow it: a tenant's baseline admits those pods alone, and a publishing
+// proxy admits them alone. Anything but "true" is off.
+func kernelNetworkPoliciesEnabled() bool {
+	return os.Getenv("KERNEL_NETWORK_POLICIES") == "true"
 }
 
 // loadKubeAPIEndpointSlice returns the EndpointSlice backing the "kubernetes"
@@ -93,25 +92,54 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
-	profiles := map[string]*gentianov1alpha1.AppProfile{}
+	// Every entry's profile, the components the platform places among them:
+	// a contract's two sides are selected by what their pods carry, whichever
+	// side a placed component is on.
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return fmt.Errorf("get AppProfile %s for network policy: %w", app.Profile, err)
+			return fmt.Errorf("get ComponentProfile %s for network policy: %w", app.Profile, err)
 		}
 		profiles[app.Profile] = profile
+	}
+
+	// A chart the platform places carries the labels its chart gives a
+	// release, not the app label every other chart is rendered with. A
+	// contract selects each side by what it carries.
+	selectors := map[string]map[string]string{}
+	for name, profile := range profiles {
+		if !operatorPlaced(profile) {
+			continue
+		}
+		comp := &gentianov1alpha1.Component{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, comp); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+		comp.Name, comp.Namespace = name, nsName
+		selectors[name] = releasePods(helmReleaseOf(comp, profile))
+	}
+
+	// The per-app policies (kernel access, in-app traffic, granted egress,
+	// adapters, the cache) are the installed apps'. A component the
+	// platform places has its own written by its Component
+	// (component_network_policy.go), and is left out here.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return err
 	}
 
 	in := netpolicy.BuildInput{
 		TenantName:    tenant.Name,
 		Namespace:     nsName,
-		Apps:          tenant.Spec.Apps,
+		Apps:          installed,
 		Profiles:      profiles,
 		Bindings:      bindings,
 		Grants:        grants,
+		PodSelectors:  selectors,
 		Config:        r.tenantNetPolicyConfig(),
 		KubeAPIEndpts: r.loadKubeAPIEndpointSlice(ctx),
 	}
@@ -122,22 +150,8 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		if err := controllerutil.SetControllerReference(tenant, np, r.Scheme); err != nil {
 			return fmt.Errorf("set owner ref on NetworkPolicy %s: %w", np.Name, err)
 		}
-		existing := &networkingv1.NetworkPolicy{}
-		err := r.Get(ctx, types.NamespacedName{Name: np.Name, Namespace: np.Namespace}, existing)
-		if errors.IsNotFound(err) {
-			if err := r.Create(ctx, np); err != nil {
-				return fmt.Errorf("create NetworkPolicy %s: %w", np.Name, err)
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("get NetworkPolicy %s: %w", np.Name, err)
-		}
-		patch := client.MergeFrom(existing.DeepCopy())
-		existing.Labels = np.Labels
-		existing.Spec = np.Spec
-		if err := r.Patch(ctx, existing, patch); err != nil {
-			return fmt.Errorf("patch NetworkPolicy %s: %w", np.Name, err)
+		if err := r.applyTenantNetworkPolicy(ctx, np); err != nil {
+			return err
 		}
 	}
 
@@ -150,7 +164,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	}
 	for i := range existingList.Items {
 		np := &existingList.Items[i]
-		if np.Labels[meta.NetPolicyTypeLabel] == "" {
+		// A run's way to its external destination is the run's, removed
+		// when it ends (discardRunDestinationEgress), not the tenant's.
+		if t := np.Labels[meta.NetPolicyTypeLabel]; t == "" || t == meta.NetPolicyExportDestination {
 			continue
 		}
 		if _, keep := desiredNames[np.Name]; keep {
@@ -159,6 +175,21 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		if err := r.Delete(ctx, np); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete stale NetworkPolicy %s: %w", np.Name, err)
 		}
+	}
+	// With the way between two apps goes the means to tell who is calling,
+	// and both come and go with the grant.
+	return r.ensureContractKeys(ctx, tenant, nsName, bindings, grants)
+}
+
+// applyTenantNetworkPolicy writes one of the tenant's NetworkPolicies: its
+// labels and spec, on every pass.
+func (r *TenantReconciler) applyTenantNetworkPolicy(ctx context.Context, np *networkingv1.NetworkPolicy) error {
+	if err := ensureObject(ctx, r.Client, np, func(existing *networkingv1.NetworkPolicy) bool {
+		existing.Labels = np.Labels
+		existing.Spec = np.Spec
+		return true
+	}); err != nil {
+		return fmt.Errorf("ensure NetworkPolicy %s: %w", np.Name, err)
 	}
 	return nil
 }

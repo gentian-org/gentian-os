@@ -1,0 +1,74 @@
+# node-apparmor — lets processes in one container signal each other again on
+# nodes whose kernel stacks container AppArmor labels.
+#
+# With kernel.apparmor_restrict_unprivileged_unconfined=1 (newer Ubuntu 26.04
+# node images), runc's profile change becomes a stack and every container runs
+# as cri-containerd.apparmor.d//&unconfined. containerd's default profile only
+# allows signals from peers named cri-containerd.apparmor.d, so a process can
+# no longer signal another one in its own container. PostgreSQL's startup
+# process signals its checkpointer at the end of crash recovery; without that
+# signal every PostgreSQL that stopped uncleanly crash-loops with
+# "could not signal for checkpoint: Permission denied".
+#
+# Upstream: containerd/containerd#14485, fix in containerd/containerd#14487.
+# This DaemonSet applies that fix on each node: it reloads the profile with the
+# stacked-peer rules (configmap.yaml), and does nothing where the sysctl is
+# off or AppArmor is absent. AppArmor stays enforcing. It goes once the node
+# images ship a containerd with the fix.
+#
+# Privileged with the host's PID namespace, because loading an AppArmor profile
+# is a host operation. kernel-admission is a kernel namespace, which the
+# baseline policies leave to the kernel.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-apparmor
+  labels:
+    app.kubernetes.io/name: node-apparmor
+    app.kubernetes.io/part-of: gentian-os
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-apparmor
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: node-apparmor
+        app.kubernetes.io/part-of: gentian-os
+    spec:
+      hostPID: true
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: reload
+        image: docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+        # Every five minutes: a node that reboots loses the reloaded profile,
+        # and containerd loads its own again with the first container.
+        command:
+        - sh
+        - -c
+        - |
+          while true; do
+            nsenter -t 1 -m -u -i -n -p -- sh -s < /script/reload-profile.sh || echo "reload failed"
+            sleep 300
+          done
+        securityContext:
+          privileged: true
+        resources:
+          requests:
+            cpu: 1m
+            memory: 8Mi
+          limits:
+            memory: 32Mi
+        volumeMounts:
+        - name: script
+          mountPath: /script
+          readOnly: true
+      volumes:
+      - name: script
+        configMap:
+          name: node-apparmor

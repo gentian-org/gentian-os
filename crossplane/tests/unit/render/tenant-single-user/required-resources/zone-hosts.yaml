@@ -1,0 +1,28 @@
+# What the operator projects for the user tenant of a single-tenancy cluster:
+# the host labels its components are served at, directly under the cluster's
+# domain. "cloud" is an installed app's.
+#
+# "cloud" also asks for an exchanged token, and its scope has NOT been
+# observed here: the first pass after an app starts asking. The scope is
+# rendered; its audience mapper and its place among the exchange client's
+# optional scopes wait for the scope's id.
+#
+# No component of this tenant vouches for people, and the projection says so
+# with an empty list rather than by leaving the key out, which is what the
+# operator writes. Nothing of vouching is rendered.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-zone-hosts-user
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: zone-hosts
+    gentianos.io/tenant: user
+data:
+  hosts: |
+    admin
+    cloud
+    desktop
+  exchangeProfiles: |
+    cloud
+  vouchingProfiles: ""

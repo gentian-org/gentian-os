@@ -1,0 +1,37 @@
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  clusterUID: 0123456789abcdef0123456789abcdef
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    namespace: kernel-gitops
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certificates:
+    issuerMode: private-ca
+    caBundleSecretRef:
+      name: acme-ca
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  monitoring:
+    enabled: true
+  logForwarding:
+    destination:
+      endpoint: "https://evidence-api.tenant-platform.svc:8443/ingest"
+      streams: [audit]
+  compositeDeletePolicy: Background
+  resourceRefs: []

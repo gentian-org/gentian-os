@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -25,27 +19,28 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-// newMariaDBProfile creates a minimal AppProfile that requires a MariaDB database.
-func newMariaDBProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+// newMariaDBProfile creates a minimal ComponentProfile that requires a MariaDB database.
+func newMariaDBProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{
-					Engine:            gentianov1alpha1.DatabaseEngineMariaDB,
-					DatabasePerTenant: true,
+					Engine: gentianov1alpha1.DatabaseEngineMariaDB,
 				},
-			},
+			}},
 		},
 	}
 }
@@ -58,7 +53,6 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nomaria"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Maria Co",
-			Domain:      "nomaria.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -85,7 +79,7 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 	// No setup Job should have been created.
 	job := &batchv1.Job{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mariadb-setup-nomaria-anything", Namespace: "platform-kernel"}, job); err == nil {
+		types.NamespacedName{Name: "mariadb-setup-nomaria-anything", Namespace: "system-mariadb"}, job); err == nil {
 		t.Error("expected no setup Job for Tenant with no MariaDB apps")
 	}
 }
@@ -96,7 +90,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 	t.Parallel()
 	profile := newMariaDBProfile("maria-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -104,7 +98,6 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mariacreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Maria Create Co",
-			Domain:      "mariacreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "maria-app1"}},
 		},
 	}
@@ -116,7 +109,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-setup-mariacreate-maria-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "mariadb-setup-mariacreate-maria-app1", Namespace: "system-mariadb"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "mariacreate" {
@@ -133,18 +126,9 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
-	// DB_NAME and DB_USER must be present as literal env vars.
-	envMap := make(map[string]string)
-	for _, e := range container.Env {
-		if e.Value != "" {
-			envMap[e.Name] = e.Value
-		}
-	}
-	if envMap["DB_NAME"] == "" {
-		t.Error("expected DB_NAME env var to be set")
-	}
-	if envMap["DB_USER"] == "" {
-		t.Error("expected DB_USER env var to be set")
+	// The script is the inventory's, for this tenant's and app's names.
+	if want := backup.MariaDBSetupScript("mariacreate_maria_app1", "mariacreate_maria_app1", false, 25); container.Command[len(container.Command)-1] != want {
+		t.Errorf("setup script = %q", container.Command)
 	}
 
 	// Credentials must come from the mariadb-admin Secret (not literal values).
@@ -167,7 +151,7 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 	t.Parallel()
 	profile := newMariaDBProfile("maria-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -175,7 +159,6 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mariaready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Maria Ready Co",
-			Domain:      "mariaready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "maria-app2"}},
 		},
 	}
@@ -195,9 +178,9 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-setup-mariaready-maria-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "mariadb-setup-mariaready-maria-app2", Namespace: "system-mariadb"}, job) == nil
 	})
-	markJobComplete(t, "mariadb-setup-mariaready-maria-app2", "platform-kernel")
+	markJobComplete(t, "mariadb-setup-mariaready-maria-app2", "system-mariadb")
 
 	// Phase=Ready and MariaDBReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -223,15 +206,14 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	t.Parallel()
 	profile := newMariaDBProfile("maria-app3")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "mariadelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Maria Delete Co",
-			Domain:         "mariadelete.example.com",
+			DisplayName:    "Test Tenant",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "maria-app3"}},
 		},
@@ -244,15 +226,18 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-setup-mariadelete-maria-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "mariadb-setup-mariadelete-maria-app3", Namespace: "system-mariadb"}, job) == nil
 	})
 
 	// Delete the tenant.
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteMariaDB; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", "platform-kernel")
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-mariadelete-gentian-backup", "system-s3")
+	// The realm goes after the stores; mark its jobs.
+	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", layout.Namespace(layout.Authentication))
 
 	// A delete Job should be created in the kernel namespace.
 	deleteJob := waitForKernelJob(t, "mariadb-delete-mariadelete-maria-app3", "mariadelete")

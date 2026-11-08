@@ -2,10 +2,10 @@
 
 ## Project overview
 
-Gentian OS is the kernel of the Gentian ecosystem: a Kubernetes operator, CRDs (`AppProfile`,
+Gentian OS is the kernel of the Gentian ecosystem: a Kubernetes operator, CRDs (`ComponentProfile`,
 `Cluster`, tenant resources), Helm charts, and install/uninstall tooling. See
 [README.md](README.md) for scope and [GETTING-STARTED.md](GETTING-STARTED.md) for local/cluster
-setup. `docs/` (see [docs/architecture.md](docs/architecture.md) and [docs/design/](docs/design/))
+setup. `docs/` (see [docs/overview/architecture.md](docs/overview/architecture.md) and [docs/concepts/](docs/concepts/))
 covers architecture in depth.
 
 ## Build & deployment — CI/GitOps only
@@ -13,7 +13,7 @@ covers architecture in depth.
 * CI runs in `.github/workflows/ci.yaml` (Go vet/build/test with envtest, plus image
   builds). Cluster configuration is layered and reconciled via ArgoCD, with cluster-specific
   values living in [gentian-deployments](https://github.com/gentian-org/gentian-deployments) (see
-  [docs/deployment.md](docs/deployment.md)).
+  [docs/guides/deployment.md](docs/guides/deployment.md)).
 * **Do not build images, run `install.sh` (in either direction) against a shared cluster, or hand-patch
   live resources.** Changes belong in git (this repo for kernel/chart defaults, `gentian-deployments`
   for cluster-specific overlays) and get applied by CI/ArgoCD reconciliation. Accelerating
@@ -24,30 +24,41 @@ covers architecture in depth.
 
 ## App customization — the ladder is generic, the apps are not
 
-[docs/app-customization.md](docs/app-customization.md) defines the customization ladder
+[docs/guides/app-customization.md](docs/guides/app-customization.md) defines the customization ladder
 (L0 Configure → L1 Drop-in → L2 Companion → L3 Extension → L4 Repackage → L5 Patch → L6 Fork)
 and the decision procedure agents must follow before customizing an installed app. Two rules
 bind work in *this* repo:
 
-* **Nothing app-specific lands here.** `AppProfile.spec.customization` describes an app's ladder
+* **Nothing app-specific lands here.** `ComponentProfile.spec.customization` describes an app's ladder
   in app-neutral terms; `internal/customization/` implements rung ordering and policy without
-  knowing any profile name. If a customization needs a new operator behaviour, extend the
+  knowing any profile name. If a customization needs a new operator behavior, extend the
   generic contract — never add `case "myapp"` to a reconciler.
 * **Platform scope (S2) is the narrowest-blast-radius exception, not the default.** A
   customization may enter `gentian-os` only when the mechanism is generic across apps. App-specific
-  behaviour belongs in `gentian-apps` at whatever rung fits, regardless of how convenient the
+  behavior belongs in `gentian-apps` at whatever rung fits, regardless of how convenient the
   operator would be.
 
 The `Customization` CRD records deviations at L2+; the operator computes debt signals on its
 status (review overdue, upstream stale, version drift, cheaper rung available). Tenant-scoped
 L1 drop-ins are reconciled by `internal/controller/dropin_reconciler.go`.
 
+## Documentation
+
+* `docs/` is laid out as `overview/`, `guides/`, `reference/`, `concepts/`, `decisions/`,
+  `security/`, `releases/`, `contributing/`; [docs/index.md](docs/index.md) lists every page and
+  [docs/contributing/documentation.md](docs/contributing/documentation.md) holds the rules.
+* Documentation outside `docs/releases` describes the present: no dates of past work and no
+  future work. The past is in git and the future in issues. Two structures are described as
+  planned by decision: class `shared-app` and class `service` (`docs/concepts/app-catalog.md`).
+* Every page carries `audience` and `type` front matter and numbered sections; code and other
+  pages cite a section by path and `§`, so existing section numbers never change.
+
 ## Security & licensing
 
 * **Never commit secrets.** `MASTER_PASSWORD`, SMTP credentials, and all derived kernel/app
   passwords are runtime-injected (OpenBao + External Secrets Operator) — never hardcoded or
   committed, including in `install.secrets.env`-style files.
-* **Respect third-party license terms.** `charts/infra/*` and `activepieces/*`-style vendored
+* **Respect third-party license terms.** `charts/infra/*` and other vendored
   charts carry their own upstream licenses (see each chart's `UPSTREAM.md`) — don't strip
   attribution or relicense vendored code. Check license compatibility before adding new
   dependencies.

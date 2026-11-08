@@ -1,0 +1,13 @@
+# Valid Cluster claim — the TURN edge ready before the first component that
+# declares it, on a cluster whose traffic arrives at its load balancers.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-turn-always
+  namespace: default
+spec:
+  kernelDomain: example.org
+  networkMode: static-ip
+  systemServices:
+    always:
+      - turn

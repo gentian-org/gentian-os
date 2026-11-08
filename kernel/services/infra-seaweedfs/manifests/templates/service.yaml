@@ -1,0 +1,25 @@
+{{- /*
+  The address apps and the platform's Jobs reach the S3 API at:
+  http://s3.<namespace>.svc.cluster.local:9000. A name of the platform's, not
+  the chart's, so that the address an app was handed does not depend on how
+  the server is laid out (one pod, or the chart's separate components).
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+  namespace: {{ .Values.namespace | default "system-s3" }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: s3
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/instance: seaweedfs
+    app.kubernetes.io/component: seaweedfs-all-in-one
+  ports:
+    - name: s3
+      protocol: TCP
+      port: {{ .Values.networkPolicy.ports.api }}
+      targetPort: {{ .Values.networkPolicy.ports.api }}

@@ -1,0 +1,1005 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+// Package gitops is the director's git backend: the only code in the platform
+// that pushes to gentian-deployments (AD-2).
+//
+// It began as a copy of internal/applifecycle's GitOps and differs in what a
+// commit says and how a push is allowed to fail. A commit is authored by the
+// human whose token authorized it and carries the authorization decision as a
+// trailer, so the repository is an audit log and not just a history. A rejected
+// push is the concurrency signal: another writer got there first, so the change
+// is rebased and retried instead of being serialized by a lock that only one
+// process could hold.
+package gitops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+
+	"github.com/gentian-org/gentian-os/internal/audit"
+)
+
+// GitOps edits gentian-deployments tenant YAML and pushes commits.
+type GitOps struct {
+	path    string
+	repo    string
+	cluster string
+	// committer is the director's own identity: the human is the author, the
+	// director is what wrote the commit.
+	committer Person
+	// mu serializes operations on the one working tree this process owns.
+	// It is not the concurrency control between writers — a rejected push is —
+	// it only keeps two handlers from editing the same checkout at once.
+	mu sync.Mutex
+	// syncedAt is when the checkout last equaled the remote, which is what
+	// lets a read skip the fetch. Guarded by mu, like the checkout itself.
+	syncedAt time.Time
+	// signArgs are the git flags that sign a commit, set by EnableSigning.
+	// Empty means this director was given no key and commits unsigned --
+	// which is a cluster whose AppProject carries no policy either (AD-2).
+	signArgs []string
+	// signingKey is the fingerprint those flags name, for reporting.
+	signingKey string
+	// keyFile and keyHome are where the key is read from and imported to,
+	// set by SignFrom. A named keyFile means every commit is signed.
+	keyFile, keyHome string
+	// definitions refuses a commit the cluster would drop part of, set by
+	// GuardDefinitions. Nil checks nothing.
+	definitions *definitionsGuard
+	// afterPush is told of every commit that reached the remote, set by
+	// AfterPush. Nil tells nobody.
+	afterPush func(actor string)
+	// auditLog receives one audit record per commit that reached the
+	// remote, set by AuditTo. Nil writes none.
+	auditLog *slog.Logger
+}
+
+// AuditTo has every commit this helper pushes written as an audit record on
+// log (docs/security/audit-events.md §3): who, under which request and which
+// decision, which commit and which files.
+func (g *GitOps) AuditTo(log *slog.Logger) {
+	g.auditLog = log
+}
+
+// audit writes the record of a pushed commit. The commit's id is read back;
+// a record without it still says what was changed and by whom.
+func (g *GitOps) audit(ctx context.Context, rels []string, message string, meta Meta) {
+	if g.auditLog == nil {
+		return
+	}
+	detail := map[string]any{"files": rels, "summary": strings.SplitN(message, "\n", 2)[0]}
+	head, cancel := g.gitCmd(ctx, "-C", g.path, "rev-parse", "HEAD")
+	if out, err := head.Output(); err == nil {
+		detail["commit"] = strings.TrimSpace(string(out))
+	}
+	cancel()
+	if meta.Principal != "" {
+		detail["principal"] = meta.Principal
+	}
+	relation, object, _ := strings.Cut(meta.Decision, " ")
+	audit.Write(ctx, g.auditLog, audit.Record{
+		Source: "director", Kind: audit.KindChange, RequestID: meta.RequestID,
+		Subject: meta.Subject, Object: object, Action: relation, Outcome: audit.OK,
+		Detail: detail,
+	})
+}
+
+// AfterPush has fn called once for every commit this helper pushes, after the
+// push has succeeded, with who the commit records as its actor. Never for a
+// push that was refused, and never for a write that changed nothing.
+//
+// fn is called under the lock a write holds and before the write answers, so
+// it must return at once. It cannot fail a write: the commit is in the
+// repository by then, and nothing it is told changes that.
+func (g *GitOps) AfterPush(fn func(actor string)) {
+	g.afterPush = fn
+}
+
+// Result is the outcome of a write.
+type Result struct {
+	// Status names what happened: installed, already_installed, uninstalled,
+	// not_installed, updated, unchanged.
+	Status string
+	// Changed reports whether a commit was pushed.
+	Changed bool
+	// Commit is the pushed commit when Changed; the handle a caller is given.
+	Commit string
+	// Warning is what the caller must be told about a change that went
+	// through, such as an approved reuse of a retired tenant's name.
+	Warning string
+}
+
+// landed reads the commit just pushed. It runs under the same lock as the
+// write, so it is this change's commit and not a neighbor's.
+func (g *GitOps) landed(ctx context.Context, status string) (Result, error) {
+	head, err := g.head(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Status: status, Changed: true, Commit: head}, nil
+}
+
+// Person is a git identity.
+type Person struct {
+	Name  string
+	Email string
+}
+
+// Meta is what a commit records beyond the change itself.
+type Meta struct {
+	// Author is the human whose token authorized the change.
+	Author Person
+	// Subject is the token's sub, the stable identifier the decision log and
+	// the OpenFGA tuples use. Names and addresses change; this does not.
+	Subject string
+	// RequestID joins this commit to the issuer event and the decision log
+	// entry (security principle 7).
+	RequestID string
+	// Decision is the authorization that allowed the change, as
+	// "<relation> <object>" — what was asked, of what.
+	Decision string
+	// Principal replaces "user:<Subject>" in the trailer when what authorized
+	// the change was not a person — a fact signed by the store, say.
+	Principal string
+	// Via names the component that asked on the person's behalf with a
+	// token it obtained by vouching, and Reason what it gave as its reason
+	// (an order reference): both in the commit beside the person.
+	Via    string
+	Reason string
+}
+
+// movedAt is when a pin is moved, as the entry records it: now, to the
+// second, in UTC.
+func (m Meta) movedAt() string { return now().UTC().Format(time.RFC3339) }
+
+// mover is who or what moved a pin: the person, or the principal that stood
+// in for one.
+func (m Meta) mover() string { return m.actor() }
+
+// now is the clock the entries' timestamps come from; a test replaces it.
+var now = time.Now
+
+// ActorName is who an ACTION records. A commit has an author and a trailer to
+// read a person off; an action has neither, so the object it creates carries
+// this name instead — the same identity, by the same rule.
+func (m Meta) ActorName() string { return m.actor() }
+
+func (m Meta) actor() string {
+	if m.Principal != "" {
+		return m.Principal
+	}
+	if m.Author.Email != "" {
+		return identClean(m.Author.Email)
+	}
+	return m.Subject
+}
+
+// trailers renders the audit trailer: who was allowed what, under which
+// request id. One line, so `git log --grep` answers "who did this and why was
+// it allowed" without joining anything.
+func (m Meta) trailers() []string {
+	if m.Subject == "" && m.Decision == "" && m.Principal == "" {
+		return nil
+	}
+	parts := []string{}
+	if m.RequestID != "" {
+		parts = append(parts, "req="+m.RequestID)
+	}
+	if m.Principal != "" {
+		parts = append(parts, m.Principal)
+	} else if m.Subject != "" {
+		parts = append(parts, "user:"+m.Subject)
+	}
+	if m.Decision != "" {
+		parts = append(parts, m.Decision, "allowed")
+	}
+	if m.Via != "" {
+		parts = append(parts, "via", m.Via)
+	}
+	out := []string{"Gentian-Authz: " + strings.Join(parts, " ")}
+	if reason := reasonLine(m.Reason); reason != "" {
+		out = append(out, "Gentian-Reason: "+reason)
+	}
+	return out
+}
+
+// reasonLine is a caller's reason as one trailer line: printable, on one
+// line, at most 200 characters.
+func reasonLine(reason string) string {
+	out := make([]rune, 0, len(reason))
+	for _, r := range reason {
+		if len(out) == 200 {
+			break
+		}
+		if r < 0x20 || r == 0x7f {
+			r = ' '
+		}
+		out = append(out, r)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ErrPushContended is returned when a write lost the race to other writers
+// for as long as it was prepared to keep trying.
+var ErrPushContended = errors.New("push rejected after retries: another writer keeps winning")
+
+// ErrNoPushCredential is a push refused because this process has nothing to
+// authenticate with.
+//
+// Distinguished because it is the one git failure that is a configuration
+// mistake rather than a fault: the commit was made, the remote is reachable,
+// and nobody told this process who it is. It reads as
+// "could not read Username for 'https://...'" -- git asking a terminal that
+// is not there -- and reporting that as "repository operation failed" sends
+// somebody looking for a broken repository instead of a missing Secret.
+var ErrNoPushCredential = errors.New("no credential to push to the deployments repository")
+
+// pushContentionBudget is for how long a write keeps starting over while other
+// writers keep landing first.
+//
+// It is a length of time and not a number of attempts because losing is not
+// independent from one attempt to the next. A writer that has just landed
+// starts its next change at once; the one it beat has first to learn that it
+// lost and put its checkout back, so it starts later, takes as long, and loses
+// again -- every time, for as long as the other has something to write. A
+// count is used up by one such run: two writers with four changes each were
+// enough to refuse a third after eight attempts. What a loser needs is to
+// still be trying when the run ends.
+//
+// Shorter than the server's write timeout, so a caller who waited this long
+// is still told why.
+const pushContentionBudget = time.Minute
+
+// retryPush is what a write does between a rejected push and starting over:
+// it answers ErrPushContended once the budget that began at started is spent,
+// and otherwise waits a random moment, so that several losers do not all
+// start over in step.
+func retryPush(ctx context.Context, started time.Time, attempt int) error {
+	if time.Since(started) >= pushContentionBudget {
+		return ErrPushContended
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(rand.Int63n(int64(min(attempt, 8)) * int64(40*time.Millisecond)))):
+		return nil
+	}
+}
+
+// NewGitOps returns a GitOps helper. Path must be a local git checkout.
+func NewGitOps(path, repo, cluster string, committer Person) *GitOps {
+	if committer.Name == "" {
+		committer.Name = "gentian-director"
+	}
+	if committer.Email == "" {
+		committer.Email = "director@gentian.invalid"
+	}
+	return &GitOps{path: path, repo: repo, cluster: cluster, committer: committer}
+}
+
+func (g *GitOps) requirePath() error {
+	if g.path == "" {
+		return fmt.Errorf("GENTIAN_DEPLOYMENTS_PATH is not configured")
+	}
+	return nil
+}
+
+// gitTimeout bounds every git invocation below.
+//
+// clone, pull and push all talk to a remote, and git has no default timeout for
+// one that accepts the connection and then goes quiet. These run under an HTTP
+// handler, so without a bound a hung remote holds the handler goroutine and the
+// git process for as long as the process lives — and the caller hanging up does
+// not release either.
+const gitTimeout = 5 * time.Minute
+
+// inForeground keeps git's housekeeping inside the command that set it off.
+//
+// A fetch, a commit and a merge each end by asking whether the repository
+// wants repacking, and when it does git does the work in a process it
+// detaches and does not wait for. The command has returned and something is
+// still writing under .git: the next reset or clean runs beside it, nothing
+// that waits for the director's git waits for that, and the process is an
+// orphan of a director that reaps nobody. How often is up to git -- 2.55
+// repacks from a hundred loose objects where earlier versions wanted
+// thousands, so there it happens within a few writes.
+//
+// The checkout still gets its housekeeping, which a clone that lives as long
+// as the director needs. It is done before the command returns, under the
+// lock and the timeout the command already has. maintenance.autoDetach is
+// the setting since git 2.47 and gc.autoDetach the one before it.
+var inForeground = []string{"-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"}
+
+// gitCmd builds a git invocation bounded by both the caller's context and
+// gitTimeout, whichever ends first.
+func (g *GitOps) gitCmd(ctx context.Context, args ...string) (*exec.Cmd, context.CancelFunc) {
+	cctx, cancel := context.WithTimeout(ctx, gitTimeout)
+	return exec.CommandContext(cctx, "git", append(append([]string{}, inForeground...), args...)...), cancel
+}
+
+// readFreshness is how stale the checkout may be when answering a read.
+//
+// Every read used to fetch from the remote first, which put a round trip to
+// the forge in front of each one: a console screen that asks three questions
+// paid for three fetches, and the slowest part of every answer was a network
+// call for state that changes when someone commits -- minutes or hours apart,
+// not seconds. A write still syncs unconditionally, and still retries when
+// the push is refused, so nothing about correctness rests on this window:
+// the worst a read can do is describe git as it was a few seconds ago, which
+// it does anyway, because Argo CD has not applied it yet either.
+const readFreshness = 15 * time.Second
+
+// ensureRepo makes the checkout equal to the remote. The checkout is never a
+// source of truth — it is scratch space for composing one commit — so it is
+// reset, not merged: anything in it that the remote does not have is the
+// residue of a request that failed, and nobody was told it succeeded.
+func (g *GitOps) ensureRepo(ctx context.Context) error {
+	return g.ensureRepoWithin(ctx, 0)
+}
+
+// ensureRepoRead syncs only when the checkout has not been synced within
+// readFreshness, for the reads that do not need the remote's latest word.
+func (g *GitOps) ensureRepoRead(ctx context.Context) error {
+	return g.ensureRepoWithin(ctx, readFreshness)
+}
+
+func (g *GitOps) ensureRepoWithin(ctx context.Context, maxAge time.Duration) error {
+	if err := g.requirePath(); err != nil {
+		return err
+	}
+	if maxAge > 0 && !g.syncedAt.IsZero() && time.Since(g.syncedAt) < maxAge {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(g.path, ".git")); err != nil {
+		if g.repo == "" {
+			return fmt.Errorf("deployments git repository not configured")
+		}
+		cmd, cancel := g.gitCmd(ctx, "clone", g.repo, g.path)
+		defer cancel()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git clone: %w: %s", err, out)
+		}
+		g.syncedAt = time.Now()
+		return nil
+	}
+	for _, args := range [][]string{
+		{"rebase", "--abort"}, // best effort: only a crashed predecessor leaves one open
+		{"fetch", "--prune", "origin"},
+		{"reset", "--hard", "@{u}"},
+		{"clean", "-fdq"},
+	} {
+		cmd, cancel := g.gitCmd(ctx, append([]string{"-C", g.path}, args...)...)
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil && args[0] != "rebase" {
+			return fmt.Errorf("git %s: %w: %s", args[0], err, out)
+		}
+	}
+	g.syncedAt = time.Now()
+	return nil
+}
+
+// ErrTenantNotFound is returned when the repository has no manifest for a tenant.
+var ErrTenantNotFound = errors.New("tenant not found")
+
+// ErrInvalidName is returned for a tenant or profile name that is not a DNS label.
+var ErrInvalidName = errors.New("invalid name")
+
+var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// ValidName reports whether s is a DNS label. Names become path segments and
+// are spliced into YAML, so nothing else is accepted, here or at the API.
+func ValidName(s string) bool { return dnsLabel.MatchString(s) }
+
+// tenantFile resolves a tenant's manifest against a checkout equal to the
+// remote. Writes call it; a reader that does not need the remote's latest
+// word calls tenantFileRead.
+func (g *GitOps) tenantFile(ctx context.Context, tenant string) (string, error) {
+	return g.tenantFileWithin(ctx, tenant, 0)
+}
+
+func (g *GitOps) tenantFileRead(ctx context.Context, tenant string) (string, error) {
+	return g.tenantFileWithin(ctx, tenant, readFreshness)
+}
+
+func (g *GitOps) tenantFileWithin(ctx context.Context, tenant string, maxAge time.Duration) (string, error) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
+		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	if err := g.ensureRepoWithin(ctx, maxAge); err != nil {
+		return "", err
+	}
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
+	}
+
+	// Active GitOps path synced by Argo CD (clusters/<cluster>/tenants/<tenant>/).
+	// No stage segment: a cluster has exactly one stage for its whole lifetime
+	// (docs/guides/deployment.md §1), so encoding it again under this cluster's own
+	// tenants/ tree would be redundant.
+	preferred := filepath.Join(g.path, "clusters", cluster, "tenants", tenant, "tenant.yaml")
+	if _, err := os.Stat(preferred); err == nil {
+		return preferred, nil
+	}
+
+	// Fallback: search only this cluster's tenants tree (never definitions/ templates).
+	tenantsRoot := filepath.Join(g.path, "clusters", cluster, "tenants")
+	var found []string
+	err := filepath.WalkDir(tenantsRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		if filepath.Base(path) != "tenant.yaml" {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(b)
+		if strings.Contains(text, "kind: Tenant") && strings.Contains(text, "name: "+tenant) {
+			found = append(found, path)
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if len(found) == 0 {
+		return "", fmt.Errorf("%w: no manifest for %q under clusters/%s/tenants", ErrTenantNotFound, tenant, cluster)
+	}
+	return found[0], nil
+}
+
+// edit is a change to a tenant manifest as a function of its current text. It
+// returns the new text, a status, and whether anything changed. Being a pure
+// function is what makes a write retryable: when another writer wins the push,
+// the edit is applied again to what they pushed, instead of asking git to
+// merge two textual insertions at the same line — which it cannot.
+type edit func(text string) (newText, status string, changed bool, err error)
+
+// apply runs one edit as one commit: sync to the remote, edit, commit, push.
+// A rejected push means the remote moved; the loop starts over from the new
+// state. That is the whole of the concurrency control, and it is correct across
+// replicas and across processes, which a mutex never was. It also keeps the
+// answer honest: if the other writer made the same change, the retry reports
+// that the state already holds rather than committing it twice.
+func (g *GitOps) apply(ctx context.Context, tenant, message string, meta Meta, fn edit) (Result, error) {
+	return g.applyTo(ctx, tenant, "", message, meta, fn)
+}
+
+// applyTo is apply for a file beside the tenant's manifest. sibling is a bare
+// file name, "" for the manifest itself; a sibling that does not exist yet is
+// edited from empty text.
+func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, meta Meta, fn edit) (Result, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for started, attempt := time.Now(), 1; ; attempt++ {
+		file, err := g.tenantFile(ctx, tenant)
+		if err != nil {
+			return Result{}, err
+		}
+		if sibling != "" {
+			file = filepath.Join(filepath.Dir(file), sibling)
+		}
+		content, err := os.ReadFile(file)
+		if err != nil && (sibling == "" || !errors.Is(err, os.ErrNotExist)) {
+			return Result{}, err
+		}
+		text, status, changed, err := fn(string(content))
+		if err != nil {
+			return Result{}, fmt.Errorf("%w in %s", err, file)
+		}
+		if !changed {
+			return Result{Status: status}, nil
+		}
+		if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
+			return Result{}, err
+		}
+		err = g.commit(ctx, file, message, meta)
+		if err == nil {
+			return g.landed(ctx, status)
+		}
+		if !errors.Is(err, errPushRejected) {
+			return Result{}, err
+		}
+		if err := retryPush(ctx, started, attempt); err != nil {
+			return Result{}, err
+		}
+	}
+}
+
+// digestPattern is the one spelling of a content digest a manifest carries.
+var digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// Install adds profile to the tenant's manifest, pinned to digest when one is
+// given. It is InstallFrom with no catalog to record.
+func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
+	return g.InstallFrom(ctx, tenant, profile, digest, "", nil, meta)
+}
+
+// InstallFrom adds profile to the tenant's manifest, pinned to digest when one
+// is given, and records the catalog the build was fetched from when the
+// caller vouches for one.
+//
+// The digest is the build the install was asked for, and it is recorded as a
+// field of the entry rather than in the profile's name: the name is what the
+// app is, across every build of it, and everything that addresses the app --
+// its group, its object in the authorization store, its route -- is spelled
+// from the name.
+//
+// The catalog is the first half of the coordinate the build was fetched
+// under, and with the name it is the coordinate. It is recorded only beside a
+// digest, and only by a caller that fetched the bundle from that catalog's
+// source and saw it hash to the digest: the entry then says where the pinned
+// build came from, which nothing else in the cluster does.
+//
+// defaultGrant is whether every member of the tenant has access to the app
+// by default (Tenant.spec.apps[].defaultGrant). It is part of the install, so
+// it is written in the same commit: the operator grants the app once its
+// group exists, and no caller has to wait for the app and ask again. nil
+// leaves an entry as it is, so that moving a pin does not also change who
+// may open the app; true writes the key, false removes it.
+//
+// Installing an app that is already there at another digest moves the pin and
+// reports "updated", and so does stating a default grant the entry does not
+// already have; with neither, nothing changes. A pin moved with no catalog
+// named loses the one it had, because that one described the build it no
+// longer points at.
+func (g *GitOps) InstallFrom(
+	ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta Meta,
+) (Result, error) {
+	if !ValidName(profile) {
+		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
+	}
+	if digest != "" && !digestPattern.MatchString(digest) {
+		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
+	}
+	if catalogue != "" && (digest == "" || !ValidName(catalogue)) {
+		return Result{}, fmt.Errorf("%w: catalog %q", ErrInvalidName, catalogue)
+	}
+	msg := fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, meta.actor())
+	if digest != "" {
+		msg = fmt.Sprintf("feat(%s): install %s at %s (via %s)", tenant, profile, shortDigest(digest), meta.actor())
+	}
+	forEveryone := defaultGrant != nil && *defaultGrant
+	if forEveryone {
+		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
+	}
+	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		// The platform tenant takes no apps, whoever asks and by whichever
+		// route: refused on the manifest about to be edited, so no caller
+		// can forget to ask first.
+		if adoptsAnotherRealm(text, tenant) {
+			return "", "", false, ErrPlatformTenant
+		}
+		lines := strings.Split(text, "\n")
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
+		}
+		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
+			out, ok := insertComponentProfile(text, profile, digest, catalogue, forEveryone)
+			if !ok {
+				return "", "", false, errors.New("failed to update apps list")
+			}
+			return out, "installed", true, nil
+		}
+		changed := false
+		if digest != "" {
+			var moved bool
+			lines, moved = setAppEntryKey(lines, profile, "digest", digest, "")
+			if catalogue != "" || moved {
+				var recorded bool
+				lines, recorded = setAppEntryKey(lines, profile, "catalogue", catalogue, "digest")
+				moved = moved || recorded
+			}
+			if moved {
+				// Who or what moved the pin, and when: what the Component's
+				// rollout record answers to, and what makes a move the
+				// platform rolled back worth trying again.
+				after := "digest"
+				if appEntryHasKey(lines, profile, "catalogue") {
+					after = "catalogue"
+				}
+				lines, _ = setAppEntryKey(lines, profile, appMovedAtKey, meta.movedAt(), after)
+				lines, _ = setAppEntryKey(lines, profile, appMovedByKey, meta.mover(), appMovedAtKey)
+			}
+			changed = moved
+		}
+		if defaultGrant != nil {
+			value := ""
+			if forEveryone {
+				value = "true"
+			}
+			// Below what says which build this is, wherever that ends.
+			after := "digest"
+			if appEntryHasKey(lines, profile, "catalogue") {
+				after = "catalogue"
+			}
+			var stated bool
+			lines, stated = setAppEntryKey(lines, profile, appDefaultGrantKey, value, after)
+			changed = changed || stated
+		}
+		if !changed {
+			return text, "already_installed", false, nil
+		}
+		return strings.Join(lines, "\n"), "updated", true, nil
+	})
+}
+
+// RetryMove asks again for a move the platform rolled back or could not
+// start: the app stays pinned to digest, and its entry records a fresh move
+// (movedAt, movedBy), which is what the operator takes as a request to try
+// once more (docs/concepts/versioning.md §5). Whether the last move to digest
+// did end badly is the caller's to have read from the cluster; this only
+// refuses an entry that is not pinned to digest, so a retry can never move a
+// pin. The status is "retried".
+func (g *GitOps) RetryMove(ctx context.Context, tenant, profile, digest string, meta Meta) (Result, error) {
+	if !ValidName(profile) {
+		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
+	}
+	if !digestPattern.MatchString(digest) {
+		return Result{}, fmt.Errorf("%w: digest %q", ErrInvalidName, digest)
+	}
+	msg := fmt.Sprintf("fix(%s): retry the move of %s to %s (via %s)", tenant, profile, shortDigest(digest), meta.actor())
+	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		lines := strings.Split(text, "\n")
+		if _, _, _, installed := appEntryExtent(lines, profile); !installed {
+			return "", "", false, ErrNotInstalled
+		}
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
+		}
+		if pinned := appEntryValue(lines, profile, "digest"); pinned != digest {
+			return "", "", false, fmt.Errorf("%w: %s is pinned to %q, not %s", ErrNotPinnedThere, profile, pinned, shortDigest(digest))
+		}
+		after := "digest"
+		if appEntryHasKey(lines, profile, "catalogue") {
+			after = "catalogue"
+		}
+		var stamped bool
+		lines, stamped = setAppEntryKey(lines, profile, appMovedAtKey, meta.movedAt(), after)
+		lines, _ = setAppEntryKey(lines, profile, appMovedByKey, meta.mover(), appMovedAtKey)
+		if !stamped {
+			// Asked again within the second the last request was written
+			// in: that request is the one the operator answers.
+			return text, "retried", false, nil
+		}
+		return strings.Join(lines, "\n"), "retried", true, nil
+	})
+}
+
+// ErrNotPinnedThere is a retry of a move to a build the app is not pinned to.
+var ErrNotPinnedThere = errors.New("the app is not pinned to that build")
+
+// appDefaultGrantKey is the key of an app's entry that says every member of
+// the tenant has access to it by default.
+const appDefaultGrantKey = "defaultGrant"
+
+// appMovedAtKey and appMovedByKey record the last move of an entry's pin:
+// when, and who or what asked for it.
+const (
+	appMovedAtKey = "movedAt"
+	appMovedByKey = "movedBy"
+)
+
+// appEntryHasKey reports whether an app's entry carries a scalar key.
+func appEntryHasKey(lines []string, profile, key string) bool {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return false
+	}
+	for i := start + 1; i < end; i++ {
+		if indentOf(lines[i]) == keyIndent && strings.HasPrefix(strings.TrimSpace(lines[i]), key+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// appEntryValue is the value of one scalar key of an app's entry, "" when
+// the entry does not carry it.
+func appEntryValue(lines []string, profile, key string) string {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return ""
+	}
+	for i := start + 1; i < end; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if indentOf(lines[i]) == keyIndent && strings.HasPrefix(trimmed, key+":") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, key+":")), `"'`)
+		}
+	}
+	return ""
+}
+
+// setAppEntryKey makes one scalar key of an app's entry equal to value, and
+// reports whether that changed anything. An empty value removes the key. A
+// key the entry does not have yet is written under the key named after, or
+// directly under the entry's name when after is empty or absent.
+func setAppEntryKey(lines []string, profile, key, value, after string) ([]string, bool) {
+	start, end, keyIndent, ok := appEntryExtent(lines, profile)
+	if !ok {
+		return lines, false
+	}
+	has := func(i int, k string) bool {
+		return indentOf(lines[i]) == keyIndent && strings.HasPrefix(strings.TrimSpace(lines[i]), k+":")
+	}
+	want := strings.Repeat(" ", keyIndent) + key + ": " + value
+	at := start
+	for i := start + 1; i < end; i++ {
+		if after != "" && has(i, after) {
+			at = i
+		}
+		if !has(i, key) {
+			continue
+		}
+		switch {
+		case value == "":
+			return append(append([]string{}, lines[:i]...), lines[i+1:]...), true
+		case lines[i] == want:
+			return lines, false
+		}
+		out := append([]string{}, lines...)
+		out[i] = want
+		return out, true
+	}
+	if value == "" {
+		return lines, false
+	}
+	out := append(append(append([]string{}, lines[:at+1]...), want), lines[at+1:]...)
+	return out, true
+}
+
+// Uninstall removes profile from the tenant's manifest.
+func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Meta) (Result, error) {
+	if !ValidName(profile) {
+		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
+	}
+	msg := fmt.Sprintf("feat(%s): uninstall %s (via %s)", tenant, profile, meta.actor())
+	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		// Remove the whole list entry, not just its `- profile:` line: an entry can carry
+		// nested keys (addons, config) and leaving those behind produces YAML that does
+		// not parse, which wedges every later reconcile. See removeAppEntry.
+		if err := refusePlaced(strings.Split(text, "\n"), profile); err != nil {
+			return "", "", false, err
+		}
+		out, ok := removeAppEntry(text, profile)
+		if !ok || out == text {
+			return text, "not_installed", false, nil
+		}
+		return out, "uninstalled", true, nil
+	})
+}
+
+// emptyAppsList is the tenant's app list written in flow form with nothing in
+// it, as a new tenant's manifest has it.
+var emptyAppsList = regexp.MustCompile(`^  apps:\s*\[\s*\]\s*$`)
+
+func insertComponentProfile(text, profile, digest, catalogue string, defaultGrant bool) (string, bool) {
+	entry := []string{"  - profile: " + profile}
+	if digest != "" {
+		entry = append(entry, "    digest: "+digest)
+	}
+	if catalogue != "" {
+		entry = append(entry, "    catalogue: "+catalogue)
+	}
+	if defaultGrant {
+		entry = append(entry, "    "+appDefaultGrantKey+": true")
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		// A tenant is written with an empty list, `apps: []`, and that line
+		// is the head of the list as much as the block form is. Appending a
+		// second `apps:` beside it is a duplicate key, which no tool that
+		// builds the tenant will read.
+		if emptyAppsList.MatchString(line) {
+			lines[i] = "  apps:"
+			line = lines[i]
+		}
+		if line == "  apps:" {
+			out := append([]string{}, lines[:i+1]...)
+			out = append(out, entry...)
+			out = append(out, lines[i+1:]...)
+			return strings.Join(out, "\n"), true
+		}
+	}
+	return strings.TrimRight(text, "\n") + "\n  apps:\n" + strings.Join(entry, "\n") + "\n", true
+}
+
+func (g *GitOps) commit(ctx context.Context, file, message string, meta Meta) error {
+	rel, err := filepath.Rel(g.path, file)
+	if err != nil {
+		rel = file
+	}
+	return g.commitPaths(ctx, []string{rel}, message, meta)
+}
+
+// commitPaths stages repository-relative paths and pushes them as one commit,
+// authored by the human in meta and committed by the director.
+//
+// If the push does not land, the local commit is discarded, so a failed
+// request leaves the checkout exactly where the remote is. A push refused
+// because the remote moved is reported as errPushRejected for apply to retry.
+func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string, meta Meta) (err error) {
+	defer func() {
+		if err != nil {
+			g.discardLocal(ctx)
+		}
+	}()
+	add, addCancel := g.gitCmd(ctx, append([]string{"-C", g.path, "add"}, rels...)...)
+	defer addCancel()
+	if out, err := add.CombinedOutput(); err != nil {
+		return fmt.Errorf("git add: %w: %s", err, out)
+	}
+	diff, diffCancel := g.gitCmd(ctx, "-C", g.path, "diff", "--cached", "--quiet")
+	defer diffCancel()
+	if err := diff.Run(); err == nil {
+		return nil
+	}
+
+	// Before anything is committed: what is staged is what would be pruned.
+	if err := g.checkDefinitions(ctx); err != nil {
+		return err
+	}
+
+	if err := g.loadSigningKey(ctx); err != nil {
+		return err
+	}
+
+	full := message
+	if t := meta.trailers(); len(t) > 0 {
+		full += "\n\n" + strings.Join(t, "\n")
+	}
+	args := []string{"-C", g.path,
+		"-c", "user.name=" + g.committer.Name,
+		"-c", "user.email=" + g.committer.Email}
+	// Signing flags before the subcommand, because they are configuration.
+	args = append(args, g.signArgs...)
+	args = append(args, "commit", "-m", full)
+	if meta.Author.Name != "" || meta.Author.Email != "" {
+		name, email := meta.Author.Name, meta.Author.Email
+		if name == "" {
+			name = meta.Subject
+		}
+		// A person without an address is known by their subject. A
+		// component holding a commission key has neither, and writes under
+		// the director's own address, as every other change the director
+		// makes on no person's behalf does; the trailer names the component.
+		switch {
+		case email != "":
+		case meta.Subject != "":
+			email = meta.Subject + "@users.gentian.invalid"
+		default:
+			email = g.committer.Email
+		}
+		args = append(args, "--author", fmt.Sprintf("%s <%s>", identClean(name), identClean(email)))
+	}
+	commit, commitCancel := g.gitCmd(ctx, args...)
+	defer commitCancel()
+	if out, err := commit.CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "nothing to commit") {
+			return nil
+		}
+		return fmt.Errorf("git commit: %w: %s", err, out)
+	}
+
+	push, pushCancel := g.gitCmd(ctx, "-C", g.path, "push")
+	defer pushCancel()
+	if out, perr := push.CombinedOutput(); perr != nil {
+		if pushRejected(string(out)) {
+			return errPushRejected
+		}
+		if pushUnauthenticated(string(out)) {
+			return fmt.Errorf("%w: %s", ErrNoPushCredential, strings.TrimSpace(string(out)))
+		}
+		return fmt.Errorf("git push: %w: %s", perr, out)
+	}
+	g.audit(ctx, rels, message, meta)
+	if g.afterPush != nil {
+		g.afterPush(meta.actor())
+	}
+	return nil
+}
+
+// errPushRejected is the optimistic-concurrency signal: another writer landed
+// between this writer's sync and its push. It is a kind of ErrPushContended, so
+// a write with no loop of its own to retry in answers the same as one that
+// spent its budget: try again.
+var errPushRejected = fmt.Errorf("%w: push rejected, remote moved", ErrPushContended)
+
+// identClean removes what git's ident syntax reserves. Name and address come
+// from token claims a user can edit in their own profile; they must not be
+// able to forge a second identity or a trailer.
+func identClean(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '<' || r == '>' || r == '\n' || r == '\r' || r == 0 {
+			return -1
+		}
+		return r
+	}, s)
+	if s = strings.TrimSpace(s); s == "" {
+		return "unknown"
+	}
+	return s
+}
+
+// pushRejected reports whether a failed push lost a race rather than hit a
+// real error. Only a race is worth retrying; a hook that refuses the push
+// ("[remote rejected]") will refuse it again.
+// pushUnauthenticated reports the credential being absent or refused.
+//
+// Matched on git's own words because git offers no exit code for it: a
+// missing credential, a rejected one and a repository that does not exist
+// are all exit 128, and only the text tells them apart.
+func pushUnauthenticated(out string) bool {
+	for _, phrase := range []string{
+		"could not read Username",   // no credential at all, no terminal to ask
+		"Authentication failed",     // a credential the remote refused
+		"terminal prompts disabled", // asked for one with nowhere to ask
+		"Permission denied",         // a credential without write access
+		"403",                       // the forge's answer to the same
+	} {
+		if strings.Contains(out, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func pushRejected(out string) bool {
+	return strings.Contains(out, "non-fast-forward") ||
+		strings.Contains(out, "fetch first") ||
+		strings.Contains(out, "cannot lock ref") ||
+		strings.Contains(out, "failed to update ref")
+}
+
+// discardLocal drops commits that never reached the remote.
+func (g *GitOps) discardLocal(ctx context.Context) {
+	abort, c1 := g.gitCmd(ctx, "-C", g.path, "rebase", "--abort")
+	_ = abort.Run()
+	c1()
+	reset, c2 := g.gitCmd(ctx, "-C", g.path, "reset", "--hard", "@{u}")
+	_ = reset.Run()
+	c2()
+}
+
+func (g *GitOps) head(ctx context.Context) (string, error) {
+	cmd, cancel := g.gitCmd(ctx, "-C", g.path, "rev-parse", "HEAD")
+	defer cancel()
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// TenantFile returns the path of a tenant's manifest, for callers that read
+// state rather than change it. The checkout is synced when it is stale; a
+// listing that asks about twenty tenants pays for one fetch, not twenty.
+func (g *GitOps) TenantFile(ctx context.Context, tenant string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.tenantFileRead(ctx, tenant)
+}

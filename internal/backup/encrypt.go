@@ -1,33 +1,27 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
 
 import (
 	"fmt"
+	"github.com/gentian-org/gentian-os/api/bundle"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
-// EncryptedSuffix is appended to every artefact in a bundle. Bundles are always
+// EncryptedSuffix is appended to every artifact in a bundle. Bundles are always
 // encrypted, so the suffix is not a variant — it is what the files are called.
 const EncryptedSuffix = ".age"
 
@@ -96,9 +90,9 @@ func (e Encryption) PlatformReadable(clusterRecipients []string) bool {
 	return false
 }
 
-// encryptContainer builds the step that encrypts one staged artefact in place.
+// encryptContainer builds the step that encrypts one staged artifact in place.
 //
-// It runs between producing the artefact and uploading it, and deletes the
+// It runs between producing the artifact and uploading it, and deletes the
 // plaintext before exiting, so an upload can only ever find the encrypted file.
 // Ordering it after the upload, or leaving the plaintext for the uploader to
 // skip, would both mean a crash at the wrong moment leaves a tenant's data
@@ -138,13 +132,7 @@ rm -f '%s'
 [ -s '%s' ] || { echo "ERROR: encryption produced no output" >&2; exit 1; }
 echo "encrypted %s"`, encryptBootstrap(e), encrypt, plain, cipher, localFile)
 
-	container := corev1.Container{
-		Name:         "encrypt",
-		Image:        kernel.KeycloakProvisionerImage(),
-		Command:      []string{"/bin/sh", "-c"},
-		Args:         []string{script},
-		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
-	}
+	container := toolsContainer("encrypt", script)
 	if e.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		container.Env = []corev1.EnvVar{
 			meta.SecretEnv(PassphraseEnvVar, e.PassphraseSecret, e.PassphraseKey),
@@ -153,44 +141,25 @@ echo "encrypted %s"`, encryptBootstrap(e), encrypt, plain, cipher, localFile)
 	return container
 }
 
-// encryptBootstrap installs age, and script(1) when a passphrase needs a pty.
+// encryptBootstrap checks that the tools are there: age, and script(1) when
+// a passphrase needs a pty. The storage tools image carries both; nothing is
+// installed when a Job runs.
 //
 // Verified rather than assumed: a missing tool must fail here, loudly, and not
 // later as an upload that quietly carried plaintext.
 func encryptBootstrap(e Encryption) string {
-	packages := "age"
 	required := "age"
 	if e.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
-		// script(1) lives in util-linux-misc on recent Alpine and in util-linux
-		// on older ones; ask for whichever is present.
-		packages = "age util-linux-misc"
 		required = "age script"
 	}
-	return fmt.Sprintf(`apk add --no-cache --quiet %[1]s >/dev/null 2>&1 \
-  || apk add --no-cache --quiet age util-linux >/dev/null 2>&1 \
-  || { echo "ERROR: could not install %[1]s" >&2; exit 1; }
-for tool in %[2]s; do
+	return fmt.Sprintf(`for tool in %s; do
   command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: ${tool} unavailable" >&2; exit 1; }
-done`, packages, required)
+done`, required)
 }
 
-// BundleInfo is the one file in a bundle that is not encrypted.
-//
-// It says what the bundle is and how to open it, and nothing about what is
-// inside. Without it a recipient facing a directory of .age files has to guess
-// which identity applies; with it, the manifest — which carries the tenant's
-// spec and app inventory — can stay encrypted like everything else.
-type BundleInfo struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	Tenant        string   `json:"tenant"`
-	Export        string   `json:"export"`
-	CreatedAt     string   `json:"createdAt"`
-	Encryption    string   `json:"encryption"`
-	Recipients    []string `json:"recipients,omitempty"`
-	// HowToDecrypt is a literal command, because the person reading this is
-	// having a bad day and should not have to look anything up.
-	HowToDecrypt string `json:"howToDecrypt"`
-}
+// BundleInfo is the one file in a bundle that is not encrypted; its format
+// is part of the API.
+type BundleInfo = bundle.Info
 
 // NewBundleInfo builds the unencrypted header for a bundle.
 func NewBundleInfo(tenant, export, createdAt string, e Encryption) *BundleInfo {

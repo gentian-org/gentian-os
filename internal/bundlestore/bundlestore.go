@@ -1,0 +1,350 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+// Package bundlestore reaches a bundle where it sits in object storage, from
+// inside the operator: to read its manifest, and to remove an uploaded one
+// once it has been used.
+//
+// The capture and restore Jobs move a bundle's artifacts; nothing here does.
+// What the operator itself has to read is the manifest, which is small and is
+// what says what a bundle holds -- an inspection shows it to a person, and a
+// restore decides by it what to put back. Both read it through this package,
+// so they cannot be shown different things.
+package bundlestore
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/url"
+	"strings"
+
+	"filippo.io/age"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/api/bundle"
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/layout"
+)
+
+// ImportBucket holds uploaded bundles until a restore has read them. Not a
+// tenant's backup bucket: the tenant does not exist yet when the upload
+// arrives, and a bundle that turns out to be somebody else's must not land
+// in a bucket a tenant can list.
+//
+// An upload stays here until a restore of it has run to its end, restored or
+// failed, and is then removed (Store.RemoveImported). A restore that is
+// refused before it changes anything leaves it, so the request can be made
+// again with the right key.
+const ImportBucket = "gentian-imports"
+
+// Key is what opens a bundle: a passphrase, or an age identity
+// (AGE-SECRET-KEY-1...), possibly several lines of them. One of the two.
+type Key struct {
+	Passphrase string
+	Identity   string
+}
+
+// Identities are the age identities of a key.
+func (k Key) Identities() ([]age.Identity, error) {
+	switch {
+	case k.Passphrase != "" && k.Identity != "":
+		return nil, errors.New("give a passphrase or an identity, not both")
+	case k.Passphrase != "":
+		id, err := age.NewScryptIdentity(k.Passphrase)
+		if err != nil {
+			return nil, err
+		}
+		return []age.Identity{id}, nil
+	case k.Identity != "":
+		ids, err := age.ParseIdentities(strings.NewReader(k.Identity))
+		if err != nil {
+			return nil, fmt.Errorf("the identity does not parse: %w", err)
+		}
+		return ids, nil
+	}
+	return nil, errors.New("a passphrase or an age identity is required to open the bundle")
+}
+
+// Store reads bundles with the credentials the cluster holds for the store
+// each one sits in.
+type Store struct {
+	// Client reads the credential Secrets, in the object store's namespace.
+	Client client.Reader
+}
+
+// Minio reaches the store a bundle sits in, with the credentials the capture
+// Jobs used. The platform's own store records its address beside its keys; a
+// configured destination has its address on the bundle and only the keys in
+// the Secret -- the same asymmetry the capture Jobs' environment explains.
+func (s *Store) Minio(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*minio.Client, error) {
+	mc, _, err := s.MinioAt(ctx, ref)
+	return mc, err
+}
+
+// MinioAt is Minio, and the address it reaches the store at: for the
+// platform's own store (an empty ref), the endpoint its administrator's
+// Secret records, which is what a client in the cluster is told to write to.
+// One read of that Secret for both.
+func (s *Store) MinioAt(ctx context.Context, ref *gentianov1alpha1.BundleRef) (*minio.Client, string, error) {
+	secretName := ref.CredentialSecret
+	if secretName == "" {
+		secretName = backup.StorageAdminSecret
+	}
+	secret := &corev1.Secret{}
+	if err := s.Client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: layout.System("s3")}, secret); err != nil {
+		return nil, "", fmt.Errorf("bundle credentials %q: %w", secretName, err)
+	}
+	endpoint := ref.Endpoint
+	if endpoint == "" {
+		endpoint = string(secret.Data["endpoint"])
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return nil, "", fmt.Errorf("bundle endpoint %q is not a URL", endpoint)
+	}
+	mc, err := minio.New(u.Host, &minio.Options{
+		Creds: credentials.NewStaticV4(string(secret.Data[backup.DestinationAccessKeyField]),
+			string(secret.Data[backup.DestinationSecretKeyField]), ""),
+		Secure: u.Scheme == "https",
+		Region: ref.Region,
+		// As the Jobs that wrote the bundle addressed it: path, unless the
+		// bundle records virtualHost. Never minio-go's guess from the host.
+		BucketLookup: BucketLookup(ref.AddressingStyle),
+	})
+	return mc, endpoint, err
+}
+
+// BucketLookup is minio-go's name for an addressing style: path when empty.
+func BucketLookup(style gentianov1alpha1.S3AddressingStyle) minio.BucketLookupType {
+	if style.VirtualHost() {
+		return minio.BucketLookupDNS
+	}
+	return minio.BucketLookupPath
+}
+
+// Manifest reads a bundle's manifest and opens it with the key.
+func (s *Store) Manifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key Key) (*bundle.Manifest, error) {
+	m, _, err := s.SignedManifest(ctx, ref, key)
+	return m, err
+}
+
+// Signed is a manifest as it was read, for its signature to be checked
+// against: the decrypted bytes the manifest was parsed from, and the
+// bundle's signature (bundle.SignatureFile), nil when it holds none.
+type Signed struct {
+	Plain     []byte
+	Signature *bundle.ManifestSignature
+}
+
+// signatureLimit bounds the signature as it is read: three short fields.
+const signatureLimit = 64 << 10
+
+// SignedManifest reads a bundle's manifest, opens it with the key, and
+// reads its signature beside it. The manifest and the bytes checked are
+// one read, so what is checked is what is planned from.
+//
+// A signature that is not there is an unsigned bundle. One that is there
+// and does not parse is returned as one that names no key, which the check
+// reports as a signature it cannot read.
+func (s *Store) SignedManifest(ctx context.Context, ref gentianov1alpha1.BundleRef, key Key) (*bundle.Manifest, *Signed, error) {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return nil, nil, errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, nil, err
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return nil, nil, err
+	}
+	cipher, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+"manifest.json"+backup.EncryptedSuffix, 16<<20)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the bundle has no manifest; an export that did not finish has none: %w", err)
+	}
+	m, plain, err := OpenManifestBytes(cipher, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	signed := &Signed{Plain: plain}
+	raw, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+bundle.SignatureFile, signatureLimit)
+	switch {
+	case err != nil && minio.ToErrorResponse(err).Code == "NoSuchKey":
+	case err != nil:
+		return nil, nil, fmt.Errorf("the bundle's signature could not be read: %w", err)
+	default:
+		signed.Signature = ParseSignature(raw)
+	}
+	return m, signed, nil
+}
+
+// ParseSignature reads a signature file. One that does not parse is a
+// signature that names nothing, never no signature: a bundle that carries
+// a damaged one is not read as an unsigned one.
+func ParseSignature(raw []byte) *bundle.ManifestSignature {
+	var sig bundle.ManifestSignature
+	if json.Unmarshal(raw, &sig) != nil {
+		return &bundle.ManifestSignature{}
+	}
+	return &sig
+}
+
+// appSecretsLimit bounds an app's secrets artifact as it is read: a handful
+// of short values, with room to spare.
+const appSecretsLimit = 4 << 20
+
+// PutArtefact writes one artifact the operator made itself into a bundle,
+// already encrypted. path is the artifact's place below the bundle's prefix,
+// without the suffix encryption adds; the suffix is added here, so that
+// nothing written through this is ever named as a plaintext file.
+func (s *Store) PutArtefact(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, cipher []byte) error {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	if !bytes.HasPrefix(cipher, []byte("age-encryption.org/")) {
+		return errors.New("refusing to write an artifact that is not an age file")
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return err
+	}
+	_, err = mc.PutObject(ctx, ref.Bucket, ObjectPrefix(ref)+path+backup.EncryptedSuffix,
+		bytes.NewReader(cipher), int64(len(cipher)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// AppSecrets reads an app's secrets artifact and opens it with the key.
+func (s *Store) AppSecrets(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key Key) (*bundle.AppSecrets, error) {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return nil, errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, err
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return nil, err
+	}
+	cipher, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+path+backup.EncryptedSuffix, appSecretsLimit)
+	if err != nil {
+		return nil, fmt.Errorf("the bundle's manifest names %s and the bundle does not hold it: %w", path, err)
+	}
+	return backup.OpenAppSecrets(cipher, ids)
+}
+
+// AppAuthorization reads an app's authorization artifact and opens it with
+// the key.
+func (s *Store) AppAuthorization(ctx context.Context, ref gentianov1alpha1.BundleRef, path string, key Key) (*bundle.AppAuthorization, error) {
+	if ref.Bucket == "" || ref.Prefix == "" {
+		return nil, errors.New("bundle.bucket and bundle.prefix are required")
+	}
+	ids, err := key.Identities()
+	if err != nil {
+		return nil, err
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return nil, err
+	}
+	cipher, err := ReadObject(ctx, mc, ref.Bucket, ObjectPrefix(ref)+path+backup.EncryptedSuffix, appAuthorizationLimit)
+	if err != nil {
+		return nil, fmt.Errorf("the bundle's manifest names %s and the bundle does not hold it: %w", path, err)
+	}
+	return backup.OpenAppAuthorization(cipher, ids)
+}
+
+// appAuthorizationLimit bounds an authorization artifact read into memory:
+// a store of some hundred thousand tuples.
+const appAuthorizationLimit = 64 << 20
+
+// OpenManifest decrypts and reads a manifest, and refuses one of a format
+// this build does not read.
+func OpenManifest(cipher []byte, ids []age.Identity) (*bundle.Manifest, error) {
+	m, _, err := OpenManifestBytes(cipher, ids)
+	return m, err
+}
+
+// OpenManifestBytes is OpenManifest, and the decrypted bytes it read.
+func OpenManifestBytes(cipher []byte, ids []age.Identity) (*bundle.Manifest, []byte, error) {
+	r, err := age.Decrypt(bytes.NewReader(cipher), ids...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the manifest could not be opened with that key: %w", err)
+	}
+	plain, err := io.ReadAll(io.LimitReader(r, 16<<20))
+	if err != nil {
+		return nil, nil, fmt.Errorf("the manifest could not be opened with that key: %w", err)
+	}
+	var m bundle.Manifest
+	if err := json.Unmarshal(plain, &m); err != nil {
+		return nil, nil, fmt.Errorf("the manifest does not parse: %w", err)
+	}
+	if m.SchemaVersion < bundle.OldestReadableSchemaVersion || m.SchemaVersion > bundle.SchemaVersion {
+		return nil, nil, fmt.Errorf("the bundle's manifest is of format %d and this platform reads formats %d to %d; "+
+			"a bundle written by a newer platform has to be restored by one at least as new",
+			m.SchemaVersion, bundle.OldestReadableSchemaVersion, bundle.SchemaVersion)
+	}
+	// A newer version line is refused like a newer format: what a later
+	// platform keeps, and where, this one cannot know. An older line, or
+	// none recorded, is read as far as it can be; the restore says so.
+	if line, ok := backup.ParseVersionLine(m.OperatorVersion); ok && line.Compare(backup.ThisVersionLine()) > 0 {
+		return nil, nil, fmt.Errorf("the bundle was written by platform version %s and this platform is version %s; "+
+			"a bundle written by a newer platform has to be restored by one at least as new",
+			line, backup.PlatformVersionLine)
+	}
+	return &m, plain, nil
+}
+
+// ObjectPrefix is the key prefix of a bundle's objects, ending in a slash.
+func ObjectPrefix(ref gentianov1alpha1.BundleRef) string {
+	return strings.TrimSuffix(ref.Prefix, "/") + "/"
+}
+
+// ReadObject reads one object, up to limit bytes.
+func ReadObject(ctx context.Context, mc *minio.Client, bucket, key string, limit int64) ([]byte, error) {
+	obj, err := mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = obj.Close() }()
+	return io.ReadAll(io.LimitReader(obj, limit))
+}
+
+// IsImported reports whether a bundle is one that was uploaded to this
+// cluster: in the import bucket of the platform's own storage.
+func IsImported(ref *gentianov1alpha1.BundleRef) bool {
+	return ref != nil && ref.Bucket == ImportBucket && ref.Endpoint == "" && ref.CredentialSecret == "" && ref.Prefix != ""
+}
+
+// RemoveImported deletes an uploaded bundle's objects. It refuses anything
+// that is not an upload: a tenant's own bundles are deleted by deleting
+// their export, and nothing else may reach them through here.
+func (s *Store) RemoveImported(ctx context.Context, ref gentianov1alpha1.BundleRef) error {
+	if !IsImported(&ref) {
+		return fmt.Errorf("refusing to remove %s/%s: it is not an uploaded bundle", ref.Bucket, ref.Prefix)
+	}
+	mc, err := s.Minio(ctx, &ref)
+	if err != nil {
+		return err
+	}
+	return ImportsOf(mc).Remove(ctx, ref.Prefix)
+}

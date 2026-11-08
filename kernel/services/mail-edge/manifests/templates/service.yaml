@@ -1,0 +1,44 @@
+{{- /*
+  The one Service of the cluster's mail that the internet reaches.
+
+  Postfix and Dovecot each had a load balancer of their own, pointing straight
+  at the server. They have none now: their Services are ClusterIP, and this
+  one, in the DMZ, selects the proxy.
+
+  externalTrafficPolicy: Local, not Cluster. Cluster forwards through any
+  node and replaces the client's address with that node's -- which on several
+  CNIs is an address inside the pod range, the one range Postfix trusts. The
+  cost is that only a node running a proxy serves, so the load balancer has to
+  health-check healthCheckNodePort (the annotation below asks Octavia to).
+*/ -}}
+{{- $enabled := splitList "," (include "mail-edge.enabled" .) | compact }}
+{{- if $enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-edge-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    {{- include "mail-edge.selector" . | nindent 4 }}
+    gentianos.io/component: mail-edge
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+    {{- with .Values.loadBalancer.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  {{- with .Values.loadBalancer.ip }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  selector:
+    {{- include "mail-edge.selector" . | nindent 4 }}
+  ports:
+    {{- range $name := $enabled }}
+    - name: {{ $name }}
+      port: {{ (index $.Values.listeners $name).port }}
+      targetPort: {{ $name }}
+      protocol: TCP
+    {{- end }}
+{{- end }}

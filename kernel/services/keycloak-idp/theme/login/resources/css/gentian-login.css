@@ -14,26 +14,31 @@
  *     theme into a derived Keycloak image where binary assets belong.
  */
 
+/* The brand's --brand-* custom properties arrive in a stylesheet js/brand.js
+ * links from the cluster's bare domain, where the concierge serves it. Every
+ * --gtn-* below reads its token and keeps the platform's own value when the
+ * token is absent, or when the file is. */
+
 :root {
-  --gtn-paper-0: #F4F1EA;
-  --gtn-paper-3: #FFFFFF;
+  --gtn-paper-0: var(--brand-color-paper-0, #F4F1EA);
+  --gtn-paper-3: var(--brand-color-paper-3, #FFFFFF);
   --gtn-border: rgba(20, 21, 46, 0.10);
-  --gtn-ink-1: #14152E;
-  --gtn-ink-2: #232547;
-  --gtn-400: #4A4AB3;
-  --gtn-500: #262696;
-  --gtn-600: #1B1A82;
-  --gtn-700: #131370;
-  --gtn-50: #ECECF7;
-  --gtn-r1: 6px;
-  --gtn-r2: 10px;
+  --gtn-ink-1: var(--brand-color-ink-1, #14152E);
+  --gtn-ink-2: var(--brand-color-ink-2, #232547);
+  --gtn-400: var(--brand-color-brand-400, #4A4AB3);
+  --gtn-500: var(--brand-color-brand-500, #262696);
+  --gtn-600: var(--brand-color-brand-600, #1B1A82);
+  --gtn-700: var(--brand-color-brand-700, #131370);
+  --gtn-50: var(--brand-color-brand-50, #ECECF7);
+  --gtn-r1: var(--brand-radius-1, 6px);
+  --gtn-r2: var(--brand-radius-2, 10px);
   --gtn-shadow-3: 0 12px 28px -8px rgba(20, 21, 46, 0.14);
   --gtn-focus-ring: 0 0 0 3px rgba(74, 74, 179, 0.30);
-  --gtn-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --gtn-font-sans: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   --gtn-dur-2: 200ms;
   --gtn-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --gtn-madder: #9B2D2D;
-  --gtn-madder-bg: #F2D9D9;
+  --gtn-madder: var(--brand-color-status-danger, #9B2D2D);
+  --gtn-madder-bg: var(--brand-color-status-danger-bg, #F2D9D9);
 }
 
 html, body { height: 100%; margin: 0; }
@@ -443,7 +448,38 @@ body.gentian-login .alert-success {
   box-sizing: border-box;
 }
 
-/* Keycloak renders identity-provider buttons and a registration link on the
-   login page; the portal's form had neither. */
-.gentian-hidden, #kc-registration, #kc-registration-container,
-#kc-social-providers, #kc-info { display: none !important; }
+.gentian-hidden { display: none !important; }
+
+/* The identity providers an administrator added (login.ftl): one outlined
+   button each, under the form. The platform's own brokers are not among
+   them -- they are hidden on the login page in the realm itself. */
+.gentian-login__providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.gentian-login__provider {
+  display: block;
+  padding: 9px 24px;
+  border: 1px solid var(--gtn-border);
+  border-radius: var(--gtn-r1);
+  color: var(--gtn-ink-1, inherit);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.gentian-login__provider:hover { border-color: var(--gtn-500); color: var(--gtn-600); }
+.gentian-login__provider:focus-visible { outline: none; box-shadow: var(--gtn-focus-ring); }
+
+/* The registration page's proof-of-work check: a line that says the browser
+   is working, then that it is done. */
+.gentian-pow-status {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--gtn-ink-2);
+}
+.gentian-pow-status--done { color: var(--gtn-ink-1, var(--gtn-ink-2)); }

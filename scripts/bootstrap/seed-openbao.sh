@@ -5,38 +5,38 @@ set -euo pipefail
 # Seed Initial Secrets into OpenBao
 # =============================================================================
 #
-# Derives all application passwords using the same HMAC-SHA256 logic as the
-# legacy generate-passwords.sh, then writes them directly to OpenBao via the
-# HTTP API.  No plaintext passwords are stored in Git or Terraform state.
+# Derives all application passwords with _derived (scripts/lib/derive.sh), then
+# writes them directly to OpenBao via the HTTP API.  No plaintext passwords are
+# stored in Git or Terraform state.
 #
-# Usage:
-#   export BAO_ADDR=http://localhost:8200     # port-forwarded OpenBao
-#   export BAO_TOKEN="<root-or-admin-token>"
-#   ./scripts/bootstrap/seed-openbao.sh <master-password> [smtp-relay-user] [smtp-relay-password]
+# Inputs come from the environment, none as arguments:
+#   BAO_ADDR, BAO_TOKEN          the vault and a root or admin token
+#   MASTER_PASSWORD              unless the vault already holds one
+#   DERIVATION_SALT              likewise; a new one is drawn when neither has it
+#   SMTP_RELAY_USERNAME, SMTP_RELAY_PASSWORD
+#                                the relay credentials (mail/postfix), optional
 #
 # Typical local run (port-forward first):
 #   kubectl port-forward svc/openbao 8200:8200 -n openbao &
 #   export BAO_ADDR=http://localhost:8200
 #   export BAO_TOKEN="$(cat /path/to/root-token)"
-#   ./scripts/bootstrap/seed-openbao.sh "your-master-password" "oci-user" "oci-pass"
+#   export MASTER_PASSWORD SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
+#   ./scripts/bootstrap/seed-openbao.sh
 #
 # Secret paths written (under secret/gentian-os/kernel/):
 #   database/postgresql
 #   database/mariadb
 #   cache/redis
-#   storage/minio
+#   storage/s3
 #   identity/keycloak-bootstrap
 #   authz/openfga
-#   mail/postfix                  (requires args 4+5: smtp relay user/pass)
+#   mail/postfix                  (with SMTP_RELAY_USERNAME/SMTP_RELAY_PASSWORD)
 #   mail/dovecot
-#   storage/registry              (optional, requires args 2+3)
 # =============================================================================
 
-MASTER_PASSWORD="${1:-}"
-SMTP_RELAY_USER="${2:-}"
-SMTP_RELAY_PASS="${3:-}"
-REGISTRY_USER="${REGISTRY_USER:-}"
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-}"
+MASTER_PASSWORD="${MASTER_PASSWORD:-}"
+SMTP_RELAY_USER="${SMTP_RELAY_USERNAME:-}"
+SMTP_RELAY_PASS="${SMTP_RELAY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
@@ -46,7 +46,12 @@ EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
 EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
 EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}"
 SECRET_MODE="${SECRET_MODE:-derived}"
-export VAULT_SKIP_VERIFY=true
+# The installer's seed_secrets hands over the vault's CA as BAO_CACERT and
+# BAO_TLS_SERVER_NAME (openbao_cli_trust), and bao_curl verifies with them.
+# shellcheck source=scripts/lib/openbao-curl.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/openbao-curl.sh"
+# shellcheck source=scripts/lib/derive.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/derive.sh"
 
 if [ -z "$BAO_TOKEN" ]; then
     echo "Error: BAO_TOKEN environment variable is not set."
@@ -55,7 +60,7 @@ if [ -z "$BAO_TOKEN" ]; then
 fi
 
 # Check prerequisites
-for cmd in openssl sha1sum curl jq; do
+for cmd in openssl python3 sha1sum curl jq; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "Error: $cmd is not installed."
         exit 1
@@ -63,16 +68,14 @@ for cmd in openssl sha1sum curl jq; do
 done
 
 # Try to read existing master-password and salt from OpenBao
-existing_secret=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
+existing_secret=$(bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/internal/master-password" 2>/dev/null || true)
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
-if [ -n "${existing_master}" ]; then
-    MASTER_PASSWORD="${existing_master}"
-fi
+gentian_settle_derivation "${existing_master}" "${existing_salt}"
 
 if [ -z "${MASTER_PASSWORD}" ]; then
-    echo "Error: MASTER_PASSWORD is empty. A master password must be provided as the first argument or pre-seeded in OpenBao." >&2
+    echo "Error: MASTER_PASSWORD is empty. A master password must be provided as MASTER_PASSWORD or pre-seeded in OpenBao." >&2
     exit 1
 fi
 
@@ -85,15 +88,6 @@ validate_master_password_entropy() {
 }
 validate_master_password_entropy "${MASTER_PASSWORD}"
 
-if [ -n "${existing_salt}" ]; then
-    DERIVATION_SALT="${existing_salt}"
-elif [ -n "${existing_master}" ]; then
-    DERIVATION_SALT=""
-else
-    DERIVATION_SALT="${DERIVATION_SALT:-$(openssl rand -hex 16)}"
-fi
-export DERIVATION_SALT
-
 echo "=========================================="
 echo "Seeding OpenBao Secrets"
 echo "  OpenBao:     ${BAO_ADDR}"
@@ -102,17 +96,13 @@ echo "  Mode:        ${SECRET_MODE}"
 echo "=========================================="
 
 # =============================================================================
-# Password derivation
-# Uses HMAC-SHA256 hex output directly.
-# Updated to support per-cluster random salting and SECRET_MODE=random.
+# Password derivation: _derived, or a random value under SECRET_MODE=random.
 # =============================================================================
 derive_password() {
-    local context="$1"
-    local purpose="$2"
     if [ "${SECRET_MODE:-derived}" = "random" ]; then
         openssl rand -hex 32
     else
-        echo -n "${context}:${purpose}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
+        _derived "$1" "$2"
     fi
 }
 
@@ -131,8 +121,10 @@ MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 # --- Redis ---
 REDIS_PW=$(derive_password "redis" "password")
 
-# --- MinIO ---
-MINIO_ROOT_PW=$(derive_password "minio" "root_password")
+# --- The object store's administrator ---
+# Derived under "s3", the store's own name, as its path is: a new install's
+# value, which differs from what a cluster seeded under the old name holds.
+S3_ADMIN_PW=$(derive_password "s3" "root_password")
 
 # --- Keycloak ---
 KC_ADMIN_PW=$(derive_password "keycloak" "adminPassword")
@@ -155,11 +147,11 @@ kv_put() {
     local full_path="secret/data/gentian-os/kernel/${path}"
     echo "  Writing ${full_path}..."
     local result http_code body
-    result=$(curl -k -s -w "\n%{http_code}" \
-        -H "X-Vault-Token: ${BAO_TOKEN}" \
+    result=$(bao_curl -s -w "\n%{http_code}" \
+        -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
         -H "Content-Type: application/json" \
         -X POST \
-        -d "{\"data\": ${json_data}}" \
+        --data-binary @<(printf '{"data": %s}' "${json_data}") \
         "${BAO_ADDR}/v1/${full_path}")
     http_code=$(echo "$result" | tail -1)
     body=$(echo "$result" | head -n -1)
@@ -185,8 +177,8 @@ kv_put_once() {
     local json_data="$2"
     local check_path="secret/data/gentian-os/kernel/${path}"
     local existing
-    existing=$(curl -k -sf \
-        -H "X-Vault-Token: ${BAO_TOKEN}" \
+    existing=$(bao_curl -sf \
+        -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
         "${BAO_ADDR}/v1/${check_path}" 2>/dev/null || true)
     if echo "${existing}" | grep -q '"data":{'; then
         echo "  Skipping gentian-os/kernel/${path} (already exists — use 'bao kv patch' to update)"
@@ -203,7 +195,7 @@ echo "Writing secrets to OpenBao..."
 # into its HKDF-SHA256 deriver to produce per-tenant per-app credentials
 # deterministically. Path matches secrets.MasterPasswordPath in
 # internal/kernel/secrets/paths.go.
-kv_put_once "internal/master-password" "$(jq -n --arg v "${MASTER_PASSWORD}" --arg s "${DERIVATION_SALT}" '{value: $v, salt: $s}')"
+kv_put_once "internal/master-password" "$(jq -n --rawfile v <(printf '%s' "${MASTER_PASSWORD}") --rawfile s <(printf '%s' "${DERIVATION_SALT}") '{value: $v, salt: $s}')"
 
 # --- PostgreSQL ---
 # --- CNPG superuser (shared CloudNativePG Cluster in platform-kernel) ------
@@ -254,7 +246,12 @@ EOF
 OPENFGA_PRESHARED=$(derive_password "openfga" "preshared_key")
 kv_put_once "authz/openfga" "$(cat <<EOF
 {
-  "preshared_key": "${OPENFGA_PRESHARED}"
+  "preshared_key": "${OPENFGA_PRESHARED}",
+  "director_key": "$(derive_password "openfga" "director_key")",
+  "bouncer_key": "$(derive_password "openfga" "bouncer_key")",
+  "usher_key": "$(derive_password "openfga" "usher_key")",
+  "registrar_key": "$(derive_password "openfga" "registrar_key")",
+  "custodian_key": "$(derive_password "openfga" "custodian_key")"
 }
 EOF
 )"
@@ -275,19 +272,20 @@ kv_put_once "cache/redis" "$(cat <<EOF
 EOF
 )"
 
-# --- MinIO ---
-kv_put_once "storage/minio" "$(cat <<EOF
+# --- The object store's administrator ---
+kv_put_once "storage/s3" "$(cat <<EOF
 {
-  "root_user":     "minio",
-  "root_password": "${MINIO_ROOT_PW}"
+  "root_user":     "s3-admin",
+  "root_password": "${S3_ADMIN_PW}"
 }
 EOF
 )"
 
-# --- Keycloak Bootstrap (Suze IdP admin) ---
+# --- Keycloak Bootstrap (Keycloak admin) ---
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
-  "admin_password": "${KC_ADMIN_PW}"
+  "admin_password": "${KC_ADMIN_PW}",
+  "operator_client_secret": "$(derive_password "keycloak" "operatorClientSecret")"
 }
 EOF
 )"
@@ -295,7 +293,7 @@ EOF
 # --- Dovecot ---
 # doveadm_password: HMAC-derived for reproducibility
 # oidc_client_secret: generated on first seed when absent.
-_DOVECOT_EXISTING=$(curl -k -sf -H "X-Vault-Token: ${BAO_TOKEN}" \
+_DOVECOT_EXISTING=$(bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
   "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/mail/dovecot" 2>/dev/null || true)
 if echo "${_DOVECOT_EXISTING}" | grep -q '"doveadm_password"'; then
   echo "  Skipping gentian-os/kernel/mail/dovecot (doveadm_password already exists)"
@@ -329,8 +327,8 @@ fi
 # --- Postfix (SMTP relay credentials) ---
 if [ -n "$SMTP_RELAY_USER" ] && [ -n "$SMTP_RELAY_PASS" ]; then
     kv_put_once "mail/postfix" "$(jq -n \
-        --arg relay_username "${SMTP_RELAY_USER}" \
-        --arg relay_password "${SMTP_RELAY_PASS}" \
+        --rawfile relay_username <(printf '%s' "${SMTP_RELAY_USER}") \
+        --rawfile relay_password <(printf '%s' "${SMTP_RELAY_PASS}") \
         '{"relay_username": $relay_username, "relay_password": $relay_password}')"
 else
     echo ""
@@ -341,7 +339,7 @@ fi
 # --- Mail transport settings ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
-if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then
+if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "system" ]; then
   echo "  Invalid MAIL_SERVICE_MODE='${MAIL_SERVICE_MODE}' (expected external|kernel); defaulting to external"
   MAIL_SERVICE_MODE="external"
 fi
@@ -356,7 +354,7 @@ kv_put "mail/smtp" "$(jq -n \
   --arg port "${EXTERNAL_SMTP_PORT}" \
   --arg ssl "${EXTERNAL_SMTP_SSL}" \
   --arg starttls "${EXTERNAL_SMTP_STARTTLS}" \
-  --arg username "${SMTP_RELAY_USER}" \
+  --rawfile username <(printf '%s' "${SMTP_RELAY_USER}") \
   '{
     "mode": $mode,
     "host": $host,
@@ -365,18 +363,6 @@ kv_put "mail/smtp" "$(jq -n \
     "starttls": $starttls,
     "username": $username
   }')"
-
-# --- Registry (OCI pull credentials) — only if provided ---
-if [ -n "$REGISTRY_USER" ] && [ -n "$REGISTRY_PASSWORD" ]; then
-    kv_put_once "storage/registry" "$(jq -n \
-        --arg username "${REGISTRY_USER}" \
-        --arg password "${REGISTRY_PASSWORD}" \
-        '{"username": $username, "password": $password}')"
-else
-    echo ""
-    echo "  Skipping registry credentials (not provided)."
-    echo "  To add them later: bao kv put gentian-os/kernel/storage/registry username=<u> password=<p>"
-fi
 
 # --- Provider credentials (DNS zone host, edge ingress) ---
 # Each under the path its provider owns in kernel/platforms.yaml.
@@ -392,14 +378,14 @@ DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
 # external-dns's and cert-manager's; the operator no longer writes DNS records.
 if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put "dns/cloudflare" "$(jq -n \
-        --arg api_token "${CF_API_TOKEN}" \
+        --rawfile api_token <(printf '%s' "${CF_API_TOKEN}") \
         --arg zone_id "${CF_ZONE_ID:-}" \
         --arg tunnel_cname "${CF_TUNNEL_CNAME:-}" \
         '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
 fi
 
 # Every other provider credential, from every provider table, as
-# "<path><TAB><json>" lines the installer assembled from the catalogue.
+# "<path><TAB><json>" lines the installer assembled from the catalog.
 #
 # One loop rather than a block per provider. The installer already knows which
 # fields each provider declares and which ones it collected, so a second list
@@ -418,8 +404,11 @@ fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---
 KERNEL_REALM="${KERNEL_REALM:-kernel}"
-LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
-LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
+LITELLM_UI_USERNAME="admin@${KERNEL_DOMAIN}"
+# LiteLLM's own fallback login, beside its Keycloak SSO. Its own derivation:
+# it was the platform administrator's derived password, which no longer
+# exists -- that account is activated by link and its password is its holder's.
+LITELLM_UI_PASSWORD=$(derive_password "llm" "ui_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 # sk- prefixed, because LiteLLM requires it of a master key and refuses
 # anything else outright: "LiteLLM Virtual Key expected. Received=a364****5827,
@@ -435,7 +424,39 @@ VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 LITELLM_MASTER_KEY="sk-$(derive_password "llm" "litellm_master_key")"
 LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
 LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
-# Admin console SSO (platform-admin only; see docs/design/llms.md and the
+# With SECRET_MODE=random the five values above are drawn anew on every run,
+# and the write below replaces the whole path on every run -- it has to, the
+# addresses beside them follow install.env. So what the path already holds
+# stands, and a drawn value is used only for a field the path does not have.
+# Without this a second run handed the proxy a master key and a database
+# password that nothing else had been given.
+#
+# Derived values need none of it: they come out the same each time.
+#
+# A path that cannot be read is not the same as a path that is not there, and
+# only the second may be filled with new values.
+if [ "${SECRET_MODE}" = "random" ]; then
+    _llm_read=$(bao_curl -s -w "\n%{http_code}" -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
+        "${BAO_ADDR}/v1/secret/data/gentian-os/kernel/llm" 2>/dev/null || true)
+    _llm_code=$(echo "${_llm_read}" | tail -1)
+    case "${_llm_code}" in
+        200) _llm_have=$(echo "${_llm_read}" | head -n -1 | jq -c '.data.data // {}') ;;
+        404) _llm_have='{}' ;;
+        *)
+            echo "Error: gentian-os/kernel/llm could not be read (HTTP ${_llm_code:-none})." >&2
+            echo "  With SECRET_MODE=random its keys cannot be made again, so they are not replaced unread." >&2
+            exit 1
+            ;;
+    esac
+    _llm_kept() { echo "${_llm_have}" | jq -r --arg f "$1" '.[$f] // empty'; }
+    _kept=$(_llm_kept vllm_api_key);           [ -n "${_kept}" ] && VLLM_API_KEY="${_kept}"
+    _kept=$(_llm_kept litellm_master_key);     [ -n "${_kept}" ] && LITELLM_MASTER_KEY="${_kept}"
+    _kept=$(_llm_kept litellm_db_password);    [ -n "${_kept}" ] && LITELLM_DB_PW="${_kept}"
+    _kept=$(_llm_kept litellm_redis_password); [ -n "${_kept}" ] && LITELLM_REDIS_PW="${_kept}"
+    _kept=$(_llm_kept litellm_ui_password);    [ -n "${_kept}" ] && LITELLM_UI_PASSWORD="${_kept}"
+    unset _llm_read _llm_have _kept
+fi
+# Admin console SSO (platform-admin only; see docs/concepts/llms.md and the
 # litellm-dashboard Keycloak client provisioned by portal-login-bootstrap.sh).
 LITELLM_PROXY_BASE_URL="https://llm.${KERNEL_DOMAIN}"
 LITELLM_SSO_AUTH_ENDPOINT="https://id.${KERNEL_DOMAIN}/auth/realms/${KERNEL_REALM}/protocol/openid-connect/auth"

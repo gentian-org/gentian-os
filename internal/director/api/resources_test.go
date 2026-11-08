@@ -1,0 +1,804 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package api_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+)
+
+// Choosing a tenant's plan goes through the director like every other change
+// to declared state: a commit by whoever may set one, validated against the
+// operator's answer first. Reading the plans, the ceiling or anything else
+// the cluster holds is the usher's and is tested there. The operator here is
+// a stand-in that answers the way internal/applifecycle does, including the
+// plans it marks as not selectable and why.
+
+// operator is the app-lifecycle API as these tests need it: a catalog of
+// plans, a tenant on the second, and the queries it was asked.
+type operator struct {
+	*httptest.Server
+	// tenants the operator knows; any other is its 400.
+	tenants map[string]bool
+	// actor and lastAction record what an action arrived as.
+	actor      string
+	lastAction string
+	lastBody   map[string]any
+}
+
+func startOperator(t *testing.T) *operator {
+	t.Helper()
+	op := &operator{tenants: map[string]bool{"demo": true, "solo": true, "other": true}}
+	mux := http.NewServeMux()
+	known := func(w http.ResponseWriter, r *http.Request) bool {
+		if !op.tenants[r.PathValue("t")] {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"detail":"tenant \"` + r.PathValue("t") + `\" not found"}`))
+			return false
+		}
+		return true
+	}
+	mux.HandleFunc("GET /v1/tenants/{t}/resources/plans", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		plans := []lifecycle.Plan{
+			{Name: "nodes-1", DisplayName: "One node", Tier: 0, Quotas: map[string]string{"requestsCpu": "4", "requestsMemory": "16Gi", "cpu": "8", "memory": "32Gi", "storage": "50Gi"},
+				Selectable: false, Blocked: "3 cpu committed does not fit under 2", BlockedBy: "fit"},
+			{Name: "nodes-2", DisplayName: "Two nodes", Tier: 1, Quotas: map[string]string{"requestsCpu": "8", "requestsMemory": "32Gi", "cpu": "16", "memory": "64Gi", "storage": "100Gi", "maxPods": "60"}, Current: true, Selectable: true},
+			{Name: "nodes-3", DisplayName: "Three nodes", Tier: 2, ProductSku: "GTN-N3", Quotas: map[string]string{"requestsCpu": "12", "requestsMemory": "48Gi", "cpu": "24", "memory": "96Gi", "storage": "150Gi", "maxPods": "90"}, Selectable: true},
+			{Name: "nodes-4", DisplayName: "Four nodes", Tier: 3, ProductSku: "GTN-N4", Quotas: map[string]string{"requestsCpu": "16", "requestsMemory": "64Gi", "cpu": "32", "memory": "128Gi", "storage": "200Gi", "maxPods": "120"}, Selectable: true},
+		}
+		plans[3].Selectable = false
+		plans[3].Blocked = "this plan is retired: kept for the tenants on it, offered to no other"
+		plans[3].BlockedBy = "retired"
+		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "plans": plans})
+	})
+	mux.HandleFunc("POST /v1/tenants/{t}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		op.actor = r.Header.Get("X-Gentian-Actor")
+		op.lastAction = r.PathValue("action")
+		op.lastBody = map[string]any{}
+		_ = json.NewDecoder(r.Body).Decode(&op.lastBody)
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"action": r.PathValue("action"), "tenant": r.PathValue("t"),
+			"name": "manual-20260924-210000", "status": "started",
+		})
+	})
+	// The real operator refuses a request that presents no token, so this one
+	// does too: the director's actor header is a claim and not a proof unless
+	// only the director can reach the API to set it.
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+operatorToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"detail":"this API is the director's; present its token"}`))
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	op.Server = httptest.NewServer(guarded)
+	t.Cleanup(op.Close)
+	return op
+}
+
+// operatorToken stands in for the director's ServiceAccount token, which the
+// stand-in operator here admits by comparison rather than by asking an API
+// server.
+const operatorToken = "operator-token-for-the-director"
+
+func startWithOperator(t *testing.T) (*harness, *operator) {
+	t.Helper()
+	op := startOperator(t)
+	return startWith(t, lifecycle.New(op.URL, func() string { return operatorToken })), op
+}
+
+// tenantPlanPath is where the cluster's administrator moves a tenant.
+const tenantPlanPath = "/v1/clusters/" + dt.Cluster + "/tenants/demo/resources"
+
+// A director with no token reaches nothing, which is what a misconfigured
+// deployment must look like rather than an open API.
+func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
+	op := startOperator(t)
+	h := startWith(t, lifecycle.New(op.URL, func() string { return "" }))
+	alice := h.token(t, "gentian", "alice")
+	code, _ := h.do(t, http.MethodPut, tenantPlanPath, alice, `{"plan":"nodes-3"}`)
+	if code != http.StatusBadGateway {
+		t.Fatalf("a director presenting no token chose a plan, or the refusal was not named as the gateway fault it is: %d", code)
+	}
+}
+
+func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`)
+	if code != http.StatusAccepted || body["status"] != "updated" || body["previousPlan"] != "nodes-2" {
+		t.Fatalf("choose: %d %v", code, body)
+	}
+	if body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("answer names %v, remote moved from %s to %s", body["commit"], before, h.tip(t))
+	}
+
+	// Choosing the plan git already records is not a commit: the state
+	// asked for already holds, and a commit that only renamed the chooser
+	// would be a change to the record and not to the tenant.
+	after := h.tip(t)
+	code, body = h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`)
+	if code != http.StatusOK || body["status"] != "unchanged" || h.tip(t) != after {
+		t.Fatalf("re-choosing the recorded plan: %d %v", code, body)
+	}
+
+	// What landed: the patch with the plan's own quantities and the chooser,
+	// listed under the kustomization so it is the last word on the quotas.
+	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/resource-plan.yaml")
+	for _, want := range []string{
+		"gentianos.io/resource-plan: nodes-3",
+		`gentianos.io/resource-plan-set-by: "alice@example.com"`,
+		`requestsCpu: "12"`, `memory: "96Gi"`, "maxPods: 90",
+	} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("patch is missing %q:\n%s", want, patch)
+		}
+	}
+	if strings.Contains(patch, "maxApps") {
+		t.Error("a plan must not touch the app cap")
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- tenant.yaml") || !strings.Contains(kustomization, "- path: resource-plan.yaml") {
+		t.Fatalf("kustomization:\n%s", kustomization)
+	}
+	// The commit is the person's, with the decision that allowed it.
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%(trailers:key=Gentian-Authz,valueonly)", "main")
+	if !strings.Contains(trailer, "Alice|") || !strings.Contains(trailer, "user:alice can_configure cluster:"+dt.Cluster+" allowed") {
+		t.Fatalf("commit = %q", trailer)
+	}
+}
+
+// A tenant orders another plan where the cluster's notice says; nobody of
+// the tenant moves it, its administrator included.
+func TestOnlyTheClustersAdministratorMovesATenant(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+	for _, who := range []string{h.token(t, "tenant-demo", "tom"), h.token(t, "tenant-demo", "mia"), h.token(t, "tenant-solo", "tina")} {
+		if code, _ := h.do(t, "PUT", tenantPlanPath, who, `{"plan":"nodes-4"}`); code != http.StatusForbidden {
+			t.Fatalf("someone who does not configure the cluster moved a tenant: %d", code)
+		}
+	}
+	// The tenant route is gone: nothing answers it with a commit.
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/resources", tom, `{"plan":"nodes-4"}`); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+		t.Fatalf("the tenant's route still answers: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+}
+
+func TestAPlanTheTenantDoesNotFitUnderIsAConflictUnlessForced(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-1"}`); code != http.StatusConflict {
+		t.Fatalf("downgrade that does not fit: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-1","force":true}`); code != http.StatusAccepted {
+		t.Fatalf("forced: %d %v", code, body)
+	}
+	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/resource-plan.yaml")
+	// A key the plan leaves unset is written as null, so the ceiling is the
+	// plan's and not a mixture with what the manifest had.
+	if !strings.Contains(patch, "resource-plan: nodes-1") || !strings.Contains(patch, "maxPods: null") {
+		t.Fatalf("patch:\n%s", patch)
+	}
+}
+
+// A retired plan is kept for the tenants on it and offered to no other,
+// forced or not.
+func TestARetiredPlanIsNotChosen(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-4","force":true}`); code != http.StatusConflict {
+		t.Fatalf("a retired plan was chosen: %d %v", code, body)
+	}
+}
+
+func TestAPlanTheClusterDoesNotHaveIsNotFound(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	if code, _ := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-99"}`); code != http.StatusNotFound {
+		t.Fatalf("unknown plan: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", tenantPlanPath, alice, `{}`); code != http.StatusBadRequest {
+		t.Fatalf("no plan: %d", code)
+	}
+}
+
+func TestWithoutAnOperatorThereAreNoResourcesRoutes(t *testing.T) {
+	h := start(t)
+	alice := h.token(t, "gentian", "alice")
+	if code, _ := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`); code != http.StatusNotFound {
+		t.Fatalf("resources without an operator: %d", code)
+	}
+}
+
+// A policy is declared state and a backup is an action, and the API says
+// which: a policy answers with a commit, a backup answers with what was
+// started. Neither is reachable by someone who does not hold the relation.
+func TestAPolicyIsCommittedAndABackupIsStarted(t *testing.T) {
+	h, op := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom") // administers demo
+
+	// Declared state: a commit, and the file a reviewer reads.
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", tom,
+		`{"destination":{"bucket":"demo-bundles"},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("policy write: %d %v", code, body)
+	}
+	policy := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/backup-policy.yaml")
+	for _, want := range []string{"kind: BackupPolicy", "scope: tenant", "tenant: demo", "demo-bundles", "recipients:"} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("policy is missing %q:\n%s", want, policy)
+		}
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- backup-policy.yaml") {
+		t.Fatalf("the policy is not applied:\n%s", kustomization)
+	}
+	// Writing the same thing again changes nothing.
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/backup-policy", tom,
+		`{"destination":{"bucket":"demo-bundles"},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`); code != http.StatusOK || body["status"] != "unchanged" {
+		t.Fatalf("rewriting the same policy: %d %v", code, body)
+	}
+
+	// An action: what was started, not what was committed, and the tip has
+	// not moved because nothing was written to git.
+	after := h.tip(t)
+	code, body = h.do(t, "POST", "/v1/tenants/demo/actions/backup", tom, `{}`)
+	if code != http.StatusAccepted || body["status"] != "started" || body["action"] != "backup" {
+		t.Fatalf("action: %d %v", code, body)
+	}
+	if _, isCommit := body["commit"]; isCommit || h.tip(t) != after {
+		t.Fatalf("an action wrote to git: %v", body)
+	}
+	// The person is named on the request, because there is no commit to
+	// read them off.
+	if op.actor != "tom@example.com" || op.lastAction != "backup" {
+		t.Fatalf("actor=%q action=%q", op.actor, op.lastAction)
+	}
+
+	// Clearing goes back to inheriting, which is the file being gone.
+	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/backup-policy", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("clear: %d", code)
+	}
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "backup-policy.yaml") {
+		t.Fatalf("the policy file survived the clear:\n%s", out)
+	}
+}
+
+func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+
+	// A member may read backups and change nothing.
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", mia, `{"destination":{"bucket":"elsewhere"}}`); code != http.StatusForbidden {
+		t.Fatalf("a member set the policy: %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/backup", mia, `{}`); code != http.StatusForbidden {
+		t.Fatalf("a member took a backup: %d", code)
+	}
+	// Another tenant's administrator holds nothing here.
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/backup", tina, `{}`); code != http.StatusForbidden {
+		t.Fatalf("a stranger took a backup: %d", code)
+	}
+	// The cluster's own policy is the cluster's to set.
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, `{"destination":{"bucket":"elsewhere"}}`); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin set the cluster's policy: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+
+	alice := h.token(t, "gentian", "alice") // platform administrator
+	code, body := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"allowTenantOverride":false}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("cluster policy: %d %v", code, body)
+	}
+	claim := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/backup-policy.yaml")
+	if !strings.Contains(claim, "scope: cluster") || !strings.Contains(claim, "allowTenantOverride: false") {
+		t.Fatalf("cluster policy:\n%s", claim)
+	}
+	// A schedule is not a policy's to state: scheduled backups are an
+	// add-on's. Refused rather than dropped, so a caller that still sends
+	// one learns it is not kept.
+	tip := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"schedule":"0 1 * * *"}`); code != http.StatusBadRequest || h.tip(t) != tip {
+		t.Fatalf("a policy with a schedule: %d, want 400 and nothing committed", code)
+	}
+
+	// A destination's addressing style is committed as stated, and one the
+	// definition would refuse is refused here, before anything is written.
+	code, body = h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"destination":{"endpoint":"https://s3.example.org","addressingStyle":"virtualHost"}}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("cluster policy with an addressing style: %d %v", code, body)
+	}
+	claim = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/backup-policy.yaml")
+	if !strings.Contains(claim, `addressingStyle: "virtualHost"`) && !strings.Contains(claim, "addressingStyle: virtualHost") {
+		t.Fatalf("the addressing style is not committed:\n%s", claim)
+	}
+	before = h.tip(t)
+	code, body = h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"destination":{"endpoint":"https://s3.example.org","addressingStyle":"dns"}}`)
+	if code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("an addressing style the definition refuses: %d %v", code, body)
+	}
+}
+
+// The realm policy is declared state: read from git, written as a commit, and
+// applied by the composition that owns the realm. No Keycloak credential is
+// involved at any point, which is what let the console stop holding one.
+func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	// Nothing declared is a real answer, with the defaults the composition
+	// applies beside it.
+	code, body := h.do(t, "GET", "/v1/tenants/demo/security-policy", tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	if defaults, _ := body["defaults"].(map[string]any); defaults == nil {
+		t.Fatalf("no defaults to render: %v", body)
+	}
+
+	before := h.tip(t)
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom,
+		`{"password":{"minLength":12,"requireDigits":true,"requireUppercase":true,"historyCount":3},`+
+			`"session":{"idleMinutes":30,"maxHours":8},`+
+			`"bruteForce":{"enabled":true,"maxLoginFailures":5,"lockoutDurationSeconds":900}}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("write: %d %v", code, body)
+	}
+
+	// What landed is a patch a reviewer can read, applied after the
+	// components the tenant pulls in.
+	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/security-policy.yaml")
+	for _, want := range []string{"kind: Tenant", "security:", "minLength: 12", "requireDigits: true", "historyCount: 3", "idleMinutes: 30", "maxLoginFailures: 5"} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("patch is missing %q:\n%s", want, patch)
+		}
+	}
+	// What was not asked for is absent, not zero: the realm keeps the
+	// composition's default rather than a zero written over it.
+	if strings.Contains(patch, "requireLowercase") || strings.Contains(patch, "maxAgeDays") {
+		t.Errorf("an unstated field was written:\n%s", patch)
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- path: security-policy.yaml") {
+		t.Fatalf("the policy is not applied:\n%s", kustomization)
+	}
+
+	// And it reads back as what was set.
+	_, body = h.do(t, "GET", "/v1/tenants/demo/security-policy", tom, "")
+	policy, _ := body["policy"].(map[string]any)
+	password, _ := policy["password"].(map[string]any)
+	if password["minLength"] != float64(12) || password["requireDigits"] != true {
+		t.Fatalf("read back: %v", policy)
+	}
+}
+
+// A tenant's country is set and cleared by whoever may set its policy, as a
+// commit of spec.country; a member may read it and not change it.
+func TestATenantsCountryIsCommittedAndReadBack(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	mia := h.token(t, "tenant-demo", "mia")
+
+	code, body := h.do(t, "GET", "/v1/tenants/demo/country", mia, "")
+	if code != http.StatusOK || body["country"] != "" {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/country", mia, `{"country":"CH"}`); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("a member set the country: %d", code)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":"Schweiz"}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("a country that is no code: %d %v", code, body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{}`); code != http.StatusBadRequest {
+		t.Fatalf("a body without a country: %d %v", code, body)
+	}
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":"ch"}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("write: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); !strings.Contains(manifest, `country: "CH"`) {
+		t.Fatalf("the country is not in the manifest:\n%s", manifest)
+	}
+	if _, body = h.do(t, "GET", "/v1/tenants/demo/country", tom, ""); body["country"] != "CH" {
+		t.Fatalf("read back: %v", body)
+	}
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/country", tom, `{"country":""}`); code != http.StatusAccepted {
+		t.Fatalf("clear: %d %v", code, body)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "country:") {
+		t.Fatalf("a cleared country is still in the manifest:\n%s", manifest)
+	}
+}
+
+// A tenant is created with its country, and a country that is no code is
+// refused before anything is committed.
+func TestATenantIsCreatedWithItsCountry(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	tenants := "/v1/clusters/" + dt.Cluster + "/tenants"
+	before := h.tip(t)
+	if code, out := h.do(t, "POST", tenants, alice, `{"name":"acme","country":"CHE"}`); code != http.StatusBadRequest || h.tip(t) != before {
+		t.Fatalf("an alpha-3 code = %d %v", code, out)
+	}
+	code, out := h.do(t, "POST", tenants, alice, `{"name":"acme","country":"de"}`)
+	if code != http.StatusAccepted || out["country"] != "DE" {
+		t.Fatalf("create = %d %v", code, out)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("acme")); !strings.Contains(manifest, `country: "DE"`) {
+		t.Fatalf("the country is not in the manifest:\n%s", manifest)
+	}
+}
+
+// A retired tenant's name is refused for a new tenant, saying why and how to
+// approve; approved, the tenant is created and the answer carries the warning.
+func TestARetiredTenantsNameNeedsTheReuseApproved(t *testing.T) {
+	h, _ := startWithOperator(t)
+	alice := h.token(t, "gentian", "alice")
+	tenants := "/v1/clusters/" + dt.Cluster + "/tenants"
+	if code, out := h.do(t, "POST", tenants, alice, `{"name":"acme"}`); code != http.StatusAccepted {
+		t.Fatalf("create = %d %v", code, out)
+	}
+	if code, out := h.do(t, "DELETE", tenants+"/acme", alice, ""); code != http.StatusAccepted {
+		t.Fatalf("retire = %d %v", code, out)
+	}
+	before := h.tip(t)
+	code, out := h.do(t, "POST", tenants, alice, `{"name":"acme"}`)
+	if msg, _ := out["error"].(string); code != http.StatusConflict || !strings.Contains(msg, `"reuseName": true`) || h.tip(t) != before {
+		t.Fatalf("create under a retired name = %d %v", code, out)
+	}
+	if used, _ := out["nameUsedBefore"].(map[string]any); used["name"] != "acme" || used["retired"] == "" {
+		t.Fatalf("the refusal does not name the retired tenant: %v", out)
+	}
+	code, out = h.do(t, "POST", tenants, alice, `{"name":"acme","reuseName":true}`)
+	if warning, _ := out["warning"].(string); code != http.StatusAccepted || !strings.Contains(warning, "pass to this one") {
+		t.Fatalf("approved reuse = %d %v", code, out)
+	}
+}
+
+func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+
+	mia := h.token(t, "tenant-demo", "mia") // a member: may look
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/security-policy", mia, ""); code != http.StatusOK {
+		t.Fatalf("a member could not read the policy: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", mia, `{"password":{"minLength":4}}`); code != http.StatusForbidden {
+		t.Fatalf("a member set the realm policy: %d", code)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tina, `{"password":{"minLength":4}}`); code != http.StatusForbidden {
+		t.Fatalf("a stranger set the realm policy: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+}
+
+// The change history is the audit evidence the platform already had: the
+// commits, with the decision that allowed each one. What it must not do is
+// present a change pushed by hand as though something had authorized it.
+func TestTheChangeHistoryNamesWhatAllowedEachChange(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	// A change made through the platform.
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom, `{"password":{"minLength":12}}`); code != http.StatusAccepted {
+		t.Fatalf("setting up a change: %d", code)
+	}
+
+	code, body := h.do(t, "GET", "/v1/tenants/demo/changes", tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	// The answer says what it does not cover, because a screen headed
+	// "audit" that showed only this would claim more than it has.
+	if covers, _ := body["covers"].(string); !strings.Contains(covers, "Sign-ins") {
+		t.Fatalf("the answer does not say what it leaves out: %v", body["covers"])
+	}
+	changes, _ := body["changes"].([]any)
+	if len(changes) == 0 {
+		t.Fatal("no changes for a tenant that has just been changed")
+	}
+	latest := changes[0].(map[string]any)
+	if latest["throughPlatform"] != true {
+		t.Fatalf("a change the director made is not marked as one: %v", latest)
+	}
+	if latest["principal"] != "tom" || latest["decision"] != "can_set_policy tenant:demo" {
+		t.Fatalf("the authority is not reported: %v", latest)
+	}
+	if latest["requestId"] == "" || latest["commit"] == "" {
+		t.Fatalf("nothing to join this to the decision log: %v", latest)
+	}
+	files, _ := latest["files"].([]any)
+	if len(files) == 0 {
+		t.Fatalf("no files on a change: %v", latest)
+	}
+
+	// The seed commit was pushed by hand, and says so.
+	byHand := false
+	for _, c := range changes {
+		entry := c.(map[string]any)
+		if entry["throughPlatform"] == false && entry["decision"] == nil {
+			byHand = true
+		}
+	}
+	if !byHand {
+		t.Fatal("a commit with no authorization trailer must be reported as one, not hidden")
+	}
+}
+
+func TestAChangeHistoryIsReadByAdministratorsAndAuditors(t *testing.T) {
+	h, _ := startWithOperator(t)
+
+	// A member may enter the tenant and may not read who did what in it.
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/changes", mia, ""); code != http.StatusForbidden {
+		t.Fatalf("a member read the change history: %d", code)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/changes", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("a stranger read the change history: %d", code)
+	}
+	// The cluster's whole history is the auditor's view.
+	audrey := h.token(t, "gentian", "audrey")
+	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/changes?limit=5", audrey, "")
+	if code != http.StatusOK {
+		t.Fatalf("cluster changes: %d %v", code, body)
+	}
+	if changes, _ := body["changes"].([]any); len(changes) == 0 || len(changes) > 5 {
+		t.Fatalf("limit not honoured: %d", len(changes))
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/changes", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin read the cluster's history: %d", code)
+	}
+}
+
+// A grant is declared state: what one app may consume, committed as an
+// object a reviewer reads, under the verb model v1 has for deciding it.
+func TestAGrantIsCommittedAndWithdrawn(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom,
+		`{"consume":[{"contract":"files","granted":["read"]}],"allowConsumers":[{"app":"tasks","contract":"notes","scope":["read"]}],"reason":"notes attach files"}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("grant: %d %v", code, body)
+	}
+	// A patch of the Tenant, with who granted it and when, from the token.
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	for _, want := range []string{"kind: Tenant", "name: demo", "app: notes", "contract: files", "- read", "app: tasks",
+		"grantedBy: tom", "grantedAt:", "reason: notes attach files"} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("grants.yaml is missing %q:\n%s", want, grants)
+		}
+	}
+	if strings.Contains(grants, "namespace:") {
+		t.Errorf("the grant is a namespaced object again:\n%s", grants)
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "grants.yaml") {
+		t.Fatalf("the grants are not applied:\n%s", kustomization)
+	}
+
+	// Withdrawing takes the entry away -- the last one, the patch -- which
+	// withdraws everything it permitted.
+	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/grants/notes", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("withdraw: %d", code)
+	}
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "grants.yaml") {
+		t.Fatalf("the grant survived being withdrawn:\n%s", out)
+	}
+}
+
+// The waiver allowlist is read under can_audit and changed by the security
+// officer (cluster#can_approve), who also approves each install's grant: a
+// waiver takes effect without break-glass. Which of the platform's cluster
+// roles the cluster permits stays break-glass's (can_set_admission), and
+// that route cannot change the waivers. A platform administrator holds
+// neither.
+func TestTheWaiverAllowlistIsTheSecurityOfficers(t *testing.T) {
+	h, _ := startWithOperator(t)
+	audrey := h.token(t, "gentian", "audrey") // may audit the cluster
+	alice := h.token(t, "gentian", "alice")   // platform administrator
+	sam := h.token(t, "gentian", "sam")       // security officer
+	bea := h.token(t, "gentian", "bea")       // break-glass
+	waivers := "/v1/clusters/" + dt.Cluster + "/platform-security/waivers"
+	whole := "/v1/clusters/" + dt.Cluster + "/platform-security"
+	element := `{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}]}`
+
+	code, body := h.do(t, "GET", whole, audrey, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	// Declared nothing yet: an empty list, and nothing else. What asks for a
+	// waiver is the cluster's to say, and this process does not answer for
+	// the cluster.
+	if list, ok := body["allowedMacWaivers"].([]any); !ok || len(list) != 0 || len(body) != 2 {
+		t.Fatalf("the declared allowlist is not all that was answered: %v", body)
+	}
+	if list, ok := body["allowedClusterRoles"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("the permitted cluster roles are not answered as an empty list: %v", body)
+	}
+
+	// Neither a platform administrator nor break-glass changes the waivers,
+	// on either route, and nothing moves.
+	before := h.tip(t)
+	for who, token := range map[string]string{"a platform administrator": alice, "break-glass": bea} {
+		if code, _ := h.do(t, "PUT", waivers, token, element); code != http.StatusForbidden {
+			t.Errorf("%s changed the waiver allowlist: %d", who, code)
+		}
+	}
+	if code, _ := h.do(t, "PUT", whole, alice, element); code != http.StatusForbidden {
+		t.Errorf("a platform administrator changed the admission posture without break-glass: %d", code)
+	}
+	code, body = h.do(t, "PUT", whole, bea, element)
+	if msg, _ := body["error"].(string); code != http.StatusForbidden || !strings.Contains(msg, "security officer") {
+		t.Errorf("break-glass changed the waivers through the whole object: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "PUT", whole, alice, `{"allowedClusterRoles":[{"profile":"dashboard","role":"read-nodes"}]}`); code != http.StatusForbidden {
+		t.Errorf("a platform administrator permitted a cluster role without break-glass: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", waivers, h.token(t, "tenant-solo", "tina"), `{"allowedMacWaivers":[]}`); code != http.StatusForbidden {
+		t.Errorf("a tenant admin changed the cluster's waivers: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+
+	// The security officer sets the waivers.
+	if code, body := h.do(t, "PUT", waivers, sam, element); code != http.StatusAccepted {
+		t.Fatalf("the security officer could not set the waivers: %d %v", code, body)
+	}
+	file := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if !strings.Contains(file, "profile: element") || !strings.Contains(file, "scope: synapse") {
+		t.Fatalf("the waiver is not declared:\n%s", file)
+	}
+	// Break-glass permits a cluster role, sending the waivers back as they
+	// are -- a screen that read the whole object -- and they stay.
+	if code, body := h.do(t, "PUT", whole, bea,
+		`{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}],`+
+			`"allowedClusterRoles":[{"profile":"dashboard","role":"read-nodes"}]}`); code != http.StatusAccepted {
+		t.Fatalf("break-glass could not permit a cluster role: %d %v", code, body)
+	}
+	file = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if !strings.Contains(file, "profile: element") || !strings.Contains(file, "role: read-nodes") {
+		t.Fatalf("the waivers or the role are lost:\n%s", file)
+	}
+}
+
+func TestOnlyTheRightVerbsChangeGrantsAndWaivers(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", mia, `{"consume":[]}`); code != http.StatusForbidden {
+		t.Fatalf("a member set a grant: %d", code)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tina, `{"consume":[]}`); code != http.StatusForbidden {
+		t.Fatalf("a stranger set a grant: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+}
+
+// The director does not answer for the cluster. Every read of live state it
+// once relayed is the usher's now, and none of them is a route here any
+// more: the path is unknown, or known only for the write that stayed.
+func TestLiveStateIsNotServedHere(t *testing.T) {
+	h, _ := startWithOperator(t)
+	audrey := h.token(t, "gentian", "audrey") // may audit the cluster and view every tenant
+	for _, path := range []string{
+		"/v1/tenants/demo/apps/status",
+		"/v1/tenants/demo/resources",
+		"/v1/tenants/demo/resources/plans",
+		"/v1/tenants/demo/resources/usage",
+		"/v1/tenants/demo/resources/report",
+		"/v1/tenants/demo/backups",
+		"/v1/tenants/demo/backups/nightly-1",
+		"/v1/tenants/demo/backup-policy",
+		"/v1/tenants/demo/backup-schedules",
+		"/v1/tenants/demo/integrations",
+		"/v1/tenants/demo/notifications",
+		"/v1/clusters/" + dt.Cluster + "/resources",
+		"/v1/clusters/" + dt.Cluster + "/backup-policy",
+		"/v1/clusters/" + dt.Cluster + "/backup-schedules",
+		"/v1/clusters/" + dt.Cluster + "/customizations",
+	} {
+		// 405 where a write of declared state keeps the path -- the plan, a
+		// backup policy -- and 404 everywhere else.
+		if code, body := h.do(t, "GET", path, audrey, ""); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s is still served here: %d %v", path, code, body)
+		}
+	}
+}
+
+// A component that keeps plans in step with a commerce backend moves a
+// tenant as a cluster administrator who linked themselves to it: with a
+// token of theirs it obtained by vouching, which reaches the routes its
+// scopes name and nothing else, never forces, and is named in the commit.
+func TestADelegatedTokenMovesATenantWithinItsScopes(t *testing.T) {
+	h, _ := startWithOperator(t)
+	delegated := func(realm, sub string, scopes string) string {
+		return h.issuer.Token(t, dt.Claims{Realm: realm, Subject: sub, Audience: audience, Name: "Alice", Email: sub + "@example.com",
+			Extra: map[string]any{"azp": "vouch-ops-sync", "scope": scopes}})
+	}
+	apply := delegated("gentian", "alice", "director-plans-apply")
+	read := delegated("gentian", "alice", "director-plans-read")
+
+	req, _ := http.NewRequest(http.MethodPut, h.URL+tenantPlanPath, strings.NewReader(`{"plan":"nodes-3"}`))
+	req.Header.Set("Authorization", "Bearer "+apply)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gentian-Reason", "order 4711")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delegated move: %d", resp.StatusCode)
+	}
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%(trailers)", "main")
+	if !strings.Contains(trailer, "can_configure cluster:"+dt.Cluster+" allowed via vouch-ops-sync") || !strings.Contains(trailer, "Gentian-Reason: order 4711") {
+		t.Fatalf("trailers = %q", trailer)
+	}
+
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, apply, `{"plan":"nodes-1","force":true}`); code != http.StatusForbidden {
+		t.Fatalf("a delegated token forced a plan: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, read, `{"plan":"nodes-2"}`); code != http.StatusForbidden {
+		t.Fatalf("a read scope moved a tenant: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPut, "/v1/clusters/"+dt.Cluster+"/resource-plans/x", apply, basePlan); code != http.StatusForbidden {
+		t.Fatalf("a delegated token wrote the catalog: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodDelete, "/v1/clusters/"+dt.Cluster+"/plan-ordering", apply, ""); code != http.StatusForbidden {
+		t.Fatalf("a delegated token reached another route: %d", code)
+	}
+	// The person's own relations are asked as well.
+	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, delegated("tenant-demo", "tom", "director-plans-apply"), `{"plan":"nodes-2"}`); code != http.StatusForbidden {
+		t.Fatalf("a delegated token did more than its person may: %d", code)
+	}
+}

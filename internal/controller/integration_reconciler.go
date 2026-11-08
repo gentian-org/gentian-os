@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -131,12 +125,11 @@ func (r *TenantReconciler) deleteIntegrationBindings(ctx context.Context, tenant
 	return nil
 }
 
-// findProviderInTenant scans the tenant's app list for an app whose AppProfile
+// findProviderInTenant scans the tenant's app list for an app whose ComponentProfile
 // declares the given contract in its Provides list. Returns the provider app name
 // or an empty string if none is found. The consumer app is excluded from the search.
 func (r *TenantReconciler) findProviderInTenant(
 	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
 	contract string,
 	presentApps map[string]struct{},
 	consumerApp string,
@@ -145,7 +138,7 @@ func (r *TenantReconciler) findProviderInTenant(
 		if appName == consumerApp {
 			continue
 		}
-		providerProfile := &gentianov1alpha1.AppProfile{}
+		providerProfile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: appName}, providerProfile); err != nil {
 			continue
 		}
@@ -158,12 +151,40 @@ func (r *TenantReconciler) findProviderInTenant(
 	return ""
 }
 
+// providedEndpoint is where a provider says it answers a contract: the
+// endpoint of its profile's spec.provides entry for it, or nil where it names
+// none or does not list the contract.
+func (r *TenantReconciler) providedEndpoint(ctx context.Context, providerApp, contract string) (*gentianov1alpha1.ContractEndpoint, error) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: providerApp}, profile); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get ComponentProfile %s: %w", providerApp, err)
+	}
+	for _, c := range profile.Spec.Provides {
+		if c.Name == contract && c.Endpoint != nil {
+			return c.Endpoint.DeepCopy(), nil
+		}
+	}
+	return nil, nil
+}
+
+// contractURL is the address a consumer in the same namespace calls the
+// provider's endpoint at. In-cluster rather than through the gateway: the
+// endpoint is for a machine, and a round trip out to the edge and back would
+// need a session neither app has any business holding.
+func contractURL(e *gentianov1alpha1.ContractEndpoint, namespace string) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s", e.Service, namespace, e.Port, e.Path)
+}
+
 // --- Builder ----------------------------------------------------------------
 
 // buildIntegrationBinding constructs an IntegrationBinding CR.
 func buildIntegrationBinding(
 	name, nsName, tenantName, consumerApp, providerApp string,
 	integration gentianov1alpha1.IntegrationRef,
+	endpoint *gentianov1alpha1.ContractEndpoint,
 ) *gentianov1alpha1.IntegrationBinding {
 	return &gentianov1alpha1.IntegrationBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -187,9 +208,9 @@ func buildIntegrationBinding(
 			},
 			Capabilities: integration.Capabilities,
 			Auth: &gentianov1alpha1.BindingAuth{
-				Method:    "api-key",
 				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
 			},
+			Endpoint: endpoint,
 		},
 	}
 }

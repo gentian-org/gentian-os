@@ -15,10 +15,12 @@
 # the value it had before. Without it you get a working cluster with entirely
 # different credentials, which is a migration rather than a restore.
 #
-# It does NOT restore OpenBao. A fresh OpenBao initialises itself and issues new
+# It does NOT restore OpenBao. A fresh OpenBao initializes itself and issues new
 # unseal material; the keys carried here belong to the OLD instance and are
-# useful for exactly one thing — unsealing a restored Raft snapshot. Restoring
-# that snapshot is a separate operation this does not perform.
+# useful for exactly one thing — getting back into a vault restored from one of
+# the old instance's snapshots (a vault on Raft storage takes one every day;
+# docs/guides/recovery.md §4). Restoring that snapshot is a separate operation
+# this does not perform.
 # =============================================================================
 
 [[ -n "${GENTIAN_RECOVERY_LOADED:-}" ]] && return 0
@@ -33,17 +35,17 @@ _KIT_KEYS=(
     KERNEL_DOMAIN
     GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH
     GENTIAN_DEPLOYMENTS_CLUSTER_ID GENTIAN_DEPLOYMENTS_STAGE
-    GENTIAN_OS_REPO GENTIAN_OS_BRANCH GENTIAN_OS_IMAGE_REPOSITORY
+    GENTIAN_OS_REPO GENTIAN_OS_BRANCH
     MASTER_PASSWORD DERIVATION_SALT
     GENTIAN_DEPLOYMENTS_GIT_USERNAME GENTIAN_DEPLOYMENTS_GIT_TOKEN
-    GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
-    GENTIAN_APPS_GIT_USERNAME GENTIAN_APPS_GIT_TOKEN
-    GENTIAN_UI_GIT_USERNAME GENTIAN_UI_GIT_TOKEN
-    REGISTRY_USER REGISTRY_PASSWORD
+    GENTIAN_OS_GIT_USERNAME GENTIAN_UI_GIT_USERNAME
+    GENTIAN_OS_GIT_TOKEN GENTIAN_UI_GIT_TOKEN
     CF_API_TOKEN CF_TUNNEL_TOKEN
     SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
     TRANSIT_UNSEAL_KEY OPENBAO_RECOVERY_KEYS OPENBAO_ROOT_TOKEN
     BACKUP_AGE_IDENTITY
+    BUNDLE_SIGNING_SEED
+    GENTIAN_BREAK_GLASS_KEY
 )
 
 # =============================================================================
@@ -195,10 +197,10 @@ _kit_recipient() {
 #
 # Under kernel/, so the cluster-admin policy already reads it and no new grant
 # is needed for the person who would be restoring. eso-read denies this exact
-# path — see the Cluster composition — so escrow means "a cluster administrator
-# can read it", not "the cluster can read it". The distinction is the whole
-# point: a key ESO could materialise into a Secret would be readable by anything
-# that takes the cluster, which is the one thing escrow must not come to mean.
+# path — see the Cluster composition — so nothing that goes through External
+# Secrets can read it: a key ESO could materialize into a Secret would be
+# readable by anything able to write an ExternalSecret. The operator's own
+# policy, operator-write, covers gentian-os/* and so reads it as well.
 _KIT_BACKUP_ESCROW_PATH="gentian-os/kernel/backup/identity"
 
 # _kit_escrow_enabled — whether this cluster escrows the backup identity.
@@ -363,8 +365,8 @@ _kit_backup_identity() {
     # arrangement — the reverse would leave an identity escrowed for a recipient
     # nothing encrypts to.
     if _kit_escrow_enabled; then
-        if bao kv put -mount=secret "${_KIT_BACKUP_ESCROW_PATH}" \
-            "identity=${BACKUP_AGE_IDENTITY}" >/dev/null 2>&1; then
+        if jq -n --rawfile v <(printf '%s' "${BACKUP_AGE_IDENTITY}") '{identity: $v}' \
+            | bao kv put -mount=secret "${_KIT_BACKUP_ESCROW_PATH}" - >/dev/null 2>&1; then
             success "  Backup key generated. Public half and escrowed identity in OpenBao."
             if _kit_escrow_stated; then
                 warn "  This cluster escrows the backup identity (spec.backup.escrowIdentity)."
@@ -373,7 +375,7 @@ _kit_backup_identity() {
                 warn "  the documented default applied. Set spec.backup.escrowIdentity to say"
                 warn "  so deliberately, or false to keep the key in this kit alone."
             fi
-            warn "  A cluster administrator can restore without this kit — and anyone who"
+            warn "  A platform admin can restore without this kit — and anyone who"
             warn "  reaches OpenBao as one can read every bundle. Keep the kit anyway: it"
             warn "  is the only copy that survives losing the cluster."
         else
@@ -410,12 +412,17 @@ _kit_gather() {
     # recovery_keys_base64; the _b64 spellings below are what older builds and
     # Vault's own docs use. Reading only one meant the value was silently
     # absent — see the recovery-key case just below, which is the reason this
-    # matters.
+    # matters. The seal's own init file is the API's answer to sys/init, which
+    # spells it keys_base64 (scripts/bootstrap/init-openbao-transit.sh).
+    #
+    # The seal is one share of one, and its seal configuration is in its own
+    # storage, so this one key is all a seal restored from its snapshot needs
+    # to unseal (docs/guides/recovery.md §4.3).
     TRANSIT_UNSEAL_KEY="${TRANSIT_UNSEAL_KEY:-$(
         _kit_from_json "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
-            '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
+            '(.unseal_keys_base64 // .unseal_keys_b64 // .keys_base64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
-        TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n openbao \
+        TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" \
             -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
 
@@ -425,7 +432,7 @@ _kit_gather() {
     # went out with OPENBAO_RECOVERY_KEYS listed under "Absent" on every
     # export ever taken. The recovery key is the one credential in the kit
     # that cannot be re-derived from anything else: it exists in this file and
-    # nowhere else, and E-04 deletes the file. A kit without it is a kit that
+    # nowhere else, and E-03 deletes the file. A kit without it is a kit that
     # cannot open OpenBao when Keycloak is what broke.
     OPENBAO_RECOVERY_KEYS="${OPENBAO_RECOVERY_KEYS:-$(
         _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" \
@@ -435,8 +442,26 @@ _kit_gather() {
 
     _kit_backup_identity || return 1
 
+    # The key the cluster signs its bundles with. In the kit so that a
+    # cluster rebuilt from it signs as this one did: its bundles still hold,
+    # and the rights granted in a tenant come back from them
+    # (seed_bundle_signing_key writes it back on --recover).
+    #
+    # A cluster handed over before bundles were signed has none, and no
+    # install step can reach its vault any more: the export, which runs as a
+    # platform administrator, seeds it then, as it makes the backup key.
+    if [[ -z "${BUNDLE_SIGNING_SEED:-}" && -n "${BAO_TOKEN:-}" ]]; then
+        BUNDLE_SIGNING_SEED="$(bao kv get -mount=secret -field=signing_seed \
+            gentian-os/kernel/backup/signing 2>/dev/null || true)"
+        if [[ -z "${BUNDLE_SIGNING_SEED}" ]]; then
+            seed_bundle_signing_key
+            BUNDLE_SIGNING_SEED="$(bao kv get -mount=secret -field=signing_seed \
+                gentian-os/kernel/backup/signing 2>/dev/null || true)"
+        fi
+    fi
+
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
-        KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n crossplane-system \
+        KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n "${CROSSPLANE_NAMESPACE:-kernel-provisioning}" \
             -o jsonpath='{.items[0].spec.kernelDomain}' 2>/dev/null || true)"
     fi
 }
@@ -461,6 +486,31 @@ export_recovery_kit() {
     banner "Recovery kit"
     _kit_gather || return 1
 
+    # The break-glass signing key (AD-2).
+    #
+    # Included by default, because the alternative is a cluster that requires
+    # signatures and a key that exists on exactly one laptop: lose the laptop
+    # and the way back in is hand-editing the AppProject on a cluster you can
+    # no longer write to. A kit that can rebuild a cluster but not sign for it
+    # can only rebuild it unsigned.
+    #
+    # It does make the kit more sensitive -- it is now enough to write to the
+    # deployments repository as the break-glass identity -- so it can be left
+    # out deliberately. The kit is already encrypted and already carries the
+    # master password, the git tokens and the backup identity, so this is a
+    # difference of degree rather than of kind.
+    if [[ "${GENTIAN_KIT_INCLUDE_BREAK_GLASS:-1}" == "1" ]]; then
+        if [[ -z "${GENTIAN_BREAK_GLASS_KEY:-}" ]] && \
+           [[ -n "$(gentian_signing_key_id break-glass 2>/dev/null)" ]]; then
+            GENTIAN_BREAK_GLASS_KEY="$(gentian_export_secret_key break-glass 2>/dev/null || true)"
+            export GENTIAN_BREAK_GLASS_KEY
+        fi
+    else
+        info "GENTIAN_KIT_INCLUDE_BREAK_GLASS=0: the break-glass signing key is left out."
+        info "  A cluster rebuilt from this kit cannot sign for itself until the key"
+        info "  is restored by hand, or the AppProject's signing policy is removed."
+    fi
+
     # The salt is the reason this command exists. It lives only in OpenBao, so a
     # disaster that loses OpenBao's storage loses it too — and then the master
     # password alone reproduces nothing.
@@ -470,7 +520,7 @@ export_recovery_kit() {
         error ""
         error "  The export tries an OIDC sign-in as cluster-admin when it has no token,"
         error "  so reaching this means that did not complete either — no browser, the"
-        error "  sign-in was cancelled, or OpenBao is unreachable from here."
+        error "  sign-in was canceled, or OpenBao is unreachable from here."
         error ""
         error "  Supply a token directly:"
         error "    export BAO_ADDR=https://localhost:8200   # localhost is in the cert SANs"
@@ -484,6 +534,12 @@ export_recovery_kit() {
     local body key value present=() missing=()
     body=""
     body+="# gentian-os recovery kit"$'\n'
+    # Where the vault's own copies are, for whoever opens this in the worst
+    # hour: a comment, which load_recovery_kit skips.
+    body+="# The daily snapshots: bucket gentian-openbao-snapshots in the cluster's object"$'\n'
+    body+="# store, the vault under openbao/ and its transit seal under openbao-transit/;"$'\n'
+    body+="# opened with BACKUP_AGE_IDENTITY below, the seal unsealed with"$'\n'
+    body+="# TRANSIT_UNSEAL_KEY, restored as docs/guides/recovery.md section 4 says."$'\n'
     body+="GENTIAN_KIT_VERSION=${GENTIAN_KIT_VERSION}"$'\n'
     for key in "${_KIT_KEYS[@]}"; do
         value="${!key:-}"
@@ -598,15 +654,18 @@ export_recovery_kit() {
     echo ""
     info "  The kit reproduces derived credentials on a rebuild. It does NOT"
     info "  restore OpenBao: a fresh instance issues its own unseal material, and"
-    info "  the keys here belong to the old one — they unseal a restored Raft"
-    info "  snapshot, nothing else."
+    info "  the keys here belong to the old one — they open a vault restored from"
+    info "  one of its snapshots (docs/guides/recovery.md §4), nothing else."
+    info "  Those snapshots are in the bucket gentian-openbao-snapshots of the"
+    info "  cluster's object store, encrypted to this kit's backup key, with those"
+    info "  of the transit seal that unseals the vault, which TRANSIT_UNSEAL_KEY opens."
 
     _record_kit_export_proof "${out}"
 }
 
 # _record_kit_export_proof — note in gentian-handover that a kit now exists.
 #
-# E-04 reads this before revoking the bootstrap token: once that token is
+# E-03 reads this before revoking the bootstrap token: once that token is
 # gone, this kit — or another export after it — is the only way back into a
 # cluster whose normal login path turns out to be broken. Revoking on the
 # strength of "the operator probably ran this command at some point" is the
@@ -617,17 +676,17 @@ export_recovery_kit() {
 # property of the file — so this warns rather than fails the export.
 _record_kit_export_proof() {
     local out="${1:-}"
-    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     # The path is recorded too, so a later step can name the file rather than
-    # describe it. E-04 stops the install to ask for two things, one of which
+    # describe it. E-03 stops the install to ask for two things, one of which
     # is "move that kit" — and an instruction to move a file is no use without
     # the file's name. It was written and announced hundreds of lines earlier,
     # which by then has scrolled away.
 
     # patch first: unambiguous (RFC 7396 JSON Merge Patch merges .data by key,
-    # never wipes what handover.RecordWritePathProven or E-04 already wrote),
+    # never wipes what handover.RecordWritePathProven or E-03 already wrote),
     # and correct on every re-run after the first. Only fails when the
     # ConfigMap does not exist yet — expected when export runs before anyone
     # has signed in, which GETTING-STARTED's own ordering invites.
@@ -650,7 +709,7 @@ _record_kit_export_proof() {
         return 0
     fi
 
-    warn "Could not record the export in ${ns}/gentian-handover — E-04 will not"
+    warn "Could not record the export in ${ns}/gentian-handover — E-03 will not"
     warn "  see this kit until it can. Check kubectl access to that namespace,"
     warn "  or run this export again once it is available."
 }
@@ -696,13 +755,29 @@ load_recovery_kit() {
         loaded+=("${key}")
     done <<< "${plain}"
 
+    # The break-glass key is the one value that is not simply an environment
+    # variable somewhere downstream: it has to be back in a KEYRING before
+    # anything can sign with it. Imported here so that a --recover run can
+    # commit to the deployments repository the way the original install did.
+    if [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]] && gentian_read_only; then
+        gentian_would "restore the kit's break-glass signing key to $(gentian_gpg_home)"
+    elif [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]]; then
+        if gentian_import_break_glass_key "${GENTIAN_BREAK_GLASS_KEY}"; then
+            info "  Break-glass signing key restored ($(gentian_signing_key_long_id break-glass))."
+        else
+            warn "  The kit carries a break-glass signing key and it could not be imported."
+            warn "  Commits to the deployments repository will be unsigned, which a"
+            warn "  cluster with a signing policy refuses."
+        fi
+    fi
+
     success "Loaded ${#loaded[@]} values: ${loaded[*]}"
     [[ -n "${KERNEL_DOMAIN:-}" ]] && info "  Cluster: ${KERNEL_DOMAIN}"
     echo ""
     info "Derived credentials will reproduce their original values."
     if [[ -n "${OPENBAO_ROOT_TOKEN:-}" ]]; then
         info "The kit carries OpenBao unseal material for the PREVIOUS instance. A fresh"
-        info "install initialises its own; those keys matter only if you are also"
-        info "restoring a Raft snapshot, which this does not do."
+        info "install initializes its own; those keys matter only if you are also"
+        info "restoring one of its snapshots, which this does not do (docs/guides/recovery.md §4)."
     fi
 }

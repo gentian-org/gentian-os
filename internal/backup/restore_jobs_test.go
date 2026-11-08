@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -24,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
 func recipientDecryption() Decryption {
@@ -73,11 +68,11 @@ func TestRestoreRefusesWithoutKeyMaterial(t *testing.T) {
 // truncated dump over a live database is the worst outcome this system has.
 func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 	jobs := map[string]*batchv1.Job{
-		"postgres": PostgresRestoreJob(params(), recipientDecryption(), "demo_app"),
-		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), "demo_app"),
-		"s3":       S3RestoreJob(params(), recipientDecryption(), "demo-app"),
-		"volume":   VolumeRestoreJob(params(), recipientDecryption(), "data"),
-		"realm":    RealmImportJob(params(), recipientDecryption(), "demo"),
+		"postgres": PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3":       S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "key-secret")),
+		"volume":   VolumeRestoreJob(params(), recipientDecryption(), VolumeArtefact("data"), "data"),
+		"realm":    RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 	}
 	for name, job := range jobs {
 		fetch := containerByName(job, "fetch")
@@ -98,14 +93,14 @@ func TestRestoreVerifiesChecksumBeforeLoading(t *testing.T) {
 			}
 		}
 		if !isInit {
-			t.Errorf("%s: fetch is not an init container, so a bad artefact would still be loaded", name)
+			t.Errorf("%s: fetch is not an init container, so a bad artifact would still be loaded", name)
 		}
 	}
 }
 
 func TestRestoreDecryptionUsesTheRightMechanism(t *testing.T) {
 	byIdentity := strings.Join(
-		containerByName(PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "fetch").Args, "\n")
+		containerByName(PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"), "fetch").Args, "\n")
 	if !strings.Contains(byIdentity, "age -d -i /tmp/identity") {
 		t.Errorf("recipient restore does not decrypt with an identity:\n%s", byIdentity)
 	}
@@ -114,7 +109,7 @@ func TestRestoreDecryptionUsesTheRightMechanism(t *testing.T) {
 	}
 
 	byPassphrase := strings.Join(
-		containerByName(PostgresRestoreJob(params(), passphraseDecryption(), "demo_app"), "fetch").Args, "\n")
+		containerByName(PostgresRestoreJob(params(), passphraseDecryption(), PostgresArtefact("demo_app"), "demo_app"), "fetch").Args, "\n")
 	if !strings.Contains(byPassphrase, "script -qec") {
 		t.Errorf("passphrase restore has no pty; age cannot read a piped passphrase:\n%s", byPassphrase)
 	}
@@ -124,7 +119,7 @@ func TestRestoreDecryptionUsesTheRightMechanism(t *testing.T) {
 // no business surviving a restore that claims to return the app to that point.
 func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	pg := strings.Join(containerByName(
-		PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "pg-restore").Args, "\n")
+		PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"), "pg-restore").Args, "\n")
 	for _, want := range []string{"--clean", "--if-exists", "--single-transaction"} {
 		if !strings.Contains(pg, want) {
 			t.Errorf("pg_restore missing %s:\n%s", want, pg)
@@ -132,7 +127,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	}
 
 	maria := strings.Join(containerByName(
-		MariaDBRestoreJob(params(), recipientDecryption(), "demo_app"), "mariadb-restore").Args, "\n")
+		MariaDBRestoreJob(params(), recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"), "mariadb-restore").Args, "\n")
 	if !strings.Contains(maria, "DROP DATABASE IF EXISTS") || !strings.Contains(maria, "CREATE DATABASE") {
 		t.Errorf("mariadb restore does not recreate the database:\n%s", maria)
 	}
@@ -143,8 +138,8 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 	}
 
 	s3 := strings.Join(containerByName(
-		S3RestoreJob(params(), recipientDecryption(), "demo-app"), "s3-restore").Args, "\n")
-	if !strings.Contains(s3, "--remove") {
+		S3RestoreJob(params(), recipientDecryption(), S3Artefact("demo-app"), "demo-app", ObjectStorageProvisionContainer("provision-bucket", "demo-app", "key-secret")), "s3-restore").Args, "\n")
+	if !strings.Contains(s3, "rclone sync ") {
 		t.Errorf("bucket restore merges instead of matching the archive:\n%s", s3)
 	}
 }
@@ -153,7 +148,7 @@ func TestDatabaseRestoresReplaceRatherThanMerge(t *testing.T) {
 // complete picture, so wiping the target would turn a documented omission into
 // data loss.
 func TestVolumeRestoreDoesNotWipeTheTarget(t *testing.T) {
-	job := VolumeRestoreJob(params(), recipientDecryption(), "nextcloud-data")
+	job := VolumeRestoreJob(params(), recipientDecryption(), VolumeArtefact("nextcloud-data"), "nextcloud-data")
 	script := strings.Join(containerByName(job, "volume-restore").Args, "\n")
 
 	if strings.Contains(script, "rm -rf /target") {
@@ -180,7 +175,7 @@ func TestVolumeRestoreDoesNotWipeTheTarget(t *testing.T) {
 // leaving an operator to learn it from users who cannot sign in.
 func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 	script := strings.Join(containerByName(
-		RealmImportJob(params(), recipientDecryption(), "demo"), "realm-import").Args, "\n")
+		RealmImportJob(params(), recipientDecryption(), IdentityArtefact, "demo", RealmSource{}), "realm-import").Args, "\n")
 
 	for _, want := range []string{"partialImport", "users.ndjson", "memberships.ndjson", "OVERWRITE"} {
 		if !strings.Contains(script, want) {
@@ -192,25 +187,29 @@ func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 	}
 }
 
-// Alpine's "mc" package is Midnight Commander. Installing it would satisfy any
-// "is mc present" check with a binary that knows nothing about object storage,
-// and the failure surfaces as an unrecognisable error on the first alias call.
-func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
-	script := strings.Join(
-		containerByName(PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "fetch").Args, "\n")
-
-	if strings.Contains(script, "apk add --no-cache --quiet mc") ||
-		strings.Contains(script, "apk add mc") {
-		t.Errorf("restore apk-installs 'mc', which is Midnight Commander on Alpine:\n%s", script)
-	}
-	if !strings.Contains(script, "MCLI="+stagedMCLI) {
-		t.Errorf("restore does not use the MinIO client from its own path:\n%s", script)
-	}
-	// And every call goes through that path, not a bare `mc`.
-	for _, line := range strings.Split(script, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "mc ") {
-			t.Errorf("bare mc invocation could pick up the wrong binary: %q", trimmed)
+// The fetch step of every restore downloads nothing. It used to fetch
+// MinIO's client at run time, and when MinIO withdrew the client the address
+// stopped answering: every restore of every kind failed on its first step.
+// The storage tools carry rclone and age.
+func TestRestoreFetchesNothingButTheArtefact(t *testing.T) {
+	for _, d := range []Decryption{recipientDecryption(), {Mode: gentianov1alpha1.ExportEncryptionPassphrase, SecretName: "key", SecretKey: "passphrase"}} {
+		fetch := containerByName(PostgresRestoreJob(params(), d, PostgresArtefact("demo_app"), "demo_app"), "fetch")
+		if fetch.Image != kernel.StorageToolsImage() {
+			t.Errorf("fetch runs %s, not the storage tools", fetch.Image)
+		}
+		script := strings.Join(fetch.Args, "\n")
+		for _, forbidden := range []string{"wget", "curl", "apk ", "dl.min.io", "mc "} {
+			if strings.Contains(script, forbidden) {
+				t.Errorf("the fetch step runs %q:\n%s", forbidden, script)
+			}
+		}
+		for _, want := range []string{
+			`rclone copyto "bundle:demo-gentian-backup/nightly/postgres/demo_app.pgc.age" '/work/dump.pgc.age'`,
+			`rclone cat "bundle:demo-gentian-backup/nightly/postgres/demo_app.pgc.age.sha256" > /tmp/expected.sha256`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("the fetch step does not run %q:\n%s", want, script)
+			}
 		}
 	}
 }
@@ -218,9 +217,9 @@ func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
 // A failed restore leaves objects owned by the admin that ran it, and the next
 // attempt — running as the app, correctly — cannot drop what it does not own.
 // The database wedges precisely when someone is recovering it, and only
-// hand-written psql gets it back. So the restore normalises ownership first.
+// hand-written psql gets it back. So the restore normalizes ownership first.
 func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
-	job := PostgresRestoreJob(params(), recipientDecryption(), "demo_nextcloud_base_ce")
+	job := PostgresRestoreJob(params(), recipientDecryption(), PostgresArtefact("demo_nextcloud_base_ce"), "demo_nextcloud_base_ce")
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
 
 	// Go's fmt leaves %!verb(...) markers behind when a format string escapes
@@ -249,7 +248,7 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 		"pg_restore --role=",
 		// Extension members, and serial/identity sequences, are owned by
 		// something else that owns them: skipping them is what lets the rest
-		// of the normaliser run to completion.
+		// of the normalizer run to completion.
 		"deptype IN ('a', 'i', 'e')",
 	} {
 		if !strings.Contains(script, want) {
@@ -258,12 +257,12 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 	}
 	// Ownership must be settled before the load, or the load is what fails.
 	if strings.Index(script, "ALTER SCHEMA") > strings.Index(script, "pg_restore") {
-		t.Error("ownership is normalised after the restore, which is too late")
+		t.Error("ownership is normalized after the restore, which is too late")
 	}
 }
 
 // A restore reads from wherever the bundle lives and writes into the cluster's
-// own MinIO. Those are one system only when bundles go to platform storage;
+// own object store. Those are one system only when bundles go to platform storage;
 // with an external destination they are two, with different credentials.
 //
 // Sharing one alias sent both at the destination: the restore tried to create
@@ -276,7 +275,7 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 	p.Region = "ch-dk-2"
 	p.UploadCredentialsSecret = "backup-destination-corp"
 
-	job := S3RestoreJob(p, recipientDecryption(), "corp-nextcloud")
+	job := S3RestoreJob(p, recipientDecryption(), S3Artefact("corp-nextcloud"), "corp-nextcloud", ObjectStorageProvisionContainer("provision-bucket", "corp-nextcloud", "key-secret"))
 
 	var restore *corev1.Container
 	for i := range job.Spec.Template.Spec.Containers {
@@ -290,22 +289,22 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 
 	// Every credential it uses names the platform's own Secret.
 	for _, env := range restore.Env {
-		if env.Name == "MINIO_ENDPOINT" && env.Value != "" {
+		if env.Name == "S3_ENDPOINT" && env.Value != "" {
 			t.Errorf("endpoint is the bundle's literal %q; the app's bucket does not live there", env.Value)
 		}
 		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-			if got := env.ValueFrom.SecretKeyRef.Name; got != MinIOAdminSecret {
-				t.Errorf("%s comes from %q, want the platform's %q", env.Name, got, MinIOAdminSecret)
+			if got := env.ValueFrom.SecretKeyRef.Name; got != StorageAdminSecret {
+				t.Errorf("%s comes from %q, want the platform's %q", env.Name, got, StorageAdminSecret)
 			}
 		}
 	}
 
 	script := restore.Args[0]
-	if !strings.Contains(script, `mc mirror --preserve --overwrite --remove /work/restore "platform/corp-nextcloud"`) {
-		t.Errorf("restore does not mirror into platform storage:\n%s", script)
+	if !strings.Contains(script, `rclone sync --ignore-times /work/restore "platform:corp-nextcloud"`) {
+		t.Errorf("restore does not sync into platform storage:\n%s", script)
 	}
-	if strings.Contains(script, `"gentian/corp-nextcloud"`) {
-		t.Errorf("restore still addresses the bundle alias:\n%s", script)
+	if strings.Contains(script, `"bundle:corp-nextcloud"`) {
+		t.Errorf("restore addresses the bundle remote:\n%s", script)
 	}
 }
 
@@ -313,7 +312,7 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 // its label implies.
 //
 // This is the one place where a Job's label and its database disagree on
-// purpose: the shell is labelled with the tenant-wide component so its progress
+// purpose: the shell is labeled with the tenant-wide component so its progress
 // aggregates there, while its database and role are named for the shell. The
 // role was derived from the label, so every restore ended at
 //
@@ -323,14 +322,14 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 // was working, and only on the tenant-wide step, which is the last one.
 func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 	shell := JobParams{
-		Namespace: "platform-kernel",
+		Namespace: "system-postgresql",
 		Name:      "tx-r-shellr",
 		Tenant:    "corp",
 		App:       "gentian-tenant", // the label, deliberately
 		Role:      PostgresRole("corp", "shell"),
 	}
 	script := PostgresRestoreJob(shell, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
-		"corp_shell").Spec.Template.Spec.Containers[0].Args[0]
+		PostgresArtefact("corp_shell"), "corp_shell").Spec.Template.Spec.Containers[0].Args[0]
 
 	if !strings.Contains(script, "'corp_shell'") {
 		t.Errorf("restore does not name the shell role:\n%s", script)
@@ -340,55 +339,10 @@ func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 	}
 
 	// An app names one thing, so leaving Role empty must keep working.
-	app := JobParams{Namespace: "platform-kernel", Name: "tx-r-pgr", Tenant: "corp", App: "docmost-ce"}
+	app := JobParams{Namespace: "system-postgresql", Name: "tx-r-pgr", Tenant: "corp", App: "docmost-ce"}
 	appScript := PostgresRestoreJob(app, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
-		"corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
+		PostgresArtefact("corp_docmost_ce"), "corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
 	if !strings.Contains(appScript, "'corp_docmost-ce'") {
 		t.Errorf("an app's role is no longer derived from its name:\n%s", appScript)
-	}
-}
-
-// The fetch step downloaded the MinIO client from dl.min.io. When MinIO retired
-// that path every restore failed with 410 Gone before reading a byte, while
-// backups kept succeeding — so the failure surfaced only on the day a restore
-// was needed. No restore Job may reach the internet for a tool; the client is
-// copied out of the pinned image, before fetch runs, onto the volume fetch reads.
-func TestRestoreStagesTheMinIOClientFromThePinnedImage(t *testing.T) {
-	jobs := map[string]*batchv1.Job{
-		"postgres": PostgresRestoreJob(params(), recipientDecryption(), "demo_app"),
-		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), "demo_app"),
-		"s3":       S3RestoreJob(params(), recipientDecryption(), "demo-app"),
-		"volume":   VolumeRestoreJob(params(), recipientDecryption(), "data"),
-		"realm":    RealmImportJob(params(), recipientDecryption(), "demo"),
-	}
-	for name, job := range jobs {
-		inits := job.Spec.Template.Spec.InitContainers
-		stage, fetch := -1, -1
-		for i, c := range inits {
-			for _, arg := range append(append([]string{}, c.Command...), c.Args...) {
-				if strings.Contains(arg, "wget") || strings.Contains(arg, "dl.min.io") || strings.Contains(arg, "curl ") {
-					t.Errorf("%s: init container %q downloads at restore time:\n%s", name, c.Name, arg)
-				}
-			}
-			switch c.Name {
-			case "mc-client":
-				stage = i
-				if c.Image != mcImage {
-					t.Errorf("%s: mc-client runs %q, not the pinned %q", name, c.Image, mcImage)
-				}
-				var mountsWork bool
-				for _, m := range c.VolumeMounts {
-					mountsWork = mountsWork || (m.Name == "work" && m.MountPath == workDir)
-				}
-				if !mountsWork {
-					t.Errorf("%s: mc-client does not write to the work volume fetch reads", name)
-				}
-			case "fetch":
-				fetch = i
-			}
-		}
-		if stage < 0 || fetch < 0 || stage > fetch {
-			t.Errorf("%s: mc-client (index %d) must run before fetch (index %d)", name, stage, fetch)
-		}
 	}
 }

@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+# step: B-01-bootstrap-apps
+# phase: secrets
+# requires: A-06-argocd
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap/chart (reloader, cnpg, kyverno, headlamp, node-apparmor Synced and Healthy; openbao and openbao-transit Synced, awaiting their init; kernel-postgres created, awaited by C-02), each in its layout namespace
+# mutates: the ValidatingAdmissionPolicy gentian-namespace-tier and its binding (who may set a namespace's tier, function and mac-waiver labels); a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's TLS in the secrets namespace (a self-signed Issuer, the CA openbao-ca, its Issuer, the serving Certificate openbao-tls); the copy openbao-ca-bundle of that CA's certificate in the cert-manager, control and provisioning namespaces; the vault pods' tls-crt-sha256 annotation, after signaling them to load their certificate; a restart of the custodian when the CA it trusts changed; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
+# pins: headlamp openbao reloader cnpg kyverno external-dns
+
+# The chart takes the namespace layout as a value and resolves every
+# destination from it; it refuses to render an Application whose function the
+# layout does not have. The installer passes kernel/namespaces.yaml, the same
+# file A-01 created the namespaces from.
+
+# Synced says git and cluster agree; Healthy says the workload came up. Most
+# Applications here must be both. The vault and its seal cannot be Healthy
+# until they are initialised, which is the next steps' work, so for them B-01
+# asks only Synced and their init steps ask Healthy. external-dns is declared
+# here but not waited on: it needs a DNS credential that arrives with the
+# secrets steps, and Argo CD brings it up once that lands. Rendering it with
+# dnsProvider=none instead left the cluster with no DNS writer at all, so a
+# kernel hostname the operator later published never resolved.
+_v5_app_state() {
+    local ns="$1" app="$2"
+    kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status} {.status.health.status}' 2>/dev/null
+}
+
+_v5_delivered() {
+    local ns="$1" app="$2" want="${3:-healthy}" state
+    state="$(_v5_app_state "${ns}" "${app}")"
+    case "${want}" in
+        synced)  [[ "${state%% *}" == "Synced" ]] ;;
+        *)       [[ "${state}" == "Synced Healthy" ]] ;;
+    esac
+}
+
+# _v5_reached <stage> -- whether the cluster already has what a later step
+# turned on, as "true" or "false".
+#
+# B-01 renders the bootstrap Applications with the operator, the
+# ApplicationSets and Headlamp's OIDC off, because on a fresh cluster none of
+# them can work yet; D-01, C-02 and D-03 render the same set again with what
+# each has made possible. A step run on its own -- `--only B-01`, or C-02 --
+# rendered with the flags it sets and the rest at false, and the apply put
+# the earlier state back: Headlamp lost its OIDC and asked for a pasted token,
+# and the operator's Application kept its old spec. Each flag a render does not
+# set now defaults to the state already reached, so a re-run never goes back.
+_v5_reached() {
+    local gitops; gitops="$(ns_kernel gitops)"
+    case "$1" in
+        appsets)
+            kubectl get application gentian-appsets -n "${gitops}" >/dev/null 2>&1 && echo true || echo false ;;
+        operator)
+            kubectl get application gentian-os -n "${gitops}" >/dev/null 2>&1 && echo true || echo false ;;
+        headlamp-oidc)
+            # D-03 writes the real kubeconfig in place of the chart's
+            # placeholder once the realm and the headlamp client exist.
+            local kc
+            kc="$(kubectl get secret headlamp-kubeconfig -n "$(ns_kernel observability)" \
+                -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+            if [[ -n "${kc}" && "${kc}" != *"${HEADLAMP_KUBECONFIG_PLACEHOLDER:-PLACEHOLDER_REPLACED_BY_THE_INSTALLER}"* ]]; then
+                echo true
+            else
+                echo false
+            fi ;;
+        *) echo false ;;
+    esac
+}
+
+_v5_apps_healthy() { echo "reloader cnpg kyverno headlamp node-apparmor"; }
+_v5_apps_synced()  { echo "openbao openbao-transit"; }
+# Created here, waited for later. kernel-postgres's role passwords are
+# ExternalSecrets on the ClusterSecretStore the Cluster claim composes (C-01),
+# reading a vault B-03 initialises -- so on a fresh cluster neither exists yet,
+# Argo CD stops the sync at that wave, and the database itself is never
+# applied. Waiting for it to be Healthy here could only time out. Nothing in
+# this phase needs Postgres (OpenBao keeps its own storage); its first readers
+# are Keycloak and OpenFGA, and C-02 waits for it before them. Earlier
+# installs never saw this because they ran where a previous install's store
+# was still standing.
+_v5_apps_deferred() { echo "kernel-postgres"; }
+_v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_deferred)"; }
+
+
+# _v5_keep_chart_version — do not downgrade a component chart this cluster has
+# already resolved.
+#
+# D-03 resolves a branch's newest IMMUTABLE chart version and passes it in.
+# Every other caller passes nothing, and nothing used to mean "the moving
+# version" -- so running B-01 on its own quietly reverted the desktop and the
+# administration console to a version string that never changes, which
+# provider-helm never upgrades, which means the first build the cluster ever
+# saw. On this cluster that put the desktop back on an image old enough to
+# loop on sign-in, hours after D-03 had moved it off.
+#
+# So an unset version means "keep what is installed", and only an empty
+# cluster falls through to the moving one.
+_v5_keep_chart_version() {
+    local profile="$1" have="${2:-}"
+    if [[ -n "${have}" ]]; then
+        printf '%s' "${have}"
+        return 0
+    fi
+    kubectl get componentprofile "${profile}" \
+        -o jsonpath='{.spec.package.chart.version}' 2>/dev/null || true
+}
+
+# _v5_installer_username -- the user name the API server knows this
+# installer by, or nothing when it cannot say.
+_v5_installer_username() {
+    kubectl auth whoami -o jsonpath='{.status.userInfo.username}' 2>/dev/null || true
+}
+
+# _v5_tier_guard_ok -- whether the namespace tier guard is in place and names
+# this installer. A run under another user has to render it again, or that
+# user could not repair a namespace's tier label.
+_v5_tier_guard_ok() {
+    local named
+    kubectl get validatingadmissionpolicybinding gentian-namespace-tier >/dev/null 2>&1 || return 1
+    named="$(kubectl get validatingadmissionpolicy gentian-namespace-tier \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/installer-username}' 2>/dev/null)" || return 1
+    [[ "${named}" == "$(_v5_installer_username)" ]]
+}
+
+_v5_render() {
+    # The layout goes in as a values file under its own key; platforms.yaml
+    # already is one (its top-level dnsProviders table is what the chart reads).
+    # Production unless the claim asks for staging, which is what every other
+    # reader of this setting assumes. Defaulting the other way here meant a
+    # cluster that said nothing got a certificate nothing trusts, while every
+    # check reported success: the edge terminates TLS with its own
+    # certificate, so only something INSIDE the cluster ever sees this one,
+    # and what it sees is an unknown authority.
+    local acme_staging=false
+    [[ "${ACME_ENV:-production}" == "staging" ]] && acme_staging=true
+
+    # Each instance's backend, read before anything is rendered: a failure to
+    # read what the vault's volume holds stops the render, where a command
+    # substitution among helm's arguments would pass an empty value on.
+    local vault_storage transit_storage
+    vault_storage="$(openbao_storage_for_render openbao)" || return 1
+    transit_storage="$(openbao_storage_for_render openbao-transit)" || return 1
+
+    local tmp
+    tmp="$(mktemp -d)"
+    { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
+    # The component pins the same way: every Application of the chart that
+    # installs an upstream chart reads its version and repository from here.
+    { echo "versions:"; sed 's/^/  /' "${GENTIAN_VERSIONS_FILE}"; } > "${tmp}/versions.yaml"
+
+    # The keys the AppProject will accept commits from (AD-2), read out of the
+    # deployments checkout rather than this host's keyring: the repository is
+    # what the cluster has to agree with. Absent, the chart renders no
+    # sourceIntegrity policy -- an unarmed cluster rather than one that
+    # refuses every sync.
+    local signing_values="${tmp}/signing.yaml" signing_id
+    { echo "signing:"; echo "  keys:"; } > "${signing_values}"
+    for signing_id in $(gentian_signing_keys_from_deployment \
+        "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel"); do
+        [[ -n "${signing_id}" ]] && printf '  - "%s"\n' "${signing_id}" >> "${signing_values}"
+    done
+
+    # Who this installer is to the API server: the one user beside the
+    # platform's own that may set a namespace's tier label
+    # (templates/namespace-tier-guard.yaml). A values file, not --set-string,
+    # which would split a name with a comma in it; a JSON string is YAML.
+    local installer_values="${tmp}/installer.yaml"
+    printf 'installer:\n  username: %s\n' \
+        "$(jq -Rn --arg u "$(_v5_installer_username)" '$u')" > "${installer_values}"
+
+    # The zones external-dns may write besides the kernel domain's: the
+    # claim's certificates.dnsZones, read as one comma-joined value
+    # (claim_list_setting). A values file for the same reason as above --
+    # --set-string would split the list at its commas and read the second
+    # zone as a second key.
+    local dns_zones_values="${tmp}/dns-zones.yaml" _zone
+    {
+        echo "dnsZones:"
+        printf '%s\n' "${DNS_ZONES:-}" | tr ',' '\n' | while IFS= read -r _zone; do
+            _zone="${_zone// /}"
+            # An if, not [[ ]] &&: the last line read is empty when no zone
+            # is named, and a false test as the loop's last command fails the
+            # pipeline -- and with it the install.
+            if [[ -n "${_zone}" ]]; then printf '  - "%s"\n' "${_zone}"; fi
+        done
+        # The records external-dns publishes with nothing on the cluster
+        # behind them (certificates.dnsRecords), the same way. Each holds
+        # spaces, which the chart splits; only the empty line is dropped.
+        echo "dnsRecords:"
+        printf '%s\n' "${DNS_RECORDS:-}" | tr ',' '\n' | while IFS= read -r _zone; do
+            if [[ -n "${_zone}" ]]; then printf '  - "%s"\n' "${_zone}"; fi
+        done
+    } > "${dns_zones_values}"
+
+    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
+        -f "${tmp}/namespaces.yaml" -f "${tmp}/versions.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
+        -f "${signing_values}" -f "${installer_values}" -f "${dns_zones_values}" \
+        --set-string "dnsProvider=$(gentian_dns_provider)" \
+        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
+        --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
+        --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
+        --set-string "gentianOsBranch=$(gentian_os_ref)" \
+        --set-string "gentianOsRevision=$(gentian_os_revision)" \
+        --set-string "storageClass=${STORAGE_CLASS:-}" \
+        --set-string "openbao.storage=${vault_storage}" \
+        --set-string "openbao.transitStorage=${transit_storage}" \
+        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
+        --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
+        --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \
+        --set-string "deployments.cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
+        --set-string "appsets.enabled=${V5_APPSETS:-$(_v5_reached appsets)}" \
+        --set-string "operator.enabled=${V5_OPERATOR:-$(_v5_reached operator)}" \
+        --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
+        --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-$(_v5_reached headlamp-oidc)}" \
+        --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
+        --set-string "desktop.chartBranch=$(gentian_ui_chart_branch)" \
+        --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
+        --set-string "adminConsole.chartBranch=$(gentian_ui_chart_branch)" \
+        --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
+        --set-string "concierge.chartBranch=$(gentian_ui_chart_branch)" \
+        --set-string "concierge.chartVersion=$(_v5_keep_chart_version concierge "${CONCIERGE_CHART_VERSION:-}")" \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
+        --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
+        --set-string "acmeStaging=${acme_staging}" \
+        --set-string "tenantDNS01ClusterIssuer=$(gentian_dns01_cluster_issuer_name)" \
+        --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
+        --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
+        --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
+        --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
+        --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-true}" \
+        --set-string "usageStatistics.enabled=$(gentian_usage_statistics_enabled)" \
+        --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}"
+    local rc=$?
+    rm -rf "${tmp}"
+    return ${rc}
+}
+
+# _v5_os_build_pinned — does the gentian-os Application name the build this
+# run renders?
+#
+# The installer pins the platform's image to the build of the commit it is run
+# from (resolve_gentian_os_image_tag), and this step is what writes the pin.
+# Nothing here asked whether the pin was still that build. So a run from a
+# newer checkout found everything else in place and skipped, `--only B-01` --
+# the command the documentation gives for taking a newer build -- skipped
+# with it, and the cluster went on with the old binary. The Applications
+# follow the checkout's commit (gentian_os_revision), so the manifests move
+# with the build; the bootstrap Applications' comparison below sees that.
+#
+# True where there is nothing to compare: a run that resolved no build
+# (--status collects none), and a cluster whose Application D-01 has not
+# written yet.
+_v5_os_build_pinned() {
+    local want="${GENTIAN_OS_IMAGE_TAG:-}" ns told
+    [[ -n "${want}" ]] || return 0
+    ns="$(ns_kernel gitops)"
+    kubectl get application gentian-os -n "${ns}" >/dev/null 2>&1 || return 0
+    told="$(kubectl get application gentian-os -n "${ns}" \
+        -o jsonpath='{.spec.sources[?(@.path=="charts/gentian-os")].helm.valuesObject.image.tag}' 2>/dev/null)"
+    [[ "${told}" == "${want}" ]]
+}
+
+# _v5_bootstrap_apps_current -- every Application the bootstrap chart renders
+# is on the cluster as rendered. Returns 1 on drift; where the comparison
+# cannot be made (no python3 with PyYAML on this host) it says so once and
+# answers current, because "cannot tell" must not re-apply forever.
+_v5_bootstrap_apps_current() {
+    local ns tmp names name live rc drift=0
+    ns="$(ns_kernel gitops)"
+    command -v python3 >/dev/null 2>&1 || { warn "python3 is not on this host: bootstrap Applications are not compared with their templates."; return 0; }
+    tmp="$(mktemp -d)"
+    if ! _v5_render > "${tmp}/rendered.yaml" 2>/dev/null; then rm -rf "${tmp}"; return 0; fi
+    # The rendered file itself, never `kubectl apply --dry-run=client -o json`
+    # of it: for an Application that exists, that output carries the live
+    # values, and a value changed in the template (a dnsRecords entry in
+    # dns-records) compared as unchanged, so the step skipped.
+    if ! names="$(python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" --names "${tmp}/rendered.yaml" 2>/dev/null)"; then
+        if [[ -z "${_V5_DRIFT_WARNED:-}" ]]; then
+            _V5_DRIFT_WARNED=1
+            warn "bootstrap Applications could not be compared with their templates (python3 without PyYAML?); run with --force to re-apply them."
+        fi
+        rm -rf "${tmp}"
+        return 0
+    fi
+    for name in ${names}; do
+        live="${tmp}/${name}.json"
+        kubectl get application "${name}" -n "${ns}" -o json > "${live}" 2>/dev/null || { drift=1; break; }
+        python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${tmp}/rendered.yaml" "${live}" "${name}" >/dev/null 2>&1
+        rc=$?
+        if [[ ${rc} -eq 1 ]]; then drift=1; break; fi
+        if [[ ${rc} -eq 2 && -z "${_V5_DRIFT_WARNED:-}" ]]; then
+            _V5_DRIFT_WARNED=1
+            warn "bootstrap Applications could not be compared with their templates (python3 without PyYAML?); run with --force to re-apply them."
+        fi
+    done
+    rm -rf "${tmp}"
+    [[ ${drift} -eq 0 ]]
+}
+
+check() {
+    local ns app
+    ns="$(ns_kernel gitops)"
+    kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
+    kubectl get certificate openbao-tls -n "$(ns_kernel secrets)" >/dev/null 2>&1 || return 1
+    # Signed by the vault's CA, that CA handed to cert-manager, and the vault
+    # and the custodian on the current certificates (scripts/lib/openbao.sh).
+    openbao_tls_settled || return 1
+    _v5_tier_guard_ok || return 1
+    # The claim's ACME environment as rendered. App pods choose their trust
+    # mount from it, and a claim moved off staging otherwise kept "true" here
+    # for good: everything else this checks was still in place.
+    local want_staging=false
+    [[ "${ACME_ENV:-production}" == "staging" ]] && want_staging=true
+    [[ "$(kubectl get configmap gentian-kernel-services -n "$(ns_kernel control)" \
+        -o jsonpath='{.data.ACME_STAGING}' 2>/dev/null)" == "${want_staging}" ]] || return 1
+    # The switch for the kernel's network rules, as the operator is told it
+    # (once there is an operator to tell). Everything else this checks stays
+    # in place when the switch moves, so without this a run that turned the
+    # rules on or off would leave the operator on the other side of it.
+    if kubectl get application gentian-os -n "${ns}" >/dev/null 2>&1; then
+        local want_rules=false told_rules
+        ns_kernel_policies_wanted && want_rules=true
+        told_rules="$(kubectl get application gentian-os -n "${ns}" \
+            -o jsonpath='{.spec.sources[?(@.path=="charts/gentian-os")].helm.valuesObject.kernelNetworkPolicies}' 2>/dev/null)"
+        [[ "${told_rules:-false}" == "${want_rules}" ]] || return 1
+    fi
+    # And the build: a run from a newer checkout is how a cluster takes it.
+    _v5_os_build_pinned || return 1
+    # And the Applications themselves, against what the checkout renders for
+    # them today: a template changed without the build changing -- a new
+    # parameter, a corrected sync wave, a bumped chart pin -- otherwise
+    # reached a fresh install and never an already-bootstrapped one
+    # A subset test, by scripts/lib/bootstrap-app-drift.py.
+    _v5_bootstrap_apps_current || return 1
+    for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
+    for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
+    return 0
+}
+
+apply() {
+    banner "Kernel bootstrap Applications"
+    # The seal's pod injects its unseal key from this Secret and cannot start
+    # without it; the key does not exist until B-02 initialises the seal. A
+    # placeholder lets the pod start, and B-02 replaces it.
+    if ! kubectl get secret openbao-transit-unseal -n "$(ns_kernel seal)" >/dev/null 2>&1; then
+        kubectl create secret generic openbao-transit-unseal -n "$(ns_kernel seal)" \
+            --from-literal=unseal-key=placeholder >/dev/null
+        info "placeholder openbao-transit-unseal created in $(ns_kernel seal); B-02 replaces it."
+    fi
+    _v5_render | kubectl apply -f -
+    local ns app want
+    ns="$(ns_kernel gitops)"
+    for app in $(_v5_apps_healthy) $(_v5_apps_synced); do
+        want=healthy
+        case " $(_v5_apps_synced) " in *" ${app} "*) want=synced ;; esac
+        info "waiting for ${app} to be Synced$([[ ${want} == healthy ]] && echo ' and Healthy')"
+        local t=$((SECONDS + 600))
+        until _v5_delivered "${ns}" "${app}" "${want}"; do
+            # An Application whose operation is parked on a hook Job that
+            # cannot start never syncs again on its own, and no amount of
+            # waiting changes that.
+            unstick_argo_hook_job "${ns}" "${app}"
+            # And an Application whose retries are spent does not try again on
+            # its own, however long anything waits for it.
+            request_argo_sync_if_stalled "${ns}" "${app}"
+            if (( SECONDS > t )); then
+                error "${app} is not as required after 10m:"
+                kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
+                return 1
+            fi
+            sleep 5
+        done
+        success "${app} delivered"
+    done
+    openbao_tls_settle
+}
+
+destroy() {
+    local ns app
+    ns="$(ns_kernel gitops)"
+    for app in $(_v5_apps); do
+        kubectl delete application "${app}" -n "${ns}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    done
+    kubectl delete appproject gentian -n "${ns}" --ignore-not-found >/dev/null 2>&1 || true
+    # Cluster-scoped, so no namespace takes it with it. Left behind, it would
+    # name this install's user to the next install's first step.
+    kubectl delete validatingadmissionpolicybinding gentian-namespace-tier --ignore-not-found >/dev/null 2>&1 || true
+    kubectl delete validatingadmissionpolicy gentian-namespace-tier --ignore-not-found >/dev/null 2>&1 || true
+}

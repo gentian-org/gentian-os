@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
@@ -122,7 +116,7 @@ func containerByName(job *batchv1.Job, name string) *corev1.Container {
 // other order leaves a window where plaintext is uploadable.
 func TestEncryptionRunsBeforeUploadForEveryArtefact(t *testing.T) {
 	p := encryptedParams(recipientEncryption())
-	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"}, NewBundleInfo("demo", "nightly", "now", p.Encryption))
+	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"}, NewBundleInfo("demo", "nightly", "now", p.Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -172,7 +166,7 @@ func TestEncryptionRemovesThePlaintext(t *testing.T) {
 		t.Errorf("plaintext is not removed:\n%s", script)
 	}
 	// And the step must fail loudly if it produced nothing, rather than let an
-	// empty artefact upload as a successful backup.
+	// empty artifact upload as a successful backup.
 	if !strings.Contains(script, "encryption produced no output") {
 		t.Errorf("no empty-output guard:\n%s", script)
 	}
@@ -215,8 +209,8 @@ func TestPassphraseModeUsesAPtyAndReadsFromASecret(t *testing.T) {
 	if !strings.Contains(script, "age -p -o") {
 		t.Errorf("passphrase mode does not use age -p:\n%s", script)
 	}
-	if !strings.Contains(script, "util-linux") {
-		t.Errorf("script(1) is not installed:\n%s", script)
+	if !strings.Contains(script, "for tool in age script;") {
+		t.Errorf("the script does not check that script(1) is there:\n%s", script)
 	}
 	if !strings.Contains(script, "passphrase is empty") {
 		t.Errorf("no guard against an empty passphrase:\n%s", script)

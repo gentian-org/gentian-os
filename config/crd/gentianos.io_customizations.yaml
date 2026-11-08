@@ -138,7 +138,7 @@ spec:
                     description: Contact is the maintainer contact for the customization.
                     type: string
                   organisation:
-                    description: Organisation names the authoring organisation, when
+                    description: Organisation names the authoring organization, when
                       not Gentian.
                     type: string
                   repo:
@@ -249,7 +249,7 @@ spec:
                       revisions.
                     type: string
                   profile:
-                    description: Profile is the AppProfile name this customization
+                    description: Profile is the ComponentProfile name this customization
                       targets.
                     minLength: 1
                     type: string
@@ -390,17 +390,12 @@ spec:
                 format: int64
                 type: integer
               phase:
-                description: Phase summarises record health.
+                description: Phase summarizes record health.
                 enum:
                 - Active
                 - NeedsReview
                 - Superseded
                 - Invalid
-                type: string
-              resolvedNamespace:
-                description: |-
-                  ResolvedNamespace is the namespace the target app was found in. Used by the
-                  L3 per-tenant namespace test.
                 type: string
               reviewOverdue:
                 description: ReviewOverdue is true once spec.reviewBy has passed.

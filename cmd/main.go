@@ -1,35 +1,38 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"log/slog"
 	"os"
+	"runtime/debug"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -38,11 +41,19 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/bundlestore"
 	"github.com/gentian-org/gentian-os/internal/controller"
-	"github.com/gentian-org/gentian-os/internal/credentialmgr"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/usage"
+	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
 
@@ -58,6 +69,9 @@ func init() {
 	utilruntime.Must(networkingv1.AddToScheme(scheme))
 	utilruntime.Must(gentianov1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
+	// Read, never watched or written: the definitions check reads the
+	// cluster's CustomResourceDefinitions by name (internal/schemacheck).
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 }
 
 // buildLogTailer gives the export loop a way to read a failed capture
@@ -72,6 +86,79 @@ func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
 		return nil
 	}
 	return controller.ClientsetLogTailer{Clientset: cs}
+}
+
+// bootClient reads the API server before the manager's cache exists.
+//
+// Settings taken from the claim are needed to build the reconcilers, which is
+// before the cache is running, so a cached client would answer from nothing.
+// A nil client is a working answer: every reader of it falls back to the value
+// this process was started with.
+func bootClient() client.Reader {
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return nil
+	}
+	c, err := client.New(cfg, client.Options{})
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// authorizationGraph builds the operator's OpenFGA client, creating the store
+// and writing the model when this cluster has neither, and records the ids in
+// the ConfigMap every enforcement point reads them from.
+//
+// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
+// authorization service, and the projection is simply not run. A cluster that
+// has one and cannot be reached is a different thing, and says so loudly --
+// nobody administers a cluster whose roles were never projected, and that
+// reads from the outside exactly like a broken login.
+func authorizationGraph(log logr.Logger) *authz.OpenFGA {
+	url := os.Getenv("OPENFGA_API_URL")
+	if url == "" {
+		return nil
+	}
+	control := envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control))
+	opts := authz.Options{
+		BaseURL:  url,
+		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	boot, err := client.New(ctrl.GetConfigOrDie(), client.Options{})
+	if err != nil {
+		log.Error(err, "no client to record the authorization store with; exiting so the pod restarts")
+		os.Exit(1)
+	}
+	opts.StoreID = controller.RecordedAuthorizationStore(ctx, boot, control)
+	store, model, err := authz.Bootstrap(ctx, opts)
+	if err == nil {
+		err = controller.RecordAuthorizationStore(ctx, boot,
+			[]string{control, layout.Namespace(layout.Edge)}, store, model)
+	}
+	if err != nil {
+		// Exit, so the pod restarts and asks again. Carrying on without
+		// the graph was carrying on for good: nothing retried, the store
+		// was never created, and the director and the edge bouncer -- which
+		// only read it -- crash-looped on "no authorization store yet"
+		// long after OpenFGA was answering. A configured OpenFGA that
+		// does not answer is a dependency not up yet, and a restart with
+		// back-off is how this cluster already waits for one.
+		log.Error(err, "authorization graph unavailable; exiting so the pod restarts and asks again",
+			"openfga", url)
+		os.Exit(1)
+	}
+	opts.StoreID, opts.ModelID = store, model
+	graph, err := authz.NewOpenFGA(opts)
+	if err != nil {
+		log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected")
+		return nil
+	}
+	log.Info("authorization graph ready", "store", opts.StoreID, "model", opts.ModelID)
+	return graph
 }
 
 func main() {
@@ -106,11 +193,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	routingMode := os.Getenv("ROUTING_MODE")
-	if routingMode == "" {
-		routingMode = controller.RoutingModeGateway
+	// Tenancy from the claim, not from this process's Helm value.
+	//
+	// The claim is where a cluster's settings are written down and the
+	// director's API is how they are changed; an operator that kept reading
+	// its own value would ignore both. Read once at start: the Deployment
+	// restarts when the projection changes, so an edit takes effect without
+	// anybody remembering to roll it.
+	tenancyMode := controller.ClusterTenancyMode(context.Background(), bootClient(), os.Getenv("TENANCY_MODE"))
+	if tenancyMode != os.Getenv("TENANCY_MODE") {
+		setupLog.Info("tenancy mode taken from the Cluster claim",
+			"claim", tenancyMode, "helmValue", os.Getenv("TENANCY_MODE"))
 	}
-	setupLog.Info("edge routing mode", "routing_mode", routingMode)
+	// Which tenant may put a website on the cluster's main address, from the
+	// claim with the tenancy mode. Empty is the mode's own default.
+	mainAddressTenant := controller.ClusterMainAddressTenant(context.Background(), bootClient())
+	if mainAddressTenant != "" {
+		setupLog.Info("the cluster names a tenant for its main address", "tenant", mainAddressTenant)
+	}
 
 	// Exec lets a profile's maintenance-mode and restore hooks run inside the
 	// app's own pod. Optional: without it those fall back to scaling the app,
@@ -124,48 +224,90 @@ func main() {
 		appExecer = podExecer
 	}
 
+	// The definitions check: whether this cluster serves every field of the
+	// resource definitions this operator was built with.
+	//
+	// A cluster whose CRDs or Crossplane-generated CRDs are older drops what
+	// it does not know on every write, and says nothing. So the cluster's
+	// definitions are compared with the embedded ones at start and on a timer,
+	// the result is logged, recorded as an Event and served to the director
+	// and to an operations screen from this operator's listener, and every
+	// reconciler that writes one of these kinds is held until the comparison
+	// has been made and comes out clean. Held, not stopped: the operator
+	// keeps running, says what is wrong on each object it would have
+	// reconciled, and resumes by itself once the definitions are updated.
+	definitions := schemacheck.NewGate(schemacheck.Embedded())
+	held := &crdcheck.Holder{
+		Gate:     definitions,
+		Recorder: mgr.GetEventRecorderFor("definitions"), //nolint:staticcheck
+	}
+	if err := mgr.Add(&crdcheck.Checker{
+		// The API reader: one get per definition, by name. The cached client
+		// would list and watch every CustomResourceDefinition in the cluster,
+		// which the operator is deliberately not permitted to do.
+		Reader:   mgr.GetAPIReader(),
+		Gate:     definitions,
+		Version:  buildVersion(),
+		Recorder: mgr.GetEventRecorderFor("definitions"), //nolint:staticcheck
+		EventOn:  ownPod(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the definitions check to manager")
+		os.Exit(1)
+	}
+
+	// Which platform this cluster runs, on the Cluster claim's status: the
+	// version line every compatibility check compares against, and the
+	// build. The claim is what a person and the director read for it.
+	if err := mgr.Add(&controller.PlatformStatusWriter{
+		Reader: mgr.GetAPIReader(),
+		Writer: mgr.GetClient(),
+		Build:  buildVersion(),
+		// The platform's releases, so the status says when a newer one
+		// exists. "none" asks nothing: an air-gapped cluster.
+		ReleaseFeed: releaseFeed(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the platform status writer to manager")
+		os.Exit(1)
+	}
+
+	// The arbiter's platform path, for the app authorization stores of a
+	// tenant's export, restore and deletion.
+	arbiterPlatform := arbiter.NewPlatformClient()
 	tenantReconciler := &controller.TenantReconciler{
-		Client: mgr.GetClient(),
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Authorization: arbiterPlatform,
 		// Needed by the deletion path, which has to tell "gone" apart from "not
 		// in the cache yet" before it acts on a Tenant being deleted.
-		APIReader:                mgr.GetAPIReader(),
-		Exec:                     appExecer,
-		Scheme:                   mgr.GetScheme(),
-		Seeder:                   buildSeeder(),
-		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:              os.Getenv("TENANCY_MODE"),
+		APIReader:    mgr.GetAPIReader(),
+		Exec:         appExecer,
+		Scheme:       mgr.GetScheme(),
+		Seeder:       buildSeeder(),
+		WithoutVault: withoutVault(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  tenancyMode,
+		// The id the cluster has in its deployments repository: what a
+		// bundle records as the cluster it was taken on, and what the
+		// rights store names the cluster by.
+		ClusterID:                os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
+		MailAliases:              os.Getenv("MAIL_ALIASES"),
 		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		Ingress:                  buildEdgeIngress(),
-		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
-		CommerceEnabled:          controller.EnvBool("GENTIAN_COMMERCE_ENABLED"),
-		CommerceAPIURL:           os.Getenv("GENTIAN_COMMERCE_API_URL"),
-		CommerceAPIToken:         os.Getenv("GENTIAN_COMMERCE_API_TOKEN"),
+		// Whether the cluster offers an App Store: it reports what it runs
+		// and its claim names a store. The first half is this process's own
+		// setting; the claim is read, and watched, for the second.
+		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
+		WatchClusterClaim:      true,
+		ServiceAccountIssuer:   controller.ServiceAccountIssuer(),
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
 		os.Exit(1)
-	}
-
-	if controller.EnvBool("GENTIAN_COMMERCE_ENABLED") {
-		interval := 1 * time.Hour
-		if os.Getenv("METERING_INTERVAL") != "" {
-			if parsed, err := time.ParseDuration(os.Getenv("METERING_INTERVAL")); err == nil {
-				interval = parsed
-			}
-		}
-		setupLog.Info("starting metering background worker", "interval", interval)
-		if err := mgr.Add(&controller.MeteringWorker{
-			Reconciler: tenantReconciler,
-			Interval:   interval,
-		}); err != nil {
-			setupLog.Error(err, "unable to add metering worker to manager")
-			os.Exit(1)
-		}
 	}
 
 	// DNS publication: whether the records the platform requests through
@@ -193,10 +335,9 @@ func main() {
 	// a cluster without the per-tenant shell databases has nowhere to write.
 	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" {
 		sampler := &usage.Sampler{
-			Client:          mgr.GetClient(),
-			KernelNamespace: envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
-			Interval:        envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
-			Retention:       envDuration("USAGE_RETENTION", 400*24*time.Hour),
+			Client:    mgr.GetClient(),
+			Interval:  envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
+			Retention: envDuration("USAGE_RETENTION", 400*24*time.Hour),
 		}
 		// The live series is optional and its absence is not an error: a
 		// cluster with no metrics-server still records the figures a plan is
@@ -219,93 +360,207 @@ func main() {
 			"actualSource", sampler.Actual != nil)
 	}
 
+	// Perimeter traffic: what each tenant's public entries carry, per path and
+	// by response class, from the counters the edge's Envoy keeps anyway.
+	// Kept in each tenant's own database beside its usage, so it needs the
+	// same; off with the usage sampler, or on its own.
+	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" && os.Getenv("PERIMETER_TRAFFIC_ENABLED") != "false" {
+		traffic := &perimetertraffic.Sampler{
+			Client:    mgr.GetAPIReader(),
+			Interval:  envDuration("PERIMETER_TRAFFIC_INTERVAL", 5*time.Minute),
+			Retention: envDuration("PERIMETER_TRAFFIC_RETENTION", 90*24*time.Hour),
+		}
+		if err := mgr.Add(traffic); err != nil {
+			setupLog.Error(err, "unable to add the perimeter traffic sampler to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("perimeter traffic sampler enabled",
+			"interval", traffic.Interval, "retention", traffic.Retention)
+	}
+
 	if err := (&controller.KeycloakPlatformReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		TenancyMode:  tenancyMode,
 		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		RoutingMode:  routingMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KeycloakPlatform")
 		os.Exit(1)
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:       mgr.GetClient(),
-		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
-		RoutingMode:  routingMode,
-		Ingress:      buildEdgeIngress(),
+		Client:            mgr.GetClient(),
+		KernelDomain:      os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:       tenancyMode,
+		MainAddressTenant: mainAddressTenant,
+		Ingress:           buildEdgeIngress(),
+		Cluster:           envvar.Or("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		BouncerService:    envvar.Or("BOUNCER_SERVICE", "gentian-os-bouncer"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
 	}
 
-	if err := (&controller.AppStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	componentDiscovery, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create discovery client")
+		os.Exit(1)
+	}
+	if err := (&controller.ComponentReconciler{
+		Definitions:       held,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		KernelDomain:      os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		TenancyMode:       tenancyMode,
+		MainAddressTenant: mainAddressTenant,
+		Cluster:           envvar.Or("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		BouncerService:    envvar.Or("BOUNCER_SERVICE", "gentian-os-bouncer"),
+		DirectorURL:       os.Getenv("DIRECTOR_URL"),
+		UsherURL:          os.Getenv("USHER_URL"),
+		Seeder:            buildSeeder(),
+		// Runs a profile's verification command in the app's pod after a
+		// move, the way the restore does; nil skips the verification.
+		Exec:     appExecer,
+		Recorder: mgr.GetEventRecorderFor("component"), //nolint:staticcheck
+		// What a component that asked where the App Store is gets told.
+		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
+		WatchClusterClaim:      true,
+		// An API extension's definitions, by name and uncached
+		// (component_api_extensions.go), and its group's other types.
+		CRDReader: mgr.GetAPIReader(),
+		Discovery: componentDiscovery,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AppStore")
+		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
 	}
 
 	if err := (&controller.CustomizationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Customization")
 		os.Exit(1)
 	}
 
-	openfgaURL := os.Getenv("OPENFGA_API_URL")
-	if openfgaURL == "" {
-		openfgaURL = "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
-	}
-	if err := (&controller.AuthzBridgeReconciler{
-		Client:       mgr.GetClient(),
-		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		OpenFGAURL:   openfgaURL,
-		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
-		Enabled:      controller.AuthzBridgeEnabled(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AuthzBridge")
+	// Each build of a profile any tenant installed: its bundle read and
+	// verified once, the profile's spec written on its status for the app
+	// Composition to read when a tenant runs that build.
+	if err := (&controller.ProfileBuildReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ProfileBuild")
 		os.Exit(1)
-	}
-	if controller.AuthzBridgeEnabled() {
-		setupLog.Info("authz bridge enabled", "openfga_url", openfgaURL)
 	}
 
 	if err := (&controller.PlatformSecurityPolicyReconciler{
+		Definitions:       held,
 		Client:            mgr.GetClient(),
-		OperatorNamespace: "gentian-system",
+		OperatorNamespace: layout.Namespace(layout.Control),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PlatformSecurityPolicy")
 		os.Exit(1)
 	}
 
 	if err := (&controller.AppGrantReconciler{
-		Client:       mgr.GetClient(),
-		OpenFGAURL:   openfgaURL,
-		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
-		Enabled:      controller.AuthzBridgeEnabled(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AppGrant")
 		os.Exit(1)
 	}
 
-	if err := (&controller.IntegrationBindingReconciler{
+	// The account a tenant's apps are installed as, bound in each tenant
+	// namespace (internal/controller/tenant_apps_helm.go).
+	if err := (&controller.TenantAppsHelmReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantAppsHelm")
+		os.Exit(1)
+	}
+
+	if err := (&controller.BrandingReconciler{Definitions: held, Client: mgr.GetClient(), KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM"))}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Branding")
+		os.Exit(1)
+	}
+
+	// The system engines something on this cluster declares, for the
+	// Cluster composition to compose (internal/controller/system_engines.go).
+	if err := (&controller.SystemEnginesReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Namespace:   envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Recorder:    mgr.GetEventRecorderFor("system-engines"), //nolint:staticcheck
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SystemEngines")
+		os.Exit(1)
+	}
+
+	// The app instance of OpenFGA's database and the arbiter, while a
+	// component declares an authorization store.
+	if err := (&controller.AuthorizationEngineReconciler{
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Seeder: buildSeeder(),
+		// The instance's credentials, in the vault the tenants' are kept in.
+		Seeder:    tenantReconciler.Seeder,
+		Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Image:     os.Getenv("GENTIAN_IMAGE"),
+		PlatformCaller: applifecycle.ServiceAccountUsername(
+			envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)), os.Getenv("OPERATOR_SA")),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationEngine")
+		os.Exit(1)
+	}
+
+	// A failed ExternalSecret read again, when the secrets operator has not.
+	if err := (&controller.ExternalSecretRetryReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ExternalSecretRetry")
+		os.Exit(1)
+	}
+
+	// The TURN edge, while a component declares requires.services.turn.
+	if err := (&controller.TURNEdgeReconciler{
+		Client: mgr.GetClient(),
+		// The shared secret, in the vault the tenants' credentials are kept in.
+		Seeder:        tenantReconciler.Seeder,
+		Namespace:     envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
+		ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TURNEdge")
+		os.Exit(1)
+	}
+
+	// The arbiter's table: which component's key opens which authorization
+	// store, and the model each is decided against.
+	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationTable")
+		os.Exit(1)
+	}
+
+	if err := (&controller.ConciergeLookupReconciler{
+		Client:       mgr.GetClient(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		TenancyMode:  tenancyMode,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ConciergeLookup")
+		os.Exit(1)
+	}
+
+	if err := (&controller.IntegrationBindingReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Seeder:      buildSeeder(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IntegrationBinding")
 		os.Exit(1)
 	}
 
 	tenantExportReconciler := &controller.TenantExportReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: tenantReconciler,
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Reconciler:    tenantReconciler,
+		Authorization: arbiterPlatform,
 		// The API reader, not the cached client: appVolumes explains why a
 		// cached PVC read is how an export comes to hold an app offline
 		// indefinitely with nothing in the log.
@@ -314,58 +569,161 @@ func main() {
 		// rather than the manager's client. Nil is tolerated by the reconciler;
 		// a failure then reports that a Job failed and not why.
 		LogTailer: buildLogTailer(mgr),
+		// An app's own secrets go into a bundle from the operator's memory,
+		// encrypted there: this is how it writes them.
+		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
+		// The cluster's bundle signing key, read from the vault with the
+		// operator's own identity. A restore checks bundles with it too.
+		SigningKey: bundleSigningKey(),
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")
 		os.Exit(1)
 	}
 
+	// What becomes of a removed person's mailbox: the registrar writes down
+	// what whoever removed the person chose, and this carries it out beside
+	// the mail server's volume, which the registrar cannot reach.
+	if err := (&controller.MailboxRemovalReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Tenant:      tenantReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "MailboxRemoval")
+		os.Exit(1)
+	}
+
 	if err := (&controller.TenantRestoreReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Reconciler: tenantExportReconciler,
-		Tenant:     tenantReconciler,
+		Definitions:   held,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Reconciler:    tenantExportReconciler,
+		Authorization: arbiterPlatform,
+		Tenant:        tenantReconciler,
+		// The bundle's manifest is what a restore goes by; this is how the
+		// operator reads it, with the credentials it holds for the store
+		// the bundle sits in.
+		Bundles: &bundlestore.Store{Client: mgr.GetClient()},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
 		os.Exit(1)
 	}
-
-	if err := (&controller.TenantExportScheduleReconciler{
+	// Nothing stays in the import bucket longer than a week, used or not.
+	if err := mgr.Add(&bundlestore.Sweeper{
+		Store:  &bundlestore.Store{Client: mgr.GetClient()},
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "TenantExportSchedule")
+	}); err != nil {
+		setupLog.Error(err, "unable to add the import bucket sweep")
 		os.Exit(1)
 	}
 
 	if err := (&controller.BackupPolicyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "BackupPolicy")
+		os.Exit(1)
+	}
+
+	if err := (&controller.BundleSourceReconciler{
+		Definitions: held,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BundleSource")
+		os.Exit(1)
+	}
+	if err := (&controller.BundleFetchReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BundleFetch")
+		os.Exit(1)
+	}
+
+	// The authorization graph's structure: which tenants this cluster has and
+	// which group holds which role over it.
+	//
+	// The director used to do this at its own start, with a token that could
+	// write anything in the graph. Projecting declared state into cluster
+	// state is the operator's work, and leaving the write capability with the
+	// service that only has to READ the graph to make a decision is the part
+	// that was wrong. Off entirely when no OpenFGA address is configured,
+	// which is what a cluster with no authorization service runs.
+	if graph := authorizationGraph(setupLog); graph != nil {
+		// The same client, for the entries of the store a tenant's backup
+		// carries and a restore puts back: read and written by the operator,
+		// which is the store's one writer.
+		tenantReconciler.Rights = graph
+		if err := (&controller.AuthzProjectionReconciler{
+			Client:  mgr.GetClient(),
+			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+			Graph:   graph,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
+			os.Exit(1)
+		}
+		// Membership, from the same graph client and for the same reason.
+		// Keycloak states a user's whole group set, signed; this applies it.
+		// It was the director's last write to the graph, which is what kept
+		// the director's token a writing token.
+		mirror := &controller.AppStoreMirror{
+			Client:    mgr.GetClient(),
+			Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+			Arbiter:   arbiterPlatform,
+		}
+		listener, err := controller.NewMembershipListener(graph, mirror, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		if err != nil {
+			setupLog.Error(err, "unable to create the membership listener")
+			os.Exit(1)
+		}
+		if listener != nil {
+			if err := mgr.Add(listener); err != nil {
+				setupLog.Error(err, "unable to add the membership listener")
+				os.Exit(1)
+			}
+			setupLog.Info("membership listener enabled", "addr", listener.Addr)
+		}
+	}
+
+	// The tile catalogue: the kernel consoles this operator routes, plus every
+	// exposure of an installed component whose profile declares a tile.
+	//
+	// The director used to carry this as a list compiled into its binary,
+	// which is a second copy of facts the operator already holds and which no
+	// installed app could add itself to without a director release.
+	if err := (&controller.TileProjectionReconciler{
+		Client:      mgr.GetClient(),
+		Cluster:     envvar.Or("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		// What a tenant's own domain is derived from: a link tile names the
+		// tenant to the service it leads to.
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  tenancyMode,
+		// Whether the cluster offers an App Store, written beside the tiles.
+		UsageStatisticsEnabled: usagestatistics.SettingsFromEnv().Active(),
+		WatchClusterClaim:      true,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TileProjection")
 		os.Exit(1)
 	}
 
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),
-			TenancyMode:  os.Getenv("TENANCY_MODE"),
+			TenancyMode:  tenancyMode,
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 			// Default on. A cluster that has not proven its administrator can
 			// write credentials is one where the recovery from a broken write
 			// path is still cheap, and admitting tenants is what makes it
 			// expensive — so the safe default is the one that keeps the exit open.
 			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
-			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", "gentian-system")),
+			KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+			HandoverNamespace: envvar.Or("HANDOVER_NAMESPACE", envvar.Or("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 		}).SetupWithManager(mgr)
 
-		(&webhook.AppProfileValidator{
-			Client: mgr.GetClient(),
-		}).SetupWithManager(mgr)
 	}
 
 	if os.Getenv("APP_LIFECYCLE_ENABLED") != "false" {
-		lifecycle, err := applifecycle.NewRunnableFromEnv(mgr)
+		lifecycle, err := applifecycle.NewRunnableFromEnv(mgr, tenancyMode)
 		if err != nil {
 			setupLog.Error(err, "unable to create app lifecycle server")
 			os.Exit(1)
@@ -374,25 +732,69 @@ func main() {
 			setupLog.Error(err, "unable to add app lifecycle server")
 			os.Exit(1)
 		}
+		// An app installed for everyone is granted by the tenant reconciler
+		// with what this service already holds: the same function behind
+		// provision-app, and the same Keycloak credential.
+		tenantReconciler.DefaultGrant = lifecycle.Server.Service.GrantAppByDefault
+		// What the check found, for the director to ask before it commits
+		// and for an operations screen to show.
+		lifecycle.Server.Definitions = definitions
+		// Which placeable components go to which tenants, for the
+		// director's placement worker to write into their manifests.
+		lifecycle.Server.Placements = tenantReconciler.Placements
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 
-	// Credential Manager — a view over the CredentialRequirement catalogue and
-	// ESO's satisfaction status, plus a write path that writes as the CALLER.
-	// It rides this manager rather than being a second Deployment, and holds no
-	// OpenBao token of its own: every write exchanges the user's OIDC token.
-	if os.Getenv("CREDENTIAL_MANAGER_ENABLED") == "true" {
-		credmgr, err := credentialmgr.NewRunnableFromEnv(mgr, credentialmgr.NewEndpointValidator())
-		if err != nil {
-			setupLog.Error(err, "unable to create the credential manager")
-			os.Exit(1)
-		}
-		if err := mgr.Add(credmgr); err != nil {
-			setupLog.Error(err, "unable to add the credential manager")
-			os.Exit(1)
-		}
-		setupLog.Info("credential manager API enabled", "addr", credmgr.Addr)
+	// The usage statistics report: what this cluster runs, told to the receiving
+	// endpoint once a day, signed, and recorded where it can be read. Added
+	// whether or not reporting is on, so that the log of every operator says
+	// which it is; off, it sends nothing and starts no timer.
+	if err := mgr.Add(&usagestatistics.Reporter{
+		Client:    mgr.GetClient(),
+		Reader:    mgr.GetAPIReader(),
+		Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		Settings:  usagestatistics.SettingsFromEnv(),
+		Identity: usagestatistics.Identity{
+			ClusterID:    os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			TenancyMode:  tenancyMode,
+		},
+		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient()},
+		Key: func() (*usagestatistics.Key, error) {
+			return usagestatistics.KeyFromFile(envvar.Or("USAGE_STATISTICS_KEY_FILE", "/etc/gentian/usage-statistics/signing_seed"))
+		},
+	}); err != nil {
+		setupLog.Error(err, "unable to add the usage statistics reporter to manager")
+		os.Exit(1)
 	}
+
+	// The vault's daily snapshot: its bucket and key, and how old the newest
+	// one is on the Cluster claim (status.openbaoSnapshots). The snapshot is
+	// taken by the CronJob the chart puts in the vault's namespace.
+	if controller.EnvBool("OPENBAO_SNAPSHOTS") {
+		staleAfter, err := time.ParseDuration(envvar.Or("OPENBAO_SNAPSHOT_STALE_AFTER", "30h"))
+		if err != nil {
+			setupLog.Error(err, "OPENBAO_SNAPSHOT_STALE_AFTER is not a duration")
+			os.Exit(1)
+		}
+		if err := mgr.Add(&controller.OpenBaoSnapshots{
+			Client:     mgr.GetClient(),
+			Reader:     mgr.GetAPIReader(),
+			Seeder:     tenantReconciler.Seeder,
+			Bucket:     envvar.Or("OPENBAO_SNAPSHOT_BUCKET", "gentian-openbao-snapshots"),
+			StaleAfter: staleAfter,
+			// The chart says false when it takes no snapshot of the seal.
+			TransitDisabled: envvar.Or("OPENBAO_TRANSIT_SNAPSHOTS", "true") == "false",
+		}); err != nil {
+			setupLog.Error(err, "unable to add the vault snapshot report to manager")
+			os.Exit(1)
+		}
+	}
+
+	// No custodian here. It was a runnable of this manager, which put the
+	// thing that sets credentials in the same process, under the same
+	// ServiceAccount, as a controller whose own vault role reads every
+	// secret. It is a Deployment of its own now (cmd/custodian).
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
@@ -410,6 +812,47 @@ func main() {
 	}
 }
 
+// buildVersion is the commit this binary was built from, when the build
+// recorded one. An image built from a copy of the sources without their git
+// history records none, and the report then identifies the build by the
+// digest of its definitions alone.
+// releaseFeed is where the operator reads the newest release from:
+// GENTIAN_RELEASE_FEED_URL, the GitHub releases API of gentian-os by
+// default, or nothing for "none".
+func releaseFeed() string {
+	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", "https://api.github.com/repos/gentian-org/gentian-os/releases/latest")
+	if feed == "none" {
+		return ""
+	}
+	return feed
+}
+
+func buildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				return setting.Value
+			}
+		}
+	}
+	// An image built without the repository's history carries no revision;
+	// the chart then names the build by the image tag it renders.
+	return os.Getenv("GENTIAN_BUILD")
+}
+
+// ownPod names this pod, for the definitions check to record its findings
+// against: an Event needs an object, and the operator's own pod is the one
+// that is always there and where somebody asking "why is nothing being
+// reconciled" looks. Nil outside a pod, which records no Event.
+func ownPod() runtime.Object {
+	namespace := os.Getenv("POD_NAMESPACE")
+	name, err := os.Hostname()
+	if namespace == "" || err != nil || name == "" {
+		return nil
+	}
+	return &corev1.ObjectReference{APIVersion: "v1", Kind: "Pod", Namespace: namespace, Name: name}
+}
+
 // kernelRealmOrDefault returns realm if non-empty, otherwise "kernel".
 func kernelRealmOrDefault(realm string) string {
 	if realm == "" {
@@ -425,19 +868,28 @@ func kernelRealmOrDefault(realm string) string {
 //	BAO_ROLE  — Kubernetes auth role name (default: gentian-os-operator)
 //
 // The platform master password is read once at startup from
-// secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that
-// every (tenant, app, category) credential the operator generates is fully
-// deterministic — uninstalling and reinstalling an app yields the same
-// credentials.
+// secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that,
+// on a cluster whose claim says secretMode: derived, every (tenant, app,
+// category) credential the operator generates is fully deterministic —
+// uninstalling and reinstalling an app yields the same credentials. With
+// secretMode: random the deriver is not used and each credential is drawn
+// from crypto/rand once and kept in OpenBao.
 //
 // Returns nil (with a warning) when BAO_ADDR is unset — in that mode
 // reconcilers skip the seeding step and behave as they did pre-Inc 21a.
 // This keeps envtest suites running without an OpenBao double and lets
 // early cluster bring-up proceed in stages.
+//
+// What a missing vault means where credentials are to be destroyed is not
+// decided here: see withoutVault.
 func buildSeeder() *secrets.Seeder {
 	baoAddr := os.Getenv("BAO_ADDR")
 	if baoAddr == "" {
-		setupLog.Info("secret seeder disabled: set BAO_ADDR to enable")
+		if withoutVault() {
+			setupLog.Info("running without a vault, as declared (GENTIAN_WITHOUT_VAULT=true): development and test only; nothing is seeded and nothing stored is destroyed")
+		} else {
+			setupLog.Error(nil, "BAO_ADDR is not set and GENTIAN_WITHOUT_VAULT is not true: nothing is seeded, and deleting a tenant will stop at the step that destroys its stored credentials until the operator can reach its vault")
+		}
 		return nil
 	}
 	role := os.Getenv("BAO_ROLE")
@@ -465,9 +917,59 @@ func buildSeeder() *secrets.Seeder {
 		deriver = secrets.NewDeriver(master["value"], master["salt"])
 	}
 
+	// How a credential is made is the claim's to say (secretMode), and it is
+	// asked each time one is made: the master password read above is used in
+	// derived mode only.
+	mode := controller.ClusterSecretMode(bootClient())
+	configured, modeErr := mode(ctx)
+	if modeErr != nil {
+		setupLog.Error(modeErr, "the secret mode could not be read; no credential is made until it can be")
+	}
 	setupLog.Info("secret seeder enabled",
-		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil)
-	return secrets.NewSeeder(kv, deriver)
+		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil, "secretMode", configured)
+	return secrets.NewSeeder(kv, deriver).WithMode(mode)
+}
+
+// bundleSigningKey reads the cluster's bundle signing key from the vault
+// with the operator's own identity, each time a manifest is written or
+// checked, so that a key written after the operator started is found. The
+// key last read is kept: a vault that does not answer for a moment does not
+// make a bundle unsigned.
+func bundleSigningKey() func() (*backup.SigningKey, error) {
+	baoAddr := os.Getenv("BAO_ADDR")
+	if baoAddr == "" {
+		return func() (*backup.SigningKey, error) { return nil, backup.ErrNoSigningKey }
+	}
+	kv := secrets.NewKVClient(baoAddr, envvar.Or("BAO_ROLE", "gentian-os-operator"), "")
+	absent := func(err error) bool { return errors.Is(err, secrets.ErrNotFound) }
+	var (
+		mu   sync.Mutex
+		last *backup.SigningKey
+	)
+	return func() (*backup.SigningKey, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		key, err := backup.SigningKeyFromVault(ctx, kv.Get, absent)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case err == nil:
+			last = key
+		case last != nil && !errors.Is(err, backup.ErrNoSigningKey):
+			return last, nil
+		}
+		return key, err
+	}
+}
+
+// withoutVault is the operator's statement that it runs without a vault:
+// GENTIAN_WITHOUT_VAULT=true, for a development or test set-up. Without the
+// statement, having no vault is not a mode but a fault, and the acts that
+// destroy stored credentials report it instead of passing over the step. A
+// vault that is configured always wins: the statement only says what its
+// absence means.
+func withoutVault() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("GENTIAN_WITHOUT_VAULT")), "true")
 }
 
 // buildEdgeIngress constructs how traffic reaches this cluster, by NAME.
@@ -480,7 +982,7 @@ func buildSeeder() *secrets.Seeder {
 //
 // There is no DNS half. external-dns writes this cluster's records -- every
 // provider in kernel/platforms.yaml, from the HTTPRoutes this operator writes
-// and from DNSEndpoint CRs for hostnames a tunnelled Gateway cannot supply an
+// and from DNSEndpoint CRs for hostnames a tunneled Gateway cannot supply an
 // address for. What an ingress contributes is the TARGET those records point
 // at. See internal/controller/edge.go.
 //
@@ -532,17 +1034,6 @@ func buildEdgeIngress() controller.EdgeIngress {
 		"separate_token", separate,
 		"account_id_supplied", os.Getenv("CLOUDFLARE_ACCOUNT_ID") != "")
 	return ing
-}
-
-// envOrDefault reads an environment variable, falling back when it is unset or
-// empty. Empty and unset are treated alike deliberately: a Helm value rendered
-// to "" is how an unset chart value reaches a container, and treating that as a
-// deliberate empty string means a default that silently stops applying.
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 // envDuration reads a Go duration from the environment, falling back when it is

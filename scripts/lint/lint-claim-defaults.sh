@@ -45,11 +45,11 @@ RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; GREEN=$'\033[0;32m'; DIM=$'\033[2m'; NC
 CLAIM_BACKED=(
     TENANCY_MODE
     NETWORK_MODE
-    ROUTING_MODE
     SECRET_MODE
     NODE_IP
     STORAGE_CLASS
     MAIL_SERVICE_MODE
+    SECRETS_AT_REST
 )
 
 # This file names every variable it looks for, so scanning itself would report
@@ -78,11 +78,11 @@ xrd_default() {
     case "$1" in
         TENANCY_MODE)      field=tenancyMode ;;
         NETWORK_MODE)      field=networkMode ;;
-        ROUTING_MODE)      field=routingMode ;;
         SECRET_MODE)       field=secretMode ;;
         NODE_IP)           field=nodeIp ;;
         STORAGE_CLASS)     field=storageClass ;;
         MAIL_SERVICE_MODE) field=mail.serviceMode ;;
+        SECRETS_AT_REST)   field=controlPlane.secretsAtRest ;;
         *) return 0 ;;
     esac
     python3 - "${field}" <<'PYEOF'

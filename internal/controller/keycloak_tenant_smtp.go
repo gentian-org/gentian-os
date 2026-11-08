@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -36,7 +30,17 @@ const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
 
 // Bumped whenever buildTenantSMTPConfigureScript changes in a way that must
 // reach realms already configured; replaceOutdatedTenantSMTPJob acts on it.
-const tenantSMTPVersion = "3"
+//
+// 5: the script takes the cluster's own mail by the mode's name, "system". It
+// compared against "kernel", the name before, so on such a cluster it wrote
+// the kernel realm's login into a tenant realm -- and realms written through
+// the Composition alone, without their password, are written again.
+//
+// 6: no change to the script. A realm on a cluster that relays had its mail
+// server rewritten by the provider without the password; its Composition now
+// declares the block with the password, and this run puts the password back
+// where the provider holds nothing to compare.
+const tenantSMTPVersion = "6"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
@@ -44,7 +48,7 @@ func tenantSMTPJobName(tenantName string) string {
 
 // buildTenantSMTPConfigureScript copies cluster Keycloak SMTP settings into a tenant realm.
 func buildTenantSMTPConfigureScript(realmExpr string) string {
-	return fmt.Sprintf(`
+	return keycloak.ShellAdminCall() + fmt.Sprintf(`
 set -eu
 REALM=%s
 
@@ -58,10 +62,10 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 %s
 
-REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
+REALM_JSON=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}")
-# Kernel mode authenticates too, when the realm has been given an identity to
-# authenticate as.
+# The cluster's own mail authenticates too, when the realm has been given an
+# identity to authenticate as.
 #
 # It used to send anonymously, because relaying was granted by mynetworks and the
 # kernel Postfix advertised no AUTH at all. That made "may this sender relay?" a
@@ -74,7 +78,14 @@ REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
 # whose operator has not yet minted the credential keeps sending rather than
 # failing every invite. mynetworks still permits it; this is a migration, and the
 # grant is removed only once every sender authenticates.
-if [ "${MAIL_SERVICE_MODE:-external}" = "kernel" ]; then
+#
+# "system" is the mode; "kernel" is what it was called, and what a
+# keycloak-smtp-credentials written before the rename still says.
+OWN_MAIL="false"
+case "${MAIL_SERVICE_MODE:-external}" in
+  system|kernel) OWN_MAIL="true" ;;
+esac
+if [ "${OWN_MAIL}" = "true" ]; then
   if [ -n "${KERNEL_SMTP_USER:-}" ] && [ -n "${KERNEL_SMTP_PASSWORD:-}" ] && [ -n "${KERNEL_MAIL_HOST:-}" ]; then
     SMTP_AUTH="true"
     SMTP_USER="${KERNEL_SMTP_USER}"
@@ -115,11 +126,12 @@ SMTP_JSON=$(jq -n \
   --arg ssl "${SMTP_SSL}" \
   --arg starttls "${SMTP_STARTTLS}" \
   --arg auth "${SMTP_AUTH}" \
+  --arg fromName "${SMTP_FROM_NAME:-Gentian}" \
   '{
     host: $host,
     port: $port,
     from: $from,
-    fromDisplayName: "Gentian",
+    fromDisplayName: $fromName,
     auth: $auth,
     ssl: $ssl,
     starttls: $starttls
@@ -128,20 +140,21 @@ SMTP_JSON=$(jq -n \
   # use them again if auth is ever flipped back on; omit them entirely instead.
   + (if $auth == "true" then {user: $user, password: $pass} else {} end)')
 UPDATED=$(printf '%%s' "${REALM_JSON}" | jq --argjson smtp "${SMTP_JSON}" '.smtpServer = $smtp')
-curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}" \
+kc_curl -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM}" \
   -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "${UPDATED}" >/dev/null
 echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
 `, realmExpr, keycloak.ShellWaitForRealm(realmExpr))
 }
 
-func makeTenantSMTPJob(tenantName, realmName, kernelMailHost string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+// makeTenantSMTPJob configures a tenant realm's mail. fromName is who its
+// mail says it is from: the cluster's brand.
+func makeTenantSMTPJob(tenantName, realmName, kernelMailHost, fromName string) *batchv1.Job {
 	// Older installs predate the mail_service_mode key in the SMTP secret.
 	optionalKey := true
 	c := keycloakContainer("tenant-smtp", buildTenantSMTPConfigureScript(fmt.Sprintf("%q", realmName)))
 	c.Env = append(c.Env,
+		corev1.EnvVar{Name: "SMTP_FROM_NAME", Value: fromName},
 		corev1.EnvVar{
 			Name: "SMTP_CONFIGURE",
 			ValueFrom: &corev1.EnvVarSource{
@@ -262,33 +275,17 @@ func makeTenantSMTPJob(tenantName, realmName, kernelMailHost string) *batchv1.Jo
 					LocalObjectReference: corev1.LocalObjectReference{Name: keycloakSMTPCredentialsSecret},
 					Key:                  "mail_service_mode",
 					// Older installs predate this key; default to the external
-					// relay behaviour rather than failing the Job.
+					// relay behavior rather than failing the Job.
 					Optional: &optionalKey,
 				},
 			},
 		},
 	)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tenantSMTPJobName(tenantName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:                         tenantName,
-				managedByLabel:                      managedByValue,
-				"gentianos.io/keycloak-tenant-smtp": tenantSMTPVersion,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{c},
-				},
-			},
-		},
-	}
+	return meta.ProvisioningJob(tenantSMTPJobName(tenantName), identityNamespace, map[string]string{
+		tenantLabel:                         tenantName,
+		managedByLabel:                      managedByValue,
+		"gentianos.io/keycloak-tenant-smtp": tenantSMTPVersion,
+	}, c)
 }
 
 // clusterKeycloakSMTPCredentialsAvailable reports whether this cluster has SMTP
@@ -313,7 +310,7 @@ func smtpCredentialsUsable(data map[string][]byte) bool {
 
 func (r *TenantReconciler) clusterKeycloakSMTPCredentialsAvailable(ctx context.Context) bool {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, secret); err != nil {
 		return false
 	}
 	return smtpCredentialsUsable(secret.Data)
@@ -337,9 +334,14 @@ func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gent
 		log.FromContext(ctx).V(1).Info(
 			"realm SMTP left unconfigured: the cluster has no usable SMTP credential",
 			"tenant", tenant.Name,
-			"secret", fmt.Sprintf("%s/%s", kernelNamespace, keycloakSMTPCredentialsSecret),
+			"secret", fmt.Sprintf("%s/%s", identityNamespace, keycloakSMTPCredentialsSecret),
 			"remedy", "supply the smtp-relay credential (Admin Console -> Credentials)")
 		return true, nil
+	}
+	// No Job where the realm is to have no mail server: buildProvisioningJobs
+	// composed none, for the reason tenantRealmMail gives.
+	if mail, err := r.tenantRealmMail(ctx, tenant); err != nil || mail == nil {
+		return err == nil, err
 	}
 	realmDone, err := r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 	if err != nil || !realmDone {
@@ -369,7 +371,7 @@ func (r *TenantReconciler) replaceOutdatedTenantSMTPJob(ctx context.Context, ten
 // mechanism, named so the next Job can use it instead of growing a third copy.
 func (r *TenantReconciler) replaceOutdatedJob(ctx context.Context, jobName, tenantName, labelKey, want string) error {
 	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: identityNamespace}, job)
 	if err != nil {
 		// Absent is the normal path; waitForProvisioningJob creates it.
 		return client.IgnoreNotFound(err)

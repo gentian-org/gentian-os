@@ -1,0 +1,5 @@
+apiVersion: v2
+name: tenant-postgres
+description: The CNPG cluster tenant and app databases are provisioned on, in system-postgresql
+type: application
+version: 0.1.0

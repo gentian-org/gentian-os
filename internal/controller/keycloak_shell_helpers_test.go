@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -21,16 +15,24 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/gentian-org/gentian-os/internal/authz"
 )
 
 func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	t.Parallel()
-	script := buildRealmScript("demo", "Demo")
+	script := buildRealmScript()
 	if !strings.Contains(script, "keycloak_json_id_by_attr") {
 		t.Fatal("expected keycloak_json_id_by_attr helper in realm script")
 	}
-	if !strings.Contains(script, "SSO Identity Brokering") {
-		t.Fatal("expected kernel SSO brokering block in realm script")
+	// No broker section at all: the bridges between a tenant realm and the
+	// kernel realm, in either direction, are the Compositions' now
+	// (hub_projection.go), so the script neither reads KERNEL_REALM nor
+	// writes a client in that realm.
+	for _, gone := range []string{"SSO Identity Brokering", "KERNEL_REALM", "KERNEL_EXTERNAL_URL", "broker-${REALM_NAME}"} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("realm script still carries the kernel broker: %s", gone)
+		}
 	}
 	// The IdP is not written here at all any more, so there is no alias to
 	// preserve and no bootstrap value to fall back to. The whole
@@ -46,12 +48,6 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 		if strings.Contains(script, gone) {
 			t.Fatalf("realm script still writes the kernel IdP: %s", gone)
 		}
-	}
-	// The broker client stays: it is Observe-only in the Composition by design,
-	// so something has to create it, and on a realm that does not exist yet that
-	// something cannot be the Composition.
-	if !strings.Contains(script, `${KERNEL_REALM}/clients`) {
-		t.Fatal("realm script must still bootstrap the kernel-realm broker client")
 	}
 	// The user profile is tenant-default's now: it declares all six attributes
 	// whole, where this script appended one patch to add uid and
@@ -78,5 +74,58 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	}
 	if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
 		t.Fatalf("realm script must be valid POSIX sh: %v\n%s", err, out)
+	}
+}
+
+// TestTheRealmScriptRunsNoTenantText runs the realm script against a stub
+// curl with a realm name built to break out of its quotes. The name reaches
+// Keycloak as data and runs nothing; the CRD's pattern refuses such a name
+// before any Job, this is what holds if one gets through.
+func TestTheRealmScriptRunsNoTenantText(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	marker := dir + "/ran"
+	stub := `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    *openid-connect/token) echo '{"access_token":"t"}'; exit 0 ;;
+    *http_code*) echo 404; exit 0 ;;
+  esac
+done
+prev=""
+for a in "$@"; do
+  [ "$prev" = "-d" ] && printf '%s' "$a" > "` + dir + `/body"
+  prev="$a"
+done
+`
+	if err := os.WriteFile(dir+"/curl", []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hostile := `x'"$(touch ` + marker + `)"';touch ` + marker + `;'`
+	cmd := exec.Command("sh", "-c", buildRealmScript())
+	cmd.Env = []string{
+		"PATH=" + dir + ":/usr/bin:/bin",
+		"KEYCLOAK_URL=http://keycloak", "KEYCLOAK_CLIENT_ID=c", "KEYCLOAK_CLIENT_SECRET=s",
+		"REALM_NAME=" + hostile,
+		"BROWSER_SECURITY_HEADERS=" + authz.BrowserSecurityHeadersJSON(),
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("realm script failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the realm name ran a command")
+	}
+	body, err := os.ReadFile(dir + "/body")
+	if err != nil {
+		t.Fatalf("no realm was posted: %v", err)
+	}
+	if !strings.Contains(string(body), `"realm":"`+hostile+`"`) {
+		t.Fatalf("the realm name did not reach Keycloak as written: %s", body)
+	}
+	if !strings.Contains(string(body), `"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()) {
+		t.Fatalf("the headers did not reach Keycloak: %s", body)
+	}
+	if strings.Contains(string(body), "displayName") {
+		t.Fatalf("the script writes the display name, which is the Composition's: %s", body)
 	}
 }

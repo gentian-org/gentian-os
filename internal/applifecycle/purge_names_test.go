@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -20,6 +14,7 @@ import (
 	"testing"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -32,13 +27,13 @@ import (
 func TestPostgresNamesDifferForHyphenatedApps(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
-	if got, want := databaseName(tenant, "docmost-ce"), "demo_docmost_ce"; got != want {
+	if got, want := backup.DatabaseName(tenant, "docmost-ce"), "demo_docmost_ce"; got != want {
 		t.Errorf("databaseName = %q, want %q", got, want)
 	}
-	if got, want := pgRoleName(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
+	if got, want := backup.PostgresRole(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
 		t.Errorf("pgRoleName = %q, want %q", got, want)
 	}
-	if databaseName(tenant, "docmost-ce") == pgRoleName(tenant.Name, "docmost-ce") {
+	if backup.DatabaseName(tenant, "docmost-ce") == backup.PostgresRole(tenant.Name, "docmost-ce") {
 		t.Error("database and role names must not be equal for a hyphenated app; " +
 			"purge relies on dropping each by its own name")
 	}
@@ -49,10 +44,10 @@ func TestPostgresNamesDifferForHyphenatedApps(t *testing.T) {
 func TestPostgresNamesAgreeWithoutHyphens(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
-	if got, want := databaseName(tenant, "xwiki"), "demo_xwiki"; got != want {
+	if got, want := backup.DatabaseName(tenant, "xwiki"), "demo_xwiki"; got != want {
 		t.Errorf("databaseName = %q, want %q", got, want)
 	}
-	if got, want := pgRoleName(tenant.Name, "xwiki"), "demo_xwiki"; got != want {
+	if got, want := backup.PostgresRole(tenant.Name, "xwiki"), "demo_xwiki"; got != want {
 		t.Errorf("pgRoleName = %q, want %q", got, want)
 	}
 }
@@ -63,14 +58,15 @@ func TestDatabasePrefixDoesNotChangeRoleName(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Isolation: &gentianov1alpha1.TenantIsolation{DatabasePrefix: "custom_"},
+			DisplayName: "Test Tenant",
+			Isolation:   &gentianov1alpha1.TenantIsolation{DatabasePrefix: "custom_"},
 		},
 	}
 
-	if got, want := databaseName(tenant, "docmost-ce"), "custom_docmost_ce"; got != want {
+	if got, want := backup.DatabaseName(tenant, "docmost-ce"), "custom_docmost_ce"; got != want {
 		t.Errorf("databaseName = %q, want %q", got, want)
 	}
-	if got, want := pgRoleName(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
+	if got, want := backup.PostgresRole(tenant.Name, "docmost-ce"), "demo_docmost-ce"; got != want {
 		t.Errorf("pgRoleName = %q, want %q", got, want)
 	}
 }

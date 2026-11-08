@@ -18,7 +18,7 @@
 #      B-10 deletes it — see "Bootstrap credential cache" below.
 #
 #   2. Only `phase: bootstrap` credentials are collected. Everything else is
-#      `phase: runtime` and belongs to the on-cluster credential manager, which
+#      `phase: runtime` and belongs to the on-cluster custodian, which
 #      has SDKs and a real HTTP client. Keeping the shell half small is what
 #      stops the two implementations drifting.
 # =============================================================================
@@ -28,7 +28,7 @@ GENTIAN_CREDENTIALS_LOADED=1
 
 GENTIAN_CATALOGUE_FILE="${GENTIAN_CATALOGUE_FILE:-${SCRIPT_DIR}/credentials.yaml}"
 
-# _cat_yq <filter> — read the catalogue, tolerant of either yq flavor.
+# _cat_yq <filter> — read the catalog, tolerant of either yq flavor.
 _cat_yq() {
     local out
     if out=$(yq eval "$1" "${GENTIAN_CATALOGUE_FILE}" 2>/dev/null) && [[ "${out}" != "null" ]]; then
@@ -48,7 +48,7 @@ _cat_yq() {
 # them, and restating that here would be one fact in two files — the drift that
 # put a Secret name in an issuer and a different one in an ExternalSecret.
 #
-# Only the ACTIVE provider is exposed to the prompt loop. The catalogue
+# Only the ACTIVE provider is exposed to the prompt loop. The catalog
 # describes the platform, so it carries all of them (see
 # scripts/gen/gen-credential-requirements.py); an installer that asked for all
 # of them would ask an operator on Route 53 for a Cloudflare token.
@@ -63,7 +63,7 @@ GENTIAN_PLATFORMS_FILE="${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms
 # that knowledge lives.
 #
 # It used to be one hard-coded hook for DNS. Then edgeIngress was added as a
-# second table, generated correctly into the on-cluster catalogue, and was
+# second table, generated correctly into the on-cluster catalog, and was
 # invisible to the installer — which reads credentials.yaml plus that one hook.
 # The operator was never prompted for the tunnel token, nothing was seeded, and
 # nothing failed: the generator passed, the tests passed, and the only symptom
@@ -92,7 +92,7 @@ _dns_provider() { printf '%s' "${DNS_PROVIDER:-cloudflare}"; }
 # _provider_requirement_names — the requirement each table contributes for THIS
 # cluster, one line each.
 #
-# Only the ACTIVE provider of each table. The catalogue describes the platform
+# Only the ACTIVE provider of each table. The catalog describes the platform
 # and carries every provider; an installer that offered all of them would ask
 # an operator on Route 53 for a Cloudflare token.
 _provider_requirement_names() {
@@ -129,16 +129,6 @@ _provider_req_path() {
         fi
     done
     return 1
-}
-
-# _provider_req_prefixes — the requirement-name prefixes, for callers matching
-# on shape rather than on an exact name.
-_provider_req_prefixes() {
-    local row table prefix selector
-    for row in "${GENTIAN_PROVIDER_TABLES[@]}"; do
-        IFS=: read -r table prefix selector <<<"${row}"
-        echo "${prefix}"
-    done
 }
 
 # catalogue_names [phase] — requirement names, optionally filtered by phase.
@@ -198,7 +188,7 @@ catalogue_field_attr() {
 }
 
 # =============================================================================
-# Mapping the catalogue onto the environment
+# Mapping the catalog onto the environment
 #
 # The installer's existing variables are the interface the rest of the shell
 # still speaks. This table is the only place that mapping lives, and it shrinks
@@ -213,14 +203,10 @@ _env_var_for() {
         # prompted for. A mapping here would put it in the prompt loop.
         deployments-repository/username)   echo GENTIAN_DEPLOYMENTS_GIT_USERNAME ;;
         deployments-repository/password)   echo GENTIAN_DEPLOYMENTS_GIT_TOKEN ;;
-        gentian-os-repository/username)    echo GENTIAN_OS_GIT_USERNAME ;;
-        gentian-os-repository/password)    echo GENTIAN_OS_GIT_TOKEN ;;
-        gentian-apps-repository/username)  echo GENTIAN_APPS_GIT_USERNAME ;;
-        gentian-apps-repository/password)  echo GENTIAN_APPS_GIT_TOKEN ;;
-        gentian-ui-repository/username)    echo GENTIAN_UI_GIT_USERNAME ;;
-        gentian-ui-repository/password)    echo GENTIAN_UI_GIT_TOKEN ;;
-        infra-chart-registry/username)     echo REGISTRY_USER ;;
-        infra-chart-registry/password)     echo REGISTRY_PASSWORD ;;
+        # The platform's own repositories take their names from the table
+        # under "Repository credentials" below.
+        gentian-*-repository/username)     _repo_credential "$1" username || true ;;
+        gentian-*-repository/password)     _repo_credential "$1" token || true ;;
         # The DNS credential, whichever provider hosts the zone. CF_API_TOKEN is
         # kept for Cloudflare because it is exported by hand, written in runbooks
         # and cached on disk from earlier installs; the rest get one generated
@@ -260,14 +246,59 @@ _env_var_for() {
 #
 # Set GENTIAN_NO_CREDENTIAL_CACHE=1 to keep credentials in the process only.
 # =============================================================================
+#
+# Which cluster a cache belongs to is written into it, as its first line:
+#
+#   # cluster: <cluster id> <kernel domain>
+#
+# The path alone does not say: it is GENTIAN_CREDENTIAL_CACHE, which a shell
+# can carry from one cluster's terminal to another's. A run whose salt came
+# from the cluster it reached once wrote that salt into the cache of the
+# cluster its checkout described -- a different one -- and the next install
+# of that cluster derived every credential with it. So a cache that names
+# another cluster is neither read nor written, and one that names none (made
+# before this line existed) is not overwritten once its salt has been shown
+# to be wrong. The loader below skips the line: it is not a variable.
 _credential_cache_file() {
     echo "${GENTIAN_CREDENTIAL_CACHE:-${HOME}/.gentian/bootstrap-credentials.env}"
 }
+
+# _credential_cache_tag — the cluster this run is for, as the cache names it.
+_credential_cache_tag() {
+    printf '%s %s' "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" "${KERNEL_DOMAIN:-}"
+}
+
+# _credential_cache_owner <file> — the cluster a cache names, or nothing.
+_credential_cache_owner() {
+    sed -n 's/^# cluster: //p' "$1" 2>/dev/null | head -1
+}
+
+# Whether the salt now in the shell came from the cache, and whether the
+# cluster then showed it to be wrong. Set by the loader and by
+# _settle_derivation_salt; read by the writer.
+_GENTIAN_SALT_FROM_CACHE=0
+_GENTIAN_CACHE_SALT_WRONG=0
 
 _load_credential_cache() {
     [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
     local f; f="$(_credential_cache_file)"
     [[ -r "${f}" ]] || return 0
+
+    local owner tag
+    owner="$(_credential_cache_owner "${f}")"
+    tag="$(_credential_cache_tag)"
+    if [[ -n "${owner}" && "${owner}" != "${tag}" ]]; then
+        echo "" >&2
+        error "The credential cache ${f} belongs to another cluster."
+        error "  it names:   ${owner}"
+        error "  this run:   ${tag}   (GENTIAN_DEPLOYMENTS_CLUSTER_ID and KERNEL_DOMAIN)"
+        error "  The path is GENTIAN_CREDENTIAL_CACHE, $(_gentian_setting_source GENTIAN_CREDENTIAL_CACHE)."
+        error "Stopped: the cache was not read and will not be written; nothing was applied."
+        error "What to do:"
+        _gentian_unset_hint
+        error "  - run ./install.sh from the gentian-os checkout, and the terminal, of the cluster that cache belongs to."
+        return 1
+    fi
 
     # Same precedence as every other source: what is already set wins, so an
     # explicit export or a corrected value is never overwritten by the cache.
@@ -277,20 +308,44 @@ _load_credential_cache() {
         [[ -n "${!var:-}" ]] && continue
         printf -v "${var}" '%s' "$(printf '%b' "${val}")"
         export "${var?}"
+        if [[ "${var}" == "DERIVATION_SALT" ]]; then _GENTIAN_SALT_FROM_CACHE=1; fi
     done < "${f}"
     info "Reusing credentials cached at ${f} (removed once OpenBao holds them)."
 }
 
 _save_credential_cache() {
     [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
-    local f dir var
+    gentian_read_only && return 0
+    local f dir var owner tag
     f="$(_credential_cache_file)"
+    tag="$(_credential_cache_tag)"
+    # Only once the run has established which cluster it is for; prepare_run
+    # stops before this point otherwise, and this is for the caller that one
+    # day does not.
+    if ! gentian_one_cluster_confirmed; then
+        warn "${f} not written: this run has not confirmed which cluster it is for."
+        return 0
+    fi
+    if [[ -r "${f}" ]]; then
+        owner="$(_credential_cache_owner "${f}")"
+        if [[ -n "${owner}" && "${owner}" != "${tag}" ]]; then
+            warn "${f} not written: it belongs to ${owner}, and this run is for ${tag}."
+            return 0
+        fi
+        if [[ -z "${owner}" && "${_GENTIAN_CACHE_SALT_WRONG}" == "1" ]]; then
+            warn "${f} not written: its derivation salt is not this cluster's, and it does not"
+            warn "  say which cluster it was written for -- it may be another cluster's."
+            warn "  Remove it if it is this cluster's; the next run then writes a fresh one."
+            return 0
+        fi
+    fi
     dir="$(dirname "${f}")"
     mkdir -p "${dir}" || return 0
     chmod 0700 "${dir}" 2>/dev/null || true
 
     local tmp="${f}.tmp.$$"
     : >"${tmp}" && chmod 0600 "${tmp}" || return 0
+    printf '# cluster: %s\n' "${tag}" >>"${tmp}"
     for var in "${_GENTIAN_CACHED_CREDENTIAL_VARS[@]}"; do
         [[ -n "${!var:-}" ]] || continue
         # printf %q would quote for the shell; this file is read by the loader
@@ -315,35 +370,75 @@ _GENTIAN_CACHED_CREDENTIAL_VARS=(
     DERIVATION_SALT
     GENTIAN_DEPLOYMENTS_GIT_USERNAME
     GENTIAN_DEPLOYMENTS_GIT_TOKEN
-    GENTIAN_OS_GIT_USERNAME
-    GENTIAN_OS_GIT_TOKEN
-    GENTIAN_APPS_GIT_USERNAME
-    GENTIAN_APPS_GIT_TOKEN
-    GENTIAN_UI_GIT_USERNAME
-    GENTIAN_UI_GIT_TOKEN
-    REGISTRY_USER
-    REGISTRY_PASSWORD
     CF_API_TOKEN
     CF_TUNNEL_TOKEN
 )
 
-# _repo_auth_for <req> — echoes the resolved GENTIAN_*_AUTH value for one of
-# the four repo-credential requirements, its own default included, or nothing
-# for any other requirement. The one place that mapping lives, shared by
-# _requirement_applies (gate the whole requirement) and _prompt_field (skip
-# just the username field under bearer).
-_repo_auth_for() {
-    case "$1" in
-        # deployments-repository defaults to basic — today's always-prompt
-        # behavior, unchanged for an unset install.env. os/apps/ui default to
-        # none, since the public gentian-org GitHub needs nothing.
-        deployments-repository)  echo "${GENTIAN_DEPLOYMENTS_AUTH:-basic}" ;;
-        gentian-os-repository)   echo "${GENTIAN_OS_AUTH:-none}" ;;
-        gentian-apps-repository) echo "${GENTIAN_APPS_AUTH:-none}" ;;
-        gentian-ui-repository)   echo "${GENTIAN_UI_AUTH:-none}" ;;
-        *)                       echo "" ;;
-    esac
+# =============================================================================
+# Repository credentials
+#
+# One row for every repository the installer may hold a credential for:
+#
+#   requirement | name in the vault | variable stem | mode when install.env is silent
+#
+# The stem gives the four variables a repository has -- GENTIAN_<stem>_REPO,
+# _AUTH, _GIT_USERNAME and _GIT_TOKEN -- and the mode is none, basic or bearer.
+# The deployments repository is private wherever it lives, so it authenticates
+# unless told otherwise; the platform's own are public unless mirrored.
+#
+# Everything that prompts for, validates, stores, recovers or hands on one of
+# these credentials reads this table, so a repository is added here and
+# nowhere else.
+# =============================================================================
+GENTIAN_REPO_CREDENTIALS=(
+    "deployments-repository|deployments|DEPLOYMENTS|basic"
+    "gentian-os-repository|gentian-os|OS|none"
+    "gentian-ui-repository|gentian-ui|UI|none"
+)
+
+# _repo_credential <requirement> <what> -- one fact about a repository's
+# credential. `vault` and `default` answer a value; `repo`, `auth`, `username`
+# and `token` answer the NAME of the variable that holds it. Fails, printing
+# nothing, for a requirement that is not a repository's.
+_repo_credential() {
+    local row req vault stem default
+    for row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        IFS='|' read -r req vault stem default <<<"${row}"
+        [[ "${req}" == "$1" ]] || continue
+        case "$2" in
+            vault)    echo "${vault}" ;;
+            default)  echo "${default}" ;;
+            repo)     echo "GENTIAN_${stem}_REPO" ;;
+            auth)     echo "GENTIAN_${stem}_AUTH" ;;
+            username) echo "GENTIAN_${stem}_GIT_USERNAME" ;;
+            token)    echo "GENTIAN_${stem}_GIT_TOKEN" ;;
+            *)        return 1 ;;
+        esac
+        return 0
+    done
+    return 1
 }
+
+# _repo_credential_mode <requirement> -- how that repository authenticates:
+# what install.env says, else the table's default. Empty for a requirement
+# that is not a repository's.
+_repo_credential_mode() {
+    local auth_var default
+    auth_var="$(_repo_credential "$1" auth)" || return 0
+    default="$(_repo_credential "$1" default)"
+    echo "${!auth_var:-${default}}"
+}
+
+# Every repository's pair is cached, whichever repository it is.
+for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+    for _what in username token; do
+        _var="$(_repo_credential "${_row%%|*}" "${_what}")"
+        if [[ " ${_GENTIAN_CACHED_CREDENTIAL_VARS[*]} " != *" ${_var} "* ]]; then
+            _GENTIAN_CACHED_CREDENTIAL_VARS+=("${_var}")
+        fi
+    done
+done
+unset _row _what _var
 
 # _edge_ingress_provider — which EdgeIngress this cluster runs.
 #
@@ -366,7 +461,7 @@ _edge_ingress_provider() {
 
 # _requirement_applies <req> — whether this cluster needs the credential at all.
 #
-# The catalogue describes the platform, so it can say a credential is optional
+# The catalog describes the platform, so it can say a credential is optional
 # but not whether this particular cluster uses the thing it unlocks. That answer
 # comes from the cluster's own configuration, and it belongs here rather than in
 # `optional:`, which would then mean two different things at once.
@@ -374,11 +469,6 @@ _edge_ingress_provider() {
 # A requirement that does not apply is never prompted for and never validated.
 _requirement_applies() {
     case "$1" in
-        infra-chart-registry)
-            # Infra charts come from a public URL unless the cluster says
-            # otherwise, and a public registry has no credential to give.
-            [[ "${INFRA_CHART_PRIVATE:-false}" == "true" ]]
-            ;;
         acme-dns-*|edge-ingress-*)
             # One rule for every provider table: the requirement applies when
             # it names the provider this cluster actually runs. Which provider
@@ -410,16 +500,40 @@ _requirement_applies() {
                 *)          return 0 ;;
             esac
             ;;
-        # The four repo-credential requirements, gated on their own
-        # GENTIAN_*_AUTH var rather than optional: true/false — "does this
-        # cluster's config actually need a credential" is a per-repo question
-        # (what host it points at), not a fixed platform-wide answer.
-        deployments-repository|gentian-os-repository|gentian-apps-repository|gentian-ui-repository)
-            [[ "$(_repo_auth_for "$1")" != "none" ]]
+        # A repository's credential is wanted exactly when that repository
+        # authenticates. Which ones do is install.env's to say, repository by
+        # repository: it depends on where each one is hosted, so the catalog
+        # cannot mark it optional or required once for every cluster.
+        deployments-repository|gentian-*-repository)
+            [[ "$(_repo_credential_mode "$1")" != "none" ]]
+            ;;
+        smtp-relay)
+            # A relay account only where mail leaves through a relay. Under
+            # system mail the cluster runs its own MTA and derives its password.
+            [[ "$(gentian_mail_service_mode)" == "external" ]]
+            ;;
+        argocd-github-webhook)
+            # Nothing configures Argo CD's webhook from this credential yet, so
+            # nothing on any cluster requests it. Applies again once something
+            # reads it.
+            return 1
             ;;
         *)
             return 0
             ;;
+    esac
+}
+
+# _requirement_entered_later <req> — a credential this cluster may use and the
+# installer neither asks for, checks nor stores.
+#
+# It applies, so its declaration and probe are on the cluster and the
+# Credentials screen has a form for it; whoever needs it enters it there, and
+# the custodian checks it. An install without it is complete.
+_requirement_entered_later() {
+    case "$1" in
+        infra-chart-registry) return 0 ;;
+        *)                    return 1 ;;
     esac
 }
 
@@ -430,43 +544,27 @@ _requirement_applies() {
 # _validate_requirement <name> — run the declared probe against the collected
 # values. Returns 0 when satisfied or when there is nothing to check.
 _validate_requirement() {
-    local name="$1" vtype vhost vurl
+    local name="$1" vtype vurl
     vtype="$(catalogue_get "${name}" 'validate.type' 2>/dev/null || echo noop)"
     [[ -n "${vtype}" && "${vtype}" != "null" ]] || vtype=noop
     [[ "${vtype}" == "noop" ]] && return 0
 
-    vhost="$(catalogue_get "${name}" 'validate.host' 2>/dev/null || true)"
     vurl="$(catalogue_get "${name}" 'validate.url' 2>/dev/null || true)"
 
-    local user pass
     case "${vtype}" in
-        oci-registry)
-            user="${REGISTRY_USER:-}"; pass="${REGISTRY_PASSWORD:-}"
-            [[ -n "${pass}" ]] || return 0
-            run_validator oci-registry "${vhost:-${INFRA_CHART_REPO:-}}" "${user}" "${pass}"
-            ;;
         git-https)
-            # deployments-repository, gentian-os-repository,
-            # gentian-apps-repository, gentian-ui-repository all validate
-            # this way; only the REPO var differs by name, since
-            # _env_var_for already gives the right username/password vars
-            # for any of the four, and _repo_auth_for the auth type.
-            local repo_var user_var token_var auth
-            case "${name}" in
-                deployments-repository)  repo_var=GENTIAN_DEPLOYMENTS_REPO ;;
-                gentian-os-repository)   repo_var=GENTIAN_OS_REPO ;;
-                gentian-apps-repository) repo_var=GENTIAN_APPS_REPO ;;
-                gentian-ui-repository)   repo_var=GENTIAN_UI_REPO ;;
-                *) error "git-https validator: no REPO var known for requirement '${name}'."; return 1 ;;
-            esac
-            user_var="$(_env_var_for "${name}" username)"
-            token_var="$(_env_var_for "${name}" password)"
-            auth="$(_repo_auth_for "${name}")"
-            [[ -n "${!token_var:-}" ]] || return 0
-            run_validator git-https "${!repo_var:-}" \
-                "${!user_var:-x-access-token}" \
-                "${!token_var}" \
-                "${auth:-basic}"
+            # Every repository credential is probed the same way: the table
+            # names its variables and its mode says how the token is sent.
+            local repo_name user_name token_name
+            repo_name="$(_repo_credential "${name}" repo)" || {
+                error "git-https: '${name}' is not a repository credential the installer knows."
+                return 1
+            }
+            user_name="$(_repo_credential "${name}" username)"
+            token_name="$(_repo_credential "${name}" token)"
+            [[ -n "${!token_name:-}" ]] || return 0
+            run_validator git-https "${!repo_name:-}" "${!user_name:-x-access-token}" \
+                "${!token_name}" "$(_repo_credential_mode "${name}")"
             ;;
         oidc-discovery)
             [[ -n "${CF_API_TOKEN:-}" ]] || return 0
@@ -486,7 +584,7 @@ _validate_requirement() {
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."
             error "  Bootstrap validators are curl/openssl only. A validator that needs more"
-            error "  belongs to phase: runtime, where the credential manager checks it in Go —"
+            error "  belongs to phase: runtime, where the custodian checks it in Go —"
             error "  which is where 'smtp' went, and why nothing here implements it."
             return 1
             ;;
@@ -540,15 +638,14 @@ _reprompt_requirement() {
 _prompt_field() {
     local req="$1" key="$2" var secret minlen example label value
 
-    # bearer auth is a token only — no username to collect. Basic and the
-    # unmapped-field guard below both still apply normally.
-    if [[ "${key}" == "username" ]] && [[ "$(_repo_auth_for "${req}")" == "bearer" ]]; then
+    # A bearer credential is the token alone: there is no username to ask for.
+    if [[ "${key}" == "username" && "$(_repo_credential_mode "${req}")" == "bearer" ]]; then
         return 0
     fi
 
     var="$(_env_var_for "${req}" "${key}")"
     if [[ -z "${var}" ]]; then
-        # A field the catalogue declares and this mapping does not know. Skipping
+        # A field the catalog declares and this mapping does not know. Skipping
         # it silently is how a required credential goes uncollected: nothing
         # prompts, the noop validator reports OK, and the install fails much
         # later complaining that the variable is unset.
@@ -647,7 +744,7 @@ _prompt_field() {
 # collect_bootstrap_credentials — the whole of install-time credential entry.
 #
 # One pass over credentials.yaml, so what the installer asks for is decided by
-# the catalogue rather than by a prompt written per credential. Adding a
+# the catalog rather than by a prompt written per credential. Adding a
 # bootstrap credential is an entry in that file and nothing here.
 collect_bootstrap_credentials() {
     if [[ ! -f "${GENTIAN_CATALOGUE_FILE}" ]]; then
@@ -659,11 +756,11 @@ collect_bootstrap_credentials() {
     info "From ${GENTIAN_CATALOGUE_FILE##*/} — phase: bootstrap only."
 
     # Before prompting: a previous attempt's answers, if this bootstrap has not
-    # reached OpenBao yet.
-    _load_credential_cache
+    # reached OpenBao yet -- and only if the cache is this cluster's.
+    _load_credential_cache || return 1
 
     # Iterate over command substitution rather than `while read … done < <(…)`.
-    # That form redirects the loop body's stdin to the catalogue stream, so the
+    # That form redirects the loop body's stdin to the catalog stream, so the
     # `read` inside _prompt_field consumes the next requirement name instead of
     # the operator's answer — every prompt returns empty and the install fails
     # later complaining the variable is unset. Names and field keys never
@@ -674,6 +771,10 @@ collect_bootstrap_credentials() {
             # Said out loud: a prompt that silently does not happen is
             # indistinguishable from one that was skipped by mistake.
             info "${req}: not required by this cluster's configuration."
+            continue
+        fi
+        if _requirement_entered_later "${req}"; then
+            info "${req}: optional and not asked for here; entered in the Credentials screen once the cluster runs."
             continue
         fi
         for key in $(catalogue_field_keys "${req}"); do
@@ -690,13 +791,14 @@ collect_bootstrap_credentials() {
     local failed=0
     for req in $(catalogue_names bootstrap); do
         _requirement_applies "${req}" || continue
+        _requirement_entered_later "${req}" && continue
         if _validate_requirement "${req}"; then
             success "${req}"
             continue
         fi
 
         # Successes are named, so a failure that is not leaves the operator
-        # matching an endpoint URL against the catalogue to find out which
+        # matching an endpoint URL against the catalog to find out which
         # credential to fix.
         error "  requirement: ${req} ($(catalogue_get "${req}" displayName 2>/dev/null))"
         error "  value from:  $(_requirement_source "${req}")"
@@ -734,7 +836,7 @@ collect_bootstrap_credentials() {
     # kernel credential is HMAC(master+salt, …), so a second salt silently
     # renames every derived secret the cluster is already using. That is not
     # hypothetical — the recovery path used to be try_load_creds_from_openbao,
-    # which needs a root token, and E-04 revokes the only one the installer
+    # which needs a root token, and E-03 revokes the only one the installer
     # knows at handover. Every re-run after handover therefore found no salt,
     # minted a fresh one, and derived an administrator password that had never
     # been valid, while Keycloak still held the one derived from the original.
@@ -752,25 +854,59 @@ collect_bootstrap_credentials() {
     # loads that file, finds the variable set, and never asks the cluster. The
     # cluster is the only party that knows which salt its secrets were built
     # with, and disagreeing with it cannot produce a working credential.
-    local cluster_salt
-    cluster_salt="$(gentian_cluster_derivation_salt || true)"
-    if [[ -n "${cluster_salt}" ]]; then
-        if [[ -n "${DERIVATION_SALT:-}" && "${DERIVATION_SALT}" != "${cluster_salt}" ]]; then
-            warn "The derivation salt in this shell is not this cluster's; using the cluster's."
-            warn "  Anything derived from the other one — including the portal password a"
-            warn "  previous run may have printed — was never valid here."
-        fi
-        DERIVATION_SALT="${cluster_salt}"
-    fi
-    if [[ -z "${DERIVATION_SALT:-}" ]]; then
-        DERIVATION_SALT="$(openssl rand -hex 16)"
-        info "Generated a new derivation salt."
-    fi
-    export DERIVATION_SALT
+    _settle_derivation_salt || return 1
 
     # After the salt, so a resumed run derives the same values it started with.
     _save_credential_cache
 
     echo ""
     success "Credentials collected and validated."
+}
+
+# _settle_derivation_salt — the salt this run derives with: the cluster's
+# when it has one, the one already here otherwise, a new one on a first
+# install. See collect_bootstrap_credentials for why the cluster's wins.
+#
+# The cluster's wins only over a salt from a cluster that has been shown to be
+# this one. A different salt on a cluster that is installed but whose identity
+# could not be confirmed (it holds no Cluster object to compare with the
+# definition yet) is the strongest sign there is that kubectl reaches the
+# wrong cluster, and adopting its salt is how one cluster's salt reached
+# another's cache. That stops the run instead.
+_settle_derivation_salt() {
+    local cluster_salt
+    cluster_salt="$(gentian_cluster_derivation_salt || true)"
+    if [[ -n "${cluster_salt}" ]]; then
+        if [[ -n "${DERIVATION_SALT:-}" && "${DERIVATION_SALT}" != "${cluster_salt}" ]]; then
+            if ! gentian_cluster_identity_verified; then
+                local from
+                from="DERIVATION_SALT, $(_gentian_setting_source DERIVATION_SALT)"
+                [[ -n "${GENTIAN_RECOVER_FROM:-}" ]] && from="the recovery kit ${GENTIAN_RECOVER_FROM}"
+                [[ "${_GENTIAN_SALT_FROM_CACHE}" == "1" ]] && from="the credential cache $(_credential_cache_file)"
+                echo "" >&2
+                error "The cluster kubectl reaches derives with a different salt from the one this run brought,"
+                error "  and it cannot be confirmed to be the cluster clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-?} describes:"
+                error "  it holds no Cluster object to compare with the definition yet."
+                error "  kube context:   $(_gentian_kube_context)"
+                error "  API server:     $(_gentian_kube_server)"
+                error "  salt from:      ${from}"
+                error "Stopped: nothing was cached, written or applied, and the salt was not changed."
+                error "What to do:"
+                _gentian_unset_hint
+                error "  - check which cluster this is: kubectl config current-context; switch with"
+                error "      kubectl config use-context <the cluster's context>"
+                error "  - if it is this cluster and the salt here is stale, unset DERIVATION_SALT and"
+                error "    remove $(_credential_cache_file), then run again: the cluster's salt is used."
+                return 1
+            fi
+            warn "The derivation salt in this shell is not this cluster's; using the cluster's."
+            warn "  Anything derived from the other one — including the portal password a"
+            warn "  previous run may have printed — was never valid here."
+            if [[ "${_GENTIAN_SALT_FROM_CACHE}" == "1" ]]; then _GENTIAN_CACHE_SALT_WRONG=1; fi
+        fi
+    fi
+    if [[ -z "${cluster_salt}" && -z "${DERIVATION_SALT:-}" ]]; then
+        info "Generated a new derivation salt."
+    fi
+    gentian_settle_derivation "" "${cluster_salt}"
 }

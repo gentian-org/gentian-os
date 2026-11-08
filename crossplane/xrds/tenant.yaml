@@ -28,14 +28,161 @@ spec:
                   type: string
                   description: >
                     Human-readable name for this tenant / organisation.
+                locales:
+                  type: array
+                  items:
+                    type: string
+                  description: >
+                    The languages this tenant's realm renders its login and
+                    account pages in, as ISO 639-1 codes. Empty means the
+                    platform's own set. Keycloak ships the translations, so
+                    this only says which to offer; a language the desktop has
+                    no catalogue for still logs in translated and then shows
+                    an English desktop.
                 domain:
                   type: string
                   description: >
-                    Optional custom app zone (e.g. "acme.com"). When omitted the
-                    tenant is served under "<name>.<kernelDomain>".
+                    The domain the tenant is served at, set by the operator: a
+                    custom domain a TenantDomain binds, the kernel domain for
+                    the user tenant of a single-tenancy cluster, otherwise
+                    "<name>.<kernelDomain>", which is also what an omitted
+                    value means.
                 adminEmail:
                   type: string
                   description: Contact address for platform notifications.
+                signUp:
+                  type: object
+                  description: >
+                    Whether people make their own accounts in the realm
+                    (spec.signUp on the Tenant). Enabled opens the realm's
+                    registration page with an e-mail confirmation and a
+                    proof-of-work check; such an account is in none of the
+                    tenant's groups.
+                  properties:
+                    enabled:
+                      type: boolean
+                brokeredTo:
+                  type: array
+                  maxItems: 8
+                  description: >
+                    Other tenants of the cluster this tenant's people sign in
+                    to (spec.signInTo here, spec.signInFrom there), projected
+                    by the operator. Each is given a client, broker-to-<name>,
+                    that sends people back to redirectURI only and
+                    authenticates the other realm by a JWT it signs, checked
+                    against the keys it publishes at jwksURL. No secret.
+                  items:
+                    type: object
+                    required: [name, redirectURI, jwksURL]
+                    properties:
+                      name:
+                        type: string
+                      redirectURI:
+                        type: string
+                      jwksURL:
+                        type: string
+                groups:
+                  type: array
+                  maxItems: 50
+                  description: >
+                    Groups of the tenant's realm declared in git
+                    (spec.groups on the Tenant), made as plain groups.
+                  items:
+                    type: string
+                signInFrom:
+                  type: array
+                  maxItems: 16
+                  description: >
+                    Other tenants of the cluster whose people sign in here,
+                    with both tenants' consent (spec.signInFrom here and
+                    spec.signInTo there). Each is an identity provider, alias,
+                    for the other realm, authenticating with a JWT this realm
+                    signs, trusting its verified addresses, and putting each
+                    person in groups (realm paths) at every sign-in.
+                  items:
+                    type: object
+                    required: [tenant, alias, displayName, realm, clientID]
+                    properties:
+                      tenant:
+                        type: string
+                      alias:
+                        type: string
+                      displayName:
+                        type: string
+                      realm:
+                        type: string
+                      clientID:
+                        type: string
+                      groups:
+                        type: array
+                        items:
+                          type: string
+                kernelBroker:
+                  type: boolean
+                  description: >
+                    The tenant lets the platform's administrators sign in to
+                    it (Tenant spec.platformAccess.adminsEnter). The realm
+                    then carries the identity provider "kernel", for members
+                    of gentian:platform:admin only, who land in the tenant's
+                    admins group at every sign-in through it.
+                kernelEnter:
+                  type: array
+                  maxItems: 1000
+                  description: >
+                    Projected onto the tenant that adopts the kernel realm:
+                    every tenant that lets the platform's administrators sign
+                    in to it, each given the client its realm's provider
+                    "kernel" signs in to the kernel realm with.
+                  items:
+                    type: object
+                    required: [tenant, realm]
+                    properties:
+                      tenant:
+                        type: string
+                      realm:
+                        type: string
+                partners:
+                  type: array
+                  maxItems: 1000
+                  description: >
+                    The tenant's partners (spec.partners on the Tenant, with
+                    the Cluster claim's defaults, within its allowedIssuers),
+                    projected by the operator with as and the pairwise salt
+                    filled in. issue composes the partner client and the
+                    scope partner-<name>; accept the identity provider
+                    partner-<name> with the JWT authorization grant.
+                  items:
+                    type: object
+                    required: [name, issuer, as, salt]
+                    properties:
+                      name:
+                        type: string
+                      issuer:
+                        type: string
+                      as:
+                        type: string
+                      salt:
+                        type: string
+                      issue:
+                        type: boolean
+                      accept:
+                        type: object
+                        required: [accounts]
+                        properties:
+                          accounts:
+                            type: string
+                            enum: [link, create, organization]
+                          domain:
+                            type: string
+                          displayName:
+                            type: string
+                serviceAccountIssuer:
+                  type: string
+                  description: >
+                    The issuer of the cluster's service account tokens, which
+                    the realm trusts for its partner apps' clients (the
+                    identity provider "kubernetes"). Read by the operator
+                    from its own token.
                 kernelDomain:
                   type: string
                   description: >
@@ -67,6 +214,52 @@ spec:
                       description: >
                         Prefix for all S3 bucket names (e.g. "acme-"). Defaults to
                         "{name}-".
+                security:
+                  type: object
+                  description: >
+                    The realm policy this tenant runs under, as the console
+                    sets it and the composition applies it. Every field maps to
+                    something Keycloak's realm already has; nothing here is
+                    enforced by Gentian on top of it.
+                  properties:
+                    password:
+                      type: object
+                      description: How strong a password has to be.
+                      properties:
+                        minLength:
+                          type: integer
+                        requireDigits:
+                          type: boolean
+                        requireLowercase:
+                          type: boolean
+                        requireUppercase:
+                          type: boolean
+                        requireSpecialChars:
+                          type: boolean
+                        historyCount:
+                          type: integer
+                        maxAgeDays:
+                          type: integer
+                    session:
+                      type: object
+                      description: How long a sign-in lasts.
+                      properties:
+                        idleMinutes:
+                          type: integer
+                        maxHours:
+                          type: integer
+                        rememberMe:
+                          type: boolean
+                    bruteForce:
+                      type: object
+                      description: What happens after repeated failures.
+                      properties:
+                        enabled:
+                          type: boolean
+                        maxLoginFailures:
+                          type: integer
+                        lockoutDurationSeconds:
+                          type: integer
                 mail:
                   type: object
                   description: Mail stack configuration.
@@ -75,14 +268,49 @@ spec:
                       type: string
                       description: Mail delivery strategy. Defaults to "selfhosted".
                       default: selfhosted
-                    domain:
-                      type: string
-                      description: Mail domain. Defaults to spec.domain.
                     smtpCredentialsSecret:
                       type: string
                       description: >
                         Name of a Secret in the kernel namespace containing SMTP
                         relay credentials. Required when mode=external.
+                realmMail:
+                  type: object
+                  description: >
+                    The mail server the tenant's realm sends invitations and
+                    password resets through. Stated by the operator, not by a
+                    person, and only once the Secret that holds the password
+                    exists: the cluster's own mail and the login minted for
+                    this realm, or the cluster's relay. Absent, the realm is
+                    declared without a mail server. The password is named by
+                    reference and is never a value here.
+                  required: [host, port, from, username, passwordSecretRef]
+                  properties:
+                    host:
+                      type: string
+                    port:
+                      type: string
+                    from:
+                      type: string
+                      description: The sender address of the realm's mail.
+                    username:
+                      type: string
+                      description: The login the realm presents to the mail server.
+                    ssl:
+                      type: boolean
+                      description: TLS from the first byte (port 465).
+                    starttls:
+                      type: boolean
+                    passwordSecretRef:
+                      type: object
+                      description: >
+                        The Secret beside Keycloak, in the identity namespace,
+                        that holds the login's password, and its key.
+                      required: [name, key]
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
                 quotas:
                   type: object
                   description: Resource consumption limits for this tenant.
@@ -125,42 +353,6 @@ spec:
                   enum:
                     - Retain
                     - Delete
-                apps:
-                  type: array
-                  description: Applications to install for this tenant.
-                  items:
-                    type: object
-                    required:
-                      - profile
-                    properties:
-                      profile:
-                        type: string
-                        description: Name of the AppProfile CR to install.
-                      variant:
-                        type: string
-                        description: >
-                          Optional Composition variant selector.  When set, the generated
-                          App claim uses spec.compositionRef.name: app-{variant} instead
-                          of the cluster default Composition.  Example: "ox" selects the
-                          app-ox Composition for OX App Suite.
-                      config:
-                        type: object
-                        description: Per-tenant overrides for this app.
-                        x-kubernetes-preserve-unknown-fields: true
-                      addons:
-                        type: array
-                        description: |
-                          Addon identifiers to activate inside this app, already
-                          resolved by the operator from the tenant's selected addon
-                          AppProfiles to whatever the hosting app's own addon system
-                          calls them (an Odoo module name, a Nextcloud app id).
-
-                          Resolving in the operator keeps compositions free of
-                          catalogue lookups; the mapping itself is declared per addon
-                          in spec.customization.addon.id, so app-specific knowledge
-                          stays in gentian-apps.
-                        items:
-                          type: string
             status:
               type: object
               properties:

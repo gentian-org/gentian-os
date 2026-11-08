@@ -11,10 +11,200 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: keycloak-idp-theme
-  namespace: platform-kernel
+  namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
+  account__resources__css__gentian-account.css: |-
+    /* The account console, in the product's colours.
+     *
+     * Keycloak's consoles are PatternFly, and PatternFly exposes its palette,
+     * typography and radii as CSS custom properties. Remapping those is the whole
+     * of this file: no selectors that depend on PatternFly's class names, because
+     * those change between its major versions and ours would then style nothing
+     * while looking like it still did.
+     *
+     * Both v5 and v6 prefixes are written. Keycloak 26.0 renders v5; later
+     * releases move to v6, and a variable nobody reads costs nothing.
+     *
+     * Tokens are the design system's, frontend/design-system/gentian-theme.css in
+     * gentian-ui, copied rather than imported: this stylesheet is served by
+     * Keycloak from its own origin and cannot reach the desktop's assets.
+     */
+
+    /* Every --gtn-* below reads a --brand-* token and keeps the platform's own
+     * value when the token is absent. Nothing loads the tokens on this page: the
+     * brand is not served from the identity provider's host. */
+
+    :root {
+      --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+      --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+      --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+      --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+      --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+      --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+      --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+      --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1b1a82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
+      --gtn-border: rgba(20, 21, 46, 0.1);
+      --gtn-border-strong: rgba(20, 21, 46, 0.22);
+      --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif);
+
+      /* Surfaces */
+      --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v5-global--BackgroundColor--200: var(--gtn-paper-0);
+      --pf-v5-global--BackgroundColor--light-300: var(--gtn-paper-1);
+      --pf-v6-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v6-global--BackgroundColor--200: var(--gtn-paper-0);
+
+      /* Text */
+      --pf-v5-global--Color--100: var(--gtn-ink-1);
+      --pf-v5-global--Color--200: var(--gtn-ink-3);
+      --pf-v5-global--Color--dark-100: var(--gtn-ink-1);
+      --pf-v5-global--Color--dark-200: var(--gtn-ink-3);
+      --pf-v6-global--Color--100: var(--gtn-ink-1);
+      --pf-v6-global--Color--200: var(--gtn-ink-3);
+
+      /* Accent */
+      --pf-v5-global--primary-color--100: var(--gtn-500);
+      --pf-v5-global--primary-color--200: var(--gtn-700);
+      --pf-v5-global--active-color--100: var(--gtn-500);
+      --pf-v5-global--link--Color: var(--gtn-500);
+      --pf-v5-global--link--Color--hover: var(--gtn-600);
+      --pf-v6-global--primary-color--100: var(--gtn-500);
+      --pf-v6-global--link--Color: var(--gtn-500);
+
+      /* Lines */
+      --pf-v5-global--BorderColor--100: var(--gtn-border-strong);
+      --pf-v5-global--BorderColor--200: var(--gtn-border);
+      --pf-v5-global--BorderColor--300: var(--gtn-border);
+      --pf-v6-global--BorderColor--100: var(--gtn-border-strong);
+
+      /* Type */
+      --pf-v5-global--FontFamily--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--heading: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--heading: var(--gtn-font);
+      --pf-v6-global--FontFamily--text: var(--gtn-font);
+
+      /* The masthead is the one band that reads as someone else's product. */
+      --pf-v5-c-masthead--BackgroundColor: var(--gtn-ink-1);
+      --pf-v5-global--BackgroundColor--dark-100: var(--gtn-ink-1);
+      --pf-v6-c-masthead--BackgroundColor: var(--gtn-ink-1);
+    }
+
+    body {
+      font-family: var(--gtn-font);
+    }
+  account__theme.properties: |-
+    # Gentian account console theme. Same reasoning as the admin one beside it:
+    # restyle what Keycloak draws, do not redraw it.
+    parent=keycloak.v2
+    import=common/keycloak
+
+    styles=css/gentian-account.css
+  admin__resources__css__gentian-admin.css: |-
+    /* The administration console, in the product's colours.
+     *
+     * Keycloak's consoles are PatternFly, and PatternFly exposes its palette,
+     * typography and radii as CSS custom properties. Remapping those is the whole
+     * of this file: no selectors that depend on PatternFly's class names, because
+     * those change between its major versions and ours would then style nothing
+     * while looking like it still did.
+     *
+     * Both v5 and v6 prefixes are written. Keycloak 26.0 renders v5; later
+     * releases move to v6, and a variable nobody reads costs nothing.
+     *
+     * Tokens are the design system's, frontend/design-system/gentian-theme.css in
+     * gentian-ui, copied rather than imported: this stylesheet is served by
+     * Keycloak from its own origin and cannot reach the desktop's assets.
+     */
+
+    /* Every --gtn-* below reads a --brand-* token and keeps the platform's own
+     * value when the token is absent. Nothing loads the tokens on this page: the
+     * brand is not served from the identity provider's host. */
+
+    :root {
+      --gtn-ink-0: var(--brand-color-ink-0, #07081a);
+      --gtn-ink-1: var(--brand-color-ink-1, #14152e);
+      --gtn-ink-3: var(--brand-color-ink-3, #45486b);
+      --gtn-ink-4: var(--brand-color-ink-4, #74779a);
+      --gtn-paper-0: var(--brand-color-paper-0, #f4f1ea);
+      --gtn-paper-1: var(--brand-color-paper-1, #ece8df);
+      --gtn-paper-2: var(--brand-color-paper-2, #ded9cc);
+      --gtn-paper-3: var(--brand-color-paper-3, #ffffff);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1b1a82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
+      --gtn-border: rgba(20, 21, 46, 0.1);
+      --gtn-border-strong: rgba(20, 21, 46, 0.22);
+      --gtn-font: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif);
+
+      /* Surfaces */
+      --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v5-global--BackgroundColor--200: var(--gtn-paper-0);
+      --pf-v5-global--BackgroundColor--light-300: var(--gtn-paper-1);
+      --pf-v6-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v6-global--BackgroundColor--200: var(--gtn-paper-0);
+
+      /* Text */
+      --pf-v5-global--Color--100: var(--gtn-ink-1);
+      --pf-v5-global--Color--200: var(--gtn-ink-3);
+      --pf-v5-global--Color--dark-100: var(--gtn-ink-1);
+      --pf-v5-global--Color--dark-200: var(--gtn-ink-3);
+      --pf-v6-global--Color--100: var(--gtn-ink-1);
+      --pf-v6-global--Color--200: var(--gtn-ink-3);
+
+      /* Accent */
+      --pf-v5-global--primary-color--100: var(--gtn-500);
+      --pf-v5-global--primary-color--200: var(--gtn-700);
+      --pf-v5-global--active-color--100: var(--gtn-500);
+      --pf-v5-global--link--Color: var(--gtn-500);
+      --pf-v5-global--link--Color--hover: var(--gtn-600);
+      --pf-v6-global--primary-color--100: var(--gtn-500);
+      --pf-v6-global--link--Color: var(--gtn-500);
+
+      /* Lines */
+      --pf-v5-global--BorderColor--100: var(--gtn-border-strong);
+      --pf-v5-global--BorderColor--200: var(--gtn-border);
+      --pf-v5-global--BorderColor--300: var(--gtn-border);
+      --pf-v6-global--BorderColor--100: var(--gtn-border-strong);
+
+      /* Type */
+      --pf-v5-global--FontFamily--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--heading: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--heading: var(--gtn-font);
+      --pf-v6-global--FontFamily--text: var(--gtn-font);
+
+      /* The masthead is the one band that reads as someone else's product. */
+      --pf-v5-c-masthead--BackgroundColor: var(--gtn-ink-1);
+      --pf-v5-global--BackgroundColor--dark-100: var(--gtn-ink-1);
+      --pf-v6-c-masthead--BackgroundColor: var(--gtn-ink-1);
+    }
+
+    body {
+      font-family: var(--gtn-font);
+    }
+  admin__theme.properties: |-
+    # Gentian administration console theme.
+    #
+    # Extends keycloak.v2, which is the console Keycloak actually ships: a compiled
+    # React application on PatternFly rendered from one template. A theme can
+    # change how it looks and not how it is laid out, and overriding the template
+    # means reworking it on every Keycloak release — which is a surface we do not
+    # want to own for a screen we embed rather than write.
+    #
+    # So this is a stylesheet and nothing else. It remaps PatternFly's own custom
+    # properties to the design system's tokens, which is the supported seam.
+    parent=keycloak.v2
+    import=common/keycloak
+
+    styles=css/gentian-admin.css
   login__login-reset-password.ftl: |-
     <#import "template.ftl" as layout>
     <@layout.registrationLayout displayMessage=false; section>
@@ -110,9 +300,130 @@ data:
               ${msg("doForgotPassword")}
             </a>
           </#if>
+
+          <#-- The identity providers an administrator added to this realm and
+               left visible: another realm, or another cluster, whose people
+               sign in here with their own account (docs/guides/identity-brokering.md).
+               Keycloak lists only those not set to "Hide on login page", which
+               is how the platform's own brokers (the kernel realm, vouching)
+               stay off this page. -->
+          <#if social.providers?? && social.providers?has_content>
+            <div class="gentian-login__providers" id="kc-social-providers">
+              <p class="gentian-login__subtitle">${msg("identity-provider-login-label")}</p>
+              <#list social.providers as p>
+                <a class="gentian-login__provider" id="social-${p.alias}" href="${p.loginUrl}">${p.displayName!}</a>
+              </#list>
+            </div>
+          </#if>
+
+          <#-- Only in a realm that takes sign-ups (a tenant created with sign-up
+               on); every other realm's people are invited. Keycloak's own words
+               and its own condition, as its base theme shows the link. -->
+          <#if realm.registrationAllowed && !registrationDisabled??>
+            <p class="gentian-login__subtitle">
+              ${msg("noAccount")}
+              <a class="gentian-login__link" id="kc-registration" href="${url.registrationUrl}">${msg("doRegister")}</a>
+            </p>
+          </#if>
         </#if>
       </div>
     </#if>
+    </@layout.registrationLayout>
+  login__messages__messages_de.properties: |-
+    gentianPowWorking=Prüfung, dass dies ein Browser ist… einen Moment.
+    gentianPowDone=Geprüft. Sie können das Konto anlegen.
+    gentianPowFailed=Die Prüfung, dass dies ein Browser ist, kam nicht zu Ende. Laden Sie die Seite neu und versuchen Sie es noch einmal.
+    identity-provider-login-label=Oder anmelden mit
+  login__messages__messages_en.properties: |-
+    # The platform's own strings on the login pages. Keycloak's are the parent
+    # theme's; these are the ones it has no word for.
+    gentianPowWorking=Checking that this is a browser… a moment.
+    gentianPowDone=Checked. You can create the account.
+    gentianPowFailed=The check that this is a browser did not complete. Reload the page and try again.
+    identity-provider-login-label=Or sign in with
+  login__register.ftl: |-
+    <#-- The registration page, when a tenant takes sign-ups (spec.signUp.enabled).
+
+         keycloak.v2's register.ftl of the Keycloak the platform runs (26.8.0), with
+         one addition: the platform's proof-of-work check (gentian-pow-captcha) puts
+         its challenge on the page, and js/pow-captcha.js has the browser solve it
+         before the form can be sent. Nothing else is changed, so that a newer
+         Keycloak's page can be taken over again by taking its file and adding the
+         one block. A realm that takes no sign-ups never renders this page. -->
+    <#import "template.ftl" as layout>
+    <#import "field.ftl" as field>
+    <#import "user-profile-commons.ftl" as userProfileCommons>
+    <#import "register-commons.ftl" as registerCommons>
+    <#import "password-validation.ftl" as validator>
+    <@layout.registrationLayout displayMessage=messagesPerField.exists('global') displayRequiredFields=true; section>
+    <!-- template: register.ftl -->
+
+        <#if section = "header">
+            <#if messageHeader??>
+                ${msg(messageHeader)}
+            <#else>
+                ${msg("registerTitle")}
+            </#if>
+        <#elseif section = "form">
+            <form id="kc-register-form" class="${properties.kcFormClass!}" action="${url.registrationAction}" method="post" novalidate="novalidate">
+                <@userProfileCommons.userProfileFormFields; callback, attribute>
+                    <#if callback = "afterField">
+                    <#-- render password fields just under the username or email (if used as username) -->
+                        <#if passwordRequired?? && (attribute.name == 'username' || (attribute.name == 'email' && realm.registrationEmailAsUsername))>
+                            <@field.password name="password" required=true label=msg("password") autocomplete="new-password" />
+                            <@field.password name="password-confirm" required=true label=msg("passwordConfirm") autocomplete="new-password" />
+                        </#if>
+                    </#if>
+                </@userProfileCommons.userProfileFormFields>
+
+                <#if gentianPow??>
+                    <div class="${properties.kcFormGroupClass!}" id="gentian-pow" data-salt="${gentianPow.salt}" data-bits="${gentianPow.bits}">
+                        <input type="hidden" id="gentian-pow-answer" name="gentian_pow" value=""/>
+                        <p id="gentian-pow-status" class="gentian-pow-status" aria-live="polite" data-done="${msg("gentianPowDone")}">${msg("gentianPowWorking")}</p>
+                    </div>
+                </#if>
+
+                <@registerCommons.termsAcceptance/>
+
+                <#if recaptchaRequired?? && (recaptchaVisible!false)>
+                    <div class="form-group">
+                        <div class="${properties.kcInputWrapperClass!}">
+                            <div class="g-recaptcha" data-size="compact" data-sitekey="${recaptchaSiteKey}" data-action="${recaptchaAction}"></div>
+                        </div>
+                    </div>
+                </#if>
+
+                <#if recaptchaRequired?? && !(recaptchaVisible!false)>
+                    <script>
+                        function onSubmitRecaptcha(token) {
+                            document.getElementById("kc-register-form").requestSubmit();
+                        }
+                    </script>
+                    <div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
+                        <button class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!} g-recaptcha"
+                                data-sitekey="${recaptchaSiteKey}" data-callback="onSubmitRecaptcha" data-action="${recaptchaAction}" type="submit" id="kc-submit">
+                            ${msg("doRegister")}
+                        </button>
+                    </div>
+                <#else>
+                    <div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
+                        <input class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}" type="submit" value="${msg("doRegister")}"/>
+                    </div>
+                </#if>
+
+                <div class="${properties.kcFormGroupClass!} pf-v5-c-login__main-footer-band">
+                    <div id="kc-form-options" class="${properties.kcFormOptionsClass!} pf-v5-c-login__main-footer-band-item">
+                        <div class="${properties.kcFormOptionsWrapperClass!}">
+                            <span><a href="${url.loginUrl}">${msg("backToLogin")}</a></span>
+                        </div>
+                    </div>
+                </div>
+
+            </form>
+
+            <@validator.templates/>
+            <@validator.script field="password"/>
+        </#if>
     </@layout.registrationLayout>
   login__resources__css__gentian-login.css: |-
     /* Gentian login theme.
@@ -131,26 +442,31 @@ data:
      *     theme into a derived Keycloak image where binary assets belong.
      */
 
+    /* The brand's --brand-* custom properties arrive in a stylesheet js/brand.js
+     * links from the cluster's bare domain, where the concierge serves it. Every
+     * --gtn-* below reads its token and keeps the platform's own value when the
+     * token is absent, or when the file is. */
+
     :root {
-      --gtn-paper-0: #F4F1EA;
-      --gtn-paper-3: #FFFFFF;
+      --gtn-paper-0: var(--brand-color-paper-0, #F4F1EA);
+      --gtn-paper-3: var(--brand-color-paper-3, #FFFFFF);
       --gtn-border: rgba(20, 21, 46, 0.10);
-      --gtn-ink-1: #14152E;
-      --gtn-ink-2: #232547;
-      --gtn-400: #4A4AB3;
-      --gtn-500: #262696;
-      --gtn-600: #1B1A82;
-      --gtn-700: #131370;
-      --gtn-50: #ECECF7;
-      --gtn-r1: 6px;
-      --gtn-r2: 10px;
+      --gtn-ink-1: var(--brand-color-ink-1, #14152E);
+      --gtn-ink-2: var(--brand-color-ink-2, #232547);
+      --gtn-400: var(--brand-color-brand-400, #4A4AB3);
+      --gtn-500: var(--brand-color-brand-500, #262696);
+      --gtn-600: var(--brand-color-brand-600, #1B1A82);
+      --gtn-700: var(--brand-color-brand-700, #131370);
+      --gtn-50: var(--brand-color-brand-50, #ECECF7);
+      --gtn-r1: var(--brand-radius-1, 6px);
+      --gtn-r2: var(--brand-radius-2, 10px);
       --gtn-shadow-3: 0 12px 28px -8px rgba(20, 21, 46, 0.14);
       --gtn-focus-ring: 0 0 0 3px rgba(74, 74, 179, 0.30);
-      --gtn-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --gtn-font-sans: var(--brand-font-family-sans, "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
       --gtn-dur-2: 200ms;
       --gtn-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-      --gtn-madder: #9B2D2D;
-      --gtn-madder-bg: #F2D9D9;
+      --gtn-madder: var(--brand-color-status-danger, #9B2D2D);
+      --gtn-madder-bg: var(--brand-color-status-danger-bg, #F2D9D9);
     }
 
     html, body { height: 100%; margin: 0; }
@@ -560,10 +876,237 @@ data:
       box-sizing: border-box;
     }
 
-    /* Keycloak renders identity-provider buttons and a registration link on the
-       login page; the portal's form had neither. */
-    .gentian-hidden, #kc-registration, #kc-registration-container,
-    #kc-social-providers, #kc-info { display: none !important; }
+    .gentian-hidden { display: none !important; }
+
+    /* The identity providers an administrator added (login.ftl): one outlined
+       button each, under the form. The platform's own brokers are not among
+       them -- they are hidden on the login page in the realm itself. */
+    .gentian-login__providers {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .gentian-login__provider {
+      display: block;
+      padding: 9px 24px;
+      border: 1px solid var(--gtn-border);
+      border-radius: var(--gtn-r1);
+      color: var(--gtn-ink-1, inherit);
+      background: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+    }
+    .gentian-login__provider:hover { border-color: var(--gtn-500); color: var(--gtn-600); }
+    .gentian-login__provider:focus-visible { outline: none; box-shadow: var(--gtn-focus-ring); }
+
+    /* The registration page's proof-of-work check: a line that says the browser
+       is working, then that it is done. */
+    .gentian-pow-status {
+      margin: 0 0 12px;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--gtn-ink-2);
+    }
+    .gentian-pow-status--done { color: var(--gtn-ink-1, var(--gtn-ink-2)); }
+  login__resources__js__brand.js: |-
+    /* The brand on the sign-in card: its colours, its name and its logo.
+     *
+     * The operator renders the brand from the Branding and the concierge serves
+     * it on the cluster's bare domain, which is this host without its first
+     * label (id.<kernel>). The colours are a stylesheet of --brand-* custom
+     * properties, linked here; the name and the logo are content, read from
+     * brand.json. Without either the card keeps the platform's own.
+     */
+    (function () {
+      var host = location.hostname;
+      if (location.protocol !== "https:" || host.indexOf("id.") !== 0) return;
+      var BASE = "https://" + host.slice(3) + "/branding/";
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = BASE + "brand.css";
+      document.head.appendChild(link);
+      function apply(brand) {
+        if (!brand || typeof brand.name !== "string" || !brand.name) return;
+        var titles = document.querySelectorAll(".gentian-login__title");
+        for (var i = 0; i < titles.length; i++) titles[i].textContent = brand.name;
+        var logos = document.querySelectorAll(".gentian-login__logo");
+        var icon = null;
+        (brand.icons || []).forEach(function (ic) {
+          if (!icon && ic && typeof ic.src === "string" && (!ic.purpose || ic.purpose.split(" ").indexOf("any") >= 0)) icon = ic;
+        });
+        for (var j = 0; j < logos.length; j++) {
+          logos[j].setAttribute("aria-label", brand.name);
+          if (icon) {
+            var url = new URL(icon.src, BASE).href;
+            if (/^https:\/\//.test(url)) logos[j].style.backgroundImage = 'url("' + url.replace(/"/g, "") + '")';
+          }
+        }
+        document.title = document.title.replace(/Gentian|Keycloak/g, brand.name);
+      }
+      function load() {
+        fetch(BASE + "brand.json", { cache: "no-cache", credentials: "omit" })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(apply)
+          .catch(function () {});
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", load);
+      } else {
+        load();
+      }
+    })();
+  login__resources__js__login-hint.js: |-
+    /* The address the concierge was given, filled in for the person.
+     *
+     * The router sends the browser to the workspace's desktop with the address on
+     * it as ?login_hint=. The desktop is behind the edge, which starts the
+     * sign-in and passes the address it was asked for to this page inside the
+     * request's `state` -- so the hint is in this page's own URL, and reading it
+     * needs no cookie and nothing stored anywhere.
+     *
+     * The edge's `state` is its own format and has changed between releases:
+     * "url=<address>&nonce=..." or the same fields as base64url JSON. Both are
+     * read. One this does not recognise fills nothing, which is the safe way to
+     * be wrong. The hint only ever becomes the value of the username field, and
+     * only when the person has not typed one.
+     *
+     * The same way carries kc_idp_hint: a desktop's address with
+     * ?kc_idp_hint=<alias> names one of the realm's identity providers, and this
+     * page goes to it at once instead of showing the form -- how a security
+     * officer reaches the platform through their own tenant's realm, and a
+     * platform administrator a tenant that let them in (iam.md 1.1c). Only to a
+     * provider the page itself lists: the link is the one Keycloak rendered for
+     * that alias, so a hint naming anything else does nothing.
+     */
+    (function () {
+      function original(state) {
+        if (!state) return "";
+        var plain = new URLSearchParams(state).get("url");
+        if (plain) return plain;
+        try {
+          var padded = state.replace(/-/g, "+").replace(/_/g, "/");
+          while (padded.length % 4) padded += "=";
+          var parsed = JSON.parse(atob(padded));
+          return typeof parsed.url === "string" ? parsed.url : "";
+        } catch (e) {
+          return "";
+        }
+      }
+      function hint() {
+        try {
+          var url = original(new URLSearchParams(window.location.search).get("state"));
+          if (!url) return "";
+          var value = new URL(url).searchParams.get("login_hint") || "";
+          // A username or an address, nothing longer or stranger.
+          return /^[^\s<>"'\\]{1,254}$/.test(value) ? value : "";
+        } catch (e) {
+          return "";
+        }
+      }
+      function providerHint() {
+        try {
+          var url = original(new URLSearchParams(window.location.search).get("state"));
+          if (!url) return "";
+          var alias = new URL(url).searchParams.get("kc_idp_hint") || "";
+          // An alias as the platform names them, nothing longer or stranger.
+          return /^[a-z0-9]([-a-z0-9]{0,62})?$/.test(alias) ? alias : "";
+        } catch (e) {
+          return "";
+        }
+      }
+      function follow() {
+        var alias = providerHint();
+        if (!alias) return false;
+        var link = document.getElementById("social-" + alias);
+        if (!link || !link.href) return false;
+        window.location.replace(link.href);
+        return true;
+      }
+      function fill() {
+        if (follow()) return;
+        var value = hint();
+        var field = document.getElementById("username");
+        if (!value || !field || field.value) return;
+        field.value = value;
+        var password = document.getElementById("password");
+        if (password) password.focus();
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fill);
+      } else {
+        fill();
+      }
+    })();
+  login__resources__js__pow-captcha.js: |-
+    // The browser's half of the proof-of-work check on the registration page
+    // (gentian-pow-captcha): find a number whose SHA-256, together with the salt
+    // the page carries, begins with as many zero bits as the page asks for, and
+    // put it in the form. About a second of work; the submit button waits for it.
+    //
+    // Nothing is loaded from anywhere and nothing is sent anywhere: the digest is
+    // the browser's own crypto.subtle, in a worker so the page stays responsive,
+    // on the main thread where there is no worker.
+    (function () {
+      "use strict";
+      var box = document.getElementById("gentian-pow");
+      if (!box) { return; }
+      var salt = box.getAttribute("data-salt") || "";
+      var bits = parseInt(box.getAttribute("data-bits") || "0", 10);
+      var answer = document.getElementById("gentian-pow-answer");
+      var status = document.getElementById("gentian-pow-status");
+      var form = document.getElementById("kc-register-form");
+      var submit = form ? form.querySelector("input[type=submit], button[type=submit]") : null;
+      if (submit) { submit.disabled = true; }
+
+      // The same arithmetic as PowChallenge.java, written once here and run in
+      // either place.
+      var work = function (salt, bits, done) {
+        var enc = new TextEncoder();
+        var leading = function (buf) {
+          var bytes = new Uint8Array(buf), n = 0;
+          for (var i = 0; i < bytes.length; i++) {
+            if (bytes[i] === 0) { n += 8; continue; }
+            n += Math.clz32(bytes[i]) - 24;
+            break;
+          }
+          return n;
+        };
+        var nonce = 0;
+        var step = function () {
+          var batch = 256;
+          var next = function () {
+            if (batch-- === 0) { setTimeout(step, 0); return; }
+            crypto.subtle.digest("SHA-256", enc.encode(salt + ":" + nonce)).then(function (d) {
+              if (leading(d) >= bits) { done(String(nonce)); return; }
+              nonce++;
+              next();
+            });
+          };
+          next();
+        };
+        step();
+      };
+
+      var solved = function (nonce) {
+        answer.value = nonce;
+        if (status) { status.textContent = status.getAttribute("data-done") || ""; status.classList.add("gentian-pow-status--done"); }
+        if (submit) { submit.disabled = false; }
+      };
+
+      var source = "(" + work.toString() + ")(" + JSON.stringify(salt) + "," + bits + ",function(n){postMessage(n)})";
+      var worker = null;
+      try {
+        if (window.Worker && window.Blob && window.URL) {
+          worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+          worker.onmessage = function (e) { solved(e.data); worker.terminate(); };
+          worker.onerror = function () { worker.terminate(); work(salt, bits, solved); };
+        }
+      } catch (e) { worker = null; }
+      if (!worker) { work(salt, bits, solved); }
+    })();
   login__theme.properties: |-
     # Gentian login theme.
     #
@@ -574,13 +1117,19 @@ data:
     import=common/keycloak
 
     styles=css/gentian-login.css
+    # login-hint fills the username from the concierge's hint; brand sets
+    # the card's name and logo from the cluster's brand. See the files.
+    # pow-captcha solves the registration page's proof-of-work check; it finds
+    # nothing to do on every other page.
+    scripts=js/login-hint.js js/brand.js js/pow-captcha.js
 
     # keycloak.v2's template.ftl renders <body class="${properties.kcBodyClass!}">,
     # which is what the stylesheet centres the card against.
     kcBodyClass=gentian-login
 
-    # The portal's own form had no social/identity-provider buttons and no
-    # registration link, so neither should this.
+    # The portal's own form had no social/identity-provider buttons, so neither
+    # has this. The registration link is Keycloak's to show: it renders one only
+    # for a realm that takes sign-ups (spec.signUp.enabled on the tenant).
     kcFormSocialAccountListClass=gentian-hidden
 binaryData:
   login__resources__img__favicon.ico: AAABAAEAEBAAAAAAIAD4AgAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAQAAAAEAgGAAAAH/P/YQAAAr9JREFUeJyFkztMk2EYhc93+fv3x9IqKMRgA02DEIxBZXGrbmqMmpiaOJhovAzGUSeGSkwccDUOuuigUYquEGGg0UQMEJWIInK/WCi3ltL2v33f5wAoaIxne9+T8+YdzgP8V4oCMfovl/8xE0ABICoUvNqoZKFzfIa8B4BIJMaRABKABJrkpsBmRRkQF6Hg5Waff/8tx1mGa2fa7HzqxmTq2eimrwhA1JYDDQ3XtL6+R06o4tJZozjcqsBtKQXT9QDLLvW0g9J+xoxcLvu9Jbn4enA9q9YPxOjGW1UVF+77AgevC7EiPNzk+QIX0pljXl8NQAiEk3Eda/bpyOTDi4AidCMc9B8N7w3d7NU0//mVpc8I+Dk/duoE/D6TgWiSIOdKN2dpnlJOmVEFANFonHLgtqos/1ilG+E2wwhWO24BSk6A0VUwbiBcW4uKPSGaSS/Qt12f4NFKoIQzAQCp1ADhAFHcc+WOsa2q2jLTlmHk9OOnz4EQjt53ndD1IgghMPxtSAnXJraZzApR6ACAssQXRQFAWsv3LDNpcq1Isx2vGh78ivm5aWiaDsY58vkslhbmFZTJCubEkCn7XwEgccQljaKFjaVe9pvWj5iSeWqZGdH9JoFMOo2Gw0dAKUWwMox99YcoZbtcf+BAgwd1ZwCoCGKMx3FOAFE2Pv2keXfZ8Q+GHmz176jxax6vmpoYIR96etT46KwEFGGcSyFch1Lm/NHEOgUAXDgDurfcR5lPDXwaVELqktIils3YzKPvhKbBAwVI6ToAkEAX1jveJKNoYVOLnbO2tfCCUk5ASqihlzNKaMp1ks+FWJo0CzPthfzoXZfmeteKlBC/WIhjQAGQq5nhRsaLzxDCMzlrttu1Vx6MJR93ADAAFP4F1RbtLj1ZGwjUb/+92aAxRiORGP+boa36ZUajLWwNsK37zfoJwWc7SxaEHE0AAAAASUVORK5CYII=

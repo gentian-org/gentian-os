@@ -4,7 +4,8 @@
 # claim to deny
 # =============================================================================
 # Phase 7, criterion 5. The Cluster composition renders three OpenBao policies —
-# eso-read, cluster-admin and tenant-admin — and the tenant-admin deny on
+# eso-read, cluster-admin and tenant-admin — the Tenant composition a fourth
+# for each tenant, eso-tenant-<tenant>, and the tenant-admin deny on
 # gentian-os/kernel/* is the one authz rule in the system where a mistake is a
 # breach rather than an annoyance. Nothing asserted it.
 #
@@ -22,8 +23,8 @@
 # The policies are read from the golden file rather than restated here. A test
 # that carries its own copy of the thing under test asserts that the copy is
 # self-consistent, which is the failure mode this repository keeps meeting —
-# see scripts/lint/check-render-fixtures.sh for the same reasoning applied to
-# the Composition copies.
+# the render fixtures link to the deployed Compositions for the same reason
+# (scripts/lint/check-render-fixtures.sh).
 #
 # The tenant path is templated on alias metadata, so the test drives the real
 # mechanism: a signed JWT carrying a `tenant` claim, an auth role whose
@@ -280,7 +281,7 @@ expect "${ESO_TOKEN}" "allowed reading a tenant's repository credentials" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "read"
 # The escrowed backup identity, denied by an exact path that has to beat the
 # kernel/* glob two lines above it in the same policy. If OpenBao ever resolved
-# those the other way, anything able to write an ExternalSecret could materialise
+# those the other way, anything able to write an ExternalSecret could materialize
 # the key that opens every bundle into an ordinary Secret — and escrow would
 # silently mean "the cluster holds its own decryption key" rather than "a cluster
 # administrator can read it". Asserted against a real bao, because the precedence
@@ -289,6 +290,11 @@ expect "${ESO_TOKEN}" "DENIED the escrowed backup identity — deny beats the ke
     "secret/data/gentian-os/kernel/backup/identity" "deny"
 expect "${ESO_TOKEN}" "DENIED its metadata — the path name is a hint on its own" \
     "secret/metadata/gentian-os/kernel/backup/identity" "deny"
+# The bundle signing key: the operator reads it from the vault itself.
+expect "${ESO_TOKEN}" "DENIED the bundle signing key — the operator reads it, not ESO" \
+    "secret/data/gentian-os/kernel/backup/signing" "deny"
+expect "${ESO_TOKEN}" "DENIED its metadata" \
+    "secret/metadata/gentian-os/kernel/backup/signing" "deny"
 # The sibling path must be unaffected: a deny that swallowed the subtree would
 # take the recipient with it, and the operator would stop being able to encrypt
 # at all.
@@ -306,19 +312,173 @@ expect "${ESO_TOKEN}" "allowed the destination credential in the same subtree" \
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 
+# ── director-repository-read ─────────────────────────────────────────────────
+# The director reads the credential of a repository a catalog artifact is
+# pulled with, and nothing else: one path per repository, a tenant's or the
+# cluster's, read only. Which of them it may use for which catalog is the
+# director's code; what it could read if that were wrong is this policy.
+director_body="$(policy_from_golden director-repository-read)"
+if [[ -z "${director_body}" || "${director_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} director-repository-read — not present in ${GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${director_body}" > "${WORKDIR}/director-repository-read.hcl"
+bao policy write director-repository-read "${WORKDIR}/director-repository-read.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} director-repository-read — OpenBao rejected the policy"
+    exit 1
+}
+DIRECTOR_TOKEN="$(bao token create -policy=director-repository-read -ttl=10m -format=json 2>/dev/null | jq -r '.auth.client_token')"
+echo ""
+echo "  director-repository-read ${DIM}(the director, for catalogue artifacts)${NC}"
+expect "${DIRECTOR_TOKEN}" "allowed reading a tenant's repository credential" \
+    "secret/data/gentian-os/tenants/acme/repositories/x" "read"
+expect "${DIRECTOR_TOKEN}" "allowed reading a cluster repository credential" \
+    "secret/data/gentian-os/kernel/repositories/x" "read"
+expect "${DIRECTOR_TOKEN}" "DENIED a tenant's app credentials" \
+    "secret/data/gentian-os/tenants/acme/apps/some-app" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED a tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED a path below a repository's" \
+    "secret/data/gentian-os/tenants/acme/repositories/x/y" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED its own commit-signing key" \
+    "secret/data/gentian-os/kernel/signing/director" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED the master password" \
+    "secret/data/gentian-os/kernel/internal/master-password" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED repository metadata — no listing" \
+    "secret/metadata/gentian-os/tenants/acme/repositories/x" "deny"
+expect "${DIRECTOR_TOKEN}" "DENIED paths outside gentian-os" \
+    "secret/data/somewhere/else" "deny"
+
+# ── eso-tenant-<tenant> ──────────────────────────────────────────────────────
+# What ESO reads for a tenant's namespace. The kernel's store, with eso-read
+# above, is not usable from a tenant's namespace; an ExternalSecret there
+# reads through the tenant's own store, which signs in with a role that
+# carries this policy and no other. So this policy is what an app chart's
+# ExternalSecret can reach, whatever path it names -- and the two properties
+# that matter are both denials: nothing of the kernel, nothing of another
+# tenant. From the Tenant composition's golden render, for its fixture tenant.
+TENANT_GOLDEN="crossplane/tests/unit/render/tenant-default/expected.yaml"
+TENANT_FIXTURE="render-fixture"
+tenant_eso_body="$(policy_body "${TENANT_GOLDEN}" "eso-tenant-${TENANT_FIXTURE}")"
+if [[ -z "${tenant_eso_body}" || "${tenant_eso_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} eso-tenant-${TENANT_FIXTURE} — not present in ${TENANT_GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${tenant_eso_body}" > "${WORKDIR}/eso-tenant.hcl"
+bao policy write "eso-tenant-${TENANT_FIXTURE}" "${WORKDIR}/eso-tenant.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} eso-tenant-${TENANT_FIXTURE} — OpenBao rejected the policy"; exit 1; }
+TENANT_ESO_TOKEN="$(bao token create -policy="eso-tenant-${TENANT_FIXTURE}" -field=token 2>/dev/null)"
+
+echo ""
+echo "  eso-tenant-${TENANT_FIXTURE} ${DIM}(what ESO holds for one tenant's namespace)${NC}"
+expect "${TENANT_ESO_TOKEN}" "allowed reading its tenant's app credentials" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/apps/some-app/database" "read"
+expect "${TENANT_ESO_TOKEN}" "allowed reading a secret generated for one of its apps" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/apps/some-app/internal/admin_password" "read"
+expect "${TENANT_ESO_TOKEN}" "allowed reading its tenant's repository credentials" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/repositories/x" "read"
+expect "${TENANT_ESO_TOKEN}" "allowed reading its tenant's contract keys" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/contracts/c" "read"
+expect "${TENANT_ESO_TOKEN}" "DENIED the master password and the salt" \
+    "secret/data/gentian-os/kernel/internal/master-password" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED the director's commit-signing key" \
+    "secret/data/gentian-os/kernel/signing/director" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED any other kernel path" \
+    "secret/data/gentian-os/kernel/database/postgresql" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED kernel metadata — path names leak too" \
+    "secret/metadata/gentian-os/kernel/internal/master-password" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED another tenant's app credentials" \
+    "secret/data/gentian-os/tenants/acme/apps/some-app/database" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED another tenant's repository credentials" \
+    "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED another tenant's contract keys" \
+    "secret/data/gentian-os/tenants/acme/contracts/c" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED its own tenant's backup destination — read in the kernel's namespaces" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/backup/destination" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED its own tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/backup/identity" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED its own tenant's administrator record" \
+    "secret/data/gentian-os/tenants/${TENANT_FIXTURE}/admin" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED listing the tenants" \
+    "secret/metadata/gentian-os/tenants" "deny"
+expect "${TENANT_ESO_TOKEN}" "DENIED paths outside gentian-os" \
+    "secret/data/identity/portal-admin" "deny"
+# The platform tenant's store is a tenant's store like any other: the kernel's
+# store does not admit its namespace. Its desktop's database is on the
+# kernel's PostgreSQL, and the password of that role is at the tenant's own
+# path, so this policy reads it and still nothing of the kernel. From the
+# golden render of the platform tenant.
+PLATFORM_GOLDEN="crossplane/tests/unit/render/tenant-platform/expected.yaml"
+platform_eso_body="$(policy_body "${PLATFORM_GOLDEN}" "eso-tenant-platform")"
+if [[ -z "${platform_eso_body}" || "${platform_eso_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} eso-tenant-platform — not present in ${PLATFORM_GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${platform_eso_body}" > "${WORKDIR}/eso-tenant-platform.hcl"
+bao policy write "eso-tenant-platform" "${WORKDIR}/eso-tenant-platform.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} eso-tenant-platform — OpenBao rejected the policy"; exit 1; }
+PLATFORM_ESO_TOKEN="$(bao token create -policy="eso-tenant-platform" -field=token 2>/dev/null)"
+
+echo ""
+echo "  eso-tenant-platform ${DIM}(what ESO holds for the platform tenant's namespace)${NC}"
+expect "${PLATFORM_ESO_TOKEN}" "allowed reading its desktop's database credential" \
+    "secret/data/gentian-os/tenants/platform/apps/shell/database" "read"
+expect "${PLATFORM_ESO_TOKEN}" "DENIED the kernel's database passwords" \
+    "secret/data/gentian-os/kernel/database/postgresql" "deny"
+expect "${PLATFORM_ESO_TOKEN}" "DENIED the master password and the salt" \
+    "secret/data/gentian-os/kernel/internal/master-password" "deny"
+expect "${ESO_TOKEN}" "eso-read reads that credential too — the kernel's database sets the role's password from it" \
+    "secret/data/gentian-os/tenants/platform/apps/shell/database" "read"
+
+# The other half of the same statement: the kernel's store still reads the
+# master password, because the probe that reports whether it was supplied
+# reads it. What keeps that from a tenant is which namespaces may name the
+# kernel's store, not this policy.
+expect "${ESO_TOKEN}" "eso-read still reads the master password (kernel namespaces only)" \
+    "secret/data/gentian-os/kernel/internal/master-password" "read"
+
+# ── custodian-write ──────────────────────────────────────────────────────────
+# The custodian sets a credential for a person the authorization store allows,
+# as itself. What its identity may do is the whole of the argument for giving
+# it one: it writes, it reads and annotates metadata, and it cannot read a
+# value back or delete one. Asserted against a real bao, deny side included,
+# because "cannot read" is the property and a comment cannot check it.
+custodian_body="$(policy_from_golden custodian-write)"
+if [[ -z "${custodian_body}" || "${custodian_body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} custodian-write — not present in ${GOLDEN}"
+    exit 1
+fi
+printf '%s\n' "${custodian_body}" > "${WORKDIR}/custodian-write.hcl"
+bao policy write custodian-write "${WORKDIR}/custodian-write.hcl" >/dev/null 2>&1 || {
+    echo "  ${RED}✗${NC} custodian-write — OpenBao rejected the policy"; exit 1; }
+CUSTODIAN_TOKEN="$(bao token create -policy=custodian-write -field=token 2>/dev/null)"
+
+echo ""
+echo "  custodian-write ${DIM}(the custodian's own identity)${NC}"
+expect "${CUSTODIAN_TOKEN}" "allowed setting a kernel credential, and NOT reading it" \
+    "secret/data/gentian-os/kernel/mail/relay" "create,update,patch"
+expect "${CUSTODIAN_TOKEN}" "allowed setting a tenant's credential, and NOT reading it" \
+    "secret/data/gentian-os/tenants/acme/mail" "create,update,patch"
+expect "${CUSTODIAN_TOKEN}" "allowed reading and recording who set it" \
+    "secret/metadata/gentian-os/tenants/acme/mail" "create,read,update"
+expect "${CUSTODIAN_TOKEN}" "DENIED anything outside the platform's tree" \
+    "secret/data/somewhere/else" "deny"
+expect "${CUSTODIAN_TOKEN}" "DENIED the auth backends" \
+    "auth/kubernetes/role/gentian-os-custodian" "deny"
+expect "${CUSTODIAN_TOKEN}" "DENIED minting tokens" \
+    "auth/token/create" "deny"
+
 # ── operator-write ───────────────────────────────────────────────────────────
 # Not from the golden render: this one is a kernel service manifest rather than
-# something the composition emits. It is here because it failed in the direction
-# the tests above do not look for — it DENIED what it meant to allow.
+# something the composition emits.
 #
-# The policy read as though it granted the tenant OIDC mounts. It used
-# "sys/auth/oidc-+", and OpenBao's + matches one whole path segment, so a literal
-# prefix with + glued to it matches nothing: every tenant reconcile stopped at
-# "configure auth mount oidc-<tenant>: HTTP 403" while the policy looked right.
-#
-# So these assert the allow side as well as the deny side. A policy that grants
-# nothing is as broken as one that grants everything; it just fails somewhere
-# less alarming.
+# It used to grant the operator the per-tenant OIDC auth mounts, which existed
+# so that a tenant administrator's token could be exchanged at the vault. The
+# custodian no longer shows the vault anybody's token, the mounts are gone, and
+# so is the operator's right to create them: these assert that it stayed gone,
+# beside the allow side that must still hold. A policy that grants nothing is
+# as broken as one that grants everything; it just fails somewhere less
+# alarming.
 OPERATOR_POLICY_FILE="kernel/services/openbao-config/manifests/templates/policy-operator-write.yaml"
 if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
     policy_body "${OPERATOR_POLICY_FILE}" operator-write > "${WORKDIR}/operator-write.hcl" 2>/dev/null || true
@@ -328,12 +488,12 @@ if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
 
         echo ""
         echo "  operator-write ${DIM}(the operator's own identity)${NC}"
-        expect "${OPERATOR_TOKEN}" "allowed creating a tenant OIDC mount" \
-            "sys/auth/oidc-acme" "create,read,update,delete,sudo"
-        expect "${OPERATOR_TOKEN}" "allowed configuring that mount" \
-            "auth/oidc-acme/config" "create,read,update,delete,list"
-        expect "${OPERATOR_TOKEN}" "allowed managing its roles" \
-            "auth/oidc-acme/role/tenant" "create,read,update,delete,list"
+        expect "${OPERATOR_TOKEN}" "DENIED creating an auth mount for a tenant" \
+            "sys/auth/oidc-acme" "deny"
+        expect "${OPERATOR_TOKEN}" "DENIED configuring one" \
+            "auth/oidc-acme/config" "deny"
+        expect "${OPERATOR_TOKEN}" "DENIED managing roles on one" \
+            "auth/oidc-acme/role/tenant" "deny"
         expect "${OPERATOR_TOKEN}" "DENIED the Kubernetes auth mount it authenticates with" \
             "auth/kubernetes/config" "deny"
         expect "${OPERATOR_TOKEN}" "DENIED enabling a non-OIDC auth backend" \
@@ -347,6 +507,46 @@ if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
     fi
 else
     echo "    ${YELLOW}SKIP${NC} — ${OPERATOR_POLICY_FILE} not found"
+fi
+
+# ── openbao-snapshot ─────────────────────────────────────────────────────────
+# The daily snapshot's identity (docs/guides/recovery.md §4): it reads a
+# snapshot and nothing else. Restoring one is snapshot-force, a person's act
+# with a root token, and a snapshot job that could do it could replace the
+# whole vault.
+body="$(policy_from_golden openbao-snapshot)"
+if [[ -z "${body}" || "${body}" == "null" ]]; then
+    echo "  ${RED}✗${NC} openbao-snapshot — not present in ${GOLDEN}"
+    fail=$((fail + 1))
+else
+    printf '%s\n' "${body}" > "${WORKDIR}/openbao-snapshot.hcl"
+    bao policy write openbao-snapshot "${WORKDIR}/openbao-snapshot.hcl" >/dev/null 2>&1
+    SNAPSHOT_TOKEN="$(bao token create -policy=openbao-snapshot -no-default-policy -ttl=5m -field=token 2>/dev/null)"
+    # Asked by root (sys/capabilities): a token without the default policy
+    # may not ask about itself, which is what the role issues.
+    expect_of() {
+        local token="$1" label="$2" path="$3" want="$4" got
+        got="$(bao token capabilities "${token}" "${path}" 2>&1 | tr ',' '\n' | tr -d ' ' | sort | tr '\n' ',')"
+        if [[ "${got}" == "$(printf '%s' "${want}" | tr ',' '\n' | sort | tr '\n' ',')" ]]; then
+            printf '    %s✓%s %-58s %s\n' "${GREEN}" "${NC}" "${label}" "${DIM}${want}${NC}"
+            pass=$((pass + 1))
+        else
+            printf '    %s✗%s %-58s want [%s] got [%s]\n' "${RED}" "${NC}" "${label}" "${want}" "${got}"
+            fail=$((fail + 1))
+        fi
+    }
+    echo ""
+    echo "  openbao-snapshot ${DIM}(the daily snapshot's CronJob, no default policy)${NC}"
+    expect_of "${SNAPSHOT_TOKEN}" "allowed reading a Raft snapshot" \
+        "sys/storage/raft/snapshot" "read"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED restoring one" \
+        "sys/storage/raft/snapshot-force" "deny"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED the Raft configuration" \
+        "sys/storage/raft/configuration" "deny"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED kernel data" \
+        "secret/data/gentian-os/kernel/backup/identity" "deny"
+    expect_of "${SNAPSHOT_TOKEN}" "DENIED minting tokens" \
+        "auth/token/create" "deny"
 fi
 
 echo ""

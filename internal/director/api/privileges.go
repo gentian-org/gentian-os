@@ -1,0 +1,286 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package api
+
+import (
+	"errors"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/security"
+)
+
+// Answering a privilege request.
+//
+// A profile says what it would need beyond the default posture; the component
+// holds until somebody answers (AD-5). These handlers are the answer, and they
+// are writes in this API's sense: a commit to the deployments repository, with
+// the approver taken from the token and never from the body.
+
+var grantDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// grantPrivilegeRequest is what an approver states. Not who they are, and not
+// when: an approval that could name its own approver would record nothing, so
+// both come from the call.
+type grantPrivilegeRequest struct {
+	// Reason in the approver's own words. The profile already said why it
+	// wants the privilege; this says why somebody agreed, which is what a
+	// reviewer reads later.
+	Reason string `json:"reason"`
+	// ExpiresAt bounds the grant, RFC 3339. Optional, and for a pod-security
+	// waiver it is close to obligatory in practice -- a waiver with no expiry
+	// is a waiver nobody reviews.
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Digest is what the approver read of an API extension: the request's
+	// digest as the pending request reports it (approvedBy, digest). Required
+	// for apiExtensions, and the approval answers that request and no later
+	// version of it.
+	Digest string `json:"digest,omitempty"`
+	// Allowlist is, for a pod-security waiver the cluster does not permit
+	// yet, the allowlist entry that permits it (profile, policy, scope, as
+	// the pending request reports it): added to the cluster's allowlist in
+	// the same approval, by the same approver, so the waiver takes effect.
+	// Both halves are the security officer's (cluster#can_approve).
+	Allowlist *gitops.MacWaiver `json:"allowlist,omitempty"`
+}
+
+// tenantPrivileges answers what has been granted for this tenant, from git.
+//
+// Under can_view, like every other read of a tenant's declared state: whoever
+// may see the tenant may see what was approved for it. Who MAY approve is a
+// different question and it is asked on the write.
+func (s *Server) tenantPrivileges(w http.ResponseWriter, r *http.Request, _ call) {
+	grants, err := s.cfg.Repo.TenantPrivileges(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if grants == nil {
+		grants = []gitops.PrivilegeGrant{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "privileges": grants})
+}
+
+// clusterPrivileges answers what has been granted for every tenant of the
+// cluster, each grant with its tenant: the per-tenant read, tenant by tenant.
+// Under can_audit on the cluster, the relation every cross-tenant read of the
+// cluster's declared state carries.
+func (s *Server) clusterPrivileges(w http.ResponseWriter, r *http.Request, _ call) {
+	tenants, err := s.cfg.Repo.Tenants(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	type tenantGrant struct {
+		Tenant string `json:"tenant"`
+		gitops.PrivilegeGrant
+	}
+	out := []tenantGrant{}
+	for _, t := range tenants {
+		grants, err := s.cfg.Repo.TenantPrivileges(r.Context(), t)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		for _, g := range grants {
+			out = append(out, tenantGrant{Tenant: t, PrivilegeGrant: g})
+		}
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": r.PathValue("c"), "privileges": out})
+}
+
+// mayApprove decides whether this caller may answer a request of this kind.
+//
+// The route itself carries only can_view, because who may approve follows from
+// the kind and the kind is not known until the request arrives. This function
+// is therefore the authorization for both writes, and neither handler may skip
+// it -- which is why it takes the ResponseWriter and answers the call itself
+// rather than returning a reason for a caller to remember to use.
+//
+//	egress                    the traffic leaves through the tenant's
+//	                          perimeter, so its perimeter approver answers:
+//	                          tenant#can_approve_privilege.
+//	podSecurity, clusterRoles these weaken what protects the NODE, and every
+//	                          tenant on it. cluster#can_approve, the security
+//	                          officer's verb, and a tenant administrator's
+//	                          authority inside their own tenant is not it.
+//	apiExtensions, and a      these let a component write through the
+//	clusterRole that writes   cluster's API: cluster#can_set_admission,
+//	                          break-glass's, as the cluster's admission is.
+//
+// The two are alternatives rather than both. A security officer is
+// deliberately not a perimeter approver, and requiring both relations would
+// mean nobody could approve a waiver without holding an authority they should
+// not need.
+// It returns the decision it made, in the form the commit trailer records --
+// "can_approve cluster:main" -- because the route's own relation is can_view
+// and a trailer saying that would name the wrong authority for the one thing
+// an audit of a privilege grant is for.
+func (s *Server) mayApprove(w http.ResponseWriter, r *http.Request, c *call, ref string) (string, bool) {
+	kind, _ := security.SplitPrivilegeRef(ref)
+	relation, target, refusal := "can_approve_privilege", "", ""
+	// security.PrivilegeApprover is the one place the request decides the
+	// approver; the operator reports the same answer on each pending
+	// request (pendingPrivilegeApprovals), which is how a console knows
+	// whom to offer the button without deciding it again.
+	approver := security.PrivilegeApprover(ref)
+	if approver == security.PrivilegeApproverPerimeter {
+		tenant, err := tenantObject(r)
+		if err != nil {
+			s.fail(w, r, http.StatusBadRequest, "invalid name")
+			return "", false
+		}
+		target = tenant
+		refusal = "approving an egress request is the perimeter approver's"
+	} else {
+		if s.cfg.Cluster == "" {
+			// No cluster object to check against, so there is no security
+			// officer to be. Refusing is the only safe answer: the
+			// alternative is letting a waiver through because the deployment
+			// happens not to name its cluster.
+			s.fail(w, r, http.StatusForbidden,
+				"a "+kind+" privilege is approved at cluster scope, and this director serves no cluster")
+			return "", false
+		}
+		relation, target = "can_approve", authz.Cluster(s.cfg.Cluster)
+		refusal = "a " + kind + " privilege weakens what protects the node; approving one is the security officer's"
+		if approver == security.PrivilegeApproverBreakGlass {
+			relation = "can_set_admission"
+			refusal = ref + " lets a component write through the cluster's API; approving it is break-glass's"
+		}
+	}
+	ok, err := s.can(r.Context(), *c, relation, target)
+	if err != nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return "", false
+	}
+	if !ok {
+		s.fail(w, r, http.StatusForbidden, refusal)
+		return "", false
+	}
+	decision := relation + " " + target
+	c.meta.Decision = decision
+	return decision, true
+}
+
+// privilegeRef reads and checks the two path segments that name the request.
+// A ref that is not one of the three kinds is a 404 rather than a 400: the
+// route exists, the privilege named on it does not.
+func (s *Server) privilegeRef(w http.ResponseWriter, r *http.Request) (install, kind, ref string, ok bool) {
+	install = r.PathValue("inst")
+	kind = r.PathValue("kind")
+	name := r.PathValue("name")
+	switch kind {
+	case security.PrivilegePodSecurity, security.PrivilegeEgress, security.PrivilegeClusterRoles, security.PrivilegeAPIExtensions:
+	default:
+		s.fail(w, r, http.StatusNotFound, "no such privilege kind: "+kind)
+		return "", "", "", false
+	}
+	if install == "" || name == "" {
+		s.fail(w, r, http.StatusBadRequest, "the path must name an install and a privilege")
+		return "", "", "", false
+	}
+	return install, kind, security.PrivilegeRef(kind, name), true
+}
+
+// grantPrivilege records one approval as a commit.
+func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) {
+	install, _, ref, ok := s.privilegeRef(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.mayApprove(w, r, &c, ref); !ok {
+		return
+	}
+	var body grantPrivilegeRequest
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"reason": "...", "expiresAt": "<RFC 3339>"}`)
+		return
+	}
+	// The minimum the CRD enforces anyway, refused here so the answer says
+	// what is wrong rather than surfacing later as a rejected commit.
+	if len(strings.TrimSpace(body.Reason)) < 10 {
+		s.fail(w, r, http.StatusBadRequest, "a grant needs a reason of at least ten characters, in your own words")
+		return
+	}
+	if body.ExpiresAt != "" {
+		t, err := time.Parse(time.RFC3339, body.ExpiresAt)
+		if err != nil {
+			s.fail(w, r, http.StatusBadRequest, "expiresAt must be an RFC 3339 timestamp")
+			return
+		}
+		if !t.After(time.Now()) {
+			// A grant that has already expired grants nothing, and committing
+			// one would read as an approval while the component kept waiting.
+			s.fail(w, r, http.StatusBadRequest, "expiresAt is in the past; that grants nothing")
+			return
+		}
+	}
+	kind, _ := security.SplitPrivilegeRef(ref)
+	switch {
+	case kind == security.PrivilegeAPIExtensions && !grantDigest.MatchString(body.Digest):
+		s.fail(w, r, http.StatusBadRequest, "approving an API extension names the definitions approved: digest, sha256:<hex>, as the pending request reports it")
+		return
+	case kind != security.PrivilegeAPIExtensions && body.Digest != "":
+		s.fail(w, r, http.StatusBadRequest, "digest belongs to an apiExtensions approval")
+		return
+	}
+	if body.Allowlist != nil {
+		if kind != security.PrivilegePodSecurity {
+			s.fail(w, r, http.StatusBadRequest, "allowlist belongs to a podSecurity approval")
+			return
+		}
+		// The cluster's half first: a grant without it waives nothing, and an
+		// allowlist entry without a grant permits nothing on any install.
+		res, err := s.cfg.Repo.AllowMacWaiver(r.Context(), *body.Allowlist, c.meta)
+		if errors.Is(err, gitops.ErrInvalidName) {
+			s.fail(w, r, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err != nil {
+			s.written(w, r, res, err)
+			return
+		}
+	}
+	res, err := s.cfg.Repo.GrantPrivilege(r.Context(), r.PathValue("t"), gitops.PrivilegeGrant{
+		Install:    install,
+		Privilege:  ref,
+		Approver:   c.meta.Subject,
+		ApprovedAt: time.Now().UTC().Format(time.RFC3339),
+		Reason:     strings.TrimSpace(body.Reason),
+		ExpiresAt:  body.ExpiresAt,
+		Digest:     body.Digest,
+	}, c.meta)
+	s.written(w, r, res, err)
+}
+
+// revokePrivilege withdraws one. The component's next reconcile finds the
+// request pending again and holds, which is where it was before the approval:
+// a revocation takes something away rather than breaking something.
+func (s *Server) revokePrivilege(w http.ResponseWriter, r *http.Request, c call) {
+	install, _, ref, ok := s.privilegeRef(w, r)
+	if !ok {
+		return
+	}
+	// Whoever may grant may withdraw, and nobody else. Checking the same
+	// requirement on the way out matters as much as on the way in: a tenant
+	// administrator who could revoke a pod-security waiver could stop a
+	// component the platform operator approved.
+	if _, ok := s.mayApprove(w, r, &c, ref); !ok {
+		return
+	}
+	res, err := s.cfg.Repo.RevokePrivilege(r.Context(), r.PathValue("t"), install, ref, c.meta)
+	s.written(w, r, res, err)
+}

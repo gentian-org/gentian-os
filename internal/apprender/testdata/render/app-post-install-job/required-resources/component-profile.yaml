@@ -1,0 +1,50 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+  hooks:
+    postInstall:
+      image: curlimages/curl:8.10.1
+      script: |
+        #!/bin/sh
+        set -eu
+        echo "bootstrapping ${APP}"
+        # APP and NAMESPACE above are the container's own shell variables and
+        # must survive untouched. The tenant-domain token on the next line is the
+        # platform's, and must be substituted before this reaches the ConfigMap.
+        echo "tenant domain is ${TENANT_DOMAIN}"
+        curl -sf "http://demo-app.${NAMESPACE}.svc.cluster.local/health"
+      envFrom:
+        - llm-credentials-demo-app
+        - demo-app-sensitive-values
+      serviceAccountName: app-init
+      readOnlyPVC:
+        claimName: demo-app-data
+        mountPath: /data

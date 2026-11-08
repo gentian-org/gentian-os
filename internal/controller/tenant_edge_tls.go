@@ -1,23 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -33,10 +28,6 @@ import (
 const (
 	defaultDNS01ClusterIssuer = "letsencrypt-dns01-cloudflare"
 	defaultServicePort        = int32(80)
-
-	// kernelWildcardTenantSecret was replicated from the kernel wildcard into
-	// tenant namespaces by older operator versions.
-	kernelWildcardTenantSecret = "kernel-wildcard-tls"
 )
 
 var certManagerCertGVK = schema.GroupVersionKind{
@@ -97,19 +88,6 @@ func buildTenantWildcardCertificate(
 	return obj
 }
 
-func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context, nsName string) error {
-	legacy := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kernelWildcardTenantSecret,
-			Namespace: nsName,
-		},
-	}
-	if err := r.Delete(ctx, legacy); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete legacy kernel wildcard TLS secret: %w", err)
-	}
-	return nil
-}
-
 // ensureTenantEdgeRoutes programs how a tenant's hostnames are reached.
 //
 // No DNS here, and none needed: the tenant's HTTPRoutes attach to the kernel
@@ -118,7 +96,7 @@ func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context,
 // address on a cluster that has one. Records for eight providers, written by
 // the component that already does that for mail.
 func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
-	if r.Ingress == nil {
+	if r.Ingress == nil || servedByKernelEdge(effectiveDomain, r.KernelDomain) {
 		return
 	}
 	logger := ctrl.LoggerFrom(ctx)
@@ -158,11 +136,7 @@ func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *g
 func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
 	effectiveDomain := r.tenantEffectiveDomain(tenant)
-	logger := ctrl.LoggerFrom(ctx)
 
-	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
-		return err
-	}
 	if err := r.deleteTenantHTTPRoutes(ctx, tenant, nsName); err != nil {
 		return err
 	}
@@ -178,19 +152,27 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
 
-	if effectiveDomain != "" {
+	// Not for the user tenant of a single-tenancy cluster: its domain is the
+	// cluster's, and these two names are the kernel's own routes.
+	if effectiveDomain != "" && !servedByKernelEdge(effectiveDomain, r.KernelDomain) {
 		// Routes only. The records go with the HTTPRoutes: external-dns
 		// removes what it published once the route it published from is gone.
+		//
+		// A route that could not be removed is returned, after both were
+		// tried. It used to be logged and passed over, and the tenant was
+		// then reported deleted with its hostnames still routed to this
+		// cluster's edge -- where the next tenant of that name, or nobody,
+		// answers them.
 		wildcard := "*." + effectiveDomain
+		var routeErrs []error
 		for _, host := range []string{wildcard, effectiveDomain} {
 			if err := edgeDeleteRoute(ctx, r.Ingress, host); err != nil {
-				logger.Error(err, "delete tenant edge route", "host", host)
+				routeErrs = append(routeErrs, fmt.Errorf("delete the edge route of %s: %w", host, err))
 			}
 		}
-	}
-
-	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
-		return err
+		if err := errors.Join(routeErrs...); err != nil {
+			return err
+		}
 	}
 
 	tenantWildcardTLS := &corev1.Secret{
@@ -213,17 +195,3 @@ func tenantWildcardSecretName(tenantName string) string {
 	return fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 }
 
-func additionalIngressProfile(appProfile string, index int) string {
-	return fmt.Sprintf("%s-extra%d", appProfile, index)
-}
-
-func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effectiveDomain string) string {
-	sub := ingress.SubDomain
-	if sub == "@" {
-		return effectiveDomain
-	}
-	if sub == "" {
-		sub = appProfile
-	}
-	return fmt.Sprintf("%s.%s", sub, effectiveDomain)
-}

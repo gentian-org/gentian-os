@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -32,15 +26,21 @@ func buildOIDCPackScript(
 	pack oidc.Pack,
 	templates map[string]oidc.MapperTemplate,
 	redirectURIs []string,
-	clientSecret string,
+	withSecret bool,
 	entitlementGroup string,
 ) string {
 	if pack.ServiceClient {
 		return buildOIDCServiceClientScript(realmName, clientID, pack)
 	}
 
+	// A request-bound client declares no address of its own: the Job makes
+	// it with none, and the Composition registers https://* once the realm
+	// narrows it. [] and not null, which Keycloak does not take for a list.
+	if redirectURIs == nil {
+		redirectURIs = []string{}
+	}
 	redirectJSON, _ := json.Marshal(redirectURIs)
-	mapperBlocks := buildMapperPOSTBlocks(pack, templates)
+	mapperBlocks := buildMapperPOSTBlocks(templates)
 
 	publicClient := "false"
 	if pack.PublicClient {
@@ -52,7 +52,7 @@ func buildOIDCPackScript(
 	}
 
 	secretClause := ""
-	if clientSecret != "" {
+	if withSecret {
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
@@ -64,12 +64,11 @@ func buildOIDCPackScript(
 	scopeLookupBlock := keycloak.ShellLookupClientScopeID()
 	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
 
-	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
 SCOPE_DESC=%q
-CLIENT_ROLE=%q
 ENTITLEMENT_GROUP=%q
 REDIRECT_URIS='%s'
 PUBLIC_CLIENT=%s
@@ -85,66 +84,59 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 %s
 
 # --- OIDC client ---
-EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
 if echo "${EXISTING}" | grep -q '"id"'; then
   echo "client ${CLIENT_ID} already exists"
 else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
-    -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
-  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+    -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false,`+keycloak.PlatformMarkerShellJSON+`%s}"
+  EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
   echo "client ${CLIENT_ID} created"
 fi
 %s
-# The client is NOT configured here. app-default composes it, and this Job
-# writing the same object is what made it the last one with two writers — the
-# shape that let the kernel IdP spend two minutes of every reconcile on the
-# wrong first-broker-login flow before anyone noticed.
+# The client is NOT configured here. The operator renders it with the app's
+# release, and this Job writing the same object would give it two writers --
+# the shape that let the kernel IdP spend two minutes of every reconcile on
+# the wrong first-broker-login flow before anyone noticed.
 #
 # The create above stays. It is a bootstrap, not ownership: something has to
-# make the client before the client role below can hang off it, and this Job is
-# waited on in the DataPlane stage while the App claim that composes the client
-# is created in AppsAndEdge, the stage after. Whichever gets there first decides
-# the initial state and the Composition converges it from then on.
+# make the client before the client role below can hang off it, and this Job
+# runs before the app's release is rendered. Whichever gets there first
+# decides the initial state and the rendered client converges it from then on.
 #
 # Same division as the realm script and the kernel IdP: create if absent, never
 # restate.
 
 # --- Client role ---
-# Not created here. app-default composes a Role, which adopted the existing one
-# by its Keycloak id rather than making a second — verified on corp, where the
-# role kept its id.
+# Neither created nor read here. The operator renders a Role with the app's
+# release, which adopts the existing one by its Keycloak id rather than making
+# a second, and maps the entitlement group to it.
 #
-# Still READ, because the group-to-role mapping below needs the role's id and
-# that mapping has no declarative form yet: it needs the entitlement group's
-# id, and the group is still made by the gentian-groups Job.
-ROLE_JSON=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles/${CLIENT_ROLE}")
-if [ -z "${ROLE_JSON}" ]; then
-  echo "ERROR: client role ${CLIENT_ROLE} not found; the Composition has not created it yet" >&2
-  exit 1
-fi
-ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+# A read of the role here would deadlock: this Job is waited on before the
+# release that brings the role is rendered, so wherever the client was there
+# and the role was not -- a reinstall after a purge, any first install -- the
+# Job would fail on a 404 for ever. Nothing in this Job needs the role.
 
-# The entitlement group is NOT mapped to the client role here. app-default
-# composes a group Roles for it, with exhaustive false so it grants that one
+# The entitlement group is NOT mapped to the client role here. The operator
+# renders a group Roles for it, with exhaustive false so it grants that one
 # role and leaves anything else on the group alone.
 #
 # This POST swallowed its own failure, so a mapping that never happened looked
 # exactly like one that did — the same silence the default-client-scopes loop had.
 
-# The default client scopes are NOT attached here. app-default composes a
+# The default client scopes are NOT attached here. The operator renders a
 # ClientDefaultScopes for exactly the same six — profile, email, roles,
 # web-origins, acr and the pack's own scope — and it reports them all attached.
-# This loop was the second place this Job wrote an object the Composition owns.
+# This loop was the second place this Job wrote an object the render owns.
 #
 # It also swallowed its own failures, so a scope that never attached looked
 # identical to one that did.
 
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
-		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
+		realmName, clientID, pack.ScopeName, pack.ScopeDescription, groupName,
 		string(redirectJSON), publicClient, fullScope,
 		// One secretClause, not two: the second filled the client PUT that this
 		// Job no longer makes.
@@ -162,8 +154,9 @@ echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 // scope and an empty role in every tenant realm and suggest, in the Keycloak
 // admin UI, that users can be entitled to a mail server.
 //
-// The client secret comes from the OIDC_CLIENT_SECRET env the Job carries, never
-// from an argument, so it stays out of the rendered script and out of Job specs.
+// The client secret comes from the OIDC_CLIENT_SECRET env the Job reads from
+// the Secret it owns, never from an argument, so it stays out of the rendered
+// script and out of Job specs.
 func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) string {
 	fullScope := "false"
 	if pack.FullScopeAllowed {
@@ -176,9 +169,10 @@ func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) st
 	body := `{\"clientId\":\"${CLIENT_ID}\",\"protocol\":\"openid-connect\",\"publicClient\":false,` +
 		`\"standardFlowEnabled\":false,\"implicitFlowEnabled\":false,\"directAccessGrantsEnabled\":false,` +
 		`\"serviceAccountsEnabled\":false,\"redirectUris\":[],\"webOrigins\":[],` +
-		`\"fullScopeAllowed\":` + fullScope + `,\"secret\":\"${OIDC_CLIENT_SECRET}\"}`
+		`\"fullScopeAllowed\":` + fullScope + `,\"secret\":\"${OIDC_CLIENT_SECRET}\",` +
+		keycloak.PlatformMarkerShellJSON + `}`
 
-	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+	return keycloak.ShellJSONIDExtractor() + keycloak.ShellAdminCall() + fmt.Sprintf(`set -eu
 REALM=%q
 CLIENT_ID=%q
 
@@ -190,20 +184,20 @@ fi
 `+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
-EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
 if echo "${EXISTING}" | grep -q '"id"'; then
   echo "service client ${CLIENT_ID} already exists in realm ${REALM}"
 else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  kc_curl -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
     -d "%s"
-  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+  EXISTING=$(kc_curl -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
   echo "service client ${CLIENT_ID} created in realm ${REALM}"
 fi
 %s
-curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+kc_curl -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
   -d "%s"
 
@@ -224,7 +218,7 @@ echo "service client ${CLIENT_ID} can introspect in realm ${REALM} (HTTP ${PROBE
 		realmName, clientID, body, clientUUIDBlock, body)
 }
 
-func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTemplate) string {
+func buildMapperPOSTBlocks(templates map[string]oidc.MapperTemplate) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `
 # Drop corrupt mappers left by earlier failed provision runs.
@@ -237,53 +231,13 @@ for _kj_mid in $(printf '%%s' "${MAPPERS}" | jq -r '.[] | select(.name=="oidc-us
   echo "removed corrupt mapper id=${_kj_mid} from scope ${SCOPE_NAME}"
 done
 `)
-	// No mapper POSTs. app-default composes a ProtocolMapper per entry in
-	// pack.Mappers, resolved through the catalogue's mapperTemplates, and those
-	// adopted the live mappers by their Keycloak ids rather than creating new
-	// ones — verified on corp, where all three kept their ids and their config.
+	// No mapper POSTs. The operator renders a ProtocolMapper per entry in
+	// pack.Mappers, resolved through the catalog's mapperTemplates, which
+	// adopt the live mappers by their Keycloak ids rather than creating new
+	// ones.
 	//
 	// The corrupt-mapper cleanup above stays. It deletes mappers whose *name* is
 	// literally "oidc-usermodel-attribute-mapper", left by a much older failed
 	// run, and nothing declarative covers that.
 	return b.String()
-}
-
-// buildEnsureFirstBrokerLoginFlowShellWithAlias is like buildEnsureFirstBrokerLoginFlowShell
-// but allows a custom flow alias (e.g. kernel portal broker login).
-func buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, flowAlias string) string {
-	return fmt.Sprintf(`
-REALM=%s
-FLOW_ALIAS=%q
-AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-
-FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
-if echo "${FLOWS}" | grep -Fq "\"alias\":\"${FLOW_ALIAS}\""; then
-  echo "first broker login flow ${FLOW_ALIAS} already exists"
-else
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows" \
-    -d "{\"alias\":\"${FLOW_ALIAS}\",\"description\":\"Confirm/verify link kernel IdP to tenant users by email\",\"providerId\":\"basic-flow\",\"topLevel\":true,\"builtIn\":false}"
-  echo "first broker login flow ${FLOW_ALIAS} created"
-fi
-
-for PROVIDER in idp-detect-existing-broker-user idp-confirm-link idp-email-verification; do
-  EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-    | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
-  if [ -z "${EXEC_ID}" ]; then
-    curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions/execution" \
-      -d "{\"provider\":\"${PROVIDER}\",\"requirement\":\"REQUIRED\"}"
-    EXEC_ID=$(curl -sf -H "${AUTH_HEADER}" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-      | jq -r --arg p "${PROVIDER}" 'map(select(.providerId == $p))[0].id // empty')
-    echo "added ${PROVIDER} to ${FLOW_ALIAS}"
-  fi
-  if [ -n "${EXEC_ID}" ]; then
-    curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ALIAS}/executions" \
-      -d "{\"id\":\"${EXEC_ID}\",\"requirement\":\"REQUIRED\"}"
-  fi
-done
-echo "first broker login flow ${FLOW_ALIAS} ready (detect + confirm-link + email-verification)"`, realmExpr, flowAlias)
 }

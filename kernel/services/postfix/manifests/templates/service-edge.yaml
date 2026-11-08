@@ -1,0 +1,38 @@
+{{- /*
+  The Service the mail edge reaches Postfix by.
+
+  ClusterIP: nothing outside the cluster reaches Postfix. The load balancer
+  that used to select these pods directly (postfix-<env>-smtp) is gone, and
+  the one that replaces it selects the proxy in the mail DMZ.
+
+  Separate from the upstream chart's Service, which carries 587 alone for the
+  pods of the cluster, because that chart's Service takes one port.
+
+  The selector has to match the upstream chart's own labels, not this chart's
+  name: the chart is bokysan/mail, so its pods carry
+  app.kubernetes.io/name: mail. A Service with no endpoints answers nothing.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: postfix-{{ .Values.env }}-edge
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+  labels:
+    app.kubernetes.io/name: postfix
+    gentianos.io/component: kernel-mail
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mail
+    app.kubernetes.io/instance: postfix-{{ .Values.env }}
+  ports:
+    - name: smtp-edge
+      port: {{ .Values.edge.ports.smtp }}
+      targetPort: {{ .Values.edge.ports.smtp }}
+      protocol: TCP
+    - name: submission-edge
+      port: {{ .Values.edge.ports.submission }}
+      targetPort: {{ .Values.edge.ports.submission }}
+      protocol: TCP

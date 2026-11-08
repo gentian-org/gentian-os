@@ -11,7 +11,7 @@
 #   C-02  tested that an Application existed, not that it was right
 #   C-06  tested the requirements; the probes were gone
 #   A-02  tested one XRD of six
-#   D-04  tested another step's artefact entirely
+#   D-04  tested another step's artifact entirely
 #   D-06  tested the Application; the store id had never arrived
 #   A-03  demanded a namespace apply() never created
 #
@@ -113,10 +113,10 @@ for file in scripts/steps/*.sh; do
                 _warn "${id}: provides '${noun}' but check() never mentions it."
         done < <(
             # Only the nouns this step produces. A `provides:` often names where
-            # something came from — "AppProfile CRs from the gentian-apps
-            # repository" — and that repository is prose, not an artefact.
+            # something came from — "ComponentProfile CRs from the gentian-apps
+            # repository" — and that repository is prose, not an artifact.
             tr ' ,—' '\n' <<<"${provides%% from *}" \
-            | grep -oiE '^(ApplicationSet|Application|Deployment|StatefulSet|Secret|ConfigMap|Namespace|CRD|XRD|CRDs|XRDs|Composition|Compositions|ClusterIssuers?|Gateway|Certificate|CredentialRequirement|AppProfile|AppCatalogue|Repository|Claim)s?$' \
+            | grep -oiE '^(ApplicationSet|Application|Deployment|StatefulSet|Secret|ConfigMap|Namespace|CRD|XRD|CRDs|XRDs|Composition|Compositions|ClusterIssuers?|Gateway|Certificate|CredentialRequirement|ComponentProfile|AppCatalogue|Repository|Claim)s?$' \
             | tr '[:upper:]' '[:lower:]' | sed 's/s$//' | sort -u
         )
     fi

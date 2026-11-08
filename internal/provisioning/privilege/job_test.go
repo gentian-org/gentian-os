@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package privilege_test
@@ -83,7 +77,7 @@ func TestMembersJSON_SkipsEntriesWithoutAnID(t *testing.T) {
 }
 
 // The whole point of this mechanism: everything app-specific arrives from the
-// AppProfile. If the platform ever has to know an app by name to provision it,
+// ComponentProfile. If the platform ever has to know an app by name to provision it,
 // this is where that would first show up.
 func TestSyncJob_TakesEverythingAppSpecificFromTheProfile(t *testing.T) {
 	t.Parallel()
@@ -111,6 +105,9 @@ func TestSyncJob_TakesEverythingAppSpecificFromTheProfile(t *testing.T) {
 	if env["GENTIAN_APP_ADMINS_FILE"] == "" {
 		t.Errorf("member list path not provided")
 	}
+	if env["GENTIAN_APP_USERS_FILE"] == "" {
+		t.Errorf("user list path not provided")
+	}
 
 	if got := job.Annotations[privilege.FingerprintAnnotation]; got != "fp1" {
 		t.Errorf("fingerprint not recorded: %q", got)
@@ -118,7 +115,7 @@ func TestSyncJob_TakesEverythingAppSpecificFromTheProfile(t *testing.T) {
 	// The app's NetworkPolicies select on this label; without it the Job cannot
 	// reach the workload it is meant to provision.
 	if got := job.Spec.Template.Labels["gentianos.io/app"]; got != "someapp-ce" {
-		t.Errorf("pod not labelled for the app's network policy: %q", got)
+		t.Errorf("pod not labeled for the app's network policy: %q", got)
 	}
 }
 
@@ -149,14 +146,36 @@ func TestStateOf(t *testing.T) {
 	}
 }
 
-func TestMembersSecret_CarriesTheMemberList(t *testing.T) {
+func TestMembersSecret_CarriesTheMemberLists(t *testing.T) {
 	t.Parallel()
-	s := privilege.MembersSecret("demo", "someapp-ce", "tenant-demo", []byte(`[]`))
+	s := privilege.MembersSecret("demo", "someapp-ce", "tenant-demo", []byte(`[]`), []byte(`[]`))
 	if s.Name != privilege.SecretName("someapp-ce") || s.Namespace != "tenant-demo" {
 		t.Fatalf("unexpected secret identity: %s/%s", s.Namespace, s.Name)
 	}
-	if _, ok := s.Data["members.json"]; !ok {
-		t.Fatalf("member list missing: %+v", s.Data)
+	for _, key := range []string{"members.json", "users.json"} {
+		if _, ok := s.Data[key]; !ok {
+			t.Fatalf("%s missing: %+v", key, s.Data)
+		}
 	}
 	var _ metav1.Object = s
+}
+
+// Every realm maps the email claim to the username; Keycloak's email field holds
+// the recovery address. A script matching on email must get the claim's value,
+// or it promotes an account the person never signs in with.
+func TestMembersJSON_EmailIsTheUsername(t *testing.T) {
+	t.Parallel()
+	j, err := privilege.MembersJSON([]authz.KeycloakUser{
+		{ID: "1", Username: "alice@corp.example", Email: "alice@personal.example"},
+	})
+	if err != nil {
+		t.Fatalf("MembersJSON: %v", err)
+	}
+	var out []privilege.Member
+	if err := json.Unmarshal(j, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 || out[0].Email != "alice@corp.example" {
+		t.Fatalf("email not taken from the username: %+v", out)
+	}
 }

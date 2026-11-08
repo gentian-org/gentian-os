@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -25,7 +19,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // AppCollectionMode is re-exported from the shared provisioner package.
@@ -36,20 +33,35 @@ const (
 	CollectForDelete    = provisioner.CollectForDelete
 )
 
+// collectKernelApps is the apps of a tenant that have one kind of store.
+//
+// For provisioning that is the apps the tenant has now whose profile
+// declares the store (match). For a deletion it is every app the store was
+// ever made for: those, the ones the tenant's record of what was provisioned
+// names (recorded) -- which is how the stores of an app uninstalled long ago
+// are found -- and, while they last, the ones a setup Job still names.
 func (r *TenantReconciler) collectKernelApps(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	mode AppCollectionMode,
-	match func(*gentianov1alpha1.AppProfile) bool,
+	match func(*gentianov1alpha1.ComponentProfile) bool,
 	setupJobPrefix func(tenantName string) string,
+	recorded func(backup.Provisioned) bool,
 ) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	profileIndex, err := loadComponentProfileIndex(ctx, r.Client)
+	if err != nil {
+		return nil, err
+	}
+	// A component the platform places gets its stores through its own
+	// Component, so the tenant-level path leaves it out and does not make
+	// a second set.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
 	if err != nil {
 		return nil, err
 	}
 	var apps []string
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
+	for _, app := range installed {
+		profile, ok := profileForApp(profileIndex, app)
 		if !ok {
 			continue
 		}
@@ -67,22 +79,29 @@ func (r *TenantReconciler) collectKernelApps(
 			apps = appendUniqueStrings(apps, fromJobs...)
 		}
 	}
+	if mode == CollectForDelete && recorded != nil {
+		fromRecord, err := r.recordedApps(ctx, tenant.Name, recorded)
+		if err != nil {
+			return nil, err
+		}
+		apps = appendUniqueStrings(apps, fromRecord...)
+	}
 	return apps, nil
 }
 
-func matchMariaDBProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchMariaDBProfile(profile)
 }
 
-func matchS3Profile(profile *gentianov1alpha1.AppProfile) bool {
+func matchS3Profile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchS3Profile(profile)
 }
 
-func matchRedisProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchRedisProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchRedisProfile(profile)
 }
 
-func matchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchMemcachedProfile(profile)
 }
 
@@ -127,19 +146,23 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 	return ctrl.Result{}, nil
 }
 
-func newKernelProvisioningJob(name string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
-	return provisioner.NewKernelProvisioningJob(
-		name, kernelNamespace, tenantLabel, managedByLabel, managedByValue, appLabel,
-		tenant.Name, appName, container,
-	)
+// newKernelProvisioningJob is a provisioning Job of a kernel namespace for a
+// tenant, and for one of its apps when appName is set.
+func newKernelProvisioningJob(name, namespace string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
+	labels := map[string]string{tenantLabel: tenant.Name, managedByLabel: managedByValue}
+	if appName != "" {
+		labels[appLabel] = appName
+	}
+	return meta.ProvisioningJob(name, namespace, labels, container)
 }
 
 func (r *TenantReconciler) ensureDeleteJobs(
 	ctx context.Context,
+	namespace string,
 	tenant *gentianov1alpha1.Tenant,
 	apps []string,
 	jobName func(tenantName, appName string) string,
 	makeJob func(*gentianov1alpha1.Tenant, string) *batchv1.Job,
 ) error {
-	return provisioner.EnsureDeleteJobs(ctx, r.Client, kernelNamespace, tenant, apps, jobName, makeJob, jobIsComplete)
+	return provisioner.EnsureDeleteJobs(ctx, r.Client, namespace, tenant, apps, jobName, makeJob, meta.JobComplete)
 }

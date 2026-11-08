@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -35,7 +37,7 @@ const (
 	// MailModeSelfhosted registers the tenant in the SHARED kernel Postfix and
 	// Dovecot — one stack per cluster, tenant-scoped by domain and maildir path.
 	// It does not deploy anything per tenant; whether Dovecot exists at all is
-	// the cluster's mail.serviceMode, not this field. See docs/design/mail.md §8.
+	// the cluster's mail.serviceMode, not this field. See docs/concepts/mail.md §8.
 	MailModeSelfhosted MailMode = "selfhosted"
 	// MailModeExternal relays through the tenant's own provider, whose credentials
 	// it supplies as spec.mail.smtpCredentialsSecret. Required for this mode.
@@ -82,7 +84,7 @@ const (
 //
 // There used to be a third value, "argocd", from when the operator created a
 // per-app Argo CD Application itself. That path is gone — reconcileTenantApps
-// creates no Applications — and no profile in the catalogue declared it. What
+// creates no Applications — and no profile in the catalog declared it. What
 // kept it alive was one branch treating any non-crossplane value as "the
 // operator owns the OIDC client", and a dozen test fixtures using it as an
 // arbitrary value, which meant the suite exercised a configuration no real
@@ -92,10 +94,12 @@ const (
 type DeploymentMethod string
 
 const (
-	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
-	// App Composition that emits an ExternalSecret and a provider-helm Release.
+	// DeploymentMethodCrossplane marks a component that runs workload pods:
+	// the operator renders its provider-helm Release and what the release
+	// needs, or, for a profile that brings its own Composition, an App claim
+	// has that Composition render them.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
-	// DeploymentMethodAPI marks an ApiProfile: a catalogue entry that runs no
+	// DeploymentMethodAPI marks an ApiProfile: a catalog entry that runs no
 	// workload pods. The orchestrator provisions no Helm release or App claim;
 	// runtime traffic is served by an external service (see spec.apiIntegration).
 	DeploymentMethodAPI DeploymentMethod = "api"
@@ -117,21 +121,6 @@ const (
 	// BackupQuiesceCommand runs the profile's own maintenance-mode commands,
 	// which usually pauses writes without taking the app offline.
 	BackupQuiesceCommand BackupQuiesceMode = "command"
-)
-
-// BackupConsistency selects the window an app's stores must be captured within.
-// +kubebuilder:validation:Enum=app;perStore
-type BackupConsistency string
-
-const (
-	// BackupConsistencyApp captures every store of the app inside a single
-	// quiesce window, because its database, buckets and volumes reference each
-	// other. This is the boundary that matters; two different apps share no
-	// transactional state, so skew between them is harmless.
-	BackupConsistencyApp BackupConsistency = "app"
-	// BackupConsistencyPerStore lets each store be captured independently, for
-	// an app whose stores hold no references to each other.
-	BackupConsistencyPerStore BackupConsistency = "perStore"
 )
 
 // TenantPhase represents the overall lifecycle phase of a Tenant.

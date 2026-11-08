@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -23,15 +25,15 @@ import (
 // Customization records one deliberate deviation from an app as shipped.
 //
 // A record is required for every customization at rung L2 and above, and is
-// written before the code — it is the design review. The schema is modelled on
-// Debian DEP-3 patch headers, generalised to the whole ladder: it captures not
+// written before the code — it is the design review. The schema is modeled on
+// Debian DEP-3 patch headers, generalized to the whole ladder: it captures not
 // just what was changed but why nothing cheaper would do, whether upstream was
 // offered the change, and when the deviation should be reconsidered.
 //
-// See docs/app-customization.md §5.
+// See docs/guides/app-customization.md §5.
 
 // CustomizationScope is the blast radius of a customization. It is independent
-// of the rung: both are minimised separately.
+// of the rung: both are minimized separately.
 // +kubebuilder:validation:Enum=tenant;profile;platform
 type CustomizationScope string
 
@@ -81,7 +83,7 @@ type CustomizationTarget struct {
 	// +optional
 	Family string `json:"family,omitempty"`
 
-	// Profile is the AppProfile name this customization targets.
+	// Profile is the ComponentProfile name this customization targets.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Profile string `json:"profile"`
@@ -144,7 +146,7 @@ type CustomizationOrigin struct {
 	// +optional
 	Authorship CustomizationAuthorship `json:"authorship,omitempty"`
 
-	// Organisation names the authoring organisation, when not Gentian.
+	// Organisation names the authoring organization, when not Gentian.
 	// +optional
 	Organisation string `json:"organisation,omitempty"`
 
@@ -299,7 +301,7 @@ type CustomizationSpec struct {
 	Licensing *CustomizationLicensing `json:"licensing,omitempty"`
 }
 
-// CustomizationPhase summarises the health of a customization record.
+// CustomizationPhase summarizes the health of a customization record.
 // +kubebuilder:validation:Enum=Active;NeedsReview;Superseded;Invalid
 type CustomizationPhase string
 
@@ -318,7 +320,7 @@ const (
 // so the debt report is derived from live cluster state rather than guessed from
 // YAML by a script.
 type CustomizationStatus struct {
-	// Phase summarises record health.
+	// Phase summarizes record health.
 	// +optional
 	Phase CustomizationPhase `json:"phase,omitempty"`
 
@@ -356,11 +358,6 @@ type CustomizationStatus struct {
 	// permanently, defeating the signal.
 	// +optional
 	RungAboveRecommended bool `json:"rungAboveRecommended,omitempty"`
-
-	// ResolvedNamespace is the namespace the target app was found in. Used by the
-	// L3 per-tenant namespace test.
-	// +optional
-	ResolvedNamespace string `json:"resolvedNamespace,omitempty"`
 }
 
 // Customization is a tracked, owned, dated deviation from an app as shipped.

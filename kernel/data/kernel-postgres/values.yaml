@@ -1,0 +1,62 @@
+instances: 1
+storageClass: ""
+storageSize: 10Gi
+
+# The kernel's own databases: one role and one database per service, the
+# role's password read from the vault by ESO (the path the seed writes) and
+# kept equal to the Secret by CNPG. Kernel data lives here and nowhere else;
+# tenant and app data live on the system engines.
+databases:
+  - name: keycloak
+    role: keycloak_user
+    passwordKey: keycloak_user_password
+  - name: openfga
+    role: openfga_user
+    passwordKey: openfga_user_password
+  # The portal's own store: a signed-in person's preferences and desktop
+  # layout. Named portal_shell because the console calls its shell what the
+  # user sees before any app is open.
+  # The registrar's record of WHO WAS ALLOWED to ask for an identity change:
+  # the caller, the relation and the object that permitted it, and the request
+  # id that joins it to Keycloak's own event (S7A.17).
+  #
+  # A database rather than git, and this is the one place the platform makes
+  # that choice deliberately. Git gives every change an author, a time and a
+  # diff, which is the standard the rest of the console is held to -- but the
+  # thing that makes git good here, append-only history, is exactly what makes
+  # it wrong for a record about people. This has a retention policy; a commit
+  # cannot.
+  - name: registrar
+    role: registrar_user
+    passwordKey: registrar_user_password
+  - name: portal-shell
+    # The name Postgres knows it by. A Kubernetes object cannot carry an
+    # underscore and a Postgres identifier is happier with one than with a
+    # hyphen, so the two are stated separately rather than one being bent to
+    # the other's rules.
+    database: portal_shell
+    role: portal_shell_user
+    # The platform tenant's desktop is the one user of this database, so the
+    # role's password is kept under that tenant's paths, laid out as any
+    # tenant's desktop database credential is. The desktop reads it there
+    # through its tenant's own store, and so needs no kernel path.
+    passwordPath: gentian-os/tenants/platform/apps/shell/database
+    passwordKey: password
+
+# Who may open a connection to the server's pods (templates/networkpolicy.yaml).
+# On by default; needs a CNI that enforces NetworkPolicy, and has no effect on
+# one that does not. Off keeps the policy and makes it admit everything, which
+# leaves the passwords as the only check. The bootstrap chart's Application
+# passes `enabled` (its storeNetworkPolicies) and the namespaces from the
+# layout; the values here are what a `helm template` run by hand gets.
+networkPolicy:
+  enabled: true
+  ports:
+    # The port every client's connection settings name, and the one
+    # CloudNativePG's instance manager answers its operator on.
+    postgresql: 5432
+    status: 8000
+  namespaces:
+    authentication: kernel-authentication
+    authorization: kernel-authorization
+    control: kernel-control

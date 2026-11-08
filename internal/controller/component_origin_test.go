@@ -1,0 +1,203 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package controller
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
+)
+
+// from is a materialized profile recorded as coming from a catalog.
+func from(t *testing.T, bundle, origin string) *gentianov1alpha1.ComponentProfile {
+	t.Helper()
+	p := materialised(t, bundle)
+	p.Annotations[profilebundle.OriginAnnotation] = origin
+	return p
+}
+
+// A profile says which catalog it came from, and a tenant's own catalog
+// belongs to that tenant. The origin the director writes beside the bundle
+// does not disturb the check of the bundle itself: a pinned install from a
+// catalog of the whole cluster, or from the tenant's own, rolls out.
+func TestAProfileOfTheClustersOrTheTenantsOwnCatalogueRollsOut(t *testing.T) {
+	for _, origin := range []string{"cluster/gentian", "tenant/" + acmeTenantFixture().Name + "/ours"} {
+		h := startDigestHarness(t, from(t, wikiBundle, origin), profilebundle.Digest([]byte(wikiBundle)))
+		got := h.reconcile()
+		if ready := componentReadyCondition(got); ready == nil || ready.Reason != "Installing" {
+			t.Fatalf("%s: condition = %+v, want the release under way", origin, ready)
+		}
+		if h.releasedVersion() != "1.0.0" {
+			t.Fatalf("%s: release at %q", origin, h.releasedVersion())
+		}
+	}
+}
+
+// A profile from another tenant's own catalog is not rolled out, pinned or
+// not: the object is visible to the whole cluster, so the director's refusal
+// is not the only one. Nothing is rendered, and the condition says why.
+func TestAProfileOfAnotherTenantsCatalogueRendersNothing(t *testing.T) {
+	for name, pinned := range map[string]string{"pinned": profilebundle.Digest([]byte(wikiBundle)), "by name": ""} {
+		h := startDigestHarness(t, from(t, wikiBundle, "tenant/somebody-else/ours"), pinned)
+		got := h.reconcile()
+		ready := componentReadyCondition(got)
+		if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonOtherTenant {
+			t.Fatalf("%s: condition = %+v, want %s", name, ready, profilebundle.ReasonOtherTenant)
+		}
+		if !strings.Contains(ready.Message, "another tenant's own catalog") || !strings.Contains(ready.Message, "nothing is rolled out") {
+			t.Fatalf("%s: the condition does not say why: %s", name, ready.Message)
+		}
+		if strings.Contains(ready.Message, "somebody-else") {
+			t.Fatalf("%s: the condition names the other tenant: %s", name, ready.Message)
+		}
+		if h.releasedVersion() != "" || h.networkPolicyWritten() {
+			t.Fatalf("%s: rendered from another tenant's profile: release %q, network policy %v",
+				name, h.releasedVersion(), h.networkPolicyWritten())
+		}
+		if e := h.events(); len(e) != 1 || !strings.Contains(e[0], "Warning "+profilebundle.ReasonOtherTenant) {
+			t.Fatalf("%s: events = %v, want one warning", name, e)
+		}
+		// Said once.
+		h.reconcile()
+		if e := h.events(); len(e) != 0 {
+			t.Fatalf("%s: the refusal was repeated: %v", name, e)
+		}
+	}
+}
+
+// A profile of trustTier platform from the tenant's own catalog is not rolled
+// out: the tier would open it ways into the kernel, and only a catalog of
+// the whole cluster may give it. The director refuses it too; the object is
+// visible to the operator whatever the director refused.
+func TestAPlatformTierProfileOfATenantsCatalogueRendersNothing(t *testing.T) {
+	p := from(t, wikiBundle, "tenant/"+acmeTenantFixture().Name+"/ours")
+	p.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+	h := startDigestHarness(t, p, "")
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != profilebundle.ReasonPlatformTierFromTenant {
+		t.Fatalf("condition = %+v, want %s", ready, profilebundle.ReasonPlatformTierFromTenant)
+	}
+	if h.releasedVersion() != "" || h.networkPolicyWritten() {
+		t.Fatalf("rendered a platform-tier profile from a tenant's catalog: release %q, network policy %v",
+			h.releasedVersion(), h.networkPolicyWritten())
+	}
+}
+
+// An origin nobody can read is not an origin that admits everybody.
+func TestAProfileWhoseOriginCannotBeReadRendersNothing(t *testing.T) {
+	h := startDigestHarness(t, from(t, wikiBundle, "tenant/acme"), "")
+	got := h.reconcile()
+	if ready := componentReadyCondition(got); ready == nil || ready.Reason != profilebundle.ReasonOtherTenant || !strings.Contains(ready.Message, "cannot be read") {
+		t.Fatalf("condition = %+v", ready)
+	}
+	if h.releasedVersion() != "" {
+		t.Fatalf("rendered from a profile whose origin cannot be read: %q", h.releasedVersion())
+	}
+}
+
+// An add-on switched on by name whose profile is not on the cluster holds
+// the app it is switched on in, and says what to do: profiles are not on a
+// cluster ahead of an install, and an add-on that resolves to nothing must
+// not be dropped from the release without a word.
+func TestAnAddonWithNoProfileOnTheClusterHoldsItsApp(t *testing.T) {
+	h := startDigestHarness(t, materialised(t, wikiBundle), "")
+	h.comp.Spec.Addons = []string{"wiki-search"}
+	if err := h.c.Update(context.Background(), h.comp); err != nil {
+		t.Fatal(err)
+	}
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != reasonAddonProfileMissing {
+		t.Fatalf("condition = %+v, want %s", ready, reasonAddonProfileMissing)
+	}
+	for _, want := range []string{"add-on wiki-search", "not on this cluster", "coordinate and digest", "<catalogue>/wiki-search"} {
+		if !strings.Contains(ready.Message, want) {
+			t.Errorf("the condition does not say %q: %s", want, ready.Message)
+		}
+	}
+	if h.releasedVersion() != "" {
+		t.Fatalf("rolled out without the add-on: %q", h.releasedVersion())
+	}
+
+	// Its profile arrives, from another tenant's own catalogue: still held.
+	addon := &gentianov1alpha1.ComponentProfile{}
+	addon.Name = "wiki-search"
+	addon.Annotations = map[string]string{profilebundle.OriginAnnotation: "tenant/somebody-else/ours"}
+	if err := h.c.Create(context.Background(), addon); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != profilebundle.ReasonOtherTenant || !strings.Contains(ready.Message, "add-on wiki-search") {
+		t.Fatalf("with another tenant's add-on: condition = %+v", ready)
+	}
+	// From a catalog of the cluster: rolled out.
+	addon.Annotations[profilebundle.OriginAnnotation] = "cluster/gentian"
+	if err := h.c.Update(context.Background(), addon); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("with the add-on's profile on the cluster: condition = %+v", ready)
+	}
+}
+
+// toolsBundle is an adapter's profile: a release of its own in the tenant,
+// nobody opens it, and the reviewed list of its tools.
+const toolsBundle = `apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: wiki-tools
+  labels:
+    gentianos.io/profile-name: wiki-tools
+spec:
+  classes: [adapter]
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/wiki-tools
+      name: wiki-tools
+      version: "1.0.0"
+  adapter:
+    adapts: {profile: wiki}
+`
+
+// An adapter is rolled out like an app, from a release of its own in its
+// tenant. An instance of a class its profile is not certified for rolls out
+// nothing, and says that a reinstall is what changes it.
+func TestAnAdapterRollsOutAndAMisclassedInstanceDoesNot(t *testing.T) {
+	h := startDigestHarness(t, materialised(t, toolsBundle), "")
+	h.comp.Spec.Class = gentianov1alpha1.ComponentClassAdapter
+	if err := h.c.Update(context.Background(), h.comp); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(h.reconcile()); ready == nil || ready.Reason != "Installing" {
+		t.Fatalf("condition = %+v, want the release under way", ready)
+	}
+	if h.releasedVersion() != "1.0.0" {
+		t.Fatalf("release at %q", h.releasedVersion())
+	}
+
+	h = startDigestHarness(t, materialised(t, toolsBundle), "")
+	got := h.reconcile()
+	ready := componentReadyCondition(got)
+	if ready == nil || ready.Status != "False" || ready.Reason != reasonClassMismatch ||
+		!strings.Contains(ready.Message, "install it again") {
+		t.Fatalf("condition = %+v, want %s", ready, reasonClassMismatch)
+	}
+	if h.releasedVersion() != "" || h.networkPolicyWritten() {
+		t.Fatalf("an adapter rolled out as an app: release %q, network policy %v",
+			h.releasedVersion(), h.networkPolicyWritten())
+	}
+}

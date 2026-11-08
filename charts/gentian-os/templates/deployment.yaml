@@ -6,18 +6,7 @@ kind: Deployment
 {{- $imageDigest := .Values.image.digest | default "" }}
 {{- $imageTag := .Values.image.tag | default .Chart.AppVersion }}
 {{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
-{{- $lifecycleDeploymentsEnabled := $lifecycleDeployments.enabled | default false }}
-{{- $lifecycleGitCredsSecret := $lifecycleDeployments.gitCredentialsSecret | default "" }}
-{{- /* basic is username+password via a mounted .git-credentials file
-     (credential.helper=store); bearer is a single token, which
-     repository-default.yaml's ExternalSecret stores under a "token" key
-     instead — no userinfo form exists for a bearer token, so it is read as a
-     secretKeyRef env var and injected as an http.extraHeader instead of a
-     mounted file. See repository-default.yaml's $isBearer branch for the
-     Secret shape this is reading. */}}
-{{- $lifecycleAuthType := $lifecycleDeployments.authType | default "basic" }}
-{{- $lifecycleBearer := eq $lifecycleAuthType "bearer" }}
-{{- $lifecycleGitCredsFile := and $lifecycleGitCredsSecret (not $lifecycleBearer) }}
+{{- $usageStatisticsEnabled := include "gentian-os.usageStatisticsEnabled" . }}
 {{- $usage := .Values.usage | default dict }}
 {{- $usageSampler := $usage.sampler | default dict }}
 {{- $metricsServer := $usage.metricsServer | default dict }}
@@ -33,10 +22,18 @@ metadata:
     # bridge read an empty OpenFGA token for an hour after ESO had populated
     # its Secret, retrying 401 bearer_token_missing against a value that was
     # by then sitting right beside it.
+    {{- /*
+      The claim's projection. gentian-cluster-config carries the settings the
+      operator reads from the claim rather than from its own Helm values --
+      tenancy, mail, LLM, the tenant limit range. Without this annotation a
+      setting changed through the director lands in git, reaches the
+      ConfigMap, and then waits for an unrelated restart before anything acts
+      on it, which reads as the change having been ignored.
+    */}}
+    configmap.reloader.stakater.com/reload: "gentian-cluster-config"
     secret.reloader.stakater.com/reload: >-
       {{ .Values.authzBridge.openfgaTokenSecretRef.name | default "gentian-os-openfga-token" }}
       {{- with .Values.cloudflare.apiTokenSecretRef }}{{- if .name }},{{ .name }}{{- end }}{{- end }}
-      {{- if $lifecycleGitCredsSecret }},{{ $lifecycleGitCredsSecret }}{{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -46,6 +43,11 @@ spec:
     metadata:
       labels:
         {{- include "gentian-os.selectorLabels" . | nindent 8 }}
+        # What tells these pods from the release's other workloads in this
+        # namespace, which carry the two labels above as well. The
+        # NetworkPolicy in networkpolicy.yaml selects on it. Not part of the
+        # Deployment's selector, which is immutable.
+        app.kubernetes.io/component: operator
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -82,6 +84,7 @@ spec:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config
           env:
+            {{- include "gentian-os.layoutEnv" . | nindent 12 }}
             {{- with .Values.trustAnchorSecret }}
             # Outside every feature guard on purpose: the operator talks to
             # Keycloak and OpenBao over kernel hostnames whatever else is
@@ -96,20 +99,13 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
-            {{- /* Only when there is nothing to verify against.
-
-                 This used to be an unconditional "true", which meant the
-                 trust anchor above could never take effect for OpenBao:
-                 NewKVClient installs an InsecureSkipVerify transport whenever
-                 this is set, overriding SSL_CERT_FILE. So configuring
-                 trustAnchorSecret bought TLS verification everywhere except the
-                 one connection that carries the master password.
-
-                 Left true when no anchor is configured, because OpenBao serves
-                 a self-signed certificate and the operator could not reach it
-                 at all otherwise — this is the honest default for that case,
-                 not a hidden one. */}}
-            {{- if not .Values.trustAnchorSecret }}
+            {{- if .Values.openbao.caSecret }}
+            # The vault is verified against its CA openbao-ca, whose
+            # certificate the installer copies into this namespace (B-01).
+            - name: BAO_CACERT
+              value: /etc/gentian/openbao-ca/ca.crt
+            {{- else if not .Values.trustAnchorSecret }}
+            # Development only: no CA to verify the vault against.
             - name: VAULT_SKIP_VERIFY
               value: "true"
             {{- end }}
@@ -131,6 +127,16 @@ spec:
             - name: MAIL_ADMIN_CONTACT
               value: {{ .Values.mailAdminContact | default "" | quote }}
             {{- /*
+            Other addresses of a hosted domain forwarded off the cluster, as
+            address=target pairs — see mailAliases in values.yaml.
+            */}}
+            {{- $aliases := list }}
+            {{- range .Values.mailAliases }}
+            {{- $aliases = append $aliases (printf "%s=%s" .address .to) }}
+            {{- end }}
+            - name: MAIL_ALIASES
+              value: {{ join "," $aliases | quote }}
+            {{- /*
             Whether an address nobody owns is accepted. catchall (default),
             observe, or strict — see mailRecipientPolicy in values.yaml.
             */}}
@@ -146,30 +152,12 @@ spec:
             */}}
             - name: MAIL_SERVICE_MODE
               value: {{ .Values.mailServiceMode | default "external" | quote }}
-            - name: ROUTING_MODE
-              value: {{ .Values.routingMode | default "gateway" | quote }}
             {{- /*
             hasKey, not `default true`: Helm's default treats false as empty, so
             `gateTenants: false | default true` renders true and the switch
             silently does nothing. A boolean that cannot be turned off is worse
             than no switch, because the operator believes it is off.
             */}}
-            {{- /*
-            OpenBao serves a self-signed certificate, so the credential manager
-            has to be told what signs it or every token exchange fails at TLS —
-            and used to report that as "not authorised".
-            Read from the Secret rather than mounted: a Pod cannot mount a
-            Secret from another namespace, which is why ESO's ClusterSecretStore
-            uses a caProvider for the same certificate.
-            */}}
-            - name: BAO_CA_SECRET
-              value: {{ (.Values.credentialManager).caSecret | default "openbao-tls" | quote }}
-            - name: BAO_CA_SECRET_NAMESPACE
-              value: {{ (.Values.credentialManager).caSecretNamespace | default "openbao" | quote }}
-            {{- if (.Values.credentialManager).tlsSkipVerify }}
-            - name: BAO_TLS_SKIP_VERIFY
-              value: "true"
-            {{- end }}
             - name: HANDOVER_GATE_TENANTS
               value: {{ if hasKey (.Values.handover | default dict) "gateTenants" }}{{ .Values.handover.gateTenants | quote }}{{ else }}"true"{{ end }}
             - name: TENANT_DNS01_CLUSTER_ISSUER
@@ -180,9 +168,18 @@ spec:
             - name: BACKUP_AGE_RECIPIENTS
               value: {{ join "," .Values.backupRecipients | quote }}
             {{- end }}
-            {{- if .Values.authzBridge.enabled }}
-            - name: AUTHZ_BRIDGE_ENABLED
-              value: "true"
+            # The vault's daily snapshot: the operator makes its bucket and
+            # key, and reports how old the newest one is on the Cluster claim
+            # (templates/openbao-snapshots.yaml).
+            - name: OPENBAO_SNAPSHOTS
+              value: {{ .Values.openbaoSnapshots.enabled | quote }}
+            - name: OPENBAO_SNAPSHOT_BUCKET
+              value: {{ .Values.openbaoSnapshots.bucket | quote }}
+            - name: OPENBAO_SNAPSHOT_STALE_AFTER
+              value: {{ .Values.openbaoSnapshots.staleAfter | quote }}
+            - name: OPENBAO_TRANSIT_SNAPSHOTS
+              value: {{ .Values.openbaoSnapshots.transit.enabled | quote }}
+            {{- if .Values.authzBridge.openfgaURL }}
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
             {{- /*
@@ -206,6 +203,26 @@ spec:
                   optional: true
             {{- end }}
             {{- end }}
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            # The public halves of the keys Keycloak's event listener signs
+            # with. A statement about who is in which group is believed only
+            # when it carries one of these signatures, so without this the
+            # operator accepts no membership at all and every permission that
+            # follows from a group is refused to everyone. The portal login
+            # step derives the pair and writes both halves.
+            - name: GENTIAN_LISTENER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.membershipListener.keysSecretRef.name | quote }}
+                  key: {{ .Values.membershipListener.keysSecretRef.key | default "keys" | quote }}
+                  optional: true
+            - name: GENTIAN_MEMBERSHIP_ADDR
+              value: ":{{ .Values.membershipListener.port }}"
+            - name: GENTIAN_PLATFORM_REALM
+              value: {{ .Values.membershipListener.platformRealm | quote }}
+            - name: GENTIAN_PLATFORM_TENANT
+              value: {{ .Values.membershipListener.platformTenant | quote }}
+            {{- end }}
             # Which EdgeIngress this cluster runs, by the name
             # kernel/platforms.yaml uses. Empty follows networkMode, so an
             # existing cluster needs no new value to keep behaving as it does.
@@ -213,6 +230,13 @@ spec:
               value: {{ .Values.edgeIngress | default "" | quote }}
             - name: NETWORK_MODE
               value: {{ .Values.networkMode | default "" | quote }}
+            # The cluster's switch for the kernel's network rules, as the
+            # installer set it (KERNEL_NETWORK_POLICIES). "true" narrows what
+            # a tenant's namespace and a publishing proxy admit from the edge
+            # namespace to the Gateway's Envoy pods; anything else leaves
+            # both as they were.
+            - name: KERNEL_NETWORK_POLICIES
+              value: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
             - name: CLOUDFLARE_ZONE_ID
               {{- if .Values.cloudflare.zoneID }}
               value: {{ .Values.cloudflare.zoneID | quote }}
@@ -274,59 +298,36 @@ spec:
                   key: {{ .Values.cloudflare.tunnelAPITokenSecretRef.key | default "api-token" | quote }}
                   optional: true
             {{- end }}
-            - name: INFRA_NAMESPACE
-              value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
               value: {{ .Values.servicesNamespace | quote }}
+            # The ext-auth bouncer's Service, which every kernel-zone SecurityPolicy
+            # the operator writes names as its ext-auth backend.
+            - name: BOUNCER_SERVICE
+              value: {{ printf "%s-bouncer" (include "gentian-os.fullname" .) | quote }}
+            # Where a desktop asks what a person may open: the usher's Service,
+            # in this namespace, beside the director's.
+            - name: USHER_URL
+              value: {{ printf "http://%s-usher.%s.svc.cluster.local:8080" (include "gentian-os.fullname" .) .Release.Namespace | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
               value: {{ .Values.llmSupport | default false | quote }}
-            {{- if .Values.credentialManager.enabled }}
-            - name: CREDENTIAL_MANAGER_ENABLED
+            {{- if include "gentian-os.usageStatisticsEnabled" . }}
+            # The usage statistics report: on, and where it goes. Absent, the operator
+            # sends nothing and starts no timer. The signing key is a file,
+            # mounted below, so that it is found without a restart once the
+            # Secret exists.
+            - name: USAGE_STATISTICS_ENABLED
               value: "true"
-            - name: CREDENTIAL_MANAGER_ADDR
-              value: ":{{ .Values.credentialManager.port }}"
-            - name: CREDENTIAL_PROBE_NAMESPACE
-              value: {{ .Values.credentialManager.probeNamespace | quote }}
-            - name: BAO_AUTH_MOUNT
-              value: {{ .Values.credentialManager.authMount | quote }}
-            - name: BAO_OIDC_ROLES
-              value: {{ join "," .Values.credentialManager.oidcRoles | quote }}
-            - name: CREDENTIAL_CLUSTER_ADMIN_POLICY
-              value: {{ .Values.credentialManager.clusterAdminPolicy | quote }}
-            - name: CREDENTIAL_TENANT_CLAIM
-              value: {{ .Values.credentialManager.tenantClaim | quote }}
-            {{- end }}
-            {{- /* Renamed keys: a cluster overlay still setting the old ones would
-                   otherwise render a commerce block pointing at nothing, and the
-                   operator would fail every install-grant exchange at runtime. */}}
-            {{- if .Values.commerce.corpAPIURL }}
-            {{- fail "commerce.corpAPIURL was renamed to commerce.apiURL" }}
-            {{- end }}
-            {{- if .Values.commerce.operatorToken }}
-            {{- fail "commerce.operatorToken was renamed to commerce.apiToken" }}
-            {{- end }}
-            {{- if .Values.commerce.enabled }}
-            - name: GENTIAN_COMMERCE_ENABLED
-              value: "true"
-            - name: GENTIAN_COMMERCE_API_URL
-              value: {{ .Values.commerce.apiURL | quote }}
-            {{- if .Values.commerce.apiToken }}
-            - name: GENTIAN_COMMERCE_API_TOKEN
-              value: {{ .Values.commerce.apiToken | quote }}
-            {{- end }}
-            {{- if .Values.commerce.meteringInterval }}
-            - name: METERING_INTERVAL
-              value: {{ .Values.commerce.meteringInterval | quote }}
-            {{- end }}
+            - name: USAGE_STATISTICS_URL
+              value: {{ .Values.usageStatistics.url | quote }}
+            - name: USAGE_STATISTICS_KEY_FILE
+              value: /etc/gentian/usage-statistics/{{ .Values.usageStatistics.signingKey.property }}
             {{- end }}
             {{- with .Values.kernelServices.smtpHost }}
             - name: MAIL_SMTP_HOST
               value: {{ . | quote }}
             {{- end }}
-            - name: OPENBAO_NAMESPACE
-              value: {{ .Values.openbaoNamespace | quote }}
             - name: MEMCACHED_IMAGE
               value: {{ .Values.memcached.image | quote }}
             - name: POSTGRES_PROVISIONER_IMAGE
@@ -335,22 +336,45 @@ spec:
               value: {{ .Values.provisioners.mariadb | quote }}
             - name: REDIS_PROVISIONER_IMAGE
               value: {{ .Values.provisioners.redis | quote }}
-            - name: KEYCLOAK_PROVISIONER_IMAGE
-              value: {{ .Values.provisioners.keycloak | quote }}
+            # The tools the Jobs that move a tenant's objects and talk to the
+            # identity provider run, from the same CI run as this operator:
+            # its own tag, unless set.
+            - name: STORAGE_TOOLS_IMAGE
+              value: {{ .Values.provisioners.storageTools | default (printf "ghcr.io/gentian-org/storage-tools:%s" $imageTag) | quote }}
             - name: CNPG_CLUSTER_NAME
               value: {{ .Values.database.clusterName | quote }}
             - name: TENANT_CROSSPLANE_ONLY
               value: {{ .Values.tenantProvisioning.crossplaneOnly | default false | quote }}
             - name: APP_LIFECYCLE_BIND_ADDRESS
               value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
-            - name: GENTIAN_DEPLOYMENTS_PATH
-              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
-            - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
+            # Who may call this API. A caller presents a ServiceAccount token
+            # issued for this audience; the operator asks the API server whose
+            # it is (TokenReview) and admits two identities of this namespace:
+            # the director's for every route, the usher's for reads. Each is
+            # named only where that workload is deployed; with neither, or
+            # with no audience, the API refuses every request.
+            - name: APP_LIFECYCLE_AUDIENCE
+              value: {{ .Values.appLifecycle.audience | quote }}
+            {{- if .Values.director.enabled }}
+            - name: APP_LIFECYCLE_DIRECTOR_SERVICE_ACCOUNT
+              value: {{ include "gentian-os.directorServiceAccountName" . | quote }}
+            {{- end }}
+            {{- if .Values.usher.enabled }}
+            - name: APP_LIFECYCLE_USHER_SERVICE_ACCOUNT
+              value: {{ include "gentian-os.usherServiceAccountName" . | quote }}
+            {{- end }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
-            - name: GENTIAN_DEPLOYMENTS_STAGE
-              value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}
+            # The build this operator is, for the Cluster claim's status: the
+            # image tag, where the binary carries no VCS revision of its own.
+            - name: GENTIAN_BUILD
+              value: {{ $imageTag | quote }}
+            # The repository's URL and nothing else of it: no checkout and no
+            # credential. When the director says it has pushed, the operator
+            # asks Argo CD to read this repository now, and the URL is how it
+            # tells which Applications and ApplicationSets read it.
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $lifecycleDeployments.repo | default "" | quote }}
             - name: USAGE_SAMPLER_ENABLED
               value: {{ $usageSampler.enabled | default false | quote }}
             - name: USAGE_SAMPLE_INTERVAL
@@ -359,63 +383,18 @@ spec:
               value: {{ $usageSampler.retention | default "9600h" | quote }}
             - name: METRICS_SERVER_ENABLED
               value: {{ $metricsServer.enabled | default false | quote }}
-            {{- if $lifecycleGitCredsSecret }}
-            - name: HOME
-              value: /tmp
-            {{- if $lifecycleBearer }}
-            - name: GIT_CONFIG_COUNT
-              value: "2"
-            - name: GIT_CONFIG_KEY_0
-              value: safe.directory
-            - name: GIT_CONFIG_VALUE_0
-              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
-            # Dependent env var: GIT_CONFIG_VALUE_1's $(GIT_BEARER_TOKEN) is
-            # resolved by Kubernetes from the entry defined immediately above
-            # it, not by a shell — this container never sees the raw token as
-            # its own named variable, only composed into the header.
-            - name: GIT_BEARER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $lifecycleGitCredsSecret }}
-                  key: token
-                  optional: true
-            - name: GIT_CONFIG_KEY_1
-              value: http.extraHeader
-            - name: GIT_CONFIG_VALUE_1
-              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
-            {{- else }}
-            # No credential.helper: it needs a lock file beside --file even
-            # for a plain read, which is fatal against a read-only mounted
-            # Secret ("unable to get credential storage lock ... Permission
-            # denied"). The init container's clone URL already carries
-            # user:pass (see git-clone-deployments below), so it lands in
-            # this checkout's origin remote and every push/fetch against
-            # origin reads it straight from there — no credential lookup, no
-            # lock, nothing for this container to mount at all.
-            - name: GIT_CONFIG_COUNT
-              value: "1"
-            - name: GIT_CONFIG_KEY_0
-              value: safe.directory
-            - name: GIT_CONFIG_VALUE_0
-              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
-            {{- end }}
-            - name: GIT_AUTHOR_NAME
-              value: gentian-os
-            - name: GIT_AUTHOR_EMAIL
-              value: gentian-os@gentian.org
-            - name: GIT_COMMITTER_NAME
-              value: gentian-os
-            - name: GIT_COMMITTER_EMAIL
-              value: gentian-os@gentian.org
-            {{- end }}
-            - name: KERNEL_NAMESPACE
-              value: {{ .Values.infraNamespace | default "platform-kernel" | quote }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: OPERATOR_SA
               value: {{ include "gentian-os.serviceAccountName" . | quote }}
+            # The image the operator runs, which the arbiter it deploys in
+            # system-authorization runs as well, with its own command: one
+            # build, so the table the operator writes and the arbiter that
+            # reads it cannot come from different commits.
+            - name: GENTIAN_IMAGE
+              value: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ $imageTag }}{{- end }}"
           ports:
             - name: metrics
               containerPort: 8080
@@ -426,9 +405,9 @@ spec:
             - name: lifecycle
               containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
-            {{- if .Values.credentialManager.enabled }}
-            - name: credentials
-              containerPort: {{ .Values.credentialManager.port }}
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            - name: membership
+              containerPort: {{ .Values.membershipListener.port }}
               protocol: TCP
             {{- end }}
             {{- if $webhookEnabled }}
@@ -459,8 +438,25 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
           volumeMounts:
+            # The operator's token for the arbiter's platform path: the
+            # realm's memberships into the app stores that mirror them, and a
+            # store's export, restore and purge. Projected for that audience
+            # alone and replaced by the kubelet; the arbiter asks the API
+            # server whose it is (internal/arbiter/platform.go).
+            - name: arbiter-token
+              mountPath: /var/run/secrets/gentian/arbiter
+              readOnly: true
+            {{- if .Values.openbao.caSecret }}
+            - name: openbao-ca
+              mountPath: /etc/gentian/openbao-ca
+              readOnly: true
+            {{- end }}
+            {{- if $usageStatisticsEnabled }}
+            - name: usage-statistics-key
+              mountPath: /etc/gentian/usage-statistics
+              readOnly: true
+            {{- end }}
             {{- with .Values.trustAnchorSecret }}
             - name: kernel-trust-anchor
               mountPath: /opt/gentian-trust-anchor
@@ -471,17 +467,6 @@ spec:
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
             {{- end }}
-            {{- if $lifecycleDeploymentsEnabled }}
-            - name: deployments-checkout
-              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
-            {{- end }}
-            {{- /* No git-credentials mount here for basic auth: the init
-                 container's clone URL already carries user:pass, so it is
-                 in this checkout's origin remote and this container never
-                 needs to read the credential itself. Bearer's token comes
-                 through GIT_BEARER_TOKEN (secretKeyRef) above, not a mount
-                 either. */}}
-          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -494,8 +479,33 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
       volumes:
+        - name: arbiter-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: gentian-arbiter
+                  expirationSeconds: 600
+                  path: token
+        {{- with .Values.openbao.caSecret }}
+        # The vault's CA certificate, nothing else. Optional, so the pod
+        # starts without it; the vault is then verified against no CA and
+        # every request to it fails until the copy is there.
+        - name: openbao-ca
+          secret:
+            secretName: {{ . | quote }}
+            optional: true
+        {{- end }}
+        {{- if $usageStatisticsEnabled }}
+        # Optional: the pod starts while the vault path or the Secret is still
+        # missing, and the operator then records that it has no key instead
+        # of sending anything unsigned.
+        - name: usage-statistics-key
+          secret:
+            secretName: {{ .Values.usageStatistics.signingKey.secretName | quote }}
+            optional: true
+            defaultMode: 0440
+        {{- end }}
         {{- with .Values.trustAnchorSecret }}
         - name: kernel-trust-anchor
           secret:
@@ -506,93 +516,4 @@ spec:
           secret:
             secretName: {{ include "gentian-os.fullname" . }}-webhook-server-cert
         {{- end }}
-        {{- if $lifecycleDeploymentsEnabled }}
-        - name: deployments-checkout
-          emptyDir: {}
-        {{- end }}
-        {{- if $lifecycleGitCredsFile }}
-        - name: git-credentials
-          secret:
-            secretName: {{ $lifecycleGitCredsSecret | quote }}
-            optional: true
-        {{- end }}
-      {{- end }}
-      {{- if $lifecycleDeploymentsEnabled }}
-      initContainers:
-        - name: git-clone-deployments
-          image: alpine/git:2.45.2
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              # credential.helper 'store' needs a lock file beside its --file
-              # target even for a plain read, which fails outright against a
-              # read-only mounted Secret ("unable to get credential storage
-              # lock ... Permission denied") — not a silent no-op. The
-              # mounted file already IS a complete scheme://user:pass@host/path
-              # URL (crossplane/compositions/repository-default.yaml), so
-              # clone from that directly and skip credential.helper entirely.
-              # It then lands in this checkout's origin remote, so the
-              # gentian-os container's own later pushes read it straight from
-              # there too — see GIT_CONFIG_COUNT below in this Deployment.
-              CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
-              {{- if $lifecycleGitCredsFile }}
-              # git-credentials is an OPTIONAL Secret volume subPath-mounted
-              # here: when the Secret doesn't exist yet (ESO/OpenBao not
-              # satisfied yet), Kubernetes falls back to an empty DIRECTORY
-              # at this path instead of failing the mount — and `-s` alone
-              # reports true for a directory too (nonzero size on most
-              # filesystems), so `cat` on it fails with "Is a directory". -f
-              # rules the directory case out; retry picks this up once the
-              # Secret exists.
-              [ -f /etc/git/credentials ] && [ -s /etc/git/credentials ] && CLONE_URL="$(cat /etc/git/credentials)"
-              {{- end }}
-              for attempt in 1 2 3 4 5; do
-                if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
-                  exit 0
-                fi
-                if git clone "${CLONE_URL}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
-                  exit 0
-                fi
-                echo "git clone attempt ${attempt} failed; retrying..."
-                sleep 15
-              done
-              exit 1
-          env:
-            - name: GENTIAN_DEPLOYMENTS_REPO
-              value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
-            {{- if $lifecycleBearer }}
-            - name: HOME
-              value: /tmp
-            - name: GIT_CONFIG_COUNT
-              value: "1"
-            - name: GIT_BEARER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $lifecycleGitCredsSecret }}
-                  key: token
-                  optional: true
-            - name: GIT_CONFIG_KEY_0
-              value: http.extraHeader
-            - name: GIT_CONFIG_VALUE_0
-              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
-            {{- end }}
-          securityContext:
-            runAsUser: 65532
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          volumeMounts:
-            - name: deployments-checkout
-              mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
-            {{- if $lifecycleGitCredsFile }}
-            - name: git-credentials
-              mountPath: /etc/git/credentials
-              subPath: .git-credentials
-              readOnly: true
-            {{- end }}
-      {{- end }}
       terminationGracePeriodSeconds: 10

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -33,8 +27,8 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 const (
@@ -50,10 +44,21 @@ func tenantProvisioningConfigMapName(tenantName string) string {
 // that Crossplane applies via tenant-default. The operator seeds
 // credentials and updates this ConfigMap; it does not create those resources directly.
 func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	jobs, err := r.buildTenantProvisioningJobs(ctx, tenant)
+	jobs, keys, err := r.buildTenantProvisioningJobs(ctx, tenant)
 	if err != nil {
 		return fmt.Errorf("build tenant provisioning jobs: %w", err)
 	}
+	// The passwords and key pairs the Jobs provision the apps' stores with,
+	// and the apps' OIDC client secrets, each in a Secret its Job owns: never
+	// in the manifests below.
+	if err := r.ensureProvisioningJobSecrets(ctx, keys); err != nil {
+		return err
+	}
+	// On record before anything is made: see recordProvisionedStores.
+	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
+		return err
+	}
+	keepFinishedJobs(jobs)
 	stampScriptHashes(jobs)
 	// A Job's pod template is immutable, so re-applying a changed script does
 	// nothing to a Job that already ran: the old script stays the last thing
@@ -78,7 +83,7 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: kernelNamespace,
+			Namespace: provisioningNamespace,
 			Labels: map[string]string{
 				tenantLabel:                tenant.Name,
 				"gentianos.io/config-type": tenantProvisioningJobsConfigType,
@@ -91,27 +96,20 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 		},
 	}
 
-	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Data != nil &&
-		existing.Data[tenantProvisioningJobsDataKey] == jobsPayload &&
-		existing.Data[tenantProvisioningObjectsDataKey] == objectsPayload {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	if existing.Data == nil {
-		existing.Data = map[string]string{}
-	}
-	existing.Data[tenantProvisioningJobsDataKey] = jobsPayload
-	existing.Data[tenantProvisioningObjectsDataKey] = objectsPayload
-	existing.Labels = desired.Labels
-	return r.Patch(ctx, existing, patch)
+	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
+		if existing.Data != nil &&
+			existing.Data[tenantProvisioningJobsDataKey] == jobsPayload &&
+			existing.Data[tenantProvisioningObjectsDataKey] == objectsPayload {
+			return false
+		}
+		if existing.Data == nil {
+			existing.Data = map[string]string{}
+		}
+		existing.Data[tenantProvisioningJobsDataKey] = jobsPayload
+		existing.Data[tenantProvisioningObjectsDataKey] = objectsPayload
+		existing.Labels = desired.Labels
+		return true
+	})
 }
 
 func (r *TenantReconciler) buildTenantProvisioningObjects(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]client.Object, error) {
@@ -144,72 +142,80 @@ func sanitizeJobForJSON(job *batchv1.Job) batchv1.Job {
 	return *out
 }
 
-func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, error) {
+func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]batchv1.Job, provisioningJobSecrets, error) {
 	var jobs []batchv1.Job
 	realmName := keycloakRealmName(tenant)
 
-	identityJobs, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
+	identityJobs, clientSecrets, err := r.buildIdentityProvisioningJobs(ctx, tenant, realmName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	jobs = append(jobs, identityJobs...)
 
-	dataJobs, err := r.buildDataPlaneJobs(ctx, tenant)
+	dataJobs, keys, err := r.buildDataPlaneJobs(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	jobs = append(jobs, dataJobs...)
-	return jobs, nil
+	for job, data := range clientSecrets {
+		keys[job] = data
+	}
+	return jobs, keys, nil
 }
 
-func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {
+// buildIdentityProvisioningJobs builds the Jobs that provision a tenant's
+// realm and its apps' clients, and the OIDC client secrets those Jobs are to
+// be handed, by Job (ensureProvisioningJobSecrets): those are not in the Jobs.
+func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, provisioningJobSecrets, error) {
 	var jobs []batchv1.Job
+	clientSecrets := provisioningJobSecrets{}
 
-	var broker *realmBrokerParams
-	if r.KernelRealm != "" && r.KernelDomain != "" {
-		broker = &realmBrokerParams{
-			kernelRealm:       r.KernelRealm,
-			kernelExternalURL: kernelExternalURL(r.KernelDomain),
-		}
+	// A tenant that adopts the kernel realm gets no realm Job, no
+	// administrator, no broker and no mail server: those are the realm's,
+	// and the realm is the identity bootstrap's. See adoptsKernelRealm.
+	adopted := r.adoptsKernelRealm(tenant)
+	if !adopted {
+		jobs = append(jobs, *makeRealmJob(tenant, realmName))
 	}
-	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
 
-	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	// An app whose client is refused gets no Job; ensureIdentity says why.
+	oidcConfigs, _, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	samlConfigs, err := r.collectSAMLAppConfigs(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	groupsJSON, err := r.collectGentianGroupsJSON(ctx, tenant, oidcConfigs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupsJSON))
 
-	adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
-	if err != nil {
-		return nil, err
+	if !adopted {
+		jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminUsername(tenant)))
 	}
-	jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminEmail(tenant), adminCreds))
 
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if crossplaneOwnsOIDCClient(profile, cfg) {
 			if err := r.seedOIDCSecrets(ctx, tenant, realmName, cfg); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			continue
 		}
-		job, err := r.buildOIDCClientProvisioningJob(ctx, tenant, realmName, cfg)
+		job, clientSecret, err := r.buildOIDCClientProvisioningJob(ctx, tenant, realmName, cfg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if clientSecret != "" {
+			clientSecrets[types.NamespacedName{Namespace: job.Namespace, Name: job.Name}] = clientSecretSecretData(clientSecret)
 		}
 		jobs = append(jobs, *job)
 	}
@@ -218,40 +224,35 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeSAMLClientJob(tenant, realmName, cfg.profileName, cfg.entityID, cfg.acsURL))
 	}
 
-	if r.KernelRealm != "" && r.KernelDomain != "" {
-		// No broker IdP Job. Every object it wrote — the kernel IdP, the tenant
-		// realm's first-broker-login flow, the two gentian_username mappers — is
-		// a Composition resource now, so the Job had nothing left to do.
-		//
-		// The kernel broker Job is down to one thing: the kernel realm's own
-		// first-broker-login flow. No XTenant covers the kernel realm, so nothing
-		// composes it.
-		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
-		// No portal BFF client Job. The client, its confidential secret taken
-		// from gentian-portal-bff, and its seven default scopes are all
-		// Composition resources now.
-		// No portal public client Job. The client and its openbao-audience
-		// protocol mapper are both Composition resources now, adopted by their
-		// natural keys, so a Job writing the same fields would be a second owner
-		// racing the first.
-		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
+	if r.KernelRealm != "" && r.KernelDomain != "" && !adopted {
+		// No broker Jobs. The bridges between a tenant realm and the kernel
+		// realm, in either direction, are the Compositions' (hub_projection.go).
+		// No portal clients at all: the portal is retired, and a tenant's people
+		// sign in through the edge's zone client, which tenant-default composes.
+		// The Job writes the mail server the Composition declares, password
+		// included, so it is built exactly where one is declared: a realm
+		// that is to have no mail server gets no Job that would give it one.
+		realmMail, err := r.tenantRealmMail(ctx, tenant)
+		if err != nil {
+			return nil, nil, fmt.Errorf("the realm's mail server: %w", err)
+		}
+		if realmMail != nil && r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			mailHost := ""
 			if r.KernelDomain != "" {
 				mailHost = "mail." + r.KernelDomain
 			}
-			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost))
+			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost, brandName(ctx, r.Client)))
 		}
 	}
 
-	return jobs, nil
+	return jobs, clientSecrets, nil
 }
 
-func (r *TenantReconciler) seedTenantAdminCreds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (secrets.TenantAdminCreds, error) {
-	username := tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
-	if r.Seeder != nil {
-		return r.Seeder.SeedTenantAdmin(ctx, tenant.Name, username)
-	}
-	return secrets.TenantAdminCreds{Username: username, Password: "placeholder"}, nil
+// tenantAdminUsername is the administrator's login. The account has no
+// password until its holder sets one through an activation link: nothing here
+// derives, stores or logs one.
+func (r *TenantReconciler) tenantAdminUsername(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
 }
 
 // seedOIDCSecrets writes issuer/client-id/client-secret to OpenBao for apps whose
@@ -260,57 +261,52 @@ func (r *TenantReconciler) seedOIDCSecrets(ctx context.Context, tenant *gentiano
 	if r.Seeder == nil || cfg.clientID == "" {
 		return nil
 	}
-	issuerHost := tenant.Spec.Domain
-	if r.KernelDomain != "" {
-		issuerHost = r.KernelDomain
-	}
-	issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+	issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 	if _, err := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID); err != nil {
 		return fmt.Errorf("seed oidc for %s: %w", cfg.profileName, err)
 	}
 	return nil
 }
 
-func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (*batchv1.Job, error) {
+// buildOIDCClientProvisioningJob builds the Job that makes an app's OIDC
+// client, and the client secret it is to be handed in the Secret it owns
+// (empty when it is handed none).
+func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (*batchv1.Job, string, error) {
 	if cfg.pack != nil {
 		clientSecret := ""
 		if r.Seeder != nil && !cfg.pack.PublicClient {
-			issuerHost := tenant.Spec.Domain
-			if r.KernelDomain != "" {
-				issuerHost = r.KernelDomain
-			}
-			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+			issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 			creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 			if seedErr != nil {
-				return nil, fmt.Errorf("seed oidc pack for %s: %w", cfg.profileName, seedErr)
+				return nil, "", fmt.Errorf("seed oidc pack for %s: %w", cfg.profileName, seedErr)
 			}
 			clientSecret = creds.ClientSecret
 		}
-		return makeOIDCPackJob(tenant, realmName, cfg, clientSecret, gentianTenantAppGroup(tenant.Name, cfg.profileName)), nil
+		return makeOIDCPackJob(tenant, realmName, cfg, clientSecret != "", gentianTenantAppGroup(tenant.Name, cfg.profileName)), clientSecret, nil
 	}
 
 	clientSecret := ""
 	if r.Seeder != nil {
-		issuerHost := tenant.Spec.Domain
-		if r.KernelDomain != "" {
-			issuerHost = r.KernelDomain
-		}
-		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", issuerHost, realmName)
+		issuer := fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, realmName)
 		creds, seedErr := r.Seeder.SeedOIDC(ctx, tenant.Name, cfg.profileName, issuer, cfg.clientID)
 		if seedErr != nil {
-			return nil, fmt.Errorf("seed oidc for %s: %w", cfg.profileName, seedErr)
+			return nil, "", fmt.Errorf("seed oidc for %s: %w", cfg.profileName, seedErr)
 		}
 		clientSecret = creds.ClientSecret
 	}
-	return makeClientJob(tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs, clientSecret), nil
+	return makeClientJob(tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs, clientSecret != ""), clientSecret, nil
 }
 
-// crossplaneOwnsOIDCClient reports whether the app Composition already emits a
-// provider-keycloak Client MR, so the operator pack/client Job can be skipped.
-// Sidecars: when the parent profile has compositionRef, Crossplane owns Client MRs
-// for sidecar OIDC clients too; the operator still reconciles OIDC pack Jobs when
-// a pack catalog is configured (see collectOIDCAppConfigs).
-func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppConfig) bool {
+// crossplaneOwnsOIDCClient reports whether the app's release already comes
+// with a provider-keycloak Client MR, rendered by the operator (apprender) or
+// by a profile's own Composition, so the operator pack/client Job can be
+// skipped. That is every client without an OIDC pack of an app that installs
+// a chart: the app's own (requires.services.identity.oidc) and each
+// extension's (extensions[].kernelRequirements.identity.oidc), which is
+// rendered beside it. A client with a pack is the pack Job's; an extension's
+// request-bound client is refused before it gets here
+// (resolveSidecarOIDCAppConfig).
+func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oidcAppConfig) bool {
 	if cfg.pack != nil {
 		return false
 	}
@@ -318,13 +314,15 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	// MR. This was written as "anything that is not crossplane", which also
 	// covered deploymentMethod: argocd — a value no profile ever set and that no
 	// longer exists.
-	if profile.Spec.DeploymentMethod == gentianov1alpha1.DeploymentMethodAPI {
+	if profile.IsAPI() {
 		return false
 	}
+	// An extension's client is declared on the parent profile, and is
+	// rendered with the parent's release, whoever renders it.
 	if cfg.parentProfile != "" {
-		return profile.Spec.CompositionRef != ""
+		return true
 	}
-	kr := profile.Spec.KernelRequirements
+	kr := profile.Services()
 	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {
 		return false
 	}
@@ -397,8 +395,19 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 
 	// 1. Add tenant default groups. App admins comes last, after the app loop
 	// below, because what it grants is collected from the installed profiles.
+	//
+	// The two administrators' groups carry the role a partner assertion
+	// says for their members (keycloak.PartnerRoleAttribute): the scope
+	// partner-<name> the Composition makes reads it off the person's
+	// groups, and nothing else does. The Composition declares the same
+	// attribute on the same groups, so the two writers agree.
 	addGroup(keycloak.TenantMembersGroup(tenant.Name), nil)
-	addGroup(keycloak.TenantAdminsGroup(tenant.Name), nil)
+	addGroup(keycloak.TenantAdminsGroup(tenant.Name), map[string][]string{
+		keycloak.PartnerRoleAttribute: {keycloak.PartnerRoleTenantAdmin},
+	})
+	addGroup(keycloak.TenantPlatformAdminsGroup(tenant.Name), map[string][]string{
+		keycloak.PartnerRoleAttribute: {keycloak.PartnerRoleClusterAdmin},
+	})
 
 	// The Odoo roles an app admin gets, unioned across everything installed.
 	//
@@ -415,9 +424,9 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 	// changes — this only decides which roles ride on the app-admins group.
 	adminRoles := map[string]struct{}{}
 
-	// Helper to extract attributes from AppProfile name
+	// Helper to extract attributes from ComponentProfile name
 	resolveProfileAttrs := func(profileName string) (map[string][]string, error) {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile)
 		if err != nil {
 			if errors.IsNotFound(err) {
@@ -425,35 +434,26 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 			}
 			return nil, err
 		}
-		var attrs map[string][]string
-		if profile.Annotations != nil {
-			if val, ok := profile.Annotations["gentianos.io/keycloak-group-attributes"]; ok {
-				var parsed map[string]any
-				if err := json.Unmarshal([]byte(val), &parsed); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal keycloak-group-attributes for %s: %w", profileName, err)
-				}
-				attrs = make(map[string][]string)
-				for k, v := range parsed {
-					if list, ok := v.([]any); ok {
-						var strList []string
-						for _, item := range list {
-							strList = append(strList, fmt.Sprint(item))
-						}
-						attrs[k] = strList
-					} else if valStr, ok := v.(string); ok {
-						attrs[k] = []string{valStr}
-					} else {
-						attrs[k] = []string{fmt.Sprint(v)}
-					}
-				}
-			}
+		val, ok := profile.Annotations[keycloak.GroupAttributesAnnotation]
+		if !ok {
+			return nil, nil
+		}
+		attrs, err := keycloak.ParseGroupAttributes(val)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal keycloak-group-attributes for %s: %w", profileName, err)
 		}
 		return attrs, nil
 	}
 
-	// 2. Add groups for all tenant apps, and for the addons activated inside them
-	for _, app := range tenant.Spec.Apps {
-		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
+	// 2. Add groups for all tenant apps, and for the addons activated inside them.
+	// Not for a component the platform places: it is not an app the tenant
+	// installed, and was never granted by a group of its own.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return "", err
+	}
+	for _, app := range installed {
+		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
 		if err != nil {
 			return "", err
 		}
@@ -521,19 +521,35 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 // has since changed.
 const provisioningScriptHashAnnotation = "gentianos.io/script-hash"
 
-// scriptHash digests what a Job actually executes. Only the image and the
-// command line are hashed — env values (a freshly generated ROLE_PW among them)
-// change on every reconcile and would make every Job look permanently stale.
-func scriptHash(job *batchv1.Job) string {
-	h := sha256.New()
-	for _, c := range job.Spec.Template.Spec.Containers {
-		h.Write([]byte(c.Image))
-		for _, part := range append(append([]string{}, c.Command...), c.Args...) {
-			h.Write([]byte(part))
-			h.Write([]byte{0})
-		}
+// keepFinishedJobs takes the TTL off Jobs Crossplane is to hold.
+//
+// Each of these Jobs is the manifest of a provider-kubernetes Object, and an
+// Object recreates whatever it holds the moment it finds it missing. A TTL
+// therefore never retired one of them: Kubernetes deleted the finished Job,
+// the Object made it again, and the script ran again — every TTL, forever,
+// against a Keycloak or store that had long been set up. A finished Job now
+// stays, as the record that its step ran, and runs again only when what it
+// runs changes (retireStaleProvisioningJobs) or it failed
+// (waitForProvisioningJob). The builders keep their TTL for the Jobs the
+// operator makes itself, which nothing recreates.
+func keepFinishedJobs(jobs []batchv1.Job) {
+	for i := range jobs {
+		jobs[i].Spec.TTLSecondsAfterFinished = nil
 	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// scriptHash digests what a Job runs: its whole pod template — image, command,
+// arguments, and env, which is how a Job is handed its inputs (the groups a
+// realm is to have, whether its administrator needs a second factor). A
+// changed input is a changed hash, and the Job runs again with it.
+//
+// Nothing in a pod template is generated per reconcile: a credential reaches a
+// provisioning Job as a reference to the Secret its Job owns (jobSecret), never
+// as a value, so the hash is stable for as long as the inputs are.
+func scriptHash(job *batchv1.Job) string {
+	raw, _ := json.Marshal(job.Spec.Template) // a PodTemplateSpec always marshals
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func stampScriptHashes(jobs []batchv1.Job) {
@@ -546,7 +562,8 @@ func stampScriptHashes(jobs []batchv1.Job) {
 }
 
 // retireStaleProvisioningJobs deletes finished provisioning Jobs whose script no
-// longer matches the desired one, so they are re-created and re-run.
+// longer matches the desired one, so they are re-created and re-run. It is how
+// a finished Job runs again: none of them carries a TTL (keepFinishedJobs).
 //
 // Only finished Jobs are touched: a running one is either about to converge
 // anyway or is being watched by a reconcile that expects it to exist. Jobs
@@ -557,7 +574,7 @@ func (r *TenantReconciler) retireStaleProvisioningJobs(ctx context.Context, jobs
 		desired := jobs[i].Annotations[provisioningScriptHashAnnotation]
 		live := &batchv1.Job{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name: jobs[i].Name, Namespace: kernelNamespace,
+			Name: jobs[i].Name, Namespace: jobs[i].Namespace,
 		}, live); err != nil {
 			continue
 		}

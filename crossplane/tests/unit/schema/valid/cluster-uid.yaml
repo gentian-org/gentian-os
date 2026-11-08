@@ -1,0 +1,9 @@
+# Valid Cluster claim — with the random id the installer gives a cluster.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-uid
+  namespace: default
+spec:
+  kernelDomain: example.org
+  clusterUID: 0123456789abcdef0123456789abcdef

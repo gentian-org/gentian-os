@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package customization implements the Gentian customization ladder: rung
@@ -19,15 +13,15 @@ limitations under the License.
 // a given (rung, scope) pair is permitted.
 //
 // The package is deliberately app-neutral. It knows about rungs and scopes, never
-// about individual catalogue entries — per-app behaviour comes from the
-// AppProfile's declared customization surface. See docs/app-customization.md.
+// about individual catalog entries — per-app behavior comes from the
+// ComponentProfile's declared customization surface. See docs/guides/app-customization.md.
 package customization
 
 import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// DefaultDropInMaxBytes caps tenant-supplied drop-in content when the AppProfile
+// DefaultDropInMaxBytes caps tenant-supplied drop-in content when the ComponentProfile
 // does not set an explicit limit. ConfigMaps are limited to ~1MiB in total, and
 // drop-ins are meant for fragments, not payloads.
 const DefaultDropInMaxBytes = 262144
@@ -95,27 +89,6 @@ func SupportsRung(surface *gentianov1alpha1.CustomizationSurface, rung gentianov
 	return false
 }
 
-// LowestSupportedRung returns the cheapest rung at or above min that the app
-// supports. It encodes principle P1 ("lowest viable rung") for callers that have
-// already determined which rungs could express the change.
-func LowestSupportedRung(
-	surface *gentianov1alpha1.CustomizationSurface,
-	candidates []gentianov1alpha1.CustomizationRung,
-) (gentianov1alpha1.CustomizationRung, bool) {
-	best := gentianov1alpha1.CustomizationRung("")
-	bestIdx := -1
-	for _, candidate := range candidates {
-		idx, ok := rungOrder[candidate]
-		if !ok || !SupportsRung(surface, candidate) {
-			continue
-		}
-		if bestIdx == -1 || idx < bestIdx {
-			best, bestIdx = candidate, idx
-		}
-	}
-	return best, bestIdx != -1
-}
-
 // FindDropIn returns the declared drop-in with the given name, or nil.
 func FindDropIn(
 	surface *gentianov1alpha1.CustomizationSurface,
@@ -130,20 +103,4 @@ func FindDropIn(
 		}
 	}
 	return nil
-}
-
-// GradeForScore bands a rubric score into a readiness grade (§4.1). Assignment is
-// manual for v0.4 — this exists so CI can check that a declared grade and its
-// recorded score agree, not to compute the grade unattended.
-func GradeForScore(score int32) gentianov1alpha1.CustomizationGrade {
-	switch {
-	case score >= 7:
-		return gentianov1alpha1.GradeA
-	case score >= 5:
-		return gentianov1alpha1.GradeB
-	case score >= 3:
-		return gentianov1alpha1.GradeC
-	default:
-		return gentianov1alpha1.GradeD
-	}
 }

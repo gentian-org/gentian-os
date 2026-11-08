@@ -41,7 +41,7 @@
 #          replace, with nothing to show for it. That is how mail.serviceMode
 #          came to read kernel in the claim and external in the operator.
 #   WARN   The producer writes a key nothing reads. Probably dead, but a reader
-#          using a form this does not recognise would make that a false
+#          using a form this does not recognize would make that a false
 #          accusation, so it is reported and never fatal.
 #   WARN   A render fixture omits a key its Composition reads, which makes the
 #          fixture pass while exercising the empty-string path instead of the
@@ -82,7 +82,7 @@ KEY_LINE = re.compile(r'^\s{20,}([A-Za-z][A-Za-z0-9.]*): ')
 # `dig "data" "objects.json" "[]" $provCM`.
 CC_READ = re.compile(r'dig\s+"([A-Za-z][A-Za-z0-9.]*)"\s+\S+\s+\$(?:ccData|clusterConfigData)\b')
 
-# A Go read, recognised only in its declared-constant form:
+# A Go read, recognized only in its declared-constant form:
 #
 #   clusterConfigLLMKey = "llm.enabled"
 #

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -20,8 +14,13 @@ import (
 	"context"
 	"os"
 
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/gentian-org/gentian-os/internal/arbiter"
+	"github.com/gentian-org/gentian-os/internal/envvar"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
 // Runnable serves the app lifecycle HTTP API inside the operator manager.
@@ -29,33 +28,51 @@ type Runnable struct {
 	Server *HTTPServer
 }
 
-// NewRunnableFromEnv builds the lifecycle HTTP server from operator environment.
-func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
+// NewRunnableFromEnv builds the lifecycle HTTP server from operator
+// environment, and from the tenancy mode the operator took from the Cluster
+// claim: the one value here that the environment may have wrong.
+func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, error) {
 	addr := os.Getenv("APP_LIFECYCLE_BIND_ADDRESS")
 	if addr == "" {
 		addr = ":8082"
 	}
+	namespace := envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control))
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
-		KernelNamespace:    envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
-		OpenBaoNamespace:   envOrDefault("OPENBAO_NAMESPACE", "openbao"),
-		OperatorNamespace:  envOrDefault("POD_NAMESPACE", "gentian-system"),
-		OperatorSA:         envOrDefault("OPERATOR_SA", "gentian-os"),
-		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
-		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
-		DeploymentsCluster: envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
-		MetricsEnabled:     os.Getenv("METRICS_SERVER_ENABLED") == "true",
+		OperatorNamespace: namespace,
+		OperatorSA:        envvar.Or("OPERATOR_SA", "gentian-os"),
+		MetricsEnabled:    os.Getenv("METRICS_SERVER_ENABLED") == "true",
+		UsageStatistics:   usagestatistics.SettingsFromEnv(),
+		Vault:             vaultFromEnv(),
+		Authorization:     arbiter.NewPlatformClient(),
+		LiveReader:        mgr.GetAPIReader(),
+		TenancyMode:       tenancyMode,
+		DeploymentsRepo:   os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Runnable{Server: &HTTPServer{Service: svc, Addr: addr}}, nil
+	// Who is admitted: the director's and the usher's ServiceAccounts, in
+	// this namespace, presenting a token issued for this listener's
+	// audience. Anything missing admits fewer callers, never more; with
+	// nothing configured the server refuses every request.
+	return &Runnable{
+		Server: &HTTPServer{
+			Service: svc,
+			Addr:    addr,
+			Auth:    NewCallerAuth(svc.clientset.AuthenticationV1().TokenReviews(), CallersFromEnv(namespace)),
+		},
+	}, nil
 }
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// vaultFromEnv is the vault the operator's own seeder writes to, reached the
+// same way: BAO_ADDR, and the operator's Kubernetes-auth role. Nil without an
+// address.
+func vaultFromEnv() CredentialStore {
+	addr := os.Getenv("BAO_ADDR")
+	if addr == "" {
+		return nil
 	}
-	return def
+	return secrets.NewKVClient(addr, envvar.Or("BAO_ROLE", "gentian-os-operator"), "")
 }
 
 // Start implements manager.Runnable.

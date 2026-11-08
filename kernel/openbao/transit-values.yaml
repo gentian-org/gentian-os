@@ -39,7 +39,7 @@ server:
     size: 1Gi
     accessMode: ReadWriteOnce
 
-  # Report ready even when sealed or uninitialised so `kubectl wait` works
+  # Report ready even when sealed or uninitialized so `kubectl wait` works
   # and the primary's seal backend can probe the health endpoint.
   readinessProbe:
     enabled: true
@@ -55,7 +55,7 @@ server:
 
   # Inject the Shamir unseal key from the openbao-transit-unseal k8s Secret.
   # Created once by: kubectl create secret generic openbao-transit-unseal \
-  #   -n openbao --from-literal=unseal-key=<key-from-bitwarden>
+  #   -n kernel-seal --from-literal=unseal-key=<key-from-bitwarden>
   extraSecretEnvironmentVars:
     - envName: TRANSIT_UNSEAL_KEY
       secretName: openbao-transit-unseal
@@ -91,6 +91,10 @@ server:
       bao status 2>/dev/null | grep -q 'Initialized.*true' || exit 0
       bao operator unseal "$TRANSIT_UNSEAL_KEY" || true
 
+  # For a render of this file alone. What a cluster runs is the config
+  # kernel/bootstrap/chart/templates/openbao-transit.yaml merges over it: the
+  # same listener, and the storage backend the Cluster claim states (raft, or
+  # file for a seal not yet moved).
   standalone:
     config: |
       ui = false

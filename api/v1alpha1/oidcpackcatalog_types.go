@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,15 +12,17 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// OIDCPackCatalog is a cluster-scoped catalogue of OIDC packs for tenant apps.
+// OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps.
 // Shipped from gentian-apps (profiles/<app>/oidc-catalog.yaml) and consumed
-// by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
+// by the operator for pack Jobs and an app's client default scopes.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=oidcpack;oidcpacks
@@ -43,12 +45,6 @@ type OIDCPackCatalogSpec struct {
 	// Packs maps OIDC clientId to pack configuration.
 	// +optional
 	Packs map[string]OIDCPackSpec `json:"packs,omitempty"`
-
-	// ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
-	// provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
-	// portal admin groups).
-	// +optional
-	ExtraManagedByAttributeGroups []string `json:"extraManagedByAttributeGroups,omitempty"`
 }
 
 // OIDCMapperTemplate describes one Keycloak protocol mapper on a client scope.
@@ -72,7 +68,7 @@ type OIDCMapperTemplate struct {
 // what lets a service pack omit them; these keep an APP pack from omitting them
 // by accident, which previously the Required markers guaranteed.
 // The presence checks are deliberately cheap — CEL costs are estimated against
-// worst-case string lengths, and comparing these three to '' as well pushed the
+// worst-case string lengths, and comparing these three to the empty string as well pushed the
 // rule over the API server's budget. MinLength on each field rejects an empty
 // string when the key IS present, so presence is all this needs to test.
 // +kubebuilder:validation:XValidation:rule="(has(self.serviceClient) && self.serviceClient) || (has(self.scopeName) && has(self.clientRole) && has(self.entitlementGroup))",message="scopeName, clientRole and entitlementGroup are required unless serviceClient is true"
@@ -139,11 +135,7 @@ type OIDCPackSpec struct {
 }
 
 // OIDCPackCatalogStatus is optional observed state.
-type OIDCPackCatalogStatus struct {
-	// PackCount is the number of entries in spec.packs.
-	// +optional
-	PackCount int `json:"packCount,omitempty"`
-}
+type OIDCPackCatalogStatus struct{}
 
 // OIDCPackCatalogList contains a list of OIDCPackCatalog.
 // +kubebuilder:object:root=true

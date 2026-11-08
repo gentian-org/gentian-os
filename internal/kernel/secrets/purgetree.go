@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package secrets
@@ -80,18 +74,19 @@ func (c *KVClient) deleteTree(ctx context.Context, path string, depth int) error
 	return c.deleteMetadata(ctx, path)
 }
 
+// ListChildren names what is directly below a KV v2 path: a secret by its
+// name, a subtree by its name with a trailing slash. Nothing there is an empty
+// list and no error. It reads names only, never a value.
+func (c *KVClient) ListChildren(ctx context.Context, logicalPath string) ([]string, error) {
+	logicalPath = strings.Trim(strings.TrimSpace(logicalPath), "/ ")
+	if logicalPath == "" {
+		return nil, fmt.Errorf("refusing to list an empty KV path")
+	}
+	return c.listChildren(ctx, logicalPath)
+}
+
 func (c *KVClient) listChildren(ctx context.Context, path string) ([]string, error) {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	url := fmt.Sprintf("%s/v1/%s/metadata/%s?list=true", c.addr, c.mount, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodGet, fmt.Sprintf("%s/v1/%s/metadata/%s?list=true", c.Addr, c.mount, path), nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("openbao unreachable: %w", err)
 	}
@@ -115,17 +110,7 @@ func (c *KVClient) listChildren(ctx context.Context, path string) ([]string, err
 }
 
 func (c *KVClient) deleteMetadata(ctx context.Context, path string) error {
-	tok, err := c.authToken(ctx)
-	if err != nil {
-		return err
-	}
-	url := fmt.Sprintf("%s/v1/%s/metadata/%s", c.addr, c.mount, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("X-Vault-Token", tok)
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, http.MethodDelete, fmt.Sprintf("%s/v1/%s/metadata/%s", c.Addr, c.mount, path), nil, "")
 	if err != nil {
 		return fmt.Errorf("openbao unreachable: %w", err)
 	}

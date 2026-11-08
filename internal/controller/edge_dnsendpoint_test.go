@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -20,6 +14,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,19 +43,19 @@ func TestStaticIPClusterGetsNoEdgeDNSEndpoint(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(dnsEndpointScheme(t)).Build()
 	ctx := context.Background()
 
-	if err := syncEdgeDNSEndpoint(ctx, c, nil, "platform-kernel",
+	if err := syncEdgeDNSEndpoint(ctx, c, nil, layout.Namespace(layout.Edge),
 		[]string{"id.example.test"}); err != nil {
 		t.Fatalf("nil ingress: %v", err)
 	}
 	noTunnel := NewCloudflareTunnelIngress("t", "z", "", "")
-	if err := syncEdgeDNSEndpoint(ctx, c, noTunnel, "platform-kernel",
+	if err := syncEdgeDNSEndpoint(ctx, c, noTunnel, layout.Namespace(layout.Edge),
 		[]string{"id.example.test"}); err != nil {
 		t.Fatalf("no tunnel: %v", err)
 	}
 
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(dnsEndpointGVK)
-	err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: "platform-kernel"}, got)
+	err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: layout.Namespace(layout.Edge)}, got)
 	if err == nil {
 		t.Fatalf("a DNSEndpoint was written with no target to point at: %v", got.Object)
 	}
@@ -75,14 +70,14 @@ func TestTunnelClusterPublishesEveryHostname(t *testing.T) {
 	ctx := context.Background()
 	ing := NewCloudflareTunnelIngress("t", "z", "abc-123.cfargotunnel.com", "")
 
-	hosts := []string{"portal.example.test", "id.example.test", "portal.example.test", ""}
-	if err := syncEdgeDNSEndpoint(ctx, c, ing, "platform-kernel", hosts); err != nil {
+	hosts := []string{"www.example.test", "id.example.test", "www.example.test", ""}
+	if err := syncEdgeDNSEndpoint(ctx, c, ing, layout.Namespace(layout.Edge), hosts); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(dnsEndpointGVK)
-	if err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: "platform-kernel"}, got); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: layout.Namespace(layout.Edge)}, got); err != nil {
 		t.Fatalf("expected a DNSEndpoint: %v", err)
 	}
 
@@ -126,7 +121,7 @@ func TestEdgeDNSEndpointIsIdempotent(t *testing.T) {
 	ing := NewCloudflareTunnelIngress("t", "z", "abc-123.cfargotunnel.com", "")
 
 	for i := 0; i < 2; i++ {
-		if err := syncEdgeDNSEndpoint(ctx, c, ing, "platform-kernel",
+		if err := syncEdgeDNSEndpoint(ctx, c, ing, layout.Namespace(layout.Edge),
 			[]string{"id.example.test"}); err != nil {
 			t.Fatalf("sync %d: %v", i+1, err)
 		}

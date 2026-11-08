@@ -1,0 +1,108 @@
+parse not a list: refused: route table: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go value of type bouncer.Table, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no keys: ok, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an empty list: ok, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse one: ok, 1 checkers
+  find "": none
+  find "notary-key": demo/notary
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse two: ok, 2 checkers
+  find "": none
+  find "notary-key": demo/notary
+  find "scribe-key": solo/scribe
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no tenant: refused: route table: checker 0 needs tenant and component, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a blank tenant: refused: route table: checker 0 needs tenant and component, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse no component: refused: route table: checker 0 needs tenant and component, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse the key itself: refused: route table: checker 0 (demo/notary) needs keyHash as 64 hex digits, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an upper-case hash: refused: route table: checker 0 (demo/notary) needs keyHash as 64 hex digits, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a short hash: refused: route table: checker 0 (demo/notary) needs keyHash as 64 hex digits, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a shared key: refused: route table: checker 1 (solo/notary) shares its key with another, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a bad second entry: refused: route table: checker 1 needs tenant and component, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an audit: ok, 1 checkers
+  find "": none
+  find "notary-key": platform/evidence audits main/kernel
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an audit without a cluster: refused: route table: checker 0 (platform/evidence) asks the audit questions and needs a cluster and a realm, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an audit with a slash in the cluster: refused: route table: checker 0 (platform/evidence) asks the audit questions and needs a cluster and a realm, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse an audit without a realm: refused: route table: checker 0 (platform/evidence) asks the audit questions and needs a cluster and a realm, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none
+parse a shared key and a bad audit: refused: route table: checker 1 (platform/evidence) asks the audit questions and needs a cluster and a realm, 0 checkers
+  find "": none
+  find "notary-key": none
+  find "scribe-key": none
+  find "a9c05a31a80a5af26a97213986b98f238f4d482613736744f74c1e83e4df51c9": none
+  find "other": none

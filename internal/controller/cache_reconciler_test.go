@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -30,42 +24,44 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel"
 )
 
-// newRedisProfile creates a minimal AppProfile that requires a Redis cache.
-func newRedisProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+// newRedisProfile creates a minimal ComponentProfile that requires a Redis cache.
+func newRedisProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName: name,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineRedis,
 				},
-			},
+			}},
 		},
 	}
 }
 
-// newMemcachedProfile creates a minimal AppProfile that requires a Memcached cache.
-func newMemcachedProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+// newMemcachedProfile creates a minimal ComponentProfile that requires a Memcached cache.
+func newMemcachedProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName: name,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineMemcached,
 				},
-			},
+			}},
 		},
 	}
 }
@@ -78,7 +74,6 @@ func TestCache_NoCacheApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nocache"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Cache Co",
-			Domain:      "nocache.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -104,12 +99,12 @@ func TestCache_NoCacheApps(t *testing.T) {
 }
 
 // TestCache_CreatesRedisACLJob verifies that a Tenant with a Redis-requiring app
-// creates the redis-cli ACL SETUSER Job in the kernel namespace with correct labels.
+// creates the valkey-cli ACL SETUSER Job in the kernel namespace with correct labels.
 func TestCache_CreatesRedisACLJob(t *testing.T) {
 	t.Parallel()
 	profile := newRedisProfile("redis-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -117,7 +112,6 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "rediscreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Redis Create Co",
-			Domain:      "rediscreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "redis-app1"}},
 		},
 	}
@@ -129,7 +123,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "system-cache"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "rediscreate" {
@@ -166,7 +160,7 @@ func TestCache_CreatesMemcachedWorkload(t *testing.T) {
 	t.Parallel()
 	profile := newMemcachedProfile("mc-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -174,7 +168,6 @@ func TestCache_CreatesMemcachedWorkload(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mccreate"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "MC Create Co",
-			Domain:      "mccreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "mc-app1"}},
 		},
 	}
@@ -211,7 +204,7 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	t.Parallel()
 	profile := newRedisProfile("redis-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -219,7 +212,6 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "cacheready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Cache Ready Co",
-			Domain:      "cacheready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "redis-app2"}},
 		},
 	}
@@ -239,9 +231,9 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "system-cache"}, job) == nil
 	})
-	markJobComplete(t, "redis-acl-cacheready-redis-app2", "platform-kernel")
+	markJobComplete(t, "redis-acl-cacheready-redis-app2", "system-cache")
 
 	// Phase=Ready and CacheReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -268,21 +260,20 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	t.Parallel()
 	redisProf := newRedisProfile("redis-app3")
 	if err := testClient.Create(context.Background(), redisProf); err != nil {
-		t.Fatalf("create Redis AppProfile: %v", err)
+		t.Fatalf("create Redis ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), redisProf) })
 
 	mcProf := newMemcachedProfile("mc-app2")
 	if err := testClient.Create(context.Background(), mcProf); err != nil {
-		t.Fatalf("create Memcached AppProfile: %v", err)
+		t.Fatalf("create Memcached ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), mcProf) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "cachedelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Cache Delete Co",
-			Domain:         "cachedelete.example.com",
+			DisplayName:    "Test Tenant",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "redis-app3"},
@@ -298,7 +289,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "system-cache"}, job) == nil
 	})
 	waitFor(t, jobAppearTimeout, func() bool {
 		dep := &appsv1.Deployment{}
@@ -310,8 +301,9 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteCache; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", "platform-kernel")
+	// The cache is first in the teardown order (backup.TeardownOrder); its
+	// Job has to finish before the rest of the cache's cleanup follows.
+	go markJobCompleteWhenReady("redis-acl-delete-cachedelete-redis-app3", "system-cache")
 
 	// Redis delete Job should appear.
 	deleteJob := waitForKernelJob(t, "redis-acl-delete-cachedelete-redis-app3", "cachedelete")

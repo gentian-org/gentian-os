@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -39,9 +41,15 @@ type PlatformSecurityPolicy struct {
 // PlatformSecurityPolicySpec holds cluster-admin security configuration.
 type PlatformSecurityPolicySpec struct {
 	// AllowedMacWaivers lists profile/policy/scope tuples the cluster permits.
-	// AppProfile requests outside this list are denied at deploy time.
+	// A profile's requests outside this list are denied at deploy time.
 	// +optional
 	AllowedMacWaivers []AllowedMacWaiver `json:"allowedMacWaivers,omitempty"`
+
+	// AllowedClusterRoles lists, per profile, the platform's cluster roles
+	// this cluster permits. It permits and does not grant: a role is bound
+	// only where it is also granted on the install.
+	// +optional
+	AllowedClusterRoles []AllowedClusterRole `json:"allowedClusterRoles,omitempty"`
 }
 
 // PlatformSecurityPolicyStatus reports observed policy state.

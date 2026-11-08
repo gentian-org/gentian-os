@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -21,6 +15,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -54,7 +49,7 @@ func startTenantProvisioningJobSimulator(ctx context.Context, c client.Client) {
 
 func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 	var cms corev1.ConfigMapList
-	if err := c.List(ctx, &cms, client.InNamespace("platform-kernel"),
+	if err := c.List(ctx, &cms, client.InNamespace(layout.Namespace(layout.Provisioning)),
 		client.MatchingLabels{"gentianos.io/config-type": tenantProvisioningJobsConfigType}); err != nil {
 		return
 	}
@@ -71,7 +66,7 @@ func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 		for j := range jobs {
 			job := jobs[j]
 			if job.Namespace == "" {
-				job.Namespace = "platform-kernel"
+				job.Namespace = layout.Namespace(layout.Authentication)
 			}
 			createIfMissing(ctx, c, &job)
 		}
@@ -94,7 +89,7 @@ func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 				continue
 			}
 			if obj.GetNamespace() == "" {
-				obj.SetNamespace("platform-kernel")
+				obj.SetNamespace(layout.Namespace(layout.Authentication))
 			}
 			createIfMissing(ctx, c, obj)
 			patchSimulatorObjectStatus(ctx, c, obj)
@@ -107,7 +102,7 @@ func provisioningJobsComplete(ctx context.Context, c client.Client, jobs []batch
 		job := jobs[i]
 		ns := job.Namespace
 		if ns == "" {
-			ns = "platform-kernel"
+			ns = layout.Namespace(layout.Authentication)
 		}
 		current := &batchv1.Job{}
 		if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: ns}, current); err != nil {

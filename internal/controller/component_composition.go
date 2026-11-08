@@ -1,0 +1,312 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/composed"
+	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
+)
+
+// A profile that brings its own Composition (the bundle's app-<profile>,
+// digest-verified: appComposition) is rendered by it, and only a profile of
+// the platform's trust may bring one. The Component writes the App claim that
+// Composition answers, owns it, and is Ready when it is. Every other chart is
+// rendered by apprender and applied by this reconciler (component_render.go).
+
+// composedReleaseSuffix is what an app Composition appends to an app's name
+// to name its Helm release: a profile's own, and the platform's of earlier
+// releases, whose apps keep that name once taken over. One name for as long
+// as the app is the tenant's.
+const composedReleaseSuffix = "-release"
+
+// helmReleaseOf is the Helm release a component's pods belong to, which is
+// what a chart labels them with (componentInstanceLabel) and so what a
+// policy selects a placed chart's pods by. A profile's own Composition names
+// it after the app; one rendered here is named by renderNames.
+func helmReleaseOf(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) string {
+	if appComposition(comp, profile) != "" {
+		return comp.Name + composedReleaseSuffix
+	}
+	_, helm, _, _ := renderNames(comp)
+	return helm
+}
+
+// appComposition answers which Composition renders a component: the one its
+// profile's bundle brings, or "" for the platform's.
+//
+// A profile's own Composition is used on one condition, and it is the
+// condition under which it is known to be the profile's own: the install is
+// pinned to a digest, and the bundle that digest names -- verified against
+// the cluster just before this -- carries it. That bundle can only have come
+// from a catalog of the whole cluster, and its Composition can only be
+// app-<profile> (profilebundle.Check). spec.package.composition alone selects
+// nothing: a name in a profile is not a Composition anybody vouched for, and
+// a profile could otherwise have itself rendered by another app's.
+func appComposition(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) string {
+	if comp.Spec.ProfileRef.Digest == "" || profile.Spec.Package.Composition == "" {
+		return ""
+	}
+	if own := profilebundle.OwnComposition(profile); own == profile.Spec.Package.Composition {
+		return own
+	}
+	return ""
+}
+
+// addonIDs answers what the app calls each addon the component lists, from
+// the addon profiles' package.addon (customization.ResolveAddons). One that
+// does not resolve -- no such profile, or an addon of another base -- is
+// left out and logged, as the tenant's app list resolves them: one bad
+// addon does not hold back the app or the others.
+func (r *ComponentReconciler) addonIDs(ctx context.Context, comp *gentianov1alpha1.Component) ([]string, error) {
+	if len(comp.Spec.Addons) == 0 {
+		return nil, nil
+	}
+	base := &gentianov1alpha1.ComponentProfile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, base); err != nil {
+		return nil, err
+	}
+	index := map[string]*gentianov1alpha1.ComponentProfile{}
+	for _, name := range comp.Spec.Addons {
+		addon := &gentianov1alpha1.ComponentProfile{}
+		err := r.Get(ctx, types.NamespacedName{Name: name}, addon)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		index[name] = addon
+	}
+	resolved, problems := customization.ResolveAddons(base, comp.Spec.Addons, index)
+	for _, problem := range problems {
+		log.FromContext(ctx).Error(problem, "addon left out of the app claim", "component", comp.Name)
+	}
+	return customization.AddonIDs(resolved), nil
+}
+
+// ensureAppClaim keeps the App claim a profile's own Composition renders
+// this component from, and reports whether what it rendered is ready.
+//
+// Named after the component, in its namespace, and owned by it: removing the
+// Component removes the claim, and with it everything the Composition made.
+func (r *ComponentReconciler) ensureAppClaim(
+	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets,
+	composition, build string, mailboxTokenSignIn bool, signIn *signInSidecar, operatorValues map[string]interface{},
+) (bool, string, error) {
+	// The profile by name, and the build when this tenant runs one that is
+	// not the profile's current: the Composition then reads the build's spec
+	// and keeps the profile's identity.
+	// Always written, "" included: the Composition reads it by field path,
+	// and a path that is not there is a fatal result, not an absent value.
+	profileRef := map[string]interface{}{"name": comp.Spec.ProfileRef.Name, "build": build}
+	spec := map[string]interface{}{
+		"compositionUpdatePolicy": "Automatic",
+		// Which Composition renders the app, said rather than left to the
+		// definition's default: a claim that names none keeps whichever it
+		// was given last, and that has to stop being the profile's own when
+		// the profile no longer brings one.
+		"compositionRef":  map[string]interface{}{"name": composition},
+		"profileRef":      profileRef,
+		"tenantNamespace": comp.Namespace,
+		"domain":          zone.domain,
+		// The tenant's realm, by the one rule (keycloak.RealmName). The
+		// Composition used to take the tenant's name for it, which is the
+		// same realm only for a tenant that names none of its own.
+		"realm": keycloakRealmName(tenant),
+	}
+	// Which of the tenant's pull Secrets the Composition names on the release
+	// and in its values. Names, and the Composition looks for them in
+	// tenantNamespace only.
+	if claimed := appClaimPullSecrets(pull); len(claimed) > 0 {
+		spec["pullSecrets"] = claimed
+	}
+	// Whether the app's sign-in client is given the realm's "mailbox" scope
+	// (mailbox_token_signin.go). Absent rather than false when it is not: the
+	// loop below removes a field the claim no longer wants, which is how an
+	// app whose profile stops declaring it loses the scope.
+	if mailboxTokenSignIn {
+		spec["mailboxTokenSignIn"] = true
+	}
+	// The app's sign-in sidecar (signin_sidecar.go): where it answers, where
+	// the realm is and which handler it runs. Absent when the profile
+	// declares none, and the loop below then takes it off a claim that had
+	// it -- which is what removes the sidecar and its client at the realm.
+	if signIn != nil {
+		spec["signInSidecar"] = signIn.claim
+	}
+	// The addons by what the app calls them, as the claim's addons field is
+	// defined: the Composition matches the base's addonValues on them and
+	// hands them to its activation script. The Component lists profile
+	// names, and passing those through had Nextcloud asked to enable
+	// "nextcloud-calendar-ce" -- an app it does not have -- and never
+	// started Collabora, whose overlay waits for "richdocuments".
+	ids, addonErr := r.addonIDs(ctx, comp)
+	if addonErr != nil {
+		return false, "", addonErr
+	}
+	if len(ids) > 0 {
+		spec["addons"] = toInterfaceSlice(ids)
+	}
+	// What the operator tells the chart (the platform's facts its profile
+	// mapped, its placement, the model gateway) travels in the same values
+	// the Composition lays over the profile's, and over the component's own:
+	// the facts are the operator's to know, not a tenant's to override.
+	replicas, values, valuesErr := componentValues(comp.Spec.Config, operatorValues)
+	if valuesErr != nil {
+		return false, "", valuesErr
+	}
+	config := map[string]interface{}{}
+	if replicas != nil {
+		config["replicas"] = *replicas
+	}
+	if values != nil {
+		config["extraValues"] = values
+	}
+	if len(config) > 0 {
+		spec["config"] = config
+	}
+
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(appClaimGVK)
+	desired.SetName(comp.Name)
+	desired.SetNamespace(comp.Namespace)
+	desired.SetLabels(map[string]string{
+		tenantLabel:                    tenant.Name,
+		"gentianos.io/app":             comp.Name,
+		componentLabel:                 comp.Name,
+		"gentianos.io/managed-by":      "crossplane",
+		"app.kubernetes.io/managed-by": managedByValue,
+	})
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return false, "", err
+	}
+	if err := controllerutil.SetControllerReference(comp, desired, r.Scheme); err != nil {
+		return false, "", err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(appClaimGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		// Not beside what an earlier install left composed: its Release
+		// names the same Helm release and the two would fight over it.
+		if waiting, err := r.composedLeftovers(ctx, comp, ""); err != nil || waiting != "" {
+			return false, waiting, err
+		}
+		return false, "claim created; waiting for the app to be composed", r.Create(ctx, desired)
+	}
+	if err != nil {
+		return false, "", err
+	}
+	if current, _, _ := unstructured.NestedString(existing.Object, "spec", "resourceRef", "name"); current != "" {
+		if waiting, err := r.composedLeftovers(ctx, comp, current); err != nil || waiting != "" {
+			return false, waiting, err
+		}
+	}
+	// A claim something else controls is not taken from it. On a cluster
+	// installed before components owned their claims that something is the
+	// tenant's Composition, which stops rendering the claim once it is
+	// updated and removes it; this then writes its own. Until then the app is
+	// not this component's to report on, and saying so is better than two
+	// controllers correcting each other's writes.
+	if owner := metav1.GetControllerOf(existing); owner != nil && owner.UID != comp.GetUID() {
+		return false, fmt.Sprintf("the App claim is still controlled by %s %s; waiting for it to be released", owner.Kind, owner.Name), nil
+	}
+	// Only what this reconciler writes is compared. Crossplane adds to a
+	// claim's spec (resourceRef, the composition it selected), and comparing
+	// the whole of it would find a difference on every pass.
+	patch := client.MergeFrom(existing.DeepCopy())
+	changed := false
+	for _, field := range []string{"profileRef", "tenantNamespace", "domain", "realm", "addons", "config", "pullSecrets", "mailboxTokenSignIn", "signInSidecar", "compositionUpdatePolicy", "compositionRef"} {
+		want, wanted := spec[field]
+		have, has, _ := unstructured.NestedFieldNoCopy(existing.Object, "spec", field)
+		switch {
+		case !wanted && has:
+			unstructured.RemoveNestedField(existing.Object, "spec", field)
+			changed = true
+		case wanted && (!has || !equality.Semantic.DeepEqual(have, want)):
+			if err := unstructured.SetNestedField(existing.Object, want, "spec", field); err != nil {
+				return false, "", err
+			}
+			changed = true
+		}
+	}
+	// A claim nobody controls is adopted, not replaced: replacing it would
+	// uninstall the app.
+	if !ownedBy(existing, comp) {
+		if err := controllerutil.SetControllerReference(comp, existing, r.Scheme); err != nil {
+			return false, "", fmt.Errorf("adopt the App claim: %w", err)
+		}
+		changed = true
+	}
+	if changed {
+		if err := r.Patch(ctx, existing, patch); err != nil {
+			return false, "", err
+		}
+	}
+	if !appClaimIsReady(existing) {
+		// The provider's own account of a release that is failing, when it
+		// has one: "waiting" is no answer to a chart that cannot be pulled.
+		if failure := r.composedReleaseMessage(ctx, existing); failure != "" {
+			return false, failure, nil
+		}
+		return false, "waiting for the app to be composed and its release to deploy", nil
+	}
+	return true, "composed and deployed", nil
+}
+
+// composedLeftovers removes what an earlier composite of the app's claim
+// composed and left behind, and says what the claim is waiting for while any
+// of it is there ("" when nothing is). current is the composite the live
+// claim names, "" before there is a claim.
+//
+// With a current composite the leftover's external resource is kept: the
+// current composite manages the same Helm release, and deleting the leftover
+// with its own policy would uninstall it. Before the claim exists nothing
+// manages it, and the leftover takes what it made with it.
+func (r *ComponentReconciler) composedLeftovers(ctx context.Context, comp *gentianov1alpha1.Component, current string) (string, error) {
+	leftovers, err := composed.Find(ctx, r.Client, comp.Namespace, comp.Name, current)
+	if err != nil || len(leftovers) == 0 {
+		return "", err
+	}
+	names := make([]string, 0, len(leftovers))
+	for _, l := range leftovers {
+		if _, err := composed.Remove(ctx, r.Client, l, current != ""); err != nil {
+			return "", err
+		}
+		names = append(names, l.String())
+	}
+	return "waiting for what an earlier install left composed to be removed: " + strings.Join(names, ", "), nil
+}
+
+func ownedBy(obj client.Object, owner client.Object) bool {
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.UID == owner.GetUID() {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,203 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package gitops_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
+)
+
+// gpgKey makes a throwaway signing key and returns it armoured, with its
+// fingerprint. Skips where gpg is absent: the director's image has it, and a
+// developer machine without it should not fail the suite.
+func gpgKey(t *testing.T) (armoured, fingerprint string) {
+	t.Helper()
+	if _, err := exec.LookPath("gpg"); err != nil {
+		t.Skip("needs gpg")
+	}
+	home := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		full := append([]string{"--homedir", home, "--batch", "--yes", "--quiet",
+			"--pinentry-mode", "loopback", "--passphrase", ""}, args...)
+		out, err := exec.Command("gpg", full...).Output()
+		if err != nil {
+			t.Fatalf("gpg %v: %v", args, err)
+		}
+		return string(out)
+	}
+	run("--quick-generate-key", "Test Director <d@example.test>", "ed25519", "sign", "never")
+	for _, line := range strings.Split(run("--list-secret-keys", "--with-colons"), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) > 9 && f[0] == "fpr" && f[9] != "" {
+			fingerprint = f[9]
+			break
+		}
+	}
+	return run("--armor", "--export-secret-keys"), fingerprint
+}
+
+// AD-2: what the director writes is signed, and the signature verifies
+// against the key the cluster was told to trust. Without this the AppProject
+// policy would refuse every write the director makes, and the first time
+// anyone found out would be the first tenant.
+func TestWhatTheDirectorCommitsIsSigned(t *testing.T) {
+	key, fpr := gpgKey(t)
+	remote := dt.Remote(t, "demo")
+	path := dt.Clone(t, remote)
+	g := gitops.NewGitOps(path, remote, dt.Cluster, director)
+
+	home := filepath.Join(t.TempDir(), "keyring")
+	if err := g.EnableSigning(context.Background(), key, home); err != nil {
+		t.Fatalf("EnableSigning: %v", err)
+	}
+	if g.SigningKey() != fpr {
+		t.Fatalf("signing key = %q, want %q", g.SigningKey(), fpr)
+	}
+
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verified with the same keyring, which is what Argo CD's repo-server
+	// does with the keys the installer put in its ConfigMap.
+	out, err := exec.Command("git", "-C", path,
+		"-c", "gpg.program="+filepath.Join(home, "git-gpg"),
+		"log", "-1", "--format=%G? %GK").Output()
+	if err != nil {
+		t.Fatalf("git log: %v", err)
+	}
+	got := strings.Fields(strings.TrimSpace(string(out)))
+	if len(got) != 2 || got[0] != "G" {
+		t.Fatalf("signature = %q, want a good signature", strings.TrimSpace(string(out)))
+	}
+	// %GK is the long key id: the last 16 of the fingerprint, and the form
+	// AppProject.spec.sourceIntegrity lists.
+	if !strings.HasSuffix(fpr, got[1]) {
+		t.Fatalf("signed by %s, which is not the key that was imported (%s)", got[1], fpr)
+	}
+}
+
+// A director with no key commits, and says nothing about signing. A cluster
+// that predates signing has no keys and no policy; refusing to write would
+// take the console down over a constraint nothing is enforcing.
+func TestWithoutAKeyTheDirectorStillWrites(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if g.SigningKey() != "" {
+		t.Fatalf("signing key = %q with no key given", g.SigningKey())
+	}
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two secret keys in one keyring leaves which one signs to gpg's default,
+// and the cluster trusts specific ids.
+func TestTwoKeysAreRefusedRatherThanPickedBetween(t *testing.T) {
+	first, _ := gpgKey(t)
+	second, _ := gpgKey(t)
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	home := filepath.Join(t.TempDir(), "keyring")
+	err := g.EnableSigning(context.Background(), first+"\n"+second, home)
+	if err == nil || !strings.Contains(err.Error(), "cannot be left to a default") {
+		t.Fatalf("two keys = %v, want a refusal", err)
+	}
+}
+
+// An empty key is a misconfigured Secret, not a director that should sign
+// with something else.
+func TestAnEmptyKeyIsRefused(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if err := g.EnableSigning(context.Background(), "  \n", t.TempDir()); err == nil {
+		t.Fatal("an empty key was accepted")
+	}
+}
+
+// requireSigning commits clusters/<id>/kernel/signing/keys.env to the remote:
+// the repository saying this cluster's commits are signed.
+func requireSigning(t *testing.T, remote string) {
+	t.Helper()
+	seed := dt.Clone(t, remote)
+	dir := filepath.Join(seed, "clusters", dt.Cluster, "kernel", "signing")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keys.env"), []byte("GENTIAN_SIGNING_KEY_DIRECTOR=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dt.Git(t, seed, "add", "-A")
+	dt.Git(t, seed, "-c", "user.name=seed", "-c", "user.email=seed@example.com", "commit", "-m", "keys")
+	dt.Git(t, seed, "push", "origin", "HEAD:main")
+}
+
+// A director told where its key is, in a repository that names signing keys,
+// pushes nothing until the key is there. One unsigned head stops Argo CD
+// syncing the whole repository, which is how a tenant created in the console
+// once left every tenant unsynced.
+func TestAMissingKeyRefusesTheCommitWhereSigningIsRequired(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	requireSigning(t, remote)
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	keyFile := filepath.Join(t.TempDir(), "private.asc")
+	if err := g.SignFrom(context.Background(), keyFile, t.TempDir()); err == nil {
+		t.Fatal("SignFrom with no key file reported no error")
+	}
+	before := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+	_, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada"))
+	if !errors.Is(err, gitops.ErrNoSigningKey) {
+		t.Fatalf("Install = %v, want ErrNoSigningKey", err)
+	}
+	if after := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main"); after != before {
+		t.Fatal("an unsigned commit reached the remote")
+	}
+}
+
+// Where the repository names no keys there is no policy to fail, and a key
+// that is not there does not stop the write.
+func TestAMissingKeyDoesNotStopARepositoryWithoutSigning(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	_ = g.SignFrom(context.Background(), filepath.Join(t.TempDir(), "private.asc"), t.TempDir())
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A key projected after the director started is picked up by the next
+// commit, without a restart.
+func TestAKeyThatArrivesLaterSignsTheNextCommit(t *testing.T) {
+	key, fpr := gpgKey(t)
+	remote := dt.Remote(t, "demo")
+	requireSigning(t, remote)
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	keyFile := filepath.Join(t.TempDir(), "private.asc")
+	_ = g.SignFrom(context.Background(), keyFile, filepath.Join(t.TempDir(), "keyring"))
+	if err := os.WriteFile(keyFile, []byte(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Install(context.Background(), "demo", "element", "", meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	if g.SigningKey() != fpr {
+		t.Fatalf("signing key = %q, want %q", g.SigningKey(), fpr)
+	}
+}

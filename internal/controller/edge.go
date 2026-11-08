@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -32,7 +26,7 @@ import "context"
 // meant a Route 53 cluster had no DNS writer at all.
 //
 // What is genuinely missing on a tunnel cluster is not a writer but a TARGET.
-// external-dns publishes what a Gateway resolves to, and a tunnelled Gateway
+// external-dns publishes what a Gateway resolves to, and a tunneled Gateway
 // has no address — traffic arrives through cloudflared, not through a
 // LoadBalancer. So the ingress declares what its hostnames must point at, the
 // operator stamps that on the kernel Gateway, and external-dns does the rest
@@ -62,7 +56,7 @@ type EdgeIngress interface {
 	//
 	// Returned rather than applied, because which annotations mean what is the
 	// ingress's knowledge and the operator has no business holding a table of
-	// them. It is also where provider-specific DNS behaviour belongs when an
+	// them. It is also where provider-specific DNS behavior belongs when an
 	// ingress requires it: a Cloudflare tunnel needs its records proxied,
 	// since cfargotunnel.com resolves to nothing a client could connect to,
 	// and that is a fact about the tunnel rather than about DNS.

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -19,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -33,20 +28,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
 	conditionCacheReady     = "CacheReady"
-	redisAdminSecret        = "redis-admin"
+	redisAdminSecret        = backup.RedisAdminSecret
 	cacheRequeueAfter       = 2 * time.Second
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
-	memcachedPort           = int32(11211)
+	memcachedPort           = provisioner.MemcachedPort
 )
 
-// ensureCache provisions per-app Redis ACL users (via redis-cli Job) and per-tenant
+// ensureCache provisions per-app Redis ACL users (via valkey-cli Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
 // to True once all Jobs complete and Memcached reports ready replicas.
 func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -78,7 +75,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 
 	// One Memcached Deployment per tenant (covers all apps needing Memcached).
 	if len(memcachedApps) > 0 {
-		done, err := r.ensureMemcached(ctx, tenant, memcachedApps)
+		done, err := r.ensureMemcached(ctx, tenant)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Memcached: %w", err)
 		}
@@ -98,37 +95,20 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 	return ctrl.Result{}, nil
 }
 
-// collectCacheApps inspects AppProfiles and partitions apps by cache engine.
+// collectCacheApps partitions the tenant's apps by cache engine, by the one
+// collection routine every store uses (collectKernelApps). Memcached is one
+// Deployment per tenant in the tenant's own namespace and has nothing to
+// find afterwards, so it is never read from a Job or the record.
 func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) (redisApps, memcachedApps []string, err error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
+	redisApps, err = r.collectKernelApps(ctx, tenant, mode, matchRedisProfile, func(tenantName string) string {
+		return redisACLJobName(tenantName, "")
+	}, func(p backup.Provisioned) bool { return p.Has(backup.KindCache) })
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
-		if !ok {
-			continue
-		}
-		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Cache == nil {
-			continue
-		}
-		switch profile.Spec.KernelRequirements.Cache.Engine {
-		case gentianov1alpha1.CacheEngineRedis:
-			if matchRedisProfile(profile) {
-				redisApps = appendUniqueStrings(redisApps, app.Profile)
-			}
-		case gentianov1alpha1.CacheEngineMemcached:
-			if matchMemcachedProfile(profile) {
-				memcachedApps = appendUniqueStrings(memcachedApps, app.Profile)
-			}
-		}
-	}
-	if mode == CollectForDelete {
-		fromJobs, err := r.listTenantAppsFromJobPrefix(ctx, tenant.Name, redisACLJobName(tenant.Name, ""))
-		if err != nil {
-			return nil, nil, err
-		}
-		redisApps = appendUniqueStrings(redisApps, fromJobs...)
+	memcachedApps, err = r.collectKernelApps(ctx, tenant, mode, matchMemcachedProfile, nil, nil)
+	if err != nil {
+		return nil, nil, err
 	}
 	return redisApps, memcachedApps, nil
 }
@@ -139,7 +119,7 @@ func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentia
 }
 
 // ensureMemcached waits for the Crossplane-provisioned Memcached Deployment.
-func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant, memcachedApps []string) (bool, error) {
+func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
 	nsName := tenantNamespaceName(tenant)
 	dep := &appsv1.Deployment{}
 	depKey := types.NamespacedName{Name: memcachedDeploymentName, Namespace: nsName}
@@ -169,7 +149,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		return err
 	}
 
-	if err := r.ensureDeleteJobs(ctx, tenant, redisApps, redisACLDeleteJobName, makeRedisACLDeleteJob); err != nil {
+	if err := r.ensureDeleteJobs(ctx, cacheNamespace, tenant, redisApps, redisACLDeleteJobName, makeRedisACLDeleteJob); err != nil {
 		return err
 	}
 
@@ -197,69 +177,26 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 
 // --- Job constructors --------------------------------------------------------
 
-// makeRedisACLJob creates a redis-cli Job that provisions a per-app Redis ACL user.
+// makeRedisACLJob creates a valkey-cli Job that provisions a per-app Redis ACL user.
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
-func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+// When withPassword is set the pod reads the user's password from the Secret
+// of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
+// no ConfigMap and no composed Object.
+func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword bool) *batchv1.Job {
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
+	jobName := redisACLJobName(tenant.Name, appName)
 	c := redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix))
-	if userPassword != "" {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "REDIS_USER_PASSWORD", Value: userPassword})
+	if withPassword {
+		c.Env = append(c.Env, meta.SecretEnv("REDIS_USER_PASSWORD", jobName, jobSecretPasswordKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      redisACLJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{c},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, cacheNamespace, tenant, appName, c)
 }
 
-// makeRedisACLDeleteJob creates a redis-cli Job that removes the per-app Redis ACL user.
+// makeRedisACLDeleteJob removes an app's user from the shared cache: the Job
+// the purge of one app runs too.
 func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
-	username := redisACLUsername(tenant.Name, appName)
-	keyPrefix := redisKeyPrefix(tenant.Name, appName)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      redisACLDeleteJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						redisContainer("del-acl-user", username, keyPrefix, redisDelUserScript(username)),
-					},
-				},
-			},
-		},
-	}
+	return backup.CacheDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 // --- Memcached workload constructors -----------------------------------------
@@ -350,90 +287,72 @@ func makeMemcachedService(tenant *gentianov1alpha1.Tenant) *corev1.Service {
 
 // --- Container constructor ---------------------------------------------------
 
-// redisContainer returns a Container running redis:7-alpine with admin credentials
+// redisContainer returns a Container running valkey-cli with admin credentials
 // injected from redis-admin Secret and user-specific values as literal env vars.
 func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.RedisProvisionerImage(),
-		Command: []string{"/bin/sh", "-c", script},
-		Env: []corev1.EnvVar{
-			{
-				Name: "REDIS_HOST",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: redisAdminSecret},
-						Key:                  "host",
-					},
-				},
-			},
-			{
-				Name: "REDIS_PORT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: redisAdminSecret},
-						Key:                  "port",
-					},
-				},
-			},
-			{
-				Name: "REDIS_PASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: redisAdminSecret},
-						Key:                  "password",
-					},
-				},
-			},
-			// Per-user values as safe literals.
-			{Name: "REDIS_USERNAME", Value: username},
-			{Name: "REDIS_KEY_PREFIX", Value: keyPrefix},
-		},
+		Name:            name,
+		Image:           kernel.RedisProvisionerImage(),
+		Command:         []string{"/bin/sh", "-c", script},
+		SecurityContext: meta.RestrictedContainer(),
+		// The admin connection by the inventory's one block, then the
+		// per-user values as safe literals.
+		Env: append(backup.CacheAdminEnv(),
+			corev1.EnvVar{Name: "REDIS_USERNAME", Value: username},
+			corev1.EnvVar{Name: "REDIS_KEY_PREFIX", Value: keyPrefix},
+		),
 	}
 }
 
 // --- Shell scripts -----------------------------------------------------------
 
+// cacheUserCommands is what an app may ask of the shared cache. A key pattern
+// does not hold the commands that take no key: FLUSHALL, SWAPDB and KEYS are in
+// @write and @read and reach every tenant, so @dangerous comes off, with the two
+// that list or sample other tenants' key names outside it. An app's scripts run
+// under these same rules.
+const cacheUserCommands = `+@read +@write +@connection +eval +evalsha +@pubsub +@transaction -@dangerous +info -randomkey -scan`
+
 // redisSetUserScript returns an idempotent ACL SETUSER script.
-// ACL SETUSER is safe to re-run — it resets the ACL entry to the given rules.
-// allkeys is required when session keys are not scoped to a single key prefix (some PHP apps).
-func redisSetUserScript(username, _ string) string {
+// reset takes the user back to nothing first, so what a Job leaves is these
+// rules and no earlier ones. The server answers an error with exit code 0, so
+// every answer is read.
+//
+// ACL SAVE comes first as well as last: a server that has no file to save to
+// loses its users on a restart, and this Job fails there without changing
+// anything, and is run again until the server that keeps them is up.
+func redisSetUserScript(username, keyPrefix string) string {
 	return fmt.Sprintf(
-		`set -euo pipefail
+		`set -eu
 USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
-redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL SETUSER %s on ">$USER_PW" allkeys allchannels "+@read" "+@write" "+@connection" "+eval" "+evalsha" "+@pubsub" "+info" "+@transaction"
-echo "ACL user %s provisioned"`,
-		username, username,
+cli() { valkey-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
+expect_ok() {
+  answer="$(cli "$@")"
+  [ "$answer" = OK ] || { echo "ERROR: $1 $2: $answer" >&2; exit 1; }
+}
+expect_ok ACL SAVE
+expect_ok ACL SETUSER %[1]s reset on ">$USER_PW" "~%[2]s*" "&%[2]s*" "&%[3]s" %[4]s
+expect_ok ACL SAVE
+echo "ACL user %[1]s provisioned"`,
+		username, keyPrefix, strings.TrimSuffix(keyPrefix, ":"), cacheUserCommands,
 	)
 }
 
 // redisCacheEndpoint returns the shared Redis host/port from the kernel redis-admin Secret.
 func (r *TenantReconciler) redisCacheEndpoint(ctx context.Context) (host, port string, err error) {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: redisAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: redisAdminSecret, Namespace: cacheNamespace}, secret); err != nil {
 		return "", "", fmt.Errorf("get redis-admin secret: %w", err)
 	}
 	host = string(secret.Data["host"])
 	port = string(secret.Data["port"])
 	if port == "" {
-		port = "6379"
+		port = fmt.Sprint(provisioner.RedisPort)
 	}
 	if host == "" {
 		return "", "", fmt.Errorf("redis-admin secret missing host")
 	}
 	return host, port, nil
-}
-
-// redisDelUserScript returns a script that removes the ACL user, ignoring absence.
-func redisDelUserScript(username string) string {
-	return fmt.Sprintf(
-		`set -euo pipefail
-redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
-  ACL DELUSER %s 2>/dev/null || echo "user %s already absent"
-echo "done"`,
-		username, username,
-	)
 }
 
 // --- Status helpers ----------------------------------------------------------
@@ -451,15 +370,15 @@ func deploymentIsReady(dep *appsv1.Deployment) bool {
 // --- Name helpers ------------------------------------------------------------
 
 // redisACLUsername returns the Redis ACL username for a tenant + app.
-// Redis usernames have no strict character restrictions, but we keep them
-// to [a-z0-9-] to match the convention used in other provisioning Jobs.
 func redisACLUsername(tenantName, appName string) string {
-	return fmt.Sprintf("%s-%s", tenantName, appName)
+	return backup.RedisACLUser(tenantName, appName)
 }
 
 // redisKeyPrefix returns the Redis key prefix scoped to a tenant + app.
 // ACL key patterns use glob syntax; the trailing * is part of the ACL rule,
-// not the prefix value stored here.
+// not the prefix value stored here. A profile writes it as
+// ${TENANT_ID}:${APP_ID}: and may use the same text without the colon as a
+// channel.
 func redisKeyPrefix(tenantName, appName string) string {
 	return fmt.Sprintf("%s:%s:", tenantName, appName)
 }
@@ -469,5 +388,5 @@ func redisACLJobName(tenantName, appName string) string {
 }
 
 func redisACLDeleteJobName(tenantName, appName string) string {
-	return fmt.Sprintf("redis-acl-delete-%s-%s", tenantName, appName)
+	return backup.CacheDestroyJobName(tenantName, appName)
 }

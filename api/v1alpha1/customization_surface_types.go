@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,16 +12,18 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
 
 import "k8s.io/apimachinery/pkg/runtime"
 
-// Types in this file describe the customization surface of a catalogue app —
+// Types in this file describe the customization surface of a catalog app —
 // which rungs of the Gentian customization ladder the app supports, and by which
 // mechanism. They are deliberately app-neutral: no per-app fields, no profile
-// names. See docs/app-customization.md.
+// names. See docs/guides/app-customization.md.
 
 // CustomizationRung identifies a rung of the customization ladder.
 // Rungs are ordered by how much of the app's own delivery artifact Gentian owns,
@@ -49,7 +51,7 @@ const (
 )
 
 // CustomizationGrade rates how far up the ladder an app can be customized.
-// Assigned by hand by the catalogue maintainer for v0.4; see roadmap item 2.13.
+// Assigned by hand by the catalog maintainer for v0.4; see roadmap item 2.13.
 // +kubebuilder:validation:Enum=A;B;C;D;unknown
 type CustomizationGrade string
 
@@ -63,17 +65,17 @@ const (
 	GradeC CustomizationGrade = "C"
 	// GradeD requires touching source for anything beyond a value change.
 	GradeD CustomizationGrade = "D"
-	// GradeUnknown means the app has not been characterised yet. Agents must not
+	// GradeUnknown means the app has not been characterized yet. Agents must not
 	// infer more than the L0/L4 default.
 	GradeUnknown CustomizationGrade = "unknown"
 )
 
-// CustomizationSurface declares the customization ladder for one catalogue app.
+// CustomizationSurface declares the customization ladder for one catalog app.
 //
 // When absent, consumers must assume {Grade: unknown, SupportedRungs: [L0, L4]}
-// and raise a task to characterise the app. L2 is always available regardless.
+// and raise a task to characterize the app. L2 is always available regardless.
 type CustomizationSurface struct {
-	// Grade rates customization readiness (see CustomizationGrade). It summarises
+	// Grade rates customization readiness (see CustomizationGrade). It summarizes
 	// the rubric score recorded in the profile's customization.md. Empty is
 	// equivalent to GradeUnknown — treat it that way rather than defaulting it
 	// in the schema, which would make every profile that omits it permanently
@@ -193,7 +195,7 @@ type CustomizationDropIn struct {
 
 	// UpstreamDocumented reports whether upstream documents this path as an
 	// extension point. When false the mount is really L4, not L1: upstream has
-	// made no promise about the path surviving a reorganisation.
+	// made no promise about the path surviving a reorganization.
 	// +optional
 	UpstreamDocumented bool `json:"upstreamDocumented,omitempty"`
 
@@ -236,7 +238,7 @@ const (
 	DeliveryGitSidecar CustomizationDelivery = "git-sidecar"
 	// DeliveryImageLayer bakes addons into a Gentian-built image layer.
 	DeliveryImageLayer CustomizationDelivery = "image-layer"
-	// DeliveryAddonProfile ships the addon as its own AppProfile.
+	// DeliveryAddonProfile ships the addon as its own ComponentProfile.
 	DeliveryAddonProfile CustomizationDelivery = "addon-profile"
 	// DeliveryAppStoreAPI installs through the app's own runtime admin API.
 	DeliveryAppStoreAPI CustomizationDelivery = "app-store-api"
@@ -245,7 +247,7 @@ const (
 // CustomizationExtension describes the L3 (in-app addon) surface.
 type CustomizationExtension struct {
 	// Mechanism names the app's extension system (for example "odoo-addon",
-	// "nextcloud-app", "xwiki-extension", "activepieces-piece").
+	// "nextcloud-app", "xwiki-extension").
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
 	Mechanism string `json:"mechanism"`
@@ -330,7 +332,7 @@ type CustomizationPublishedAPI struct {
 // "patched" is the correct destination for a chart that needs template changes:
 // it carries the delta rather than a copy, so upstream bumps surface as patch
 // conflicts instead of silently diverging. "vendored" is a review signal, not a
-// normal state — see docs/app-customization.md §6.2.
+// normal state — see docs/guides/app-customization.md §6.2.
 // +kubebuilder:validation:Enum=upstream;patched;gentian-owned;vendored
 type CustomizationChartOwnership string
 
@@ -381,7 +383,7 @@ type CustomizationFork struct {
 	// +optional
 	Upstream string `json:"upstream,omitempty"`
 
-	// Owner is the team or organisation accountable for the fork, including its
+	// Owner is the team or organization accountable for the fork, including its
 	// CVE response. Free-form so an external maintainer can hold it later.
 	// +optional
 	Owner string `json:"owner,omitempty"`
@@ -395,16 +397,16 @@ type CustomizationFork struct {
 // CustomizationAddon declares an addon's identity to the app that hosts it.
 //
 // This exists so the operator can resolve a tenant's selected addons without
-// knowing anything app-specific. A tenant selects addons by AppProfile name
+// knowing anything app-specific. A tenant selects addons by ComponentProfile name
 // ("odoo-crm-ce"), but the app's own addon system knows them by its own
 // identifier — Odoo installs the module "crm", Nextcloud enables the app
 // "richdocuments". Declaring that identifier here keeps the mapping in the
-// catalogue, where app-specific knowledge belongs, instead of putting
+// catalog, where app-specific knowledge belongs, instead of putting
 // per-app parsing in a reconciler (see the platform boundary rule in
 // gentian-apps/docs/app-profile-guide.md).
 type CustomizationAddon struct {
 	// ID is what the hosting app's own addon system calls this addon: an Odoo
-	// module name, a Nextcloud app id, an Activepieces piece name. The operator
+	// module name, a Nextcloud app id, an XWiki extension. The operator
 	// passes it to the composition, which renders the app-native activation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -412,7 +414,7 @@ type CustomizationAddon struct {
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
 	ID string `json:"id"`
 
-	// Of is the AppProfile name of the base this addon activates into. It must be
+	// Of is the ComponentProfile name of the base this addon activates into. It must be
 	// in the same family. Replaces the gentianos.io/requires-profile annotation,
 	// which pointed the same way but existed to auto-install a base when an addon
 	// was installed standalone — the relationship the L3 cleanup inverts.
@@ -454,9 +456,9 @@ type CustomizationAddonValues struct {
 //
 // The platform must not know that Nextcloud enables apps with `occ app:enable` or
 // that Odoo installs modules with `-i`. So the base profile — which lives in
-// gentian-apps alongside the app — supplies the recipe, and the composition only
-// renders it. Apps whose activation cannot be expressed as chart values (Odoo needs
-// a database-side install) ship their own composition instead and leave this unset.
+// gentian-apps alongside the app — supplies the recipe, and the platform only
+// renders it. An app whose activation cannot be expressed as chart values ships its
+// own composition instead and leaves this unset.
 type CustomizationAddonActivation struct {
 	// ValuesPath is the dot-separated Helm values path the rendered Script is
 	// written to, e.g. "nextcloud.hooks.before-starting". Path segments may not

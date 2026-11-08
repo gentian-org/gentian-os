@@ -16,15 +16,28 @@ try_load_creds_from_openbao() {
     # The deployments token counts — it is prompted for on every run that does
     # not have it, so a fast path that ignores it skips the lookup that would
     # have prevented the prompt.
-    MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
-    # A role whose AUTH is "none" needs nothing here — the fast path must not
-    # wait on a token that will never exist. _repo_auth_for is the same gate
-    # _requirement_applies() uses, so this agrees with what
-    # collect_bootstrap_credentials would actually prompt for.
-    local _os_ready=1 _apps_ready=1 _ui_ready=1
-    [[ "$(_repo_auth_for gentian-os-repository)" != "none" && -z "${GENTIAN_OS_GIT_TOKEN:-}" ]] && _os_ready=0
-    [[ "$(_repo_auth_for gentian-apps-repository)" != "none" && -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]] && _apps_ready=0
-    [[ "$(_repo_auth_for gentian-ui-repository)" != "none" && -z "${GENTIAN_UI_GIT_TOKEN:-}" ]] && _ui_ready=0
+    #
+    # A local, not MAIL_SERVICE_MODE itself: this runs before step 0, and on a
+    # cluster with no claim yet the mode resolved here is only the schema's
+    # default. Written to the global, it read as an answer already given and
+    # prompt_mail_mode never asked.
+    local _mail_mode
+    _mail_mode="$(gentian_mail_service_mode)"
+    # A repository that authenticates is ready once its token is here. One
+    # that does not is ready as it stands: waiting for a token nobody will
+    # ever supply would keep the fast path from being taken at all. The mode
+    # is the same one the prompt loop asks, so the two cannot disagree.
+    local _repos_ready=1 _row _req _what _var _vault
+    for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        _req="${_row%%|*}"
+        if [[ "$(_repo_credential_mode "${_req}")" == "none" ]]; then
+            continue
+        fi
+        _var="$(_repo_credential "${_req}" token)"
+        if [[ -z "${!_var:-}" ]]; then
+            _repos_ready=0
+        fi
+    done
     # The provider credentials count too. Without them the fast path returns
     # with the zone and ingress tokens still unset, and the prompt loop asks
     # for what OpenBao is holding -- the same defect the recovery below fixes,
@@ -40,15 +53,19 @@ try_load_creds_from_openbao() {
         done < <(catalogue_field_keys "${_pr}" 2>/dev/null || true)
     done < <(_provider_requirement_names 2>/dev/null || true)
 
-    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" \
-        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" \
-        && "${_providers_ready}" == "1" ]]; then
-        if [[ "${MAIL_SERVICE_MODE}" == "external" \
+    # The master password and the deployments token are wanted on every
+    # cluster; the rest was worked out above.
+    local _core_ready=0
+    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        _core_ready=1
+    fi
+    if [[ "${_core_ready}${_repos_ready}${_providers_ready}" == "111" ]]; then
+        if [[ "${_mail_mode}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
             return
         fi
-        if [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
+        if [[ "${_mail_mode}" == "system" ]]; then
             return
         fi
     fi
@@ -75,15 +92,15 @@ try_load_creds_from_openbao() {
     info "Checking whether OpenBao already holds this cluster's credentials..."
 
     local bao_addr
-    if ! bao_addr=$(gentian_service_addr openbao openbao 8200 https 2>/dev/null) \
+    if ! bao_addr=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null) \
         || [[ -z "${bao_addr}" ]]; then
         info "  OpenBao is not reachable yet — asking for the credentials instead."
         return 0
     fi
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
     # Don't bother if OpenBao is sealed/unreachable.
-    if ! curl -k -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1; then
+    if ! bao_curl -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1; then
         info "  OpenBao is not answering yet — asking for the credentials instead."
         return 0
     fi
@@ -93,8 +110,8 @@ try_load_creds_from_openbao() {
         # $1 = relative path under secret/data/gentian-os/kernel/
         # $2 = jq filter to extract the field, e.g. '.data.data.value'
         # Missing paths (404) are normal before OpenBao is bootstrapped — must not abort install.
-        curl -k -sf --max-time 5 \
-            -H "X-Vault-Token: ${token}" \
+        bao_curl -sf --max-time 5 \
+            -H @<(printf 'X-Vault-Token: %s\n' "${token}") \
             "${bao_addr}/v1/secret/data/gentian-os/kernel/$1" 2>/dev/null \
             | jq -r "$2 // empty" 2>/dev/null || true
     }
@@ -121,47 +138,27 @@ try_load_creds_from_openbao() {
         v=$(_bao_get "repositories/deployments" '.data.data.password')
         [[ -n "$v" ]] && { export GENTIAN_DEPLOYMENTS_GIT_TOKEN="$v"; loaded=1; }
     fi
-    # os/apps/ui mirror the deployments pair above, but only when their AUTH
-    # gates them in — reading a path nothing ever wrote is a guaranteed 404,
-    # every run, for the common unmirrored install.
-    if [[ "$(_repo_auth_for gentian-os-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_OS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-os" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_OS_GIT_USERNAME="$v"; loaded=1; }
+    # The platform's own repositories are read back the same way, but only
+    # those that authenticate: the path of one that does not was never
+    # written, and asking for it is a 404 on every run of a plain install.
+    for _row in "${GENTIAN_REPO_CREDENTIALS[@]}"; do
+        _req="${_row%%|*}"
+        if [[ "${_req}" == "deployments-repository" || "$(_repo_credential_mode "${_req}")" == "none" ]]; then
+            continue
         fi
-        if [[ -z "${GENTIAN_OS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-os" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_OS_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ "$(_repo_auth_for gentian-apps-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_APPS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-apps" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_USERNAME="$v"; loaded=1; }
-        fi
-        if [[ -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-apps" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ "$(_repo_auth_for gentian-ui-repository)" != "none" ]]; then
-        if [[ -z "${GENTIAN_UI_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-ui" '.data.data.username')
-            [[ -n "$v" ]] && { export GENTIAN_UI_GIT_USERNAME="$v"; loaded=1; }
-        fi
-        if [[ -z "${GENTIAN_UI_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/gentian-ui" '.data.data.password')
-            [[ -n "$v" ]] && { export GENTIAN_UI_GIT_TOKEN="$v"; loaded=1; }
-        fi
-    fi
-    if [[ -z "${REGISTRY_USER:-}" ]]; then
-        v=$(_bao_get "storage/registry" '.data.data.username')
-        [[ -n "$v" ]] && { export REGISTRY_USER="$v"; loaded=1; }
-    fi
-    if [[ -z "${REGISTRY_PASSWORD:-}" ]]; then
-        v=$(_bao_get "storage/registry" '.data.data.password')
-        [[ -n "$v" ]] && { export REGISTRY_PASSWORD="$v"; loaded=1; }
-    fi
+        _vault="$(_repo_credential "${_req}" vault)"
+        for _what in username token; do
+            _var="$(_repo_credential "${_req}" "${_what}")"
+            if [[ -n "${!_var:-}" ]]; then
+                continue
+            fi
+            v=$(_bao_get "repositories/${_vault}" ".data.data.${_what/token/password}")
+            if [[ -n "$v" ]]; then
+                export "${_var}=${v}"
+                loaded=1
+            fi
+        done
+    done
     # Provider credentials -- the zone host and the edge ingress -- read back
     # from the same tables that decided to ask for them, so what was seeded is
     # what is recovered.
@@ -203,58 +200,6 @@ try_load_creds_from_openbao() {
         info "Loaded missing credentials from OpenBao."
     fi
 }
-install_eso() {
-    banner "Installing External Secrets Operator"
-
-    if helm status external-secrets -n external-secrets &>/dev/null; then
-        success "ESO already installed. Skipping."
-        return
-    fi
-
-    helm repo add external-secrets "$(gentian_pin external-secrets repo)" --force-update
-    helm repo update external-secrets
-    _helm_retry install external-secrets external-secrets/external-secrets \
-        -n external-secrets \
-        --version "${ESO_CHART_VERSION}" \
-        -f "${SCRIPT_DIR}/kernel/eso/values.yaml" \
-        --wait --timeout 5m
-    success "ESO installed."
-}
-# =============================================================================
-# 5. Deploy OpenBao transit seal instance
-# =============================================================================
-bootstrap_transit_app() {
-    banner "OpenBao transit seal instance"
-
-    # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
-    # invoked reactively by wait_for_running_pod's 2nd-tier escalation
-    # only if the transit pod is demonstrably wedged (stuck 120s+ in
-    # ContainerCreating with no IP), so a fresh / healthy cluster never
-    # pays the sudo-prompt + sweep cost.
-
-    if ! kubectl get secret openbao-transit-unseal -n openbao &>/dev/null; then
-        kubectl create secret generic openbao-transit-unseal \
-            -n openbao --from-literal=unseal-key=placeholder
-        success "Placeholder openbao-transit-unseal secret created."
-    fi
-
-    apply_bootstrap_application openbao-transit
-    success "Applied openbao-transit-application.yaml (storageClass=${STORAGE_CLASS})"
-
-    _wait_for_argocd_application_workload \
-        openbao-transit openbao statefulset \
-        "app.kubernetes.io/instance=openbao-transit" 300 \
-    || {
-        error "Argo CD did not deploy openbao-transit StatefulSet."
-        exit 1
-    }
-
-    if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
-        error "openbao-transit pod never became Ready. Aborting install."
-        exit 1
-    fi
-}
-
 # =============================================================================
 # 5b. Init the transit instance
 # =============================================================================
@@ -271,8 +216,8 @@ init_openbao_transit() {
     # silently took an early-return path on a stale state), fail fast here
     # so subsequent steps don't proceed against a half-initialised transit.
     local missing=()
-    kubectl get secret -n openbao openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
-    kubectl get secret -n openbao openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-$(ns_kernel seal)}" openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
     if (( ${#missing[@]} > 0 )); then
         error "Transit init reported success but required Secrets are missing: ${missing[*]}"
         error "Re-run init-openbao-transit.sh manually and re-run install.sh."
@@ -287,38 +232,51 @@ init_openbao() {
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
-    until kubectl get svc openbao -n openbao &>/dev/null; do
+    until kubectl get svc openbao -n "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" &>/dev/null; do
         echo -n "."; sleep 5; i=$((i + 5))
         [[ $i -lt 120 ]] || { error "Timed out."; exit 1; }
     done
     echo ""
 
-    local BAO_HTTP
-    if ! BAO_HTTP=$(gentian_service_addr openbao openbao 8200 https); then
-        error "Could not reach the openbao Service on :8200."
-        error "  Neither the ClusterIP nor a kubectl port-forward responded."
-        exit 1
-    fi
-    export VAULT_SKIP_VERIFY=true
+    # The Service exists the moment the chart is applied; the pod behind it
+    # does not answer until it can start. On a fresh cluster it waits for the
+    # transit token B-02 writes a moment earlier and for its volume to bind,
+    # which on network storage is minutes, not seconds. Probing as soon as the
+    # Service existed failed every cold install. So: retry the address for up
+    # to five minutes, and say why it is waiting.
+    local BAO_HTTP="" waited=0 phase
+    info "Waiting for openbao-0 to answer (up to 5 min)..."
+    until BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null); do
+        if (( waited >= 300 )); then
+            phase="$(kubectl get pod openbao-0 -n "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            error "Could not reach the openbao Service on :8200 within 5 minutes (openbao-0: ${phase:-absent})."
+            error "  Neither the ClusterIP nor a kubectl port-forward responded."
+            error "  kubectl describe pod openbao-0 -n ${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}   says why."
+            exit 1
+        fi
+        echo -n "."; sleep 10; waited=$((waited + 10))
+    done
+    echo ""
+    openbao_cli_trust
 
     local init_status
-    init_status=$(curl -k -sf "${BAO_HTTP}/v1/sys/init" | jq -r '.initialized')
+    init_status=$(bao_curl -sf "${BAO_HTTP}/v1/sys/init" | jq -r '.initialized')
 
     if [[ "$init_status" == "true" ]]; then
         success "OpenBao already initialized."
         local sealed seal_type
-        sealed=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
-        seal_type=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
+        sealed=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
+        seal_type=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
         if [[ "$sealed" == "true" && "$seal_type" == "transit" ]]; then
             warn "OpenBao sealed — waiting for transit auto-unseal..."
             sleep 15
-            sealed=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
+            sealed=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.sealed')
             [[ "$sealed" == "true" ]] && { error "Auto-unseal failed."; exit 1; }
             success "Transit auto-unseal completed."
         fi
         # Report the STATE of the stored credentials on re-runs — never their
         # values. This block used to re-print both on every single install.sh
-        # invocation until E-04 revoked the token, which made "how many times
+        # invocation until E-03 revoked the token, which made "how many times
         # has this value been in a terminal or a CI log" grow with every
         # re-run rather than stay at one. Nothing here needs the literal text:
         # BAO_TOKEN is exported for this shell's own later steps to use, which
@@ -327,32 +285,32 @@ init_openbao() {
             local stored_token
             stored_token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
             if [[ -n "$stored_token" ]]; then
-                # E-04 revokes this token at handover, but this file outlives
+                # E-03 revokes this token at handover, but this file outlives
                 # that. Exporting it unasked made every later OpenBao write die
                 # on a bare 403 — so ask OpenBao first, and when it is dead say
                 # which kind of dead: revoked on purpose, or orphaned by a
                 # re-initialisation.
-                if curl -k -sf -H "X-Vault-Token: ${stored_token}" \
+                if bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${stored_token}") \
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
                     info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
                     if [[ "$(kubectl get configmap gentian-handover \
-                            -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                            -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                             -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null)" != "true" ]]; then
                         warn "  No recovery kit is on record yet. Run:"
                         warn "    ./install.sh --export-recovery-kit"
                     fi
                     export BAO_TOKEN="$stored_token"
                 elif [[ "$(kubectl get configmap gentian-handover \
-                        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                        -n "${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}" \
                         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
-                    info "Bootstrap token: revoked at handover (E-04)."
+                    info "Bootstrap token: revoked at handover (E-03)."
                     info "  Day-2 writes go through OIDC; steps that need an OpenBao"
                     info "  token will report undefined and skip."
                 else
                     warn "Bootstrap token: no longer authenticates, and no revocation"
                     warn "  is recorded — OpenBao was likely re-initialised since this"
                     warn "  file was written. If you still hold the recovery key from"
-                    warn "  when this cluster was first initialised, mint a new root"
+                    warn "  when this cluster was first initialized, mint a new root"
                     warn "  token with 'bao operator generate-root', export it as"
                     warn "  BAO_TOKEN, and re-run. Otherwise recovery is from a kit."
                 fi
@@ -362,12 +320,12 @@ init_openbao() {
     fi
 
     local seal_type_before
-    seal_type_before=$(curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
+    seal_type_before=$(bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -r '.type')
 
     if [[ "$seal_type_before" == "transit" ]]; then
         info "Initializing OpenBao with transit seal (recovery_shares=1)..."
         local init_resp
-        init_resp=$(curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
+        init_resp=$(bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
             -d '{"recovery_shares": 1, "recovery_threshold": 1}')
 
@@ -394,10 +352,10 @@ init_openbao() {
         # banner this replaced was a second, unprotected copy of exactly the
         # same values, in the one place (a terminal, a CI log) they should
         # never sit in the clear. The durable copy is a recovery kit, and nothing
-        # downstream of here needs the raw text: E-04 later refuses to revoke
+        # downstream of here needs the raw text: E-03 later refuses to revoke
         # this token until `./install.sh --export-recovery-kit` has run.
         echo ""
-        info "OpenBao initialised. The recovery key and root token are in"
+        info "OpenBao initialized. The recovery key and root token are in"
         info "  ${OPENBAO_INIT_FILE} (mode 600) — nowhere else."
         warn "Before this cluster can finish handover, run:"
         warn "    ./install.sh --export-recovery-kit"
@@ -407,7 +365,7 @@ init_openbao() {
 
         info "Waiting for transit auto-unseal (up to 30 s)..."
         i=0
-        until curl -k -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -e '.sealed == false' >/dev/null 2>&1; do
+        until bao_curl -sf "${BAO_HTTP}/v1/sys/seal-status" | jq -e '.sealed == false' >/dev/null 2>&1; do
             sleep 3; i=$((i + 3))
             [[ $i -lt 30 ]] || { error "Auto-unseal timed out."; exit 1; }
         done
@@ -415,11 +373,11 @@ init_openbao() {
     else
         info "Initializing OpenBao (1-of-1 Shamir — transit unavailable)..."
         local init_resp
-        init_resp=$(curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
+        init_resp=$(bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/init" \
             -H "Content-Type: application/json" \
             -d '{"secret_shares": 1, "secret_threshold": 1}') || {
             error "OpenBao init request failed against ${BAO_HTTP}."
-            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n openbao')."
+            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n ${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}')."
             error "Common cause: the openbao-transit-token Secret is missing, leaving openbao-0 in CreateContainerConfigError."
             exit 1
         }
@@ -447,15 +405,15 @@ init_openbao() {
         # already in the mode-600 init file, and a recovery kit — not this
         # terminal — is where a durable copy belongs.
         echo ""
-        info "OpenBao initialised. The unseal key and root token are in"
+        info "OpenBao initialized. The unseal key and root token are in"
         info "  ${OPENBAO_INIT_FILE} (mode 600) — nowhere else."
         warn "Before this cluster can finish handover, run:"
         warn "    ./install.sh --export-recovery-kit"
         echo ""
 
-        curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
+        bao_curl -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
             -H "Content-Type: application/json" \
-            -d "{\"key\": \"${unseal_key}\"}" | jq .
+            --data-binary @<(printf '{"key": "%s"}' "${unseal_key}") | jq .
         export BAO_TOKEN="$root_token"
         success "OpenBao initialized and unsealed (Shamir)."
     fi
@@ -465,7 +423,7 @@ init_openbao() {
 # 10b. Seed kernel secrets
 # _dns_credential_fields_json — the active DNS provider's fields as one object.
 #
-# Field names come from the catalogue, which reads them from
+# Field names come from the catalog, which reads them from
 # kernel/platforms.yaml, and values from the environment variables the prompt
 # loop wrote. Empty when the provider is Cloudflare (which has its own
 # variables, kept for compatibility), "none", or when nothing was collected.
@@ -496,7 +454,7 @@ _provider_credential_fields_json() {
 # have a requirement, a validator and a vault path with nothing ever seeding
 # it.
 #
-# The vault path comes from the catalogue and is stripped of the store prefix
+# The vault path comes from the catalog and is stripped of the store prefix
 # the seeder adds back, so the path an operator reads in platforms.yaml is the
 # path the secret lands at.
 _provider_seed_pairs() {
@@ -520,7 +478,7 @@ _provider_seed_pairs() {
 # sign-in as cluster-admin, and only then the raw root-token prompt.
 #
 # The OIDC tier exists for exactly one situation: a cluster that has been
-# handed over. E-04-revoke-bootstrap-token deliberately revokes the root
+# handed over. E-03-revoke-bootstrap-token deliberately revokes the root
 # token and strips it from both the openbao-init Secret and this file, so the
 # first two tiers come up empty on any post-handover re-run — asking for the
 # root token at that point is asking for something that cannot exist. It sits
@@ -546,9 +504,18 @@ _resolve_bao_token() {
         fi
     fi
 
+    # Both routes below need a person: one opens a browser, the other reads
+    # from the terminal. Unattended, they cost their own timeouts and then
+    # fail anyway, so say what is missing and let the caller decide.
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" || ! -t 0 ]]; then
+        warn "No OpenBao token available, and no terminal to ask at."
+        warn "  Export BAO_TOKEN, or run this from an interactive shell."
+        return 1
+    fi
+
     if command -v bao >/dev/null 2>&1 && [[ -n "${BAO_ADDR:-}" ]]; then
         info "No OpenBao token available; trying an OIDC sign-in as cluster-admin..."
-        info "  A browser should open. Sign in as the cluster administrator."
+        info "  A browser should open. Sign in as the platform admin."
         # -token-only: the token and nothing else on stdout (no verification
         # banner, no wrapping details), and it is not written to the local
         # token helper file — this shell carries it as BAO_TOKEN like every
@@ -603,13 +570,13 @@ _resolve_bao_token() {
 #
 # Returns non-zero when OpenBao cannot be reached, leaving BAO_TOKEN unset.
 resolve_openbao_access() {
-    if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         warn "Could not reach the openbao Service on :8200."
         warn "  Neither the ClusterIP nor a kubectl port-forward responded."
         return 1
     fi
     export BAO_ADDR
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
     _resolve_bao_token
 }
 
@@ -617,15 +584,18 @@ resolve_openbao_access() {
 seed_secrets() {
     banner "Seeding kernel secrets"
 
-    if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
     fi
     export BAO_ADDR
-    export VAULT_SKIP_VERIFY=true
+    openbao_cli_trust
 
-    _resolve_bao_token
+    if ! _resolve_bao_token; then
+        error "Cannot seed kernel secrets without an OpenBao token."
+        exit 1
+    fi
 
     # Automatically query Cloudflare zone ID and tunnel CNAME to seed into OpenBao
     local zone_id=""
@@ -633,12 +603,12 @@ seed_secrets() {
     if [[ -n "${CF_API_TOKEN:-}" && -n "${KERNEL_DOMAIN:-}" ]]; then
         info "Resolving Cloudflare Zone ID for domain ${KERNEL_DOMAIN}..."
         zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${KERNEL_DOMAIN}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+            -H @<(printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}") | jq -r '.result[0].id // empty')
         if [[ -z "${zone_id}" && "${KERNEL_DOMAIN}" == *.*.* ]]; then
             local apex_domain
             apex_domain=$(echo "${KERNEL_DOMAIN}" | awk -F. '{print $(NF-1)"."$NF}')
             zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${apex_domain}" \
-                -H "Authorization: Bearer ${CF_API_TOKEN}" | jq -r '.result[0].id // empty')
+                -H @<(printf 'Authorization: Bearer %s\n' "${CF_API_TOKEN}") | jq -r '.result[0].id // empty')
         fi
         if [[ -n "${zone_id}" ]]; then
             info "Resolved Cloudflare Zone ID: ${zone_id}"
@@ -678,7 +648,7 @@ seed_secrets() {
     fi
 
     # A provider other than Cloudflare hands its fields over as one JSON object,
-    # built from the catalogue rather than from a variable per provider — the
+    # built from the catalog rather than from a variable per provider — the
     # installer already knows which fields the provider declares, and a second
     # list here would be the place they stop matching.
     local provider_seed_pairs=""
@@ -697,9 +667,335 @@ seed_secrets() {
     EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}" \
     EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}" \
     EXTERNAL_SMTP_STARTTLS="${EXTERNAL_SMTP_STARTTLS:-true}" \
-    bash "${SCRIPT_DIR}/scripts/bootstrap/seed-openbao.sh" \
-        "$MASTER_PASSWORD" \
-        "${SMTP_RELAY_USERNAME:-}" \
-        "${SMTP_RELAY_PASSWORD:-}"
+    MASTER_PASSWORD="${MASTER_PASSWORD}" \
+    SMTP_RELAY_USERNAME="${SMTP_RELAY_USERNAME:-}" \
+    SMTP_RELAY_PASSWORD="${SMTP_RELAY_PASSWORD:-}" \
+    bash "${SCRIPT_DIR}/scripts/bootstrap/seed-openbao.sh"
     success "All kernel secrets seeded."
+}
+
+# gentian_handed_over — the bootstrap token was revoked at handover (E-03).
+#
+# After that this shell holds no OpenBao token by design, so a step whose
+# check needs one cannot verify anything -- and that is not the same as the
+# step being undone. Such checks answer undefined then, so a finished cluster
+# does not list them as outstanding and a re-run does not walk into a 403.
+# Before handover the same gap stays MISSING, which is what makes apply() run
+# and say what is wrong.
+gentian_handed_over() {
+    [[ "$(kubectl get configmap gentian-handover -n "$(ns_kernel control)" \
+        -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]
+}
+
+# =============================================================================
+# The vault's TLS anchor (kernel/bootstrap/chart/templates/vault-tls.yaml)
+# =============================================================================
+# The serving certificate openbao-tls is signed by the CA openbao-ca, and
+# every client of the vault trusts that CA's certificate rather than the
+# serving one. Three things follow from it that a manifest cannot do, and
+# B-01 does them once the serving certificate is the CA's:
+#
+#   1. the CA's certificate, and nothing else, is copied as openbao-ca-bundle
+#      to cert-manager's namespace, where the internal CA's ClusterIssuer can
+#      read a Secret only, and to the operator's and Crossplane's, which mount
+#      it to verify the vault;
+#   2. the vault is told to load its files again (SIGHUP; it reads them only
+#      at start or on that signal). Its StatefulSet updates OnDelete, and a
+#      restart would seal it until the seal unseals it again, so a signal is
+#      what is sent. Each pod records which certificate it was told about;
+#   3. the custodian is restarted when the CA it trusts has changed: it reads
+#      ca.crt once, at start (internal/custodian/http.go loadBaoCA).
+#
+# External Secrets' stores read ca.crt on every connection and need nothing.
+#
+# On a cluster whose serving certificate was self-signed, (1)-(3) are the
+# switch: before it, ca.crt held that self-signed certificate, so the stores
+# trusted it under either key; between cert-manager re-issuing openbao-tls
+# and (2) a store's connection fails and is retried, and no Secret it made
+# is touched.
+# =============================================================================
+
+# _openbao_tls_field <secret> <key> — a field of a Secret in the secrets
+# namespace, base64 as the API server holds it.
+_openbao_tls_field() {
+    kubectl get secret "$1" -n "$(ns_kernel secrets)" \
+        -o jsonpath="{.data.${2//./\\.}}" 2>/dev/null || true
+}
+
+_openbao_tls_sha() { printf '%s' "$1" | sha256_of /dev/stdin; }
+
+# openbao_tls_from_ca — is the serving certificate the CA's, and current?
+openbao_tls_from_ca() {
+    local ns ca
+    ns="$(ns_kernel secrets)"
+    [[ "$(kubectl get certificate openbao-tls -n "${ns}" -o jsonpath='{.spec.issuerRef.name}' 2>/dev/null)" == "openbao-ca" ]] ||
+        return 1
+    [[ "$(kubectl get certificate openbao-tls -n "${ns}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return 1
+    ca="$(_openbao_tls_field openbao-ca-tls tls.crt)"
+    [[ -n "${ca}" && "${ca}" == "$(_openbao_tls_field openbao-tls ca.crt)" ]]
+}
+
+# openbao_cli_trust — make this shell's bao and bao_curl verify the vault.
+#
+# The vault's CA certificate, ca.crt of openbao-tls, is written to a file
+# and named as BAO_CACERT, with the name the serving certificate carries as
+# BAO_TLS_SERVER_NAME (the address is a ClusterIP or a port-forward, which
+# it does not carry). VAULT_* alike, for the tools that read only those.
+#
+# Before B-01 has made the CA there is no ca.crt, and nothing answers on the
+# vault's address either; only then does this leave verification off, and
+# says so.
+openbao_cli_trust() {
+    local ns ca file
+    ns="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}"
+    unset VAULT_SKIP_VERIFY BAO_SKIP_VERIFY
+    ca="$(kubectl get secret openbao-tls -n "${ns}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
+    if [[ -z "${ca}" ]]; then
+        unset BAO_CACERT VAULT_CACERT BAO_TLS_SERVER_NAME VAULT_TLS_SERVER_NAME
+        export VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+        warn "The vault's CA is not there yet (openbao-tls in ${ns}); not verifying the vault." >&2
+        return 0
+    fi
+    # Beside this run's port-forward records, and removed with them at exit
+    # (gentian_cleanup_port_forwards): a dry run leaves the host as it was.
+    file="${_GENTIAN_PF_CACHE}.openbao-ca.crt"
+    printf '%s' "${ca}" | base64 -d > "${file}"
+    export BAO_CACERT="${file}" VAULT_CACERT="${file}"
+    export BAO_TLS_SERVER_NAME="openbao.${ns}.svc" VAULT_TLS_SERVER_NAME="openbao.${ns}.svc"
+}
+
+# _openbao_ca_namespaces — where the copy openbao-ca-bundle is kept.
+_openbao_ca_namespaces() {
+    printf '%s\n' "$(gentian_cert_manager_namespace)" "$(ns_kernel control)" "$(ns_kernel provisioning)"
+}
+
+_openbao_running_pods() {
+    kubectl get pods -n "$(ns_kernel secrets)" \
+        -l app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao \
+        --field-selector=status.phase=Running -o name 2>/dev/null || true
+}
+
+_openbao_custodian() {
+    kubectl get deploy -n "$(ns_kernel control)" -l app.kubernetes.io/component=custodian \
+        -o name 2>/dev/null | head -1 || true
+}
+
+# openbao_tls_settled — (1)-(3) above are done for the certificates there now.
+openbao_tls_settled() {
+    openbao_tls_from_ca || return 1
+    local ca crt pod dep
+    ca="$(_openbao_tls_field openbao-tls ca.crt)"
+    crt="$(_openbao_tls_field openbao-tls tls.crt)"
+    local cns
+    for cns in $(_openbao_ca_namespaces); do
+        [[ "$(kubectl get secret openbao-ca-bundle -n "${cns}" \
+            -o jsonpath='{.data.ca\.crt}' 2>/dev/null)" == "${ca}" ]] || return 1
+    done
+    for pod in $(_openbao_running_pods); do
+        [[ "$(kubectl get "${pod}" -n "$(ns_kernel secrets)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/tls-crt-sha256}' 2>/dev/null)" == \
+            "$(_openbao_tls_sha "${crt}")" ]] || return 1
+    done
+    dep="$(_openbao_custodian)"
+    if [[ -n "${dep}" ]]; then
+        [[ "$(kubectl get "${dep}" -n "$(ns_kernel control)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-ca-sha256}' 2>/dev/null)" == \
+            "$(_openbao_tls_sha "${ca}")" ]] || return 1
+    fi
+    return 0
+}
+
+# openbao_tls_settle — wait for the serving certificate to be the CA's, then
+# do (1)-(3).
+openbao_tls_settle() {
+    local t=$((SECONDS + ${OPENBAO_TLS_TIMEOUT:-180})) ca crt sha pod dep
+    info "Waiting for the vault's serving certificate to be signed by its CA openbao-ca..."
+    until openbao_tls_from_ca; do
+        if (( SECONDS > t )); then
+            error "openbao-tls in $(ns_kernel secrets) is not signed by openbao-ca yet:"
+            error "  kubectl describe certificate openbao-tls openbao-ca -n $(ns_kernel secrets)"
+            return 1
+        fi
+        sleep 3
+    done
+    ca="$(_openbao_tls_field openbao-tls ca.crt)"
+    crt="$(_openbao_tls_field openbao-tls tls.crt)"
+
+    # The certificate only; on stdin, as every Secret this installer writes.
+    local cns
+    for cns in $(_openbao_ca_namespaces); do
+        kubectl apply -n "${cns}" -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openbao-ca-bundle
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+type: Opaque
+data:
+  ca.crt: ${ca}
+YAML
+    done
+
+    # A vault whose pod is not up yet reads the files when it starts; one
+    # that is up is told to read them. On a first install the pod is
+    # usually still being scheduled when this runs.
+    t=$((SECONDS + ${OPENBAO_POD_WAIT:-120}))
+    while [[ -z "$(_openbao_running_pods)" ]] && (( SECONDS < t )); do sleep 4; done
+
+    sha="$(_openbao_tls_sha "${crt}")"
+    for pod in $(_openbao_running_pods); do
+        [[ "$(kubectl get "${pod}" -n "$(ns_kernel secrets)" \
+            -o jsonpath='{.metadata.annotations.gentianos\.io/tls-crt-sha256}' 2>/dev/null)" == "${sha}" ]] &&
+            continue
+        # The kubelet updates a mounted Secret within about a minute of the
+        # Secret changing; until the file is the new one, a signal reloads
+        # the old.
+        local i
+        for i in $(seq 1 30); do
+            [[ "$(kubectl exec -n "$(ns_kernel secrets)" "${pod}" -c openbao -- \
+                cat /openbao/tls/tls.crt 2>/dev/null | base64 | tr -d '\n')" == "${crt}" ]] && break
+            sleep 4
+        done
+        if kubectl exec -n "$(ns_kernel secrets)" "${pod}" -c openbao -- pkill -HUP -x bao >/dev/null 2>&1; then
+            kubectl annotate "${pod}" -n "$(ns_kernel secrets)" --overwrite \
+                "gentianos.io/tls-crt-sha256=${sha}" >/dev/null
+            info "${pod#pod/} loaded the vault's current serving certificate."
+        else
+            warn "Could not signal ${pod#pod/} to load its serving certificate; it serves the"
+            warn "  previous one until it restarts."
+        fi
+    done
+
+    dep="$(_openbao_custodian)"
+    sha="$(_openbao_tls_sha "${ca}")"
+    if [[ -n "${dep}" && "$(kubectl get "${dep}" -n "$(ns_kernel control)" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-ca-sha256}' 2>/dev/null)" != "${sha}" ]]; then
+        kubectl rollout restart "${dep}" -n "$(ns_kernel control)" >/dev/null &&
+            kubectl annotate "${dep}" -n "$(ns_kernel control)" --overwrite \
+                "gentianos.io/openbao-ca-sha256=${sha}" >/dev/null &&
+            info "The custodian restarted to trust the vault's CA."
+    fi
+    success "The vault's TLS is signed by openbao-ca, and its clients trust that CA."
+}
+
+# openbao_storage_for_render [openbao|openbao-transit] — the storage backend
+# B-01 renders for the vault (openbao, the default) or for the transit seal
+# that unseals it (openbao-transit): raft or file (kernel/bootstrap/chart,
+# openbao.storage and openbao.transitStorage).
+#
+# What the claim says (openbao.storage, one setting for both; a new claim says
+# raft, one that says nothing is file), unless that would start the running
+# instance on a backend its volume holds no data for. Raft started on a volume
+# of file data comes up uninitialized: an empty vault, or a seal without the
+# key that unseals the vault. So an instance that exists, runs the other
+# backend today, and whose volume does not say it was moved (the annotation
+# gentianos.io/openbao-storage the move sets, docs/guides/recovery.md §5)
+# keeps the backend it has, and this says why on stderr; stdout is the
+# rendered YAML. The two instances are decided apart, each by its own volume.
+#
+# Which backend an instance runs is read from its Application. One whose
+# Application names none, the seal before its configuration moved into the
+# bootstrap chart, runs file storage: the only backend before Raft.
+#
+# A volume or Application is absent only when the API server says NotFound;
+# any other failure to read them returns 1 with nothing on stdout, and the
+# caller stops rather than render a backend it could not check.
+#
+# Read only. The claim is read here rather than only by
+# load_deployments_cluster_settings, because on a new cluster step 0 writes
+# the claim after the settings were loaded.
+openbao_storage_for_render() {
+    local instance="${1:-openbao}" want claim live annotated ns gitops pvc
+    case "${instance}" in
+        openbao) ns="$(ns_kernel secrets)" ;;
+        openbao-transit) ns="$(ns_kernel seal)" ;;
+        *) error "openbao_storage_for_render: no instance ${instance}" >&2; return 1 ;;
+    esac
+    pvc="data-${instance}-0"
+    if [[ -z "${OPENBAO_STORAGE:-}" ]]; then
+        claim="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}/kernel/claims/cluster.yaml"
+        if [[ -r "${claim}" ]]; then
+            claim_setting OPENBAO_STORAGE openbao.storage "${claim}"
+        fi
+    fi
+    want="${OPENBAO_STORAGE:-file}"
+    case "${want}" in
+        raft|file) ;;
+        *)
+            warn "openbao.storage on the claim is \"${want}\"; it is raft or file. Rendering file." >&2
+            want="file" ;;
+    esac
+    gitops="$(ns_kernel gitops)"
+    # Absent means the API server said NotFound. Any other failure -- an API
+    # server that timed out, a token that expired -- says nothing about the
+    # volume, and reading it as "absent" would render the claim's backend
+    # onto a volume of the other's data: a vault that restarts empty. So the
+    # step stops, and says why.
+    local rc=0
+    # No volume yet: a new cluster, which starts on what the claim says.
+    _openbao_kube_get pvc "${pvc}" -n "${ns}" -o name >/dev/null || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) printf '%s' "${want}"; return 0 ;;
+        *) error "The volume ${pvc} in ${ns} could not be read; not choosing ${instance}'s storage blind." >&2
+           return 1 ;;
+    esac
+    # No Application to read: nothing says what the volume holds, and the
+    # claim answers, as it did when the volume was made.
+    live="$(_openbao_kube_get application "${instance}" -n "${gitops}" \
+        -o jsonpath='{.spec.sources[0].helm.valuesObject.server.standalone.config}')" || rc=$?
+    case "${rc}" in
+        0) ;;
+        3) printf '%s' "${want}"; return 0 ;;
+        *) error "The Application ${instance} in ${gitops} could not be read; not choosing ${instance}'s storage blind." >&2
+           return 1 ;;
+    esac
+    if [[ "${live}" == *'storage "raft"'* ]]; then
+        live="raft"
+    else
+        live="file"
+    fi
+    if [[ "${live}" == "${want}" ]]; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    if ! annotated="$(_openbao_kube_get pvc "${pvc}" -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.gentianos\.io/openbao-storage}')"; then
+        error "The volume ${pvc} in ${ns} could not be read; not choosing ${instance}'s storage blind." >&2
+        return 1
+    fi
+    if [[ "${annotated}" == "${want}" ]]; then
+        printf '%s' "${want}"
+        return 0
+    fi
+    warn "The claim asks for ${instance} on ${want} storage; it runs on ${live}, and its" >&2
+    warn "  volume ${pvc} does not say its data was moved (gentianos.io/openbao-storage)." >&2
+    warn "  Keeping ${live}: ${want} on this volume would start it empty." >&2
+    warn "  The move is docs/guides/recovery.md §5." >&2
+    printf '%s' "${live}"
+}
+
+# _openbao_kube_get <kubectl get arguments...> — what kubectl get prints, on
+# stdout. Returns 0 when it answered, 3 when the API server said NotFound, and
+# 1 for any other failure, whose message it passes on to stderr: only a
+# definite NotFound may be read as "absent".
+_openbao_kube_get() {
+    local err out rc=0
+    err="$(mktemp)"
+    out="$(kubectl get "$@" 2>"${err}")" || rc=$?
+    if (( rc == 0 )); then
+        rm -f "${err}"
+        printf '%s' "${out}"
+        return 0
+    fi
+    if grep -q '(NotFound)' "${err}"; then
+        rm -f "${err}"
+        return 3
+    fi
+    cat "${err}" >&2
+    rm -f "${err}"
+    return 1
 }

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -46,8 +40,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -318,18 +313,14 @@ func TestMain(m *testing.M) {
 		KernelDomain:             "platform.example.test",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
-		RoutingMode:              controller.RoutingModeGateway,
-		// The mail tests assert the shared Postfix AND Dovecot artefacts, which
+		// The mail tests assert the shared Postfix AND Dovecot artifacts, which
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
-		MailServiceMode: "kernel",
-	}).SetupWithManager(mgr); err != nil {
-		panic(err)
-	}
-
-	if err := (&controller.AppStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		MailServiceMode: "system",
+		// This suite has no vault, and says so: without the statement a
+		// tenant's deletion stops at the step that destroys its stored
+		// credentials, which is what a deployment missing its vault must do.
+		WithoutVault: true,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -339,6 +330,7 @@ func TestMain(m *testing.M) {
 	ctx, cancel := context.WithCancel(context.Background())
 	startXTenantShellSimulator(ctx, testClient)
 	startTenantProvisioningJobSimulator(ctx, testClient)
+	startNamespaceFinalizer(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
 
 	// Stand in for Crossplane and provider-keycloak, which do not run here.
@@ -356,15 +348,19 @@ func TestMain(m *testing.M) {
 	// nothing to mark, so the wait never ended.
 	go fakeKeycloakClientProvider(ctx, mgr.GetClient())
 
-	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
+	// The authentication namespace: the identity reconciler's Keycloak Jobs.
 	if err := testClient.Create(context.Background(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: layout.Namespace(layout.Authentication)},
 	}); err != nil {
 		panic(err)
 	}
 
-	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
-	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"} {
+	// The platform namespaces tenant provisioning writes to, one per function
+	// (internal/controller/namespaces.go): identity Jobs in the authentication
+	// namespace, the Gateway and its reference grants at the edge, the
+	// provisioning ConfigMap in the provisioning one, and each data-plane Job
+	// beside its system service.
+	for _, ns := range testPlatformNamespaces[1:] {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
 		}); err != nil {
@@ -374,7 +370,7 @@ func TestMain(m *testing.M) {
 
 	// dovecot-admin Secret provides OIDC + doveadm credentials for shared Dovecot.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "system-mail"},
 		Data: map[string][]byte{
 			"doveadm_password":   []byte("test-doveadm-password"),
 			"oidc_client_secret": []byte("test-oidc-secret"),
@@ -389,11 +385,11 @@ func TestMain(m *testing.M) {
 	// succeed under envtest.
 	fakeKC := startFakeKeycloak()
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
 		Data: map[string][]byte{
 			"url":      []byte(fakeKC.URL),
-			"username": []byte("kcadmin"),
-			"password": []byte("test-kc-password"),
+			"client_id": []byte("kcadmin"),
+			"client_secret": []byte("test-kc-password"),
 		},
 	}); err != nil {
 		panic(err)
@@ -402,7 +398,7 @@ func TestMain(m *testing.M) {
 	// The kernel OIDCPackCatalog, as the operator chart ships it. Selfhosted mail
 	// resolves the gentian-dovecot service pack from it to provision the client
 	// Dovecot introspects IMAP XOAUTH2 tokens with, so without it every tenant
-	// using mail waits on a catalogue that never arrives.
+	// using mail waits on a catalog that never arrives.
 	if err := testClient.Create(context.Background(), &gentianov1alpha1.OIDCPackCatalog{
 		ObjectMeta: metav1.ObjectMeta{Name: "gentian-kernel"},
 		Spec: gentianov1alpha1.OIDCPackCatalogSpec{
@@ -414,13 +410,13 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	// minio-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
+	// s3-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "s3-admin", Namespace: "system-s3"},
 		Data: map[string][]byte{
-			"endpoint":  []byte("http://minio.platform-kernel.svc:9000"),
-			"accessKey": []byte("minioadmin"),
-			"secretKey": []byte("minioadmin"),
+			"endpoint":  []byte("http://s3.system-s3.svc:9000"),
+			"accessKey": []byte("s3admin"),
+			"secretKey": []byte("s3admin"),
 		},
 	}); err != nil {
 		panic(err)
@@ -444,7 +440,13 @@ func TestMain(m *testing.M) {
 		for {
 			time.Sleep(50 * time.Millisecond)
 			var jobs batchv1.JobList
-			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
+			for _, ns := range testPlatformNamespaces {
+				var page batchv1.JobList
+				if err := testClient.List(context.Background(), &page, client.InNamespace(ns)); err == nil {
+					jobs.Items = append(jobs.Items, page.Items...)
+				}
+			}
+			{
 				for _, job := range jobs.Items {
 					j := job // copy loop variable
 					if j.Status.Succeeded > 0 {
@@ -496,7 +498,7 @@ func TestMain(m *testing.M) {
 							break
 						} else if k8serrors.IsConflict(err) {
 							time.Sleep(20 * time.Millisecond)
-							if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "platform-kernel"}, &j); err != nil {
+							if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: j.Namespace}, &j); err != nil {
 								break
 							}
 							if j.Status.Succeeded > 0 {
@@ -557,9 +559,8 @@ func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
 	ctx := context.Background()
 	deadline := time.Now().Add(jobAppearTimeout)
 	for {
-		job := &batchv1.Job{}
-		if testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: meta.KernelNamespace}, job) == nil {
-			return job
+		if found := getPlatformJob(ctx, jobName); found != nil {
+			return found
 		}
 		if time.Now().After(deadline) {
 			break
@@ -568,7 +569,11 @@ func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
 	}
 
 	list := &batchv1.JobList{}
-	_ = testClient.List(ctx, list, client.InNamespace(meta.KernelNamespace))
+	for _, ns := range testPlatformNamespaces {
+		page := &batchv1.JobList{}
+		_ = testClient.List(ctx, page, client.InNamespace(ns))
+		list.Items = append(list.Items, page.Items...)
+	}
 	present := make([]string, 0, len(list.Items))
 	for i := range list.Items {
 		if list.Items[i].Labels[meta.TenantLabel] == tenantName {
@@ -578,7 +583,7 @@ func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
 	tenantAlive := testClient.Get(ctx, types.NamespacedName{Name: tenantName}, &gentianov1alpha1.Tenant{}) == nil
 
 	t.Fatalf("Job %q never appeared in %s within %s\n\tkernel Jobs still labelled for tenant %q: %v\n\tTenant object still present: %v",
-		jobName, meta.KernelNamespace, jobAppearTimeout, tenantName, present, tenantAlive)
+		jobName, testPlatformNamespaces, jobAppearTimeout, tenantName, present, tenantAlive)
 	return nil
 }
 
@@ -613,7 +618,6 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "acme"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GTN Demo",
-			Domain:      "acme.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -640,7 +644,6 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "beta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Beta Co",
-			Domain:      "beta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -683,7 +686,6 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "gamma"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Gamma Inc",
-			Domain:      "gamma.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -715,7 +717,6 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "delta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Delta Ltd",
-			Domain:      "delta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -746,7 +747,6 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "epsilon"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Epsilon GmbH",
-			Domain:      "epsilon.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -779,7 +779,6 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "missing-profile"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Co",
-			Domain:      "missing-profile.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "does-not-exist"},
 			},
@@ -830,7 +829,6 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "zeta"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Zeta Corp",
-			Domain:      "zeta.example.com",
 			Isolation:   &gentianov1alpha1.TenantIsolation{Namespace: "zeta-custom"},
 		},
 	}
@@ -855,7 +853,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "retainer"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Retainer LLC",
-			Domain:         "retainer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 		},
 	}
@@ -893,7 +890,6 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "destroyer"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Destroyer Co",
-			Domain:         "destroyer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		},
 	}
@@ -911,7 +907,10 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// For Delete policy deleteIdentity creates cleanup jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
+	// Stores go before the realm (backup.TeardownOrder), and a purge always
+	// removes the backup bucket: that Job has to finish for the rest to follow.
+	go markJobCompleteWhenReady("s3-delete-destroyer-gentian-backup", "system-s3")
+	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", layout.Namespace(layout.Authentication))
 
 	// Wait for Tenant CR to be gone
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -919,11 +918,12 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		return err != nil
 	})
 
-	// Namespace should be terminating or gone
+	// The namespace is gone, not merely terminating: the Tenant's finalizer
+	// comes off only once it is, because every volume of the tenant is in it.
 	ns := &corev1.Namespace{}
 	err := testClient.Get(context.Background(), types.NamespacedName{Name: "tenant-destroyer"}, ns)
-	if err == nil && ns.DeletionTimestamp == nil {
-		t.Error("namespace should be deleted or terminating after Delete policy")
+	if err == nil {
+		t.Errorf("the tenant is gone while its namespace is still there (deletionTimestamp %v)", ns.DeletionTimestamp)
 	}
 }
 
@@ -933,9 +933,9 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 	t.Parallel()
 	pgProfile := newPostgresProfile("combo-pg")
 	redisProfile := newRedisProfile("combo-redis")
-	for _, p := range []*gentianov1alpha1.AppProfile{pgProfile, redisProfile} {
+	for _, p := range []*gentianov1alpha1.ComponentProfile{pgProfile, redisProfile} {
 		if err := testClient.Create(context.Background(), p); err != nil {
-			t.Fatalf("create AppProfile: %v", err)
+			t.Fatalf("create ComponentProfile: %v", err)
 		}
 		t.Cleanup(func() { _ = testClient.Delete(context.Background(), p) })
 	}
@@ -944,7 +944,6 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "combodp"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Combo DP Co",
-			Domain:      "combodp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "combo-pg"},
 				{Profile: "combo-redis"},
@@ -959,12 +958,12 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 	pgJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-combodp-combo-pg", Namespace: "platform-kernel"}, pgJob) == nil
+			types.NamespacedName{Name: "pg-role-combodp-combo-pg", Namespace: "system-postgresql"}, pgJob) == nil
 	})
 	redisJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "platform-kernel"}, redisJob) == nil
+			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "system-cache"}, redisJob) == nil
 	})
 }
 
@@ -1049,4 +1048,39 @@ func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
 			}
 		}
 	}
+}
+
+// testPlatformNamespaces are the namespaces a tenant's provisioning writes
+// to under the layout the tests run with: no GENTIAN_NS_* set, so the kernel
+// function, and each system function is always system-<function>. First is
+// the authentication namespace, which several helpers look in by position.
+//
+// Every one of these is CREATED by TestMain as well as searched. They used to
+// collapse onto one name because the layout they were written against put
+// authentication, the edge and control in a single namespace; they do not any
+// more, and a namespace a reconciler writes to and the suite never created is
+// a test that waits three minutes for something that cannot happen.
+var testPlatformNamespaces = []string{
+	layout.Namespace(layout.Authentication),
+	layout.Namespace(layout.Provisioning),
+	layout.Namespace(layout.Edge),
+	layout.Namespace(layout.Control),
+	"system-postgresql",
+	"system-mariadb",
+	"system-s3",
+	"system-cache",
+	"system-mail",
+	"system-mail-dmz",
+}
+
+// getPlatformJob finds a Job by name in whichever platform namespace its
+// function put it, or nil.
+func getPlatformJob(ctx context.Context, name string) *batchv1.Job {
+	for _, ns := range testPlatformNamespaces {
+		job := &batchv1.Job{}
+		if testClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, job) == nil {
+			return job
+		}
+	}
+	return nil
 }

@@ -1,0 +1,105 @@
+{{- /*
+What one person may spend at the gateway: the Cluster claim's
+spec.llm.personBudget, a budget of the gateway's under the id gentian-person.
+
+The gateway applies it to every person it is told about -- the request's
+end user, which the desktop's assistant sends as the person's subject and
+Open WebUI as its own user id -- who has no budget of their own. Its
+configuration file names the budget (gateway-config.yaml,
+max_end_user_budget_id); the budget itself lives in the gateway's database,
+so this Job writes it there, through the gateway's API with its master key,
+after every sync. A request from somebody over it is refused (429).
+
+A budget the claim no longer states is left in the database and named by
+nothing, so nobody is held to it.
+
+Costs are what the gateway prices a model at: a provider's model has a
+price, a model this cluster serves itself has none and costs nothing. The
+limits per minute hold for both.
+*/ -}}
+{{- $budget := dig "personBudget" dict (.Values.spec.llm | default dict) }}
+{{- if and (eq (toString .Values.spec.llm.enabled) "true") $budget }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llm-person-budget
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/component: kernel-llm
+  annotations:
+    # After the gateway is up, and again on every sync: the budget is the
+    # claim's, and a changed claim changes it.
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: llm-person-budget
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: budget
+        image: {{ .Values.gateway.image }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: HOME
+          value: /tmp
+        - name: LITELLM_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_master_key
+        - name: BUDGET
+          value: {{ dict
+              "budget_id" "gentian-person"
+              "max_budget" ($budget.maxBudget | default nil)
+              "budget_duration" ($budget.budgetDuration | default nil)
+              "rpm_limit" ($budget.rpmLimit | default nil)
+              "tpm_limit" ($budget.tpmLimit | default nil)
+            | toJson | quote }}
+        command: ["python3", "-c"]
+        args:
+        - |
+          import json, os, sys, time, urllib.error, urllib.request
+
+          base = "http://litellm-proxy:4000"
+          headers = {"Authorization": "Bearer " + os.environ["LITELLM_MASTER_KEY"], "Content-Type": "application/json"}
+          body = json.dumps(json.loads(os.environ["BUDGET"])).encode()
+
+          def post(path):
+              req = urllib.request.Request(base + path, data=body, headers=headers, method="POST")
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as resp:
+                      return resp.status, resp.read().decode()
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read().decode()
+
+          # The gateway may still be starting after a sync.
+          for attempt in range(30):
+              try:
+                  status, text = post("/budget/update")
+                  break
+              except urllib.error.URLError as e:
+                  print("the gateway does not answer yet:", e.reason)
+                  time.sleep(10)
+          else:
+              sys.exit("the gateway did not answer")
+          if status != 200:
+              # Not there yet: the first sync with a budget.
+              status, text = post("/budget/new")
+          if status != 200:
+              sys.exit(f"the gateway refused the budget: {status} {text[:300]}")
+          print("person budget gentian-person:", os.environ["BUDGET"])
+{{- end }}

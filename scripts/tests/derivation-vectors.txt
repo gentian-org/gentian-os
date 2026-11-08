@@ -1,0 +1,13 @@
+# The kernel credential derivation, worked out with
+#   printf '%s' "<context>:<purpose>" | openssl dgst -sha256 -hmac "<master><salt>"
+# apart from _derived in scripts/lib/derive.sh, which
+# scripts/tests/test-secret-mode.sh checks against it.
+#
+# master|salt|context|purpose|expected — one per line; an empty salt is a
+# cluster seeded before salts existed.
+golden-master-password-1|0123456789abcdef0123456789abcdef|postgres|postgres_user|a5e45ae804d214d8648eedaf543190eb694e527ecb3e3b9a92c370739dc6bdcd
+golden-master-password-1|0123456789abcdef0123456789abcdef|portal-bootstrap|headlamp_client_secret|51fe6cc4e5470311e5e344d96a6146ac3eb5694cbacdadc03442ca9b54f4bd82
+golden-master-password-1|0123456789abcdef0123456789abcdef|openfga|director_key|1c90d7acfd9c2efa515300f83cae300fdaee3cf8c39814b17950027ee04aefec
+golden-master-password-1|0123456789abcdef0123456789abcdef|portal-bootstrap|listener_signing_seed|4bbc326daf24d94feef1022b986f7804994186a57a1e9b6f4049de398c5c95e5
+legacy-master-without-salt||openfga|director_key|485eabf4e062df53e074a5a8d6a45fac4b1d187b9620edab269aebc1a5b2cd05
+pässwört mit Leerzeichen & $ymbols|fedcba9876543210fedcba9876543210|keycloak|adminPassword|4f5d9fb98b1568380d857f7fc9cc82750453b4da7e205311dfe378594055d62f

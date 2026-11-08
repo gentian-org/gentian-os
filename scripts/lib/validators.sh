@@ -9,7 +9,7 @@
 #
 # Scope is deliberately small and fixed. These validators cover the
 # `phase: bootstrap` set only; every `phase: runtime` credential is validated by
-# the on-cluster credential manager, which has SDKs and a real HTTP client.
+# the on-cluster custodian, which has SDKs and a real HTTP client.
 #
 # The rule that keeps this file from growing: **every validator here is
 # expressible in curl or openssl.** A credential needing request signing (s3) or
@@ -63,17 +63,23 @@ validate_whitespace() {
 # =============================================================================
 # oci-registry — curl the v2 API root with the credential
 # =============================================================================
+# _v_basic <user> <password> — the header curl -u sends, for curl to read from
+# a pipe with -H @file: the credential is then not one of curl's arguments.
+_v_basic() {
+    printf 'Authorization: Basic %s\n' "$(printf '%s:%s' "$1" "$2" | base64 | tr -d '\n')"
+}
+
 validate_oci_registry() {
     local host="$1" user="$2" pass="$3" url code
     host="${host#https://}"; host="${host#http://}"; host="${host%%/*}"
     url="https://${host}/v2/"
 
-    local auth=()
-    [[ -n "${pass}" ]] && auth=(-u "${user}:${pass}")
+    local auth=""
+    [[ -n "${pass}" ]] && auth="$(_v_basic "${user}" "${pass}")"
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        -H @<(printf '%s' "${auth}") "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         # 200 is an authenticated OK. Some registries answer the v2 root with a
@@ -96,24 +102,23 @@ validate_oci_registry() {
 # git-https — the smart-HTTP ref advertisement, the cheapest authenticated read
 # =============================================================================
 validate_git_https() {
-    local repo="$1" user="$2" token="$3" authtype="${4:-basic}" url code auth=()
+    local repo="$1" user="$2" token="$3" url code auth=""
+    local mode="${4:-basic}"
     repo="${repo%.git}"; repo="${repo%/}"
     url="${repo}.git/info/refs?service=git-upload-pack"
 
     # Only send credentials when there are some. Passing -u with an empty
     # password makes a public repository answer 401, which would report a
     # perfectly good public repo as a rejected credential.
-    if [[ -n "${token}" ]]; then
-        if [[ "${authtype}" == "bearer" ]]; then
-            auth=(-H "Authorization: Bearer ${token}")
-        else
-            auth=(-u "${user}:${token}")
-        fi
-    fi
+    case "${token:+${mode}}" in
+        "")     ;;
+        bearer) auth="$(printf 'Authorization: Bearer %s\n' "${token}")" ;;
+        *)      auth="$(_v_basic "${user}" "${token}")" ;;
+    esac
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        -H @<(printf '%s' "${auth}") "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         200) return 0 ;;
@@ -160,7 +165,7 @@ validate_cloudflare_dns() {
     while [[ "${candidate}" == *.*.* || "${candidate}" == *.* ]]; do
         url="https://api.cloudflare.com/client/v4/zones?name=${candidate}"
         body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-            -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+            -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}" 2>/dev/null)" || body=$'\n000'
         code="${body##*$'\n'}"
         body="${body%$'\n'*}"
 
@@ -283,7 +288,7 @@ _validate_cloudflare_dns_write() {
     [[ -n "${zone_id}" ]] || return 0
 
     body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -X POST -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+        -X POST -H @<(printf 'Authorization: Bearer %s\n' "${token}") -H "Content-Type: application/json" \
         --data "{\"type\":\"TXT\",\"name\":\"${probe_name}\",\"content\":\"gentian-os installer permission probe\",\"ttl\":60}" \
         "${url}" 2>/dev/null)" || body=$'\n000'
     code="${body##*$'\n'}"
@@ -315,7 +320,7 @@ _validate_cloudflare_dns_write() {
     rec_id="$(jq -r '.result.id // empty' <<<"${body}" 2>/dev/null || true)"
     if [[ -n "${rec_id}" ]]; then
         if ! curl -s -o /dev/null --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-            -X DELETE -H "Authorization: Bearer ${token}" "${url}/${rec_id}" 2>/dev/null; then
+            -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}/${rec_id}" 2>/dev/null; then
             warn "Left the permission-probe record ${probe_name} behind; delete it by hand."
         fi
     fi
@@ -367,7 +372,7 @@ _validate_cloudflare_tunnel_scope() {
     fi
 
     body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+        -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}" 2>/dev/null)" || body=$'\n000'
     code="${body##*$'\n'}"
     body="${body%$'\n'*}"
 
@@ -459,14 +464,28 @@ validate_image_tag() {
     fi
 
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -H "Authorization: Bearer ${token}" \
+        -H @<(printf 'Authorization: Bearer %s\n' "${token}") \
         -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
         "https://ghcr.io/v2/${path}/manifests/${tag}" 2>/dev/null || echo 000)"
 
     case "${code}" in
         200) return 0 ;;
-        404) _v_fail "${repo}:${tag}" "no such tag in the registry" \
-                 "CI publishes v1.2.3 for a release, develop/main for a branch, and develop-abc1234 for a commit — there is no stage-named tag" ;;
+        404)
+            # Two very different 404s wear the same status. A tag shaped
+            # <branch>-<sha> is the one the installer resolves from the
+            # checkout's own commit, so it is not wrong -- it is early: CI
+            # has not finished publishing that commit. Saying "there is no
+            # stage-named tag" there sends somebody to edit a values file
+            # when what they needed was to wait.
+            case "${tag}" in
+                *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+                    _v_fail "${repo}:${tag}" "that commit has not been published yet" \
+                        "this is the image of the commit this checkout is on. Wait for CI to finish building it, then run again — or set GENTIAN_OS_IMAGE_TAG to a tag that exists" ;;
+                *)
+                    _v_fail "${repo}:${tag}" "no such tag in the registry" \
+                        "CI publishes v1.2.3 for a release, develop/main for a branch, and develop-abc1234 for a commit — there is no stage-named tag" ;;
+            esac
+            ;;
         000) warn "ghcr.io unreachable; skipping the image tag check for ${repo}:${tag}."
              return 0 ;;
         *)   warn "HTTP ${code} checking ${repo}:${tag}; continuing without the check."
@@ -475,8 +494,8 @@ validate_image_tag() {
 }
 
 validate_oidc_discovery() {
-    local url="$1" token="${2:-}" code auth=()
-    [[ -n "${token}" ]] && auth=(-H "Authorization: Bearer ${token}")
+    local url="$1" token="${2:-}" code auth=""
+    [[ -n "${token}" ]] && auth="$(printf 'Authorization: Bearer %s' "${token}")"
 
     # GENTIAN_CURL_RESOLVE pins host:port:addr for this request, set by a caller
     # that has already resolved the name against the zone's own nameservers.
@@ -490,7 +509,7 @@ validate_oidc_discovery() {
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${resolve[@]}" "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        "${resolve[@]}" -H @<(printf '%s' "${auth}") "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         200) return 0 ;;
@@ -509,7 +528,7 @@ validate_oidc_discovery() {
 # run_validator <type> [args...] — dispatch by spec.validate.type.
 #
 # An unknown type is an error rather than a pass: silently accepting a
-# credential the catalogue asked to have checked is the failure this file
+# credential the catalog asked to have checked is the failure this file
 # exists to prevent.
 run_validator() {
     local type="$1"; shift

@@ -1,0 +1,3 @@
+[codespell]
+skip = ./.git,./node_modules,./docs/reference/store-api/*.yaml,./docs/reference/store-api/*.sql,./docs/llms.txt
+ignore-words-list = deriver,fulfilment

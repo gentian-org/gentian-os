@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller_test
@@ -21,28 +15,32 @@ import (
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-func newS3Profile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newS3Profile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Storage: &gentianov1alpha1.StorageRequirement{
-					S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
+					S3: &gentianov1alpha1.S3Requirement{},
 				},
-			},
+			}},
 		},
 	}
 }
@@ -55,7 +53,6 @@ func TestStorage_NoStorageApps(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "nostorage"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Storage Co",
-			Domain:      "nostorage.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -81,13 +78,13 @@ func TestStorage_NoStorageApps(t *testing.T) {
 }
 
 // TestStorage_CreatesS3BucketJob verifies that a Tenant with an S3-requiring app
-// creates the MinIO mc bucket Job in the kernel namespace with the correct labels
+// creates the bucket Job in the object store's namespace with the correct labels
 // and credentials.
 func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	t.Parallel()
 	profile := newS3Profile("s3-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -95,7 +92,6 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "s3create"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "S3 Create Co",
-			Domain:      "s3create.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "s3-app1"}},
 		},
 	}
@@ -107,7 +103,7 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "system-s3"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "s3create" {
@@ -120,21 +116,40 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		t.Fatal("expected at least one container in S3 bucket Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z" {
+	if container.Image != kernel.DefaultSeaweedFSImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
+	// The object store's NetworkPolicy admits the pod to the master and the
+	// filer by this label.
+	if job.Spec.Template.Labels[backup.ObjectStorageShellLabel] != "true" {
+		t.Errorf("the bucket Job's pod lacks %s", backup.ObjectStorageShellLabel)
+	}
 
-	// Credentials must come from the minio-admin Secret.
+	// The master's address comes from the s3-admin Secret, and the filer's
+	// signing key, which s3.configure needs a token of, from the store's
+	// signing Secret; no administrator's key is needed, and none is handed
+	// to the pod.
 	secretEnvs := make(map[string]string)
 	for _, e := range container.Env {
 		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
+			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name + "/" + e.ValueFrom.SecretKeyRef.Key
 		}
 	}
-	for _, required := range []string{"MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"} {
-		if secretEnvs[required] != "minio-admin" {
-			t.Errorf("expected %s sourced from minio-admin Secret, got %q", required, secretEnvs[required])
+	if secretEnvs["S3_MASTER"] != "s3-admin/master" ||
+		secretEnvs["WEED_JWT_FILER_SIGNING_KEY"] != backup.ObjectStoreSigningSecret+"/filer_signing_key" || len(secretEnvs) != 2 {
+		t.Errorf("the bucket Job reads %v from Secrets, want S3_MASTER from s3-admin/master and the filer's signing key", secretEnvs)
+	}
+	// The client certificate the master and the filer accept the Job by.
+	var tls *corev1.Volume
+	for i, v := range job.Spec.Template.Spec.Volumes {
+		if v.Secret != nil && v.Secret.SecretName == backup.ObjectStoreClientTLSSecret {
+			tls = &job.Spec.Template.Spec.Volumes[i]
 		}
+	}
+	if tls == nil {
+		t.Errorf("the bucket Job's pod does not mount %s", backup.ObjectStoreClientTLSSecret)
+	} else if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].Name != tls.Name || container.VolumeMounts[0].SubPath != "" {
+		t.Errorf("the bucket container mounts %v, want the whole client certificate", container.VolumeMounts)
 	}
 
 	// BUCKET_NAME must be a non-empty literal env var.
@@ -155,7 +170,7 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	t.Parallel()
 	profile := newS3Profile("s3-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -163,7 +178,6 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "storageready"},
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Storage Ready Co",
-			Domain:      "storageready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "s3-app2"}},
 		},
 	}
@@ -183,9 +197,9 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "system-s3"}, job) == nil
 	})
-	markJobComplete(t, "s3-bucket-storageready-s3-app2", "platform-kernel")
+	markJobComplete(t, "s3-bucket-storageready-s3-app2", "system-s3")
 
 	// Phase=Ready and StorageReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -211,15 +225,14 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	t.Parallel()
 	s3Prof := newS3Profile("s3-app3")
 	if err := testClient.Create(context.Background(), s3Prof); err != nil {
-		t.Fatalf("create S3 AppProfile: %v", err)
+		t.Fatalf("create S3 ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), s3Prof) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "storagedelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Storage Delete Co",
-			Domain:         "storagedelete.example.com",
+			DisplayName:    "Test Tenant",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "s3-app3"},
@@ -234,20 +247,20 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "system-s3"}, job) == nil
 	})
 
 	// Delete the tenant.
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
-	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", "platform-kernel")
+	// The realm goes after the stores; mark cleanup Jobs so reconcile proceeds.
+	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", layout.Namespace(layout.Authentication))
 
 	s3DeleteJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "platform-kernel"}, s3DeleteJob) == nil
+			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "system-s3"}, s3DeleteJob) == nil
 	})
 	if s3DeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
 		t.Errorf("expected tenant label 'storagedelete', got %q", s3DeleteJob.Labels["gentianos.io/tenant"])

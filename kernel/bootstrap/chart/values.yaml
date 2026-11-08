@@ -1,64 +1,227 @@
-# The three values the bootstrap Applications are parameterised on.
-#
-# They were substituted by an allowlisted envsubst, allowlisted because these
-# manifests also carry Argo CD's $values expressions and a substitute-everything
-# run would silently blank them. Helm has no such hazard: $values is not its
-# syntax, so nothing needs listing and nothing can be blanked by omission.
+# The bootstrap Applications are parameterized on these values. Namespaces are
+# not among them: every destination is resolved from kernel/namespaces.yaml,
+# which the installer copies in as `namespaces` (see B-01), so an Application
+# cannot name a namespace the layout does not have.
 gentianOsBranch: develop
-storageClass: ""
-stage: dev
-
-# The operator and portal Applications carry more provenance than the six above:
-# where the code comes from, where the deployments live, and which cluster and
-# stage this is.
+# The commit the Applications follow, set by the installer to this checkout's
+# (gentian_os_revision). Empty follows gentianOsBranch.
+gentianOsRevision: ""
 osRepo: https://github.com/gentian-org/gentian-os
-osImageRepository: ghcr.io/gentian-org/gentian-os
-appsRepo: https://github.com/gentian-org/gentian-apps
-deploymentsRepo: ""
-deploymentsBranch: main
-uiRepo: https://github.com/gentian-org/gentian-ui
-uiBranch: develop
-portalImageTag: develop
-cluster: ""
+storageClass: ""
 
-# Who hosts the zone, for external-dns. An entry in kernel/platforms.yaml,
-# which is also where cert-manager's DNS-01 solver comes from — one answer, two
-# consumers. "none" emits no external-dns Application at all.
+# Who hosts the zone, for external-dns; an entry in kernel/platforms.yaml.
+# "none" emits no external-dns Application.
 dnsProvider: none
-
-# Merged in from kernel/platforms.yaml, which is the single definition.
 dnsProviders: {}
-
-# The root ApplicationSet's own parameters.
 kernelDomain: ""
-smtpHost: ""
-smtpPort: "587"
-smtpSsl: "false"
-smtpStarttls: "true"
-
-# Which mail stack this cluster runs, from the Cluster claim's
-# mail.serviceMode. Not inferred from smtpHost: a relay host says only that
-# outbound goes through a smarthost, and a cluster can host its own mailboxes
-# AND relay outbound — the common arrangement when port 25 is blocked
-# outbound but reachable inbound. Inferring would take Dovecot away from it.
-mailServiceMode: external
-
-# How traffic reaches this cluster, from the Cluster claim's networkMode.
-# external-dns's source list branches on it — see its template for why a
-# tunnel cluster must not run the gateway-httproute source.
+# Zones external-dns may write besides the kernel domain's (the claim's
+# certificates.dnsZones): the zones of tenants served on a domain of their
+# own. A list; B-01 writes it from the claim. Empty is the kernel domain alone.
+dnsZones: []
+# Records external-dns publishes with nothing on the cluster behind them (the
+# claim's certificates.dnsRecords), each "<name> <A|CNAME> <target>". B-01
+# writes the list.
+dnsRecords: []
+# The cluster's id in gentian-deployments: what external-dns owns records as,
+# so two clusters never fight over one zone.
+cluster: ""
+# How traffic reaches this cluster (the Cluster claim's networkMode):
+# tunnel (the claim's default), or static-ip.
 networkMode: tunnel
 
-# Whether this cluster serves LLMs, and whether it has GPUs — from the Cluster
-# claim's llm.enabled and llm.gpuAcceleration. The first decides whether the LLM
-# ApplicationSet is generated at all; the second whether the mock inference
-# backend is deployed alongside LiteLLM.
+# Filled by the installer from kernel/namespaces.yaml. Never set by hand.
+namespaces: {}
+
+# versions.yaml, which B-01 passes in whole. Never set by hand; the empty
+# entries are the components the templates read.
+versions:
+  headlamp:
+    chart: ""
+    repo: ""
+  openbao:
+    chart: ""
+    repo: ""
+  reloader:
+    chart: ""
+    repo: ""
+  cnpg:
+    chart: ""
+    repo: ""
+  kyverno:
+    chart: ""
+    repo: ""
+  external-dns:
+    chart: ""
+    repo: ""
+
+# The realm the kernel signs people in against. Tenants have their own.
+kernelRealm: kernel
+
+headlamp:
+  oidc:
+    # On once the kernel realm carries the headlamp client and its secret;
+    # a fresh cluster starts with token login, which is enough to look at a
+    # cluster that has no realm yet. The portal login step turns it on.
+    enabled: false
+    proxy:
+      # The maintained fork of jetstack's kube-oidc-proxy, which the archived
+      # original names as its successor.
+      image: docker.io/tremolosecurity/kube-oidc-proxy:1.0.13
+      # Where the image keeps the public roots that verify the issuer.
+      caFile: /etc/ssl/certs/ca-certificates.crt
+
+# The stage and the deployments repository, for the ApplicationSets.
+stage: dev
+deployments:
+  repo: ""
+  revision: main
+  cluster: ""
+# The app of apps is applied by C-02, once its children's prerequisites exist.
+appsets:
+  enabled: false
+
+# What the kernel-services ConfigMap says beyond the layout.
+tenancyMode: multi
+acmeStaging: "true"
+smtpHost: ""
+
+# Whether this cluster serves LLM, from the Cluster claim's llm.enabled. The
+# portal turns it into a capability, and a tile appears only for a capability
+# the cluster actually has.
 llmEnabled: "false"
-llmGpuAcceleration: "false"
-# Whether the claim's llm.providers lists any external provider. Gates the
-# ExternalSecret projecting their API keys into platform-kernel: with no
-# provider there is no OpenBao path behind it, and an ExternalSecret pointed at
-# a path that does not exist reports SecretSyncError forever.
-llmExternalProviders: "false"
-# The hostname outbound mail leaves from, from spec.mail.egressHost on the
-# Cluster claim. Empty means the shared egress address or a smarthost relay.
+
+# The desktop -- a component every tenant gets from the profile the operator
+# chart ships (admin-console.md §1.2). What the bootstrap decides is which
+# branch's chart that profile names: a prerelease per branch on a dev cluster,
+# and only some branches publish.
+desktop:
+  chartBranch: develop
+  # An exact chart version, which is what a cluster runs once the realm
+  # exists: the kernel realm step resolves the branch's newest immutable
+  # version and sets it here, because a Helm release under an unchanged
+  # version string is never upgraded, so the moving version can only ever
+  # install the first build it saw.
+  chartVersion: ""
+
+# The operator (and, with it, the director) — applied by D-01, once the
+# identity services its reconcilers address exist.
+# The administration console's chart, published by gentian-ui beside the
+# desktop's. D-03 resolves the moving prerelease for the branch into the
+# immutable version it names and passes that as chartVersion; empty falls back
+# to the moving one, which installs but never upgrades.
+adminConsole:
+  chartBranch: develop
+  chartVersion: ""
+# The concierge's chart, from the same repository and branch, pinned the same
+# way.
+concierge:
+  chartBranch: develop
+  chartVersion: ""
+
+operator:
+  enabled: false
+  image: ghcr.io/gentian-org/gentian-os
+  # An exact published tag. The installer sets it to the image built from the
+  # checkout's own commit (`<branch>-<sha>`), so the manifests Argo CD syncs
+  # and the binary the kubelet pulls come from one commit. Required when the
+  # operator is enabled: a branch tag moves and never rolls a Deployment by
+  # itself.
+  tag: ""
+
+# Who may set or change a namespace's gentianos.io/tier, gentianos.io/function
+# and mac-waiver.gentianos.io labels (templates/namespace-tier-guard.yaml),
+# beside system:masters.
+installer:
+  # The user the installer signs in to the cluster as, which the installer
+  # passes in (`kubectl auth whoami`). Empty leaves only system:masters for it.
+  username: ""
+namespaceTier:
+  # The operator's ServiceAccount in the control namespace: the gentian-os
+  # chart's, released under the name gentian-os.
+  operatorServiceAccount: gentian-os
+  # provider-kubernetes's, in the provisioning namespace: the fixed name its
+  # DeploymentRuntimeConfig pins (crossplane/providers/providers.yaml).
+  providerKubernetesServiceAccount: provider-kubernetes
+
+# The usage statistics report (docs/concepts/operations.md): once a day the operator
+# tells an address what this cluster runs -- its tenants, counts of accounts,
+# and the apps installed through the App Store. No personal data, and nothing
+# on the cluster depends on the answer.
+usageStatistics:
+  # On unless the installer is told otherwise (--no-usage-statistics, or
+  # GENTIAN_NO_USAGE_STATISTICS=1 in install.env). Off, nothing is sent and the
+  # App Store is not offered.
+  enabled: "true"
+  # The default report address. This is the one place it is written: the
+  # operator and its chart name no address of their own, and a cluster
+  # installed any other way reports nowhere. It can be changed
+  # (GENTIAN_USAGE_STATISTICS_URL in install.env, which arrives as `url` below)
+  # or turned off (above).
+  defaultUrl: https://statistics.aluvian.io/api/v1/usage-statistics
+  # Another address for this cluster, from the installer. Empty is the default.
+  url: ""
+
+# The ClusterIssuer tenant wildcard certificates are requested from. The
+# installer sets it to the issuer it created; empty leaves the stage
+# profile's, or the operator chart's default.
+tenantDNS01ClusterIssuer: ""
+
+# Which mail stack this cluster runs, from the Cluster claim
+# (spec.mail.serviceMode). `system` deploys Postfix and Dovecot into the system
+# tier; `external` relays through a provider and deploys neither.
+mailServiceMode: external
+# The name mail leaves from, when the cluster sends from an address it owns
+# (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""
+
+# Whether the shared stores of the system tier -- PostgreSQL, MariaDB, Redis,
+# SeaweedFS -- each get the NetworkPolicy that says who may connect to them. On by
+# default. "false" removes all four, and a connection is then checked by its
+# credentials alone. The installer passes STORE_NETWORK_POLICIES.
+# The same switch covers the policies on the kernel's own PostgreSQL
+# (kernel-postgres, whose policy is kept and admits everything when off) and
+# on the mail servers of a cluster that runs its own.
+storeNetworkPolicies: "true"
+
+# Whether the kernel namespaces refuse an ingress their NetworkPolicies do not
+# list (kernel/security/network-policies, applied by the installer's first
+# step). On by default. The installer passes
+# KERNEL_NETWORK_POLICIES; here it only tells the operator, whose two rules
+# that name the Gateway's Envoy pods follow the same switch.
+kernelNetworkPolicies: "true"
+
+# The long key ids Argo CD accepts commits from on the deployments repository
+# (AD-2). Passed by the installer, which reads them out of
+# clusters/<id>/kernel/signing/keys.env in the deployments checkout -- so what
+# the cluster trusts and what the repository says it trusts are one list.
+#
+# Empty renders no sourceIntegrity policy at all. That is a cluster which has
+# not been given keys, not a cluster which trusts everyone by choice: an empty
+# key list on an armed policy would refuse every sync, including the one that
+# would fix it.
+signing:
+  keys: []
+
+# Where the vault keeps its data, from the Cluster claim's openbao.storage.
+#   raft  integrated storage: what a new claim states, and the only backend
+#         with a consistent online snapshot (docs/guides/recovery.md §4)
+#   file  a directory of files: the claim's default, so a cluster whose claim
+#         says nothing stays on the backend its data is in
+# Changing it on a cluster with data is a migration, never a value change: the
+# vault reads its data with the backend it was written with, and Raft started
+# on a volume of file data comes up as a new, empty vault
+# (docs/guides/recovery.md §5). The installer passes OPENBAO_STORAGE and keeps
+# the backend a running vault has until the volume says it was migrated.
+openbao:
+  storage: file
+  # The same for the transit seal that unseals the vault (openbao-transit):
+  # the claim's one setting, decided per instance by its own volume.
+  transitStorage: file
+
+# On the switches above (appsets.enabled, operator.enabled,
+# headlamp.oidc.enabled): the templates compare them to "true" rather than
+# testing them for truth. The installer passes every value with --set-string,
+# and in a template the string "false" is true -- any non-empty string is. A
+# fresh cluster rendered the operator, the appsets and Headlamp's OIDC in B-01,
+# phases before any of them could work, and Headlamp waited on a Secret only
+# D-03 writes.

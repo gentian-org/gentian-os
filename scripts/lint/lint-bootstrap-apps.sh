@@ -34,13 +34,12 @@ checked=0
 
 # The install list: apps=(...) and apps+=(...) in bootstrap_argocd_apps.
 # The teardown list: the for-loop in B-03's destroy().
+# B-01 names them in _v5_apps_healthy and _v5_apps_synced; the teardown list
+# is the same two, read through _v5_apps.
 names="$(
-    {
-        grep -hoE 'apps\+?=\([a-z0-9 -]+\)' scripts/lib/argocd.sh 2>/dev/null |
-            sed -E 's/apps\+?=\(//; s/\)//'
-        grep -hoE 'for app in [a-z0-9 -]+; do' scripts/steps/B-03-argocd-bootstrap-apps.sh 2>/dev/null |
-            sed -E 's/for app in //; s/; do//'
-    } | tr ' ' '\n' | sort -u | grep -v '^$'
+    grep -hoE '_v5_apps_(healthy|synced)\(\) *\{ *echo "?[a-z0-9 -]+' \
+        scripts/steps/B-01-bootstrap-apps.sh 2>/dev/null |
+        sed -E 's/.*echo "?//' | tr ' ' '\n' | sort -u | grep -v '^$'
 )"
 
 if [[ -z "${names}" ]]; then

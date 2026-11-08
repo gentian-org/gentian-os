@@ -1,28 +1,22 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,6 +25,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/oidc"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // oidcAppConfig holds resolved OIDC settings for one tenant app profile.
@@ -43,41 +38,63 @@ type oidcAppConfig struct {
 	templates     map[string]oidc.MapperTemplate
 }
 
-// oidcPacksNeedEntitlementGroups reports whether any OIDC pack maps a group to a client role.
-func oidcPacksNeedEntitlementGroups(configs []oidcAppConfig) bool {
-	for _, cfg := range configs {
-		if cfg.pack != nil && cfg.pack.EntitlementGroup != "" {
-			return true
-		}
-	}
-	return false
+// oidcClientRefusal is why one app's OIDC client cannot be made as its
+// profile declares it. It is that app's alone: the app is left out of what is
+// provisioned and named on the tenant's IdentityReady condition, and every
+// other app of the tenant is provisioned as before. Any other error -- the API
+// server not answering -- still ends the reconcile, as it is no app's.
+type oidcClientRefusal struct{ msg string }
+
+func (e *oidcClientRefusal) Error() string { return e.msg }
+
+func refuseOIDCClient(format string, args ...any) error {
+	return &oidcClientRefusal{msg: fmt.Sprintf(format, args...)}
 }
 
-func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]oidcAppConfig, error) {
-	var configs []oidcAppConfig
+// collectOIDCAppConfigs resolves the OIDC clients of the tenant's apps. refused
+// are the apps whose client cannot be made as declared (oidcClientRefusal),
+// one message each; they are not among configs.
+func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) (configs []oidcAppConfig, refused []string, err error) {
 	seen := make(map[string]struct{})
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+	add := func(key string, cfg oidcAppConfig, err error) error {
+		var refusal *oidcClientRefusal
+		if stderrors.As(err, &refusal) {
+			refused = append(refused, refusal.msg)
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		configs = append(configs, cfg)
+		seen[key] = struct{}{}
+		return nil
+	}
+	// The installed apps' clients. A component the platform places has its
+	// client composed with its own Component, and no Job here.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, app := range installed {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.OIDC != nil {
+		if profile.Services() != nil &&
+			profile.Services().Identity != nil &&
+			profile.Services().Identity.OIDC != nil {
 			cfg, err := r.resolveOIDCAppConfig(ctx, tenant, app.Profile)
-			if err != nil {
-				return nil, err
+			if err := add(app.Profile, cfg, err); err != nil {
+				return nil, nil, err
 			}
-			configs = append(configs, cfg)
-			seen[app.Profile] = struct{}{}
 		}
-		for _, sidecar := range profile.Spec.Sidecars {
-			if sidecar.KernelRequirements == nil ||
-				sidecar.KernelRequirements.Identity == nil ||
-				sidecar.KernelRequirements.Identity.OIDC == nil {
+		for _, sidecar := range profile.Spec.Extensions {
+			if sidecar.ServiceRequirements == nil ||
+				sidecar.ServiceRequirements.Identity == nil ||
+				sidecar.ServiceRequirements.Identity.OIDC == nil {
 				continue
 			}
 			scKey := gentianov1alpha1.SidecarAppName(app.Profile, sidecar.Name)
@@ -85,14 +102,12 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 				continue
 			}
 			cfg, err := r.resolveSidecarOIDCAppConfig(ctx, tenant, app.Profile, sidecar)
-			if err != nil {
-				return nil, err
+			if err := add(scKey, cfg, err); err != nil {
+				return nil, nil, err
 			}
-			configs = append(configs, cfg)
-			seen[scKey] = struct{}{}
 		}
 	}
-	return configs, nil
+	return configs, refused, nil
 }
 
 // cleanupOrphanedClientJobs deletes Keycloak OIDC/SAML client provisioning Jobs for
@@ -109,7 +124,7 @@ func (r *TenantReconciler) cleanupOrphanedClientJobs(ctx context.Context, tenant
 
 	prefix := clientJobName(tenant.Name, "")
 	jobList := &batchv1.JobList{}
-	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
+	if err := r.List(ctx, jobList, client.InNamespace(identityNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
 		return fmt.Errorf("list OIDC/SAML client Jobs for tenant %s: %w", tenant.Name, err)
 	}
 	for i := range jobList.Items {
@@ -133,16 +148,24 @@ func (r *TenantReconciler) cleanupOrphanedClientJobs(ctx context.Context, tenant
 }
 
 func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) (oidcAppConfig, error) {
-	profile := &gentianov1alpha1.AppProfile{}
+	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-		return oidcAppConfig{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
+		return oidcAppConfig{}, fmt.Errorf("get ComponentProfile %s: %w", profileName, err)
 	}
-	oidcSpec := profile.Spec.KernelRequirements.Identity.OIDC
+	oidcSpec := profile.Services().Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs)
+	// A request-bound client is rendered with the app's release, with the
+	// rule that narrows its https://* (OIDCRequestParameterSpec). A profile
+	// that installs no chart has its client made by a Job, which holds no
+	// such rule and would register a client the parameter binds nothing on.
+	if oidcSpec.RequestParameter != nil && profile.IsAPI() {
+		return oidcAppConfig{}, refuseOIDCClient(
+			"ComponentProfile %s: requires.services.identity.oidc.requestParameter needs a release the client is rendered with, which an API entry does not have", profileName)
+	}
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs, oidcSpec.RequestParameter != nil)
 	if err != nil {
 		return oidcAppConfig{}, err
 	}
@@ -156,27 +179,52 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if oidcSpec.OIDCPackRef != "" {
 		packKey = oidcSpec.OIDCPackRef
 	}
-	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
+	if err := r.resolveOIDCPack(ctx, &cfg, profileName, packKey); err != nil {
 		return oidcAppConfig{}, err
-	} else if ok {
-		cfg.pack = &pack
-		cfg.templates = templates
 	}
 	return cfg, nil
 }
 
+// resolveOIDCPack puts the pack the profile's own catalog holds under
+// packKey on cfg, where the component reconciler looks for it
+// (oidc.ResolvePack). A profile two catalogs are labeled for is refused:
+// which one the renderer reads is not defined, so neither writer can be told the client
+// is its own.
+func (r *TenantReconciler) resolveOIDCPack(ctx context.Context, cfg *oidcAppConfig, profileName, packKey string) error {
+	pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, profileName, packKey)
+	if stderrors.Is(err, oidc.ErrCatalogAmbiguous) {
+		return refuseOIDCClient("ComponentProfile %s: %v", profileName, err)
+	}
+	if err != nil {
+		return err
+	}
+	if ok {
+		cfg.pack = &pack
+		cfg.templates = templates
+	}
+	return nil
+}
+
 func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tenant *gentianov1alpha1.Tenant, parentProfile string, sidecar gentianov1alpha1.AppSidecarSpec) (oidcAppConfig, error) {
-	owner := &gentianov1alpha1.AppProfile{}
+	owner := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: parentProfile}, owner); err != nil {
-		return oidcAppConfig{}, fmt.Errorf("get parent AppProfile %s: %w", parentProfile, err)
+		return oidcAppConfig{}, fmt.Errorf("get parent ComponentProfile %s: %w", parentProfile, err)
 	}
 	profileName := gentianov1alpha1.SidecarAppName(parentProfile, sidecar.Name)
-	oidcSpec := sidecar.KernelRequirements.Identity.OIDC
+	oidcSpec := sidecar.ServiceRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
 	}
-	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs)
+	// The renderer holds the rule that narrows a request-bound client's
+	// https://* for the app's own client alone; an extension's it renders
+	// without one, so nothing would hold its request parameter
+	// (see resolveOIDCAppConfig).
+	if oidcSpec.RequestParameter != nil {
+		return oidcAppConfig{}, refuseOIDCClient(
+			"ComponentProfile %s: extension %s declares requestParameter, which only the app's own client can: the operator binds no request parameter on an extension's client", parentProfile, sidecar.Name)
+	}
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, owner, profileName, oidcSpec.RedirectURIs, false)
 	if err != nil {
 		return oidcAppConfig{}, err
 	}
@@ -192,36 +240,41 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 		clientID:      clientID,
 		redirectURIs:  redirects,
 	}
-	if pack, templates, ok, err := oidc.ResolvePack(ctx, r.Client, packKey); err != nil {
+	// The parent's catalogue: the extension's client is declared on it, and
+	// the renderer looks for its pack there.
+	if err := r.resolveOIDCPack(ctx, &cfg, parentProfile, packKey); err != nil {
 		return oidcAppConfig{}, err
-	} else if ok {
-		cfg.pack = &pack
-		cfg.templates = templates
 	}
 	return cfg, nil
 }
 
-// getOIDCOwnerProfile returns the AppProfile that owns an OIDC config. Sidecar
+// getOIDCOwnerProfile returns the ComponentProfile that owns an OIDC config. Sidecar
 // configs (element-jitsi) live on the parent profile (element); there is no
-// standalone AppProfile for sidecars; sidecar OIDC configs live on the parent profile.
-func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppConfig) (*gentianov1alpha1.AppProfile, error) {
+// standalone ComponentProfile for sidecars; sidecar OIDC configs live on the parent profile.
+func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppConfig) (*gentianov1alpha1.ComponentProfile, error) {
 	ownerName := cfg.profileName
 	if cfg.parentProfile != "" {
 		ownerName = cfg.parentProfile
 	}
-	profile := &gentianov1alpha1.AppProfile{}
+	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: ownerName}, profile); err != nil {
-		return nil, fmt.Errorf("get AppProfile %s: %w", ownerName, err)
+		return nil, fmt.Errorf("get ComponentProfile %s: %w", ownerName, err)
 	}
 	return profile, nil
 }
 
+// resolveOIDCRedirectURIs is where the client's codes may be delivered: the
+// declared redirectUris, else the profile's default annotation. A
+// request-bound client needs neither -- its address is computed from each
+// request, and the Composition registers https://* for it -- so for one
+// nothing declared is no address, not a refusal.
 func (r *TenantReconciler) resolveOIDCRedirectURIs(
 	_ context.Context,
 	tenant *gentianov1alpha1.Tenant,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	profileName string,
 	uris []string,
+	requestBound bool,
 ) ([]string, error) {
 	if len(uris) > 0 {
 		return substituteTenantDomainInURIs(tenant, uris, r.KernelDomain, r.TenancyMode), nil
@@ -229,22 +282,22 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 	if profile != nil {
 		defaults, err := gentianov1alpha1.ProfileOIDCDefaultRedirectURIs(profile)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s on AppProfile %s: %w", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
+			return nil, refuseOIDCClient("parse %s on ComponentProfile %s: %v", gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs, profileName, err)
 		}
 		if len(defaults) > 0 {
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
-	// Sidecar OIDC redirect URIs must be declared on the AppProfile or in the pack spec.
-	return nil, fmt.Errorf("AppProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
+	if requestBound {
+		return nil, nil
+	}
+	// Sidecar OIDC redirect URIs must be declared on the ComponentProfile or in the pack spec.
+	return nil, refuseOIDCClient("ComponentProfile %s: no OIDC redirect URIs in pack spec and no %s annotation",
 		profileName, gentianov1alpha1.AnnotationProfileOIDCDefaultRedirectURIs)
 }
 
 func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string, kernelDomain, tenancyMode string) []string {
 	host := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-	if host == "" {
-		host = tenant.Spec.Domain
-	}
 	out := make([]string, 0, len(uris))
 	for _, u := range uris {
 		out = append(out, strings.ReplaceAll(u, "${TENANT_DOMAIN}", host))
@@ -254,47 +307,30 @@ func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string
 
 func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
 	if cfg.pack != nil {
-		return r.ensureOIDCPackJob(ctx, tenant, realmName, cfg)
+		return r.ensureOIDCPackJob(ctx, tenant, cfg)
 	}
-	return r.ensureClientJob(ctx, tenant, realmName, cfg.profileName, cfg.clientID, cfg.redirectURIs)
+	return r.ensureClientJob(ctx, tenant, cfg.profileName, cfg.clientID, cfg.redirectURIs)
 }
 
-func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
+func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, cfg oidcAppConfig) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, clientJobName(tenant.Name, cfg.profileName))
 }
 
-func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret, entitlementGroup string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+// makeOIDCPackJob creates a Job that makes or updates an app's OIDC client,
+// with its pack's scope, mappers and role, in the tenant's realm.
+//
+// When withSecret is set (Seeder enabled, confidential client) the Job gives
+// the client the secret the vault holds for the app. The pod reads it from
+// the Secret of the Job's name, which the Job owns (jobSecret); it is in no
+// Job spec, no ConfigMap and no composed Object.
+func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, withSecret bool, entitlementGroup string) *batchv1.Job {
+	jobName := clientJobName(tenant.Name, cfg.profileName)
 	container := keycloakContainer("provision-oidc-pack",
-		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret, entitlementGroup))
-	if clientSecret != "" {
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "OIDC_CLIENT_SECRET",
-			Value: clientSecret,
-		})
+		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, withSecret, entitlementGroup))
+	if withSecret {
+		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      clientJobName(tenant.Name, cfg.profileName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       cfg.profileName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, identityNamespace, tenant, cfg.profileName, container)
 }
 
 // samlAppConfig holds resolved SAML settings for one tenant app profile.
@@ -306,22 +342,24 @@ type samlAppConfig struct {
 
 func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]samlAppConfig, error) {
 	var configs []samlAppConfig
-	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
-		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
+	// As for OIDC: the installed apps, not the components the platform places.
+	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
+	for _, app := range installed {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.SAML != nil {
-			samlSpec := profile.Spec.KernelRequirements.Identity.SAML
+		if profile.Services() != nil &&
+			profile.Services().Identity != nil &&
+			profile.Services().Identity.SAML != nil {
+			samlSpec := profile.Services().Identity.SAML
 			host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
-			if host == "" {
-				host = tenant.Spec.Domain
-			}
 			acsURL := strings.ReplaceAll(samlSpec.ACSURL, "${TENANT_DOMAIN}", host)
 
 			configs = append(configs, samlAppConfig{

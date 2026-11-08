@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -23,12 +17,12 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 // replicaMemoAnnotation remembers what a workload was scaled to before an
@@ -128,13 +122,6 @@ func resumeQuiescedApp(
 	return tr.unquiesceApp(ctx, tenantName, appName, spec, mode)
 }
 
-// resumeApp puts an app back. It is safe to call when the app was never paused,
-// and safe to call twice: both are normal, because it runs on the failure path
-// and on every reconcile that finds a stale entry in status.quiesced.
-func (r *TenantReconciler) resumeApp(ctx context.Context, tenantName, appName string) error {
-	return r.scaleAppWorkloads(ctx, tenantName, appName, -1)
-}
-
 // restartWorkloadAnnotation is the one kubectl itself writes, so a roll this
 // causes is indistinguishable from `kubectl rollout restart` in the history.
 const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
@@ -146,7 +133,7 @@ const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
 // that is still running, and a command-mode quiesce never recreates the pod --
 // maintenance mode goes on and off around it. What survives is everything the
 // old pod had already read: its caches in Redis and APCu, and every ConfigMap
-// mounted with subPath, which Kubernetes materialises once at pod start and
+// mounted with subPath, which Kubernetes materializes once at pod start and
 // never updates again.
 //
 // That last one is not theoretical. Nextcloud's session configuration is one
@@ -154,7 +141,10 @@ const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
 // at all: logins failed at the OIDC callback with 403 while the app looked
 // healthy. A restore could not clear it, because nothing ever restarted the pod.
 func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, appName string) error {
-	ns := backup.TenantNamespace(tenantName)
+	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return err
+	}
 	stamp := time.Now().UTC().Format(time.RFC3339)
 
 	deployments := &appsv1.DeploymentList{}
@@ -163,7 +153,7 @@ func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, 
 	}
 	for i := range deployments.Items {
 		d := &deployments.Items[i]
-		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, appName) {
 			continue
 		}
 		patch := client.MergeFrom(d.DeepCopy())
@@ -179,7 +169,7 @@ func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, 
 	}
 	for i := range statefulSets.Items {
 		st := &statefulSets.Items[i]
-		if !workloadBelongsToApp(st.Labels, st.Name, appName) {
+		if !workloadOfApp(st.ObjectMeta, st.Spec.Template, appName) {
 			continue
 		}
 		patch := client.MergeFrom(st.DeepCopy())
@@ -189,6 +179,68 @@ func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, 
 		}
 	}
 	return nil
+}
+
+// appRolloutPending names the app's Deployments and StatefulSets that have
+// not finished rolling out: whose controller has not seen their latest
+// template, or that still run a pod of an older one, or fewer ready pods
+// than they ask for. Empty when every one has.
+func (r *TenantReconciler) appRolloutPending(ctx context.Context, tenantName, appName string) ([]string, error) {
+	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return nil, err
+	}
+	return appRolloutPendingIn(ctx, r.Client, ns, appName)
+}
+
+// appRolloutPendingIn is appRolloutPending for the app's own namespace.
+func appRolloutPendingIn(ctx context.Context, c client.Reader, ns, appName string) ([]string, error) {
+	var pending []string
+	deployments := &appsv1.DeploymentList{}
+	if err := c.List(ctx, deployments, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("list deployments in %s: %w", ns, err)
+	}
+	for i := range deployments.Items {
+		d := &deployments.Items[i]
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, appName) {
+			continue
+		}
+		want := replicasOf(d.Spec.Replicas)
+		if want == 0 {
+			continue
+		}
+		if d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < want ||
+			d.Status.Replicas > d.Status.UpdatedReplicas || d.Status.AvailableReplicas < want {
+			pending = append(pending, "deployment/"+d.Name)
+		}
+	}
+	statefulSets := &appsv1.StatefulSetList{}
+	if err := c.List(ctx, statefulSets, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("list statefulsets in %s: %w", ns, err)
+	}
+	for i := range statefulSets.Items {
+		st := &statefulSets.Items[i]
+		if !workloadOfApp(st.ObjectMeta, st.Spec.Template, appName) {
+			continue
+		}
+		want := replicasOf(st.Spec.Replicas)
+		if want == 0 {
+			continue
+		}
+		if st.Status.ObservedGeneration < st.Generation || st.Status.UpdatedReplicas < want ||
+			st.Status.ReadyReplicas < want ||
+			(st.Status.UpdateRevision != "" && st.Status.CurrentRevision != st.Status.UpdateRevision) {
+			pending = append(pending, "statefulset/"+st.Name)
+		}
+	}
+	return pending, nil
+}
+
+func replicasOf(replicas *int32) int32 {
+	if replicas == nil {
+		return 1
+	}
+	return *replicas
 }
 
 func setTemplateAnnotation(meta *metav1.ObjectMeta, stamp string) {
@@ -201,17 +253,22 @@ func setTemplateAnnotation(meta *metav1.ObjectMeta, stamp string) {
 // scaleAppWorkloads scales an app's Deployments and StatefulSets. A replicas of
 // -1 means "restore whatever was memoed", which is how resume works.
 func (r *TenantReconciler) scaleAppWorkloads(ctx context.Context, tenantName, appName string, replicas int32) error {
-	ns := backup.TenantNamespace(tenantName)
+	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return err
+	}
 
+	matched := 0
 	deployments := &appsv1.DeploymentList{}
 	if err := r.List(ctx, deployments, client.InNamespace(ns)); err != nil {
 		return fmt.Errorf("list deployments in %s: %w", ns, err)
 	}
 	for i := range deployments.Items {
 		d := &deployments.Items[i]
-		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+		if !workloadOfApp(d.ObjectMeta, d.Spec.Template, appName) {
 			continue
 		}
+		matched++
 		if err := r.scaleOne(ctx, d, d.Spec.Replicas, replicas, func(v *int32) { d.Spec.Replicas = v }); err != nil {
 			return err
 		}
@@ -223,12 +280,19 @@ func (r *TenantReconciler) scaleAppWorkloads(ctx context.Context, tenantName, ap
 	}
 	for i := range statefulSets.Items {
 		s := &statefulSets.Items[i]
-		if !workloadBelongsToApp(s.Labels, s.Name, appName) {
+		if !workloadOfApp(s.ObjectMeta, s.Spec.Template, appName) {
 			continue
 		}
+		matched++
 		if err := r.scaleOne(ctx, s, s.Spec.Replicas, replicas, func(v *int32) { s.Spec.Replicas = v }); err != nil {
 			return err
 		}
+	}
+	// A pause that reached no workload leaves the app running while its data
+	// is captured or replaced underneath it, so it is refused rather than
+	// reported as done. Resuming one never paused is fine.
+	if replicas >= 0 && matched == 0 {
+		return fmt.Errorf("no Deployment or StatefulSet of app %q in %s to scale down", appName, ns)
 	}
 	return nil
 }
@@ -284,12 +348,21 @@ func (r *TenantReconciler) scaleOne(
 	return r.Update(ctx, obj)
 }
 
+// workloadOfApp matches a Deployment or StatefulSet to an installed app, by
+// its own labels and name or by those of the pods it makes: a chart may put
+// the platform's app label on its pods only (Odoo's does), and a matcher that
+// read the workload alone left that app running through a restore.
+func workloadOfApp(meta metav1.ObjectMeta, template corev1.PodTemplateSpec, appName string) bool {
+	return workloadBelongsToApp(meta.Labels, meta.Name, appName) ||
+		workloadBelongsToApp(template.Labels, "", appName)
+}
+
 // workloadBelongsToApp matches a workload to an installed app.
 //
 // It reuses the same label conventions the volume matcher does, minus the
 // bare-name substring fallback: scaling the wrong workload takes an unrelated
 // app offline, so this errs toward missing a workload rather than pausing a
-// neighbour's.
+// neighbor's.
 func workloadBelongsToApp(labels map[string]string, objectName, appName string) bool {
 	if labels["gentianos.io/app"] == appName {
 		return true

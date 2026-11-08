@@ -1,0 +1,3590 @@
+# Copyright The Gentian OS Authors.
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# SPDX-License-Identifier: MPL-2.0
+
+openapi: 3.1.0
+info:
+  title: Gentian OS store API
+  version: "1.15"
+  summary: What a cluster's App Store app asks of a store outside the cluster.
+  license:
+    name: Mozilla Public License 2.0
+    identifier: MPL-2.0
+  description: |
+    The API a store serves and the App Store app on a Gentian OS cluster calls.
+
+    This file is the normative format. The prose beside it
+    (`store-api.md` in this directory, and `docs/concepts/store-contract.md`)
+    explains it; where they disagree, this file is right and the prose is
+    the defect.
+
+    ## Direction
+
+    Every request in this file is made by the cluster's side, outbound, over
+    HTTPS. Nothing in it requires the store to call into a cluster, and a
+    store never does: it holds no credential for one and a cluster exposes
+    no endpoint to it.
+
+    ## Who calls
+
+    The App Store app: a platform UI installed per tenant on the cluster. Its
+    backend makes these requests on behalf of the person using it.
+
+    ## Open reads and signed-in calls
+
+    The API has two halves, and the line between them is whether a call
+    concerns a tenant.
+
+    **Open reads** take no token: `GET /v1/meta`, `GET /v1/categories`,
+    `GET /v1/apps`, `GET /v1/apps/{catalogue}/{app}` and its `/reviews` and
+    `/reports`. What a store offers can be seen at once, by anyone, with no
+    account. An open read never answers `401` or `403`.
+
+    A token may be presented on an open read. The store may then add what
+    it knows of the token's tenant to the answer — today one member,
+    `acquired`, on an app. It is never required. A token the store cannot
+    validate, or one for a tenant it does not serve, is ignored on an open
+    read: the answer is the anonymous one, not an error.
+
+    **Signed-in calls** need a token: `GET /v1/tenant`, every other
+    `/v1/acquisitions` operation, and a request for support
+    (`POST /v1/apps/{catalogue}/{app}/support-requests`). The token is a
+    **partner assertion** (1.11, the security scheme `partnerAssertion`):
+    the App Store app exchanges the person's own token, at the tenant's own
+    realm, for an assertion towards the store's realm, and sends it. There
+    is no sign-in flow, no page and no client secret. The store turns the
+    assertion into its own account of the person by the JWT bearer grant at
+    its realm; the tenant a call is about is the issuer of the assertion,
+    not a parameter.
+
+    **One call takes the assertion without an account** (1.13):
+    `POST /v1/acquisitions/free`, for an app whose price model is `free`.
+    The store checks the assertion itself — its issuer's keys, its
+    audience, its expiry, its `jti` once — and holds its issuer and the
+    tenant `uid` in the body to the usage statistics reports it has
+    received, and the tenant's acceptance of its terms to the version in
+    force. No account is made; the acquisition is recorded against the
+    tenant and the pairwise subject.
+
+    ## Accounts and tenants
+
+    A tenant is an organization in the store's records; an account is a
+    person. They are separate things. A person registers with the store
+    once, at its registration page (`registrationUrl` of `GET /v1/meta`):
+    the linking sign-in through the tenant's own realm, which makes the
+    account at the store, and the store associates that account with the
+    tenant. That account manages the tenant: it may acquire for it.
+
+    A store may serve another account linked for the tenant as well: it
+    reads the tenant's standing and acquisitions, and an acquisition it
+    asks for waits for `approval` (see `waitingFor`). An owner or
+    administrator of the organization the tenant belongs to, or the
+    store's operator, approves or declines it, outside this API; once
+    approved, the account manages the tenant. Where a store does not, an
+    account that is not associated with the tenant URL in its token is
+    refused on the signed-in calls with the reason `tenant-not-claimed`
+    (see `RefusalReason`).
+
+    Removed in 1.15: the account that held a tenant and decided through
+    `/v1/tenant/access` who else manages it — the operations
+    `GET /v1/tenant/access`, `POST /v1/tenant/access/{subject}/approve`
+    and `…/decline`, the feature `tenant-access`, the role `holder` and
+    the code `not-tenant-holder`. A 1.14 client finds no `tenant-access`
+    in `features` and does not call them.
+
+    Whether a store serves a tenant (`tenant-refused`) is a question of the
+    signed-in calls only. An anonymous visitor sees the catalogue whatever
+    the standing of their tenant, and learns at its first signed-in call
+    whether the store serves it.
+
+    ## What is sent
+
+    *On an open read with no token:* the path and query — which categories,
+    apps and pages are looked at — the language asked for, and the address
+    the request comes from, which is the cluster's outbound address. Nothing
+    else. A client sends no cluster identifier, no tenant URL, no cookie and
+    no `Referer` or `Origin` naming a tenant on an anonymous call; its
+    `User-Agent` names the client software and its version and nothing of
+    the cluster. An anonymous read therefore tells the store only where the
+    request came from.
+
+    *On a signed-in call, and on an open read that carries a token:* in
+    addition the assertion: the issuer of the tenant's realm and a pairwise
+    subject, random to the store and stable for the person, which the store
+    has linked to its own account of them.
+
+    Never: a user of the tenant, their name or address, a list of what is
+    installed, cluster configuration.
+
+    ## Store content is data
+
+    Every text field is plain text unless its description says it is
+    Markdown, and a Markdown field is the subset named `store-markdown-1`
+    below. A client renders text as text. It never interprets HTML, never
+    runs script, and never embeds a frame from a store. A store must not
+    rely on any markup outside the subset being rendered.
+
+    ### store-markdown-1
+
+    CommonMark, restricted to: paragraphs and hard line breaks; emphasis and
+    strong emphasis; inline code and fenced code blocks (shown preformatted,
+    never executed or highlighted by a named language); bullet and ordered
+    lists, nested at most two levels; headings of level 2 and 3; and inline
+    links whose destination is an absolute `https` URL. Everything else is
+    shown as the characters it is written with: raw HTML, images, tables,
+    reference-style links, autolinks, footnotes, block quotes, thematic
+    breaks, and links with any other scheme. A link is opened in a separate
+    window with no opener.
+
+    ## URLs in answers
+
+    Every URL a store returns is absolute and `https`. Image URLs must be on
+    an origin listed in `mediaOrigins` of `GET /v1/meta`, and a checkout URL
+    on one listed in `checkoutOrigins`; a client refuses the others. Images
+    are `image/png`, `image/jpeg` or `image/webp`; SVG is not accepted.
+    Document and link URLs are opened in a separate window and never
+    embedded.
+
+    ## Language
+
+    A request states the languages the person reads in `Accept-Language`.
+    The store answers each translatable field in the best match and names
+    the language of the answer in `Content-Language`. Matching is forgiving
+    within a language and never across one: `de-CH` is served `de` when
+    there is no `de-CH`. With no match the store answers in its
+    `defaultLanguage` (`GET /v1/meta`). An answer is in one language as a
+    whole; a field with no translation in that language is served in the
+    default language rather than left empty. Answers that depend on the
+    language carry `Vary: Accept-Language`.
+
+    ## Paging
+
+    A list answers `{"items": [...], "nextCursor": "..."}`. `nextCursor` is
+    `null` on the last page; otherwise it is passed back as `cursor`,
+    unchanged, with the same filters. A cursor is opaque and may expire, in
+    which case the store answers `400` with code `invalid-request`. `limit`
+    is 20 when absent and at most 100.
+
+    ## Errors
+
+    Every answer with a status of 400 or above is `application/problem+json`
+    (RFC 9457), with the members of the `Problem` schema. `code` is the
+    stable value a client branches on; `type` is `urn:gentian:store:problem:`
+    followed by the same code. `title` and `detail` are for a person and are
+    in the language of the request.
+
+    | Status | `code` | Meaning |
+    | --- | --- | --- |
+    | 400 | `invalid-request` | A parameter or the body is malformed; `errors` names the fields |
+    | 401 | `unauthenticated` | Signed-in calls only. No assertion, one the store refuses, or a person not linked yet: `WWW-Authenticate: Partner link=…` |
+    | 403 | `not-tenant-manager` | `POST /v1/acquisitions/{id}/credential` only. Only an account that manages the tenant is handed a credential |
+    | 403 | `registration-required` | `POST /v1/acquisitions/free` only (1.13). The app is not free; `WWW-Authenticate` names the registration page |
+    | 403 | `terms-not-accepted` | `POST /v1/acquisitions/free` only (1.13). The tenant has not accepted the store's terms in force |
+    | 403 | `tenant-refused` | `/v1/acquisitions` operations only. The store does not serve the tenant in the token; `reason` says why |
+    | 404 | `not-found` | No such app, acquisition, support offer, or page |
+    | 409 | `acquisition-not-confirmed` | A credential was asked for an acquisition that is not `confirmed` |
+    | 409 | `idempotency-conflict` | The `Idempotency-Key` was used before with a different body |
+    | 422 | `not-acquirable` | The app or the version named exists and cannot be acquired by this tenant; `detail` says why |
+    | 422 | `not-requestable` | The support offer named exists and takes no request through this API; its `contactUrl` is the way |
+    | 429 | `rate-limited` | Too many requests. Carries `Retry-After` |
+    | 500 | `internal` | The store failed |
+    | 503 | `unavailable` | The store is temporarily not serving. May carry `Retry-After` |
+
+    ## Rate limiting
+
+    Every answer may carry `RateLimit-Limit`, `RateLimit-Remaining` and
+    `RateLimit-Reset` (seconds). A `429` carries `Retry-After`, in seconds,
+    and the same three headers.
+
+    A request with a valid token is counted per token. A request without
+    one is counted per client address. One address is one cluster, not one
+    person: every tenant of a cluster reaches the store from the cluster's
+    outbound address, so a store sizes the anonymous limit for a cluster's
+    worth of administrators browsing, and a client caches open reads (see
+    "Caching") so that they share answers rather than repeat requests.
+
+    ## Caching
+
+    An open read answered without regard to a token is the same for
+    everybody who asks in the same language, and is cacheable. Such an
+    answer carries:
+
+    * `Cache-Control: public, max-age=<seconds>` — the store chooses the
+      time; minutes for listings, longer for `GET /v1/meta`;
+    * `ETag` — a validator for exactly this answer;
+    * `Vary: Accept-Language, Authorization`.
+
+    A client may repeat the request with `If-None-Match`, and the store
+    answers `304` with no body when the answer has not changed. A `304`
+    counts against the rate limit like any request.
+
+    An open read the store personalized from a token carries
+    `Cache-Control: private, no-store` and no `ETag`. Every signed-in call
+    carries `Cache-Control: no-store`.
+
+    Images and documents are served from the store's own origins under the
+    store's own caching; they are not part of this API.
+
+    ## Compatibility
+
+    `/v1` changes only by addition: new optional members, new operations,
+    new values of the open enumerations named as such in a schema. A client
+    ignores members it does not know and treats an unknown value of an open
+    enumeration as its documented fallback. Anything else is `/v2`.
+servers:
+  - url: "{storeUrl}"
+    description: >-
+      The address a cluster names for its store (`spec.catalogue.storeUrl` on the Cluster claim).
+      A cluster installed with the installer's defaults names `https://store-service.aluvian.io`;
+      that default is provisional.
+    variables:
+      storeUrl:
+        default: https://store.example
+        description: An `https` address with no trailing slash. Every path below is appended to it.
+tags:
+  - name: meta
+    description: Open. What a client needs to know of a store, and where a person registers.
+  - name: catalogue
+    description: Open. The apps a store lists, and what it says about each. No token is needed.
+  - name: tenant
+    description: Signed in. Whether the store serves the tenant in the token, and what it has to tell it.
+  - name: acquisitions
+    description: Signed in. What a tenant has acquired, and acquiring.
+security:
+  - partnerAssertion: []
+paths:
+  /v1/meta:
+    get:
+      tags: [meta]
+      operationId: getMeta
+      summary: Discovery
+      description: |
+        Names the store, the version of this API it serves, its partner
+        realm and its registration page. An open read: it takes no token
+        and ignores one. A client reads it before anything else and may
+        cache it for the `max-age` the answer states.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The store's description of itself.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Vary:
+              $ref: "#/components/headers/Vary"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meta"
+              examples:
+                meta:
+                  $ref: "#/components/examples/Meta"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/tenant:
+    get:
+      tags: [tenant]
+      operationId: getTenant
+      summary: The standing of the tenant in the token
+      description: |
+        Answers for the tenant the assertion's issuer is. It is the one
+        signed-in call that never answers `tenant-refused`: a refusal is
+        stated in the body, with `served: false`, so that a client can show
+        the reason. Every `/v1/acquisitions` operation answers `403` with
+        code `tenant-refused` and the same `reason` while `served` is false.
+        The open reads are not affected: the catalogue stays readable.
+
+        A client may ask this before the signed-in call the person wanted.
+
+        `known` says whether the store holds usage statistics reports that list this
+        tenant URL (see `usage-statistics.openapi.yaml`). `notices` are shown
+        to the person as they are; none of them blocks anything on the
+        cluster.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+      responses:
+        "200":
+          description: The tenant's standing.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStanding"
+              examples:
+                served:
+                  summary: A tenant the store serves, on a cluster with no subscription
+                  $ref: "#/components/examples/TenantServed"
+                refused:
+                  summary: A tenant the store has no reports for
+                  $ref: "#/components/examples/TenantRefused"
+                notClaimed:
+                  summary: An account that is not associated with the tenant
+                  $ref: "#/components/examples/TenantNotClaimed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/categories:
+    get:
+      tags: [catalogue]
+      operationId: listCategories
+      security:
+        - {}
+        - partnerAssertion: []
+      summary: The categories apps are filed under
+      description: The whole list, unpaged; a store has tens of categories, not thousands.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Every category, in the order the store shows them.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Vary:
+              $ref: "#/components/headers/Vary"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Category"
+              examples:
+                categories:
+                  value:
+                    items:
+                      - {id: collaboration, name: Collaboration}
+                      - {id: files, name: Files and documents}
+        "304":
+          $ref: "#/components/responses/NotModified"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/apps:
+    get:
+      tags: [catalogue]
+      operationId: listApps
+      security:
+        - {}
+        - partnerAssertion: []
+      summary: List apps
+      description: |
+        The store's entries, one per coordinate. Filters combine with AND.
+        The order is the store's own and is stable across the pages of one
+        listing.
+
+        An open read. With a valid token of a tenant the store serves, each
+        entry may additionally carry `acquired`.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - name: category
+          in: query
+          description: A category `id` from `GET /v1/categories`. Only entries filed under it.
+          schema:
+            type: string
+        - name: edition
+          in: query
+          description: Only entries of this edition.
+          schema:
+            $ref: "#/components/schemas/Edition"
+        - name: q
+          in: query
+          description: |
+            Free text, matched by the store against name, summary and
+            description in the language of the request. At most 200
+            characters. How it matches is the store's affair.
+          schema:
+            type: string
+            maxLength: 200
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of entries.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Vary:
+              $ref: "#/components/headers/Vary"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AppSummary"
+                  nextCursor:
+                    $ref: "#/components/schemas/NextCursor"
+              examples:
+                withToken:
+                  summary: With a token — the entry is marked as acquired by the token's tenant
+                  value:
+                    items:
+                      - coordinate: gentian/xwiki-ce
+                        family: xwiki
+                        name: XWiki
+                        summary: A wiki for a team's shared knowledge.
+                        iconUrl: null
+                        categories: [collaboration]
+                        publisher:
+                          name: XWiki community
+                          url: null
+                        edition: ce
+                        editions:
+                          - {edition: ce, coordinate: gentian/xwiki-ce}
+                        trustTier: certified
+                        latestVersion: 16.4.1
+                        price:
+                          model: free
+                          amount: null
+                          currency: null
+                          per: null
+                          period: null
+                          note: null
+                        acquired: true
+                        rating: null
+                    nextCursor: null
+                page:
+                  summary: Anonymous — no token, no `acquired`
+                  value:
+                    items:
+                      - coordinate: gentian/nextcloud-base-ee
+                        family: nextcloud
+                        name: Nextcloud
+                        summary: Files, calendars and contacts for a team, on your own cluster.
+                        iconUrl: https://media.store.example/icons/nextcloud.png
+                        categories: [files, collaboration]
+                        publisher:
+                          name: Example Publisher AG
+                          url: https://publisher.example
+                        edition: ee
+                        editions:
+                          - {edition: ce, coordinate: gentian/nextcloud-base-ce}
+                          - {edition: ee, coordinate: gentian/nextcloud-base-ee}
+                        trustTier: certified
+                        latestVersion: 31.0.4
+                        price:
+                          model: subscription
+                          amount: "4.50"
+                          currency: CHF
+                          per: user
+                          period: month
+                          note: null
+                        rating:
+                          count: 2
+                          average: 4.5
+                          distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
+                        addonCount: 1
+                        maturityScore: 7
+                        installations: 120
+                      - coordinate: gentian/xwiki-ce
+                        family: xwiki
+                        name: XWiki
+                        summary: A wiki for a team's shared knowledge.
+                        iconUrl: null
+                        categories: [collaboration]
+                        publisher:
+                          name: XWiki community
+                          url: null
+                        edition: ce
+                        editions:
+                          - {edition: ce, coordinate: gentian/xwiki-ce}
+                        trustTier: certified
+                        latestVersion: 16.4.1
+                        price:
+                          model: free
+                          amount: null
+                          currency: null
+                          per: null
+                          period: null
+                          note: null
+                        rating: null
+                    nextCursor: eyJhZnRlciI6Inh3aWtpLWNlIn0
+        "304":
+          $ref: "#/components/responses/NotModified"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    get:
+      tags: [catalogue]
+      operationId: getApp
+      security:
+        - {}
+        - partnerAssertion: []
+      summary: One app in full
+      description: |
+        `country` narrows `support` to the offers that cover that country,
+        worldwide offers among them. Without it, the store lists every
+        offer to an anonymous caller, and may narrow them for a signed-in
+        caller to a country it knows of the account (its company's); such
+        an answer is personalized and carries `Cache-Control: private,
+        no-store`. A `country` asked always wins.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - name: country
+          in: query
+          description: |
+            The country the tenant is in, ISO 3166-1 alpha-2. Only support
+            offers that cover it. Added in 1.3, with the feature `support`.
+          schema:
+            $ref: "#/components/schemas/CountryCode"
+      responses:
+        "200":
+          description: The entry.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Vary:
+              $ref: "#/components/headers/Vary"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppDetail"
+              examples:
+                app:
+                  $ref: "#/components/examples/AppDetail"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}/reviews:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    get:
+      tags: [catalogue]
+      operationId: listReviews
+      security:
+        - {}
+        - partnerAssertion: []
+      summary: Reviews of an app
+      description: |
+        Newest first. `summary` is over every review of the entry, not over
+        the page, and is repeated on each page. A store that carries no
+        reviews (no `reviews` in `features`) answers an empty list and a
+        summary with `count` 0.
+
+        `companySize` and `industry` narrow both: the summary is then over
+        the reviews whose author's company is of that size or in that
+        industry, and so are the items. A review whose author has stated no
+        company is in no narrowed answer. Reviews are written with
+        `PUT /v1/apps/{catalogue}/{app}/reviews/mine`.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: companySize
+          in: query
+          description: Only reviews by people whose company is of this size.
+          schema:
+            $ref: "#/components/schemas/CompanySize"
+        - name: industry
+          in: query
+          description: Only reviews by people whose company is in this industry.
+          schema:
+            $ref: "#/components/schemas/Industry"
+      responses:
+        "200":
+          description: One page of reviews, and the summary of all of them.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Vary:
+              $ref: "#/components/headers/Vary"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary, items, nextCursor]
+                properties:
+                  summary:
+                    $ref: "#/components/schemas/ReviewSummary"
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Review"
+                  nextCursor:
+                    $ref: "#/components/schemas/NextCursor"
+              examples:
+                reviews:
+                  value:
+                    summary:
+                      count: 2
+                      average: 4.5
+                      distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
+                    items:
+                      - id: rv_01J9ZC1E
+                        rating: 5
+                        title: Does what we need
+                        text: Running it for forty people since spring. Upgrades have been uneventful.
+                        author: M. K.
+                        date: "2026-09-12"
+                        language: en
+                        version: 31.0.4
+                      - id: rv_01J9YQ7B
+                        rating: 4
+                        title: null
+                        text: Solid. The mail integration took some reading.
+                        author: An administrator in Bern
+                        date: "2026-08-30"
+                        language: en
+                        version: null
+                    nextCursor: null
+        "304":
+          $ref: "#/components/responses/NotModified"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}/reviews/mine:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    get:
+      tags: [catalogue]
+      operationId: getMyReview
+      summary: The signed-in person's review of an app
+      description: |
+        One review per person and entry. `404` when they have written none.
+      security:
+        - partnerAssertion: []
+      responses:
+        "200":
+          description: Their review.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [catalogue]
+      operationId: putMyReview
+      summary: Write or replace the signed-in person's review
+      description: |
+        Writes the review, or replaces the one the person wrote before; it
+        is dated anew. Only the person's own review is touched.
+
+        Refused with `403`:
+        * `review-not-acquired` where the store reviews only what a tenant
+          acquired (`reviewing.requireAcquisition` in `GET /v1/meta`) and no
+          tenant this person signed in for has a `confirmed` acquisition of
+          the entry;
+        * `tenant-refused`, as every signed-in call, while the store does
+          not serve the tenant in the token.
+
+        Refused with `409` and code `company-missing` while the account has
+        no company (`GET /v1/account/company`): a review is shown with its
+        author's company size and industry.
+
+        `scores.support` and `scores.value` are for an entry of edition
+        `ee` and are refused (`400`) on any other.
+      security:
+        - partnerAssertion: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewRequest"
+            examples:
+              review:
+                value:
+                  recommend: true
+                  scores: {features: 4, easeOfUse: 5, easeOfSetup: 3, support: null, value: null}
+                  title: Does what we need
+                  text: Running it for forty people since spring. Upgrades have been uneventful.
+                  version: 31.0.4
+      responses:
+        "200":
+          description: The review as it is now shown.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/CompanyMissing"
+    delete:
+      tags: [catalogue]
+      operationId: deleteMyReview
+      summary: Withdraw the signed-in person's review
+      security:
+        - partnerAssertion: []
+      responses:
+        "204":
+          description: Withdrawn, or there was none.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /v1/account/company:
+    get:
+      tags: [account]
+      operationId: getCompany
+      summary: The company the signed-in person is with
+      description: |
+        The company of the person's account, whichever tenant they sign in
+        for. Its size and industry are shown with their reviews and filter
+        them; its name is not shown with a review. The store's operator
+        records it, outside this API (removed in 1.15: `PUT`). `404` until
+        it has.
+      security:
+        - partnerAssertion: []
+      responses:
+        "200":
+          description: Their company.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/apps/{catalogue}/{app}/reports:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    get:
+      tags: [catalogue]
+      operationId: listReports
+      security:
+        - {}
+        - partnerAssertion: []
+      summary: Evaluations and reports about an app
+      description: |
+        Documents somebody wrote about the app: a security assessment, a
+        quality or accessibility evaluation, a license review. Newest first,
+        unpaged. The store states who issued each one; it does not vouch for
+        it, and nothing on the cluster reads them.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Every report the store holds for the entry.
+          headers:
+            Content-Language:
+              $ref: "#/components/headers/ContentLanguage"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Vary:
+              $ref: "#/components/headers/Vary"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Report"
+              examples:
+                reports:
+                  value:
+                    items:
+                      - id: rp_01J8T3QH
+                        kind: security
+                        title: Penetration test of the 31.0 release
+                        issuer: Example Security GmbH
+                        date: "2026-07-02"
+                        summary: Two findings of medium severity, both fixed in 31.0.3. No finding of high severity.
+                        version: 31.0.3
+                        documentUrl: https://media.store.example/reports/rp_01J8T3QH.pdf
+                        documentType: application/pdf
+        "304":
+          $ref: "#/components/responses/NotModified"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/apps/{catalogue}/{app}/support-requests:
+    parameters:
+      - $ref: "#/components/parameters/Catalogue"
+      - $ref: "#/components/parameters/App"
+    post:
+      tags: [catalogue]
+      operationId: requestSupport
+      summary: Ask a partner for support with an app
+      description: |
+        The signed-in person asks for the support offer `offer` of this
+        app (`support` in `GET /v1/apps/{catalogue}/{app}`), with an
+        optional message. The store answers that it received the request;
+        what it does with it — passing it to the partner, and how the
+        partner answers the person — is the store's. Only an offer with
+        `requestable: true` takes a request; another answers `422`
+        `not-requestable`, and its `contactUrl` is the way to it. Added in
+        1.3, with the feature `support`.
+      security:
+        - partnerAssertion: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportRequest"
+            examples:
+              request:
+                value:
+                  offer: so_01JA2K7M
+                  message: We run it for sixty people and would like help with the upgrade to 32.
+      responses:
+        "202":
+          description: Received. Nothing on the cluster waits for it.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportRequestReceipt"
+              examples:
+                received:
+                  value: {id: sr_01JA2M3Q, status: received}
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/NotRequestable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/acquisitions:
+    get:
+      tags: [acquisitions]
+      operationId: listAcquisitions
+      summary: What this tenant has acquired
+      description: |
+        Every acquisition recorded for the tenant URL in the token, in any
+        status, newest first. In this listing a confirmation never carries
+        a `credential`: a credential is handed out one acquisition at a
+        time, by the two `POST` operations and by
+        `GET /v1/acquisitions/{id}`.
+      parameters:
+        - name: status
+          in: query
+          description: Only acquisitions in this status.
+          schema:
+            $ref: "#/components/schemas/AcquisitionStatus"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of acquisitions.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Acquisition"
+                  nextCursor:
+                    $ref: "#/components/schemas/NextCursor"
+              examples:
+                acquisitions:
+                  value:
+                    items:
+                      - id: acq_01JA2M8Y
+                        coordinate: gentian/nextcloud-base-ee
+                        status: confirmed
+                        createdAt: "2026-10-01T09:14:03Z"
+                        updatedAt: "2026-10-01T09:16:40Z"
+                        checkoutUrl: null
+                        checkoutExpiresAt: null
+                        failure: null
+                        confirmation:
+                          coordinate: gentian/nextcloud-base-ee
+                          version: 31.0.4
+                          digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+                          repository:
+                            type: oci
+                            url: oci://registry.store.example/apps
+                          addons: []
+                    nextCursor: null
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [acquisitions]
+      operationId: acquire
+      summary: Acquire an app for this tenant
+      description: |
+        Asks the store for an app, for the tenant URL in the token. Three
+        answers:
+
+        * `201` — acquired now. The body is the acquisition, `confirmed`,
+          with its confirmation. This is what a free app answers, and a paid
+          one that needs no checkout (an existing contract, say).
+        * `202` — a checkout is needed. The body is the acquisition,
+          `pending`, with `checkoutUrl`. The client opens that address in a
+          separate window; payment happens there, at the store, and never
+          passes through the cluster. The client then asks
+          `GET /v1/acquisitions/{id}` until the status is no longer
+          `pending`.
+        * `200` — this tenant has a live acquisition of the coordinate
+          already (`pending` or `confirmed`). The body is that acquisition.
+          When it is `confirmed`, its confirmation is for the `version`
+          asked, or for the latest version the acquisition covers when none
+          is asked: this is how a client obtains the digest of a newer
+          version of an app it has acquired.
+
+        A tenant has at most one live acquisition per coordinate.
+
+        `Idempotency-Key` makes a retry safe: a request repeated with the
+        same key and the same body within 24 hours answers what the first
+        one answered and creates nothing.
+
+        The account must manage the tenant (see `TenantRole`). One that
+        does not is not refused: the acquisition waits for `approval` until
+        an owner or administrator of the organization the tenant belongs
+        to, or the store's operator, approves or declines it, outside this
+        API.
+
+        Acquiring is not installing. The store records that the tenant has
+        the app and, for an app whose artefacts are in a private repository,
+        mints the credential that repository checks. What the cluster does
+        with the confirmation is described on the `Confirmation` schema.
+      security:
+        - partnerAssertion: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - name: Idempotency-Key
+          in: header
+          description: A value the client chooses, unique per attempt to acquire; 1 to 128 visible ASCII characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcquisitionRequest"
+            examples:
+              latest:
+                summary: The latest version
+                value:
+                  coordinate: gentian/nextcloud-base-ee
+              pinned:
+                summary: A named version
+                value:
+                  coordinate: gentian/nextcloud-base-ee
+                  version: 31.0.4
+      responses:
+        "200":
+          description: The tenant's existing live acquisition of this coordinate.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+              examples:
+                existing:
+                  $ref: "#/components/examples/AcquisitionConfirmed"
+        "201":
+          description: |
+            Decided at once. The acquisition is `confirmed` and carries its
+            confirmation — or, rarely, `failed`, and `failure` says why.
+          headers:
+            Location:
+              description: The acquisition, `/v1/acquisitions/{id}`.
+              schema:
+                type: string
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+              examples:
+                paid:
+                  summary: An app in a private repository, with its credential
+                  $ref: "#/components/examples/AcquisitionConfirmed"
+                free:
+                  summary: A free app; no repository and no credential
+                  $ref: "#/components/examples/AcquisitionFree"
+        "202":
+          description: |
+            Not decided yet. The acquisition is `pending`, and `waitingFor`
+            says on what: a checkout (then it carries `checkoutUrl`), an
+            approval, or the store's own confirmation.
+          headers:
+            Location:
+              description: The acquisition, `/v1/acquisitions/{id}`.
+              schema:
+                type: string
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+              examples:
+                checkout:
+                  $ref: "#/components/examples/AcquisitionPending"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The `Idempotency-Key` was used before with a different body.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                conflict:
+                  value:
+                    type: urn:gentian:store:problem:idempotency-conflict
+                    code: idempotency-conflict
+                    title: This key was used for another request
+                    status: 409
+                    detail: The Idempotency-Key was first sent with a different coordinate.
+        "422":
+          $ref: "#/components/responses/NotAcquirable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/acquisitions/free:
+    post:
+      tags: [acquisitions]
+      operationId: acquireFree
+      summary: Acquire a free app for this tenant, without registering
+      description: |
+        Added in 1.13, with the feature `free-acquisition`. Acquires an app
+        whose price model is `free` for the tenant whose realm issued the
+        assertion, with no account at the store: the person has not
+        registered, and nothing is made at the store for them. The store
+        stays the point of record of every tenant that takes an app from it,
+        under its terms.
+
+        The bearer is a partner assertion obtained exactly as for a
+        signed-in call (`partnerAssertion`). The store does not turn it into
+        an account; it checks it itself, and accepts it only when all of
+        these hold:
+
+        1. The entry's price model is `free` (`Price.model`). Any other —
+           `freemium` among them — is answered `403`
+           `registration-required`, with the registration page in
+           `WWW-Authenticate: Partner link="…"`; the client then goes the
+           signed-in way (`POST /v1/acquisitions`).
+        2. The assertion's signature verifies with a key its issuer
+           publishes: the issuer's OpenID discovery document
+           (`<iss>/.well-known/openid-configuration`) names its `jwks_uri`,
+           both `https`. A store caches the keys for minutes and reads them
+           again for a key id it does not know.
+        3. The latest usage statistics report naming the tenant `uid` sent
+           in the body names this issuer for it (`tenants[].uid`,
+           `tenants[].issuer`), on the reporting cluster's own domain. The
+           signed report is what ties a realm to a tenant: a cluster
+           cannot claim another cluster's realm, and a body cannot claim
+           another tenant. Otherwise `403` `tenant-refused`, reason
+           `no-reports-for-tenant`.
+        4. Its `aud` is the store's realm (`partner.issuer` of
+           `GET /v1/meta`) and nothing else; it has not expired (a few
+           seconds of skew are allowed); its `jti` has not been seen before
+           — each assertion is taken once. Otherwise `401`.
+        5. The tenant has accepted the terms in force (`termsVersion` of
+           `GET /v1/meta`): the report says so (`tenants[].terms.version`),
+           or, where the report has not caught up, the body does (`terms`)
+           and the store records that this acceptance came with the
+           request. Otherwise `403` `terms-not-accepted`. A store that
+           names no terms version takes no acquisition this way.
+
+        The acquisition is recorded against the tenant `uid` and the
+        assertion's pairwise subject; nothing else about the person is
+        sent or kept. The answers are those of `POST /v1/acquisitions`:
+        `201` confirmed, `202` while the store's own confirmation is
+        outstanding, `200` with the tenant's live acquisition of the
+        coordinate. A client asks again with this call and a new assertion,
+        not with `GET /v1/acquisitions/{id}`, which needs an account. A
+        confirmation answered here carries its repository credential: it is
+        the tenant's, and the tenant has nobody else to hand it to.
+      security:
+        - partnerAssertion: []
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FreeAcquisitionRequest"
+            examples:
+              free:
+                summary: A free app, with the acceptance the tenant recorded
+                value:
+                  coordinate: gentian/xwiki-ce
+                  tenant: 3f2b9c1e-7d4a-4e0b-9a51-2c8d6f0e1b7a
+                  terms:
+                    version: "2026-10"
+                    acceptedAt: "2026-10-24T09:12:00Z"
+      responses:
+        "200":
+          description: The tenant's existing live acquisition of this coordinate.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+        "201":
+          description: Acquired. The acquisition is `confirmed` and carries its confirmation.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+              examples:
+                free:
+                  $ref: "#/components/examples/AcquisitionFree"
+        "202":
+          description: |
+            Not decided yet: `pending`, waiting for the store's own
+            `confirmation`. The client asks again with this call after
+            `Retry-After`.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          description: |
+            No assertion, or one the store does not take: its signature does
+            not verify with its issuer's keys, its audience is not the
+            store's realm, it has expired, or it was taken before.
+          headers:
+            WWW-Authenticate:
+              description: '`Bearer error="invalid_token"`.'
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: |
+            `registration-required`: the entry is not free; the registration
+            page is in `WWW-Authenticate: Partner link="…"`.
+            `tenant-refused` (reason `no-reports-for-tenant`): no usage
+            statistics report names this tenant with this realm.
+            `terms-not-accepted`: the tenant has not accepted the terms in
+            force, or the store names none.
+          headers:
+            WWW-Authenticate:
+              description: '`Partner link="<address>"` with `registration-required`.'
+              schema:
+                type: string
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                notFree:
+                  value:
+                    type: urn:gentian:store:problem:registration-required
+                    code: registration-required
+                    title: Register with the store to acquire this app
+                    status: 403
+                    detail: gentian/nextcloud-base-ee is not free. Register with the store, then acquire it.
+                terms:
+                  value:
+                    type: urn:gentian:store:problem:terms-not-accepted
+                    code: terms-not-accepted
+                    title: Accept the store's terms first
+                    status: 403
+                    detail: The tenant has not accepted version 2026-10 of the store's terms.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/NotAcquirable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/acquisitions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AcquisitionId"
+    get:
+      tags: [acquisitions]
+      operationId: getAcquisition
+      summary: One acquisition, and its confirmation once confirmed
+      description: |
+        The outcome of an acquisition. While it is `pending` the answer
+        carries `Retry-After`, which a client honors before it asks again
+        (and never asks more often than every two seconds). Once it is
+        `confirmed` the answer carries the confirmation.
+
+        A confirmation's repositories carry the `credential` that is valid
+        now — answered to an account that manages the tenant (see
+        `TenantRole`). Answered to any other account, the confirmation is
+        the same without any `credential` member: it is `200`, not `403`;
+        the acquisition may be read, the secret may not.
+
+        The confirmation is for the latest version the acquisition covers,
+        or for `version` when the query names one.
+
+        An acquisition of another tenant answers `404`, not `403`.
+      parameters:
+        - $ref: "#/components/parameters/AcceptLanguage"
+        - name: version
+          in: query
+          description: The version the confirmation should be for. Ignored unless the acquisition is `confirmed`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The acquisition.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acquisition"
+              examples:
+                pending:
+                  $ref: "#/components/examples/AcquisitionPending"
+                confirmed:
+                  summary: Confirmed, with the credential valid now
+                  $ref: "#/components/examples/AcquisitionConfirmed"
+                cancelled:
+                  summary: The person left the checkout
+                  value:
+                    id: acq_01JA2M8Y
+                    coordinate: gentian/nextcloud-base-ee
+                    status: cancelled
+                    createdAt: "2026-10-01T09:14:03Z"
+                    updatedAt: "2026-10-01T09:15:11Z"
+                    checkoutUrl: null
+                    checkoutExpiresAt: null
+                    failure: null
+                    confirmation: null
+                failed:
+                  summary: The checkout did not complete
+                  value:
+                    id: acq_01JA2M8Y
+                    coordinate: gentian/nextcloud-base-ee
+                    status: failed
+                    createdAt: "2026-10-01T09:14:03Z"
+                    updatedAt: "2026-10-01T09:15:42Z"
+                    checkoutUrl: null
+                    checkoutExpiresAt: null
+                    failure:
+                      reason: payment-declined
+                      detail: The payment was declined. Nothing was charged.
+                    confirmation: null
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/NotAcquirable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/acquisitions/{id}/credential:
+    parameters:
+      - $ref: "#/components/parameters/AcquisitionId"
+    post:
+      tags: [acquisitions]
+      operationId: replaceCredential
+      summary: Replace an acquisition's repository credential now
+      description: |
+        Rotation: replaces the credential of every repository the
+        acquisition's confirmation names with a newly minted one, and
+        answers the confirmation with the new credentials in place. It
+        takes no body. It is what an administrator asks for when a
+        credential may have leaked. Nothing calls it on a schedule: a
+        credential does not expire (see `Credential`), so there is nothing
+        to renew.
+
+        The credential it replaces keeps working for an overlap of 24 hours
+        from this call and is refused by the repository from then on. The
+        overlap is what lets a cluster in the middle of replacing one never
+        hold only a credential the repository refuses. A store ends the old
+        credential sooner only by ending the acquisition.
+
+        The user name does not change: it is the tenant's (see
+        `Credential`). Only the token is new.
+
+        An acquisition with no repository answers its confirmation
+        unchanged. Every store serves this operation.
+
+        The confirmation is for the version the acquisition was last
+        confirmed for; `version` in the query names another.
+      security:
+        - partnerAssertion: []
+      parameters:
+        - name: version
+          in: query
+          description: The version the confirmation should be for.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The confirmation, with the new credentials.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Confirmation"
+              examples:
+                replaced:
+                  $ref: "#/components/examples/Confirmation"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The acquisition is not `confirmed`, so it has no credential to replace.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+              examples:
+                notConfirmed:
+                  value:
+                    type: urn:gentian:store:problem:acquisition-not-confirmed
+                    code: acquisition-not-confirmed
+                    title: This acquisition is not confirmed
+                    status: 409
+                    detail: The acquisition was cancelled on 2026-10-01. It has no credential.
+        "422":
+          $ref: "#/components/responses/NotAcquirable"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+components:
+  securitySchemes:
+    partnerAssertion:
+      type: http
+      scheme: bearer
+      description: |
+        A **partner assertion** (1.11): an access token the tenant's own
+        realm issues for the person, whose only audience is the store's
+        realm (`partner.issuer` of `GET /v1/meta`). It is sent as
+        `Authorization: Bearer <assertion>`. It replaces the store token of
+        1.10 and earlier: there is no sign-in flow at the store.
+
+        It is required on the signed-in calls and optional on the open
+        reads, where it only lets the store personalize an answer.
+
+        ## Obtaining one
+
+        The App Store app makes one request to its own realm's token
+        endpoint, OAuth 2.0 Token Exchange (RFC 8693): the person's token
+        the edge forwarded as `subject_token`, `scope=partner-<name>`
+        (the name the tenant gives the store's realm as a partner), and the
+        app's Kubernetes service account token as its client assertion. No
+        secret is held. The answer's `access_token` is the assertion: its
+        `aud` is the store's issuer, its `sub` a pairwise subject, its life
+        a few minutes. A client uses each assertion for one call.
+
+        ## What the store does with it
+
+        It posts the assertion to its own realm, the JWT bearer grant
+        (RFC 7523), and acts as the account the answer names. The issuer of
+        the assertion says which tenant the call is about.
+
+        A person whose realm the store's realm has no partner entry for, or
+        who has not linked their account yet, is answered `401` with
+        `WWW-Authenticate: Partner link="<address>"`: the registration page,
+        with `?tenant=<tenant uid>` where the store knows the tenant. The
+        client shows the address to the person, who opens it in a new
+        window; nothing else happens.
+
+        ## What it is not
+
+        It is **not** what pulls anything. Charts and images are pulled
+        with the tenant's registry credential (see `Credential`), which the
+        App Store app hands to the cluster's custodian once and does not
+        keep.
+  parameters:
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      description: The languages the person reads, RFC 9110. See "Language" in the introduction.
+      schema:
+        type: string
+      example: de-CH, de;q=0.9, en;q=0.5
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: The `ETag` of an answer the client holds. The store answers `304` with no body when it still stands.
+      schema:
+        type: string
+      example: '"7d1c9a40"'
+    Cursor:
+      name: cursor
+      in: query
+      description: The `nextCursor` of the previous page, unchanged.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: How many items a page holds at most.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Catalogue:
+      name: catalogue
+      in: path
+      required: true
+      description: The first half of a coordinate — the name of the catalogue source the app's profile bundle is published in.
+      schema:
+        $ref: "#/components/schemas/Name"
+    App:
+      name: app
+      in: path
+      required: true
+      description: The second half of a coordinate — the name of the app's profile.
+      schema:
+        $ref: "#/components/schemas/Name"
+    AcquisitionId:
+      name: id
+      in: path
+      required: true
+      description: The `id` of an acquisition.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{1,64}$"
+  headers:
+    ContentLanguage:
+      description: The language the translatable fields of this answer are in, as a BCP 47 tag.
+      schema:
+        type: string
+      example: de
+    CacheControl:
+      description: |
+        `public, max-age=<seconds>` on an answer given without regard to a
+        token; `private, no-store` on one the store personalized from a
+        token.
+      schema:
+        type: string
+      example: public, max-age=300
+    ETag:
+      description: A validator for this answer, for `If-None-Match`. Absent from an answer the store personalized from a token.
+      schema:
+        type: string
+      example: '"7d1c9a40"'
+    Vary:
+      description: Always `Accept-Language, Authorization` on an open read.
+      schema:
+        type: string
+      example: Accept-Language, Authorization
+    NoStore:
+      description: Always `no-store`. The answer is about one tenant, and may carry a credential.
+      schema:
+        type: string
+        const: no-store
+    RetryAfter:
+      description: Seconds to wait before the next request.
+      schema:
+        type: integer
+        minimum: 0
+      example: 5
+    RateLimitLimit:
+      description: How many requests the caller may make in the current window.
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: How many of them are left.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Seconds until the window starts again.
+      schema:
+        type: integer
+  responses:
+    NotModified:
+      description: The answer the client holds, named by `If-None-Match`, still stands. No body.
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+        Cache-Control:
+          $ref: "#/components/headers/CacheControl"
+    InvalidRequest:
+      description: A parameter or the body is malformed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            invalid:
+              value:
+                type: urn:gentian:store:problem:invalid-request
+                code: invalid-request
+                title: The request is not valid
+                status: 400
+                detail: coordinate must be <catalogue>/<app>.
+                errors:
+                  - field: coordinate
+                    detail: must be <catalogue>/<app>
+    Unauthenticated:
+      description: |
+        No assertion, one the store's realm refuses, or one of a person not
+        linked yet. Signed-in calls only: an open read never answers this.
+      headers:
+        WWW-Authenticate:
+          description: |
+            `Partner link="<address>"` when an assertion was sent: the
+            registration page, with `?tenant=<tenant uid>` where the store
+            knows the tenant; the client shows it to the person. `Bearer`
+            when none was sent.
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            unauthenticated:
+              value:
+                type: urn:gentian:store:problem:unauthenticated
+                code: unauthenticated
+                title: Register with the store
+                status: 401
+                detail: This account is not linked with the store yet.
+    Forbidden:
+      description: |
+        Either the store does not serve the tenant in the token
+        (`tenant-refused`, with `reason`), or a review is asked of an entry
+        no tenant of the person's acquired where the store requires that
+        (`review-not-acquired`), or an account that does not manage the
+        tenant asks for a new credential
+        (`not-tenant-manager`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            tenantRefused:
+              value:
+                type: urn:gentian:store:problem:tenant-refused
+                code: tenant-refused
+                title: The store does not serve this tenant
+                status: 403
+                reason: no-reports-for-tenant
+                detail: >-
+                  No usage statistics report names https://acme.example. The store serves tenants of clusters that report;
+                  ask the cluster's administrator whether reporting is on.
+    NotFound:
+      description: No such app, acquisition or page — or one that is another tenant's.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            notFound:
+              value:
+                type: urn:gentian:store:problem:not-found
+                code: not-found
+                title: Not found
+                status: 404
+                detail: The store lists no app gentian/nextcloud-base-xx.
+    CompanyMissing:
+      description: The account has no company yet (`GET /v1/account/company`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            company:
+              value:
+                type: urn:gentian:store:problem:company-missing
+                code: company-missing
+                title: Your company is not known yet
+                status: 409
+                detail: A review is shown with its author's company size and industry.
+    NotAcquirable:
+      description: The app or the version named exists and cannot be acquired by this tenant.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            version:
+              value:
+                type: urn:gentian:store:problem:not-acquirable
+                code: not-acquirable
+                title: This version cannot be acquired
+                status: 422
+                detail: Version 29.0.1 of gentian/nextcloud-base-ee has been withdrawn.
+    NotRequestable:
+      description: The support offer named exists and takes no request through this API.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            offer:
+              value:
+                type: urn:gentian:store:problem:not-requestable
+                code: not-requestable
+                title: This offer takes no request here
+                status: 422
+                detail: Contact the partner at the address the offer names.
+    RateLimited:
+      description: Too many requests.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+        RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            rateLimited:
+              value:
+                type: urn:gentian:store:problem:rate-limited
+                code: rate-limited
+                title: Too many requests
+                status: 429
+                detail: Try again in 30 seconds.
+    Internal:
+      description: The store failed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            internal:
+              value:
+                type: urn:gentian:store:problem:internal
+                code: internal
+                title: The store failed
+                status: 500
+                detail: Quote reference 7f3a91c2 when reporting this.
+    Unavailable:
+      description: The store is temporarily not serving.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+          examples:
+            unavailable:
+              value:
+                type: urn:gentian:store:problem:unavailable
+                code: unavailable
+                title: The store is not available
+                status: 503
+                detail: Maintenance until 06:00 UTC.
+  schemas:
+    Name:
+      type: string
+      description: A DNS label, as the cluster spells the name of a catalogue source and of a profile.
+      pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+      examples: [nextcloud-base-ee]
+    Coordinate:
+      type: string
+      description: |
+        `<catalogue>/<app>`: the name of a catalogue source, a slash, and
+        the name of the app's profile in it. It is the identity of a store
+        entry and the value an install request to the cluster carries. A
+        profile's name includes its edition, so each edition of an app is
+        an entry of its own.
+      pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?/[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+      examples: [gentian/nextcloud-base-ee]
+    Digest:
+      type: string
+      description: |
+        The SHA-256 of an app version's profile bundle — the exact bytes the
+        catalogue source serves for it — as `sha256:` and 64 lower-case
+        hexadecimal characters. It is what the cluster pins and verifies:
+        the cluster fetches the bundle from its own catalogue source and
+        refuses it unless it hashes to this value.
+      pattern: "^sha256:[0-9a-f]{64}$"
+      examples: ["sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6"]
+    Edition:
+      type: string
+      description: |
+        The edition of an entry, with the values a profile carries on the
+        cluster. `ce`: the community edition as its upstream publishes it.
+        `me`: the community edition's code, curated and maintained by the
+        catalogue's maintainer. `ie`: an internal edition, an operator's own
+        profile (1.12). `pe`: a proprietary edition, free of charge -- before
+        1.12 `pe` was the private edition `ie` now is. `ee`: an enterprise
+        edition, proprietary and paid for. Closed: a client refuses an entry
+        with any other value.
+      enum: [ce, me, ie, pe, ee]
+    TrustTier:
+      type: string
+      description: The review level the entry's profile states, with the values a profile carries on the cluster. Closed.
+      enum: [platform, certified, experimental]
+    NextCursor:
+      type: [string, "null"]
+      description: The cursor of the next page; `null` on the last.
+    Url:
+      type: string
+      format: uri
+      description: An absolute `https` URL.
+      pattern: "^https://"
+    Meta:
+      type: object
+      required: [apiVersion, name, partner, registrationUrl, defaultLanguage, languages, mediaOrigins, checkoutOrigins, features]
+      properties:
+        apiVersion:
+          type: string
+          description: The version of this API the store serves, `<major>.<minor>`. The major is the `/v1` of the paths.
+          pattern: "^1\\.[0-9]+$"
+        name:
+          type: string
+          description: What the store calls itself. Plain text.
+          maxLength: 80
+        partner:
+          type: object
+          description: |
+            The store's realm as a partner (1.11): an assertion for a
+            signed-in call names its `issuer` as its only audience.
+          required: [issuer]
+          properties:
+            issuer:
+              $ref: "#/components/schemas/Url"
+        registrationUrl:
+          $ref: "#/components/schemas/Url"
+          description: |
+            The store's registration page (1.11): the linking sign-in
+            through the tenant's own realm, once, with the store's terms and
+            privacy notice. A client opens it in a new window, with
+            `?tenant=<tenant uid>`, when a signed-in call answers `401`
+            with a `Partner` challenge.
+        defaultLanguage:
+          type: string
+          description: The language the store answers in when none asked for matches. BCP 47.
+        languages:
+          type: array
+          description: The languages the store has translations in.
+          items:
+            type: string
+        mediaOrigins:
+          type: array
+          description: |
+            The origins (`https://host[:port]`) image URLs in answers are
+            on. A client loads images from these and from nowhere else, and
+            may fix its content security policy from this list.
+          items:
+            type: string
+        checkoutOrigins:
+          type: array
+          description: The origins a `checkoutUrl` is on. A client opens a checkout address on one of these and refuses any other.
+          items:
+            type: string
+        companySizes:
+          type: array
+          description: The company sizes, in order, each with its name in the language of the request.
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: {$ref: "#/components/schemas/CompanySize"}
+              name: {type: string, maxLength: 80}
+        industries:
+          type: array
+          description: The industries, in the order of NACE, each with its name in the language of the request and its NACE section letter.
+          items:
+            type: object
+            required: [id, name, nace]
+            properties:
+              id: {$ref: "#/components/schemas/Industry"}
+              name: {type: string, maxLength: 80}
+              nace: {type: string, pattern: "^[A-U]$"}
+        reviewing:
+          type: object
+          description: The store's rules for writing a review.
+          required: [requireAcquisition]
+          properties:
+            requireAcquisition:
+              type: boolean
+              description: A review may be written only of an entry a tenant the person signed in for has acquired.
+        features:
+          type: array
+          description: |
+            What this store carries beyond the minimum. Open: a client
+            ignores values it does not know. `reviews`: apps have reviews.
+            `review-writing`: a signed-in person may write one
+            (`PUT /v1/apps/{catalogue}/{app}/reviews/mine`). `company`: the
+            account has a company (`/v1/account/company`).
+            `reports`: apps have evaluations and reports. `checkout`: an
+            acquisition may answer `202` with a checkout address.
+            `support`: apps may carry support offers (`support` on an app)
+            and a signed-in person may request one
+            (`POST /v1/apps/{catalogue}/{app}/support-requests`).
+            `free-acquisition` (1.13): a tenant takes an app whose price
+            model is `free` without registering
+            (`POST /v1/acquisitions/free`).
+            `tenant-organization` (1.14): an acquisition may say who the
+            tenant is (`organization` of `AcquisitionRequest`); a client
+            sends it only to a store that lists this.
+            `tenant-access` (1.2) was removed in 1.15; a store no longer
+            lists it.
+          items:
+            type: string
+        catalogues:
+          type: array
+          description: |
+            The catalogue sources the store's entries come from: the first
+            half of every coordinate it serves is the `name` of one of them.
+            A cluster's installer that names this store may add each to the
+            cluster's own catalogue sources under that name, when the
+            cluster has none of the name, so an entry acquired here can be
+            installed without the administrator adding its catalogue by
+            hand. The bytes are still held to the digest of the install. A
+            catalogue whose entries are private still says where its
+            profiles are read from here; the charts and images they name are
+            pulled with the credential an acquisition confirms. Optional;
+            added in 1.5.
+          items:
+            $ref: "#/components/schemas/StoreCatalogue"
+        links:
+          type: object
+          description: Pages of the store's a client may link to. Each is opened in a separate window.
+          properties:
+            terms:
+              $ref: "#/components/schemas/Url"
+            privacy:
+              $ref: "#/components/schemas/Url"
+            support:
+              $ref: "#/components/schemas/Url"
+            account:
+              $ref: "#/components/schemas/Url"
+              description: Where a person manages their store account.
+        termsVersion:
+          type: string
+          pattern: "^[A-Za-z0-9._-]{1,64}$"
+          description: |
+            The version of the terms (`links.terms`) in force. A client asks
+            a tenant to accept them once per version, and asks again when
+            this changes; it records the acceptance on the cluster, where the
+            usage statistics report carries it. A store that offers
+            `free-acquisition` takes a free app without registration only
+            for a tenant that accepted this version (1.13); a registered
+            account's calls do not turn on it.
+            Absent when the store names no version or no terms. Optional;
+            added in 1.12.
+    StoreCatalogue:
+      type: object
+      required: [name, url]
+      description: One catalogue source a store's entries come from. Added in 1.5.
+      properties:
+        name:
+          type: string
+          description: The catalogue's name, the first half of a coordinate.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        url:
+          $ref: "#/components/schemas/Url"
+          description: The https address the catalogue is served from, holding `index.yaml` and `profiles/<name>.yaml`.
+        displayName:
+          type: string
+          maxLength: 80
+          description: What the catalogue is called, in plain text.
+    TenantStanding:
+      type: object
+      required: [tenantUrl, known, served, refusal, notices]
+      properties:
+        tenantUrl:
+          type: string
+          description: The tenant URL the token is bound to, echoed.
+        known:
+          type: boolean
+          description: Whether the store holds at least one usage statistics report that lists this tenant URL.
+        lastReportAt:
+          type: [string, "null"]
+          format: date-time
+          description: The `sentAt` of the latest such report; `null` when `known` is false.
+        served:
+          type: boolean
+          description: |
+            Whether the store serves this tenant. False means every
+            `/v1/acquisitions` operation answers `403` `tenant-refused`,
+            and `refusal` says why. The open reads are answered either way.
+        refusal:
+          oneOf:
+            - $ref: "#/components/schemas/Refusal"
+            - type: "null"
+          description: Present exactly when `served` is false.
+        notices:
+          type: array
+          description: Things the store has to tell this tenant's administrator. Shown in order. None of them blocks anything.
+          items:
+            $ref: "#/components/schemas/Notice"
+        access:
+          type: object
+          description: What the account signed in may do for the tenant. Added in 1.2; see `TenantRole`.
+          required: [role]
+          properties:
+            role:
+              $ref: "#/components/schemas/TenantRole"
+    TenantRole:
+      type: string
+      description: |
+        What an account may do for a tenant. Open: a client treats a value
+        it does not know like `none`.
+
+        * `manager` — an account that manages the tenant: it may acquire
+          for it. The account the store associated with the tenant, or
+          one an owner or administrator of the organization the tenant
+          belongs to, or the store's operator, approved.
+        * `requested` — an account that asked to manage the tenant, by
+          acquiring for it, and waits for approval.
+        * `declined` — such a request, turned down.
+        * `none` — signed in and nothing decided. Every account may read
+          the tenant's standing and acquisitions.
+
+        Removed in 1.15: `holder`, the first account that signed in for the
+        tenant, which decided who else manages it. A 1.15 store sends
+        `manager` for that account.
+      examples: [manager]
+    RefusalReason:
+      type: string
+      description: |
+        Why the store does not serve a tenant. Open: a client shows `detail`
+        for a value it does not know.
+
+        * `no-reports-for-tenant` — no usage statistics report lists this tenant URL.
+          Either the cluster does not report, or the tenant's realm is not
+          the one the report names.
+        * `tenant-not-claimed` — reports exist, and the account signed in
+          is not associated with this tenant: it is not the account of the
+          tenant's administrator (or another the store lets act for the
+          tenant). A store that lets other accounts ask to manage a tenant
+          does not refuse for this reason: such an account is served, and its acquisitions wait for `approval`. With this reason `GET /v1/tenant` answers
+          `served: false`, every `/v1/acquisitions` operation answers `403`
+          `tenant-refused` — also for an `id` that exists, so that the
+          account learns nothing of the tenant's acquisitions — and an open
+          read is answered as the anonymous one, without `acquired`.
+        * `reports-stale` — reports exist and the latest is older than the
+          store accepts.
+        * `tenant-blocked` — the store has decided not to serve this tenant.
+      examples: [no-reports-for-tenant]
+    Refusal:
+      type: object
+      required: [reason, detail]
+      properties:
+        reason:
+          $ref: "#/components/schemas/RefusalReason"
+        detail:
+          type: string
+          description: The reason in words, in the language of the request. Plain text. Shown to the person as it is.
+        link:
+          $ref: "#/components/schemas/Link"
+    Notice:
+      type: object
+      required: [type, severity, text]
+      properties:
+        type:
+          type: string
+          description: |
+            What kind of notice. Open: a client shows a notice of a type it
+            does not know like `message`.
+
+            * `free-license-limit` — the cluster this tenant is on has no
+              subscription. The text states the terms in the store's own
+              words.
+            * `reports-stale` — the latest usage statistics report is old.
+            * `message` — anything else the store has to say.
+          examples: [free-license-limit]
+        severity:
+          type: string
+          description: How prominently to show it. Closed.
+          enum: [info, warning]
+        title:
+          type: [string, "null"]
+          description: A short heading. Plain text.
+          maxLength: 120
+        text:
+          type: string
+          description: The notice. Plain text, in the language of the request.
+          maxLength: 2000
+        link:
+          $ref: "#/components/schemas/Link"
+    Link:
+      type: object
+      required: [url]
+      properties:
+        rel:
+          type: string
+          description: |
+            What the link leads to. Open; a client shows `label`, or the
+            address, for a value it does not know. Values: `homepage`,
+            `documentation`, `source`, `support`, `license`, `privacy`,
+            `terms`, `subscription`, `donate` -- where to give money to
+            the people who build the app, on an entry that is not sold --
+            and `video` (1.6), a tutorial or demonstration video.
+        label:
+          type: [string, "null"]
+          description: What to call it. Plain text.
+          maxLength: 80
+        url:
+          $ref: "#/components/schemas/Url"
+    Category:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Stable across languages; what the `category` filter takes and what an app's `categories` hold.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        name:
+          type: string
+          description: The category's name in the language of the request.
+          maxLength: 80
+    Publisher:
+      type: object
+      description: Who publishes the entry — the party that maintains or licenses it.
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        url:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+    EditionRef:
+      type: object
+      description: One edition an app is offered in, and the entry that is that edition.
+      required: [edition, coordinate]
+      properties:
+        edition:
+          $ref: "#/components/schemas/Edition"
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+    Price:
+      type: object
+      description: |
+        The list price of the entry: what the store asks of anybody, the
+        same with a token and without. It is shown, not computed with. What
+        a tenant is charged — a contract rate, a discount, tax — is what the
+        checkout says, and is not in this API.
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: |
+            `free`: nothing is charged and no checkout follows. `one-time`:
+            charged once. `subscription`: charged every `period`. `quote`:
+            the store names no amount; `note` says how to obtain one.
+            `freemium` (1.12): free to acquire, and no checkout follows;
+            `note` says what is free, and `amount`, `per` and `period`, where
+            they are stated, what is charged beyond it. Closed.
+          enum: [free, one-time, subscription, quote, freemium]
+        amount:
+          type: [string, "null"]
+          description: |
+            A decimal number as a string, with a point and no grouping
+            (`"4.50"`). `null` for `free` and `quote`, and for `freemium` when
+            what is charged beyond the free use is not stated.
+          pattern: "^[0-9]+(\\.[0-9]{1,4})?$"
+        currency:
+          type: [string, "null"]
+          description: ISO 4217, upper case. `null` exactly when `amount` is.
+          pattern: "^[A-Z]{3}$"
+        per:
+          type: [string, "null"]
+          description: What the amount is multiplied by. `tenant`, `user`, or `null` when it is a flat amount.
+          enum: [tenant, user, null]
+        period:
+          type: [string, "null"]
+          description: For `subscription`, how often it is charged.
+          enum: [month, year, null]
+        note:
+          type: [string, "null"]
+          description: Anything the numbers do not say. Plain text.
+          maxLength: 300
+    AppSummary:
+      type: object
+      required:
+        - coordinate
+        - family
+        - name
+        - summary
+        - iconUrl
+        - categories
+        - publisher
+        - edition
+        - editions
+        - trustTier
+        - latestVersion
+        - price
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        family:
+          type: string
+          description: The app this entry is an edition of, the same on every edition of it. Not shown; it groups entries.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        name:
+          type: string
+          description: The app's display name. Plain text.
+          maxLength: 80
+        summary:
+          type: string
+          description: One or two sentences. Plain text.
+          maxLength: 300
+        iconUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: A square image, at least 128 by 128 pixels, on one of `mediaOrigins`. `null` when the store has none.
+        categories:
+          type: array
+          description: Category ids.
+          items:
+            type: string
+        publisher:
+          $ref: "#/components/schemas/Publisher"
+        edition:
+          $ref: "#/components/schemas/Edition"
+        editions:
+          type: array
+          description: Every edition the app is offered in, this entry's included, each with the coordinate of the entry that is that edition.
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/EditionRef"
+        trustTier:
+          $ref: "#/components/schemas/TrustTier"
+        latestVersion:
+          type: string
+          description: The newest version the store lists for the entry.
+        price:
+          $ref: "#/components/schemas/Price"
+        acquired:
+          type: boolean
+          description: |
+            Whether the tenant in the token has a `confirmed` acquisition of
+            this coordinate. Optional, and present only on an answer to a
+            request that carried a valid token of a tenant the store
+            serves; absent from every anonymous answer. A client never
+            depends on it: `GET /v1/acquisitions` says the same.
+        rating:
+          oneOf:
+            - $ref: "#/components/schemas/ReviewSummary"
+            - type: "null"
+          description: The summary of the entry's reviews; `null` when the store carries none.
+        addonCount:
+          type: integer
+          minimum: 0
+          description: How many add-ons the entry's detail names in `addons`. Optional; a client that needs them reads the detail. Added in 1.4.
+        maturityScore:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 10
+          description: |
+            How mature the store judges the entry, 0 (least) to 10 (most).
+            What each point means is the store's to define and to publish
+            beside its listings; a client shows the number and does not
+            interpret it. `null` or absent: the store has not scored the
+            entry. Optional; added in 1.6.
+        installations:
+          type: integer
+          minimum: 0
+          description: |
+            How many tenants the store counts as having the entry. What it
+            counts -- confirmed acquisitions, installs it is told of -- is
+            the store's to say. Absent when the store does not say. Optional;
+            added in 1.6.
+    AppDetail:
+      allOf:
+        - $ref: "#/components/schemas/AppSummary"
+        - type: object
+          required: [description, screenshots, versions, addons, addonOf, links, license]
+          properties:
+            description:
+              type: string
+              description: The long text. Markdown, the subset `store-markdown-1`.
+              maxLength: 20000
+            screenshots:
+              type: array
+              description: In the order to show them.
+              items:
+                $ref: "#/components/schemas/Screenshot"
+            versions:
+              type: array
+              description: |
+                The versions the store lists, newest first; at most 50. The
+                first is `latestVersion`. Each states the digest an install
+                of it is pinned to.
+              minItems: 1
+              maxItems: 50
+              items:
+                $ref: "#/components/schemas/Version"
+            addons:
+              type: array
+              description: The add-ons that exist for this entry. Each is a store entry of its own, with its own coordinate.
+              items:
+                $ref: "#/components/schemas/AddonRef"
+            addonOf:
+              oneOf:
+                - $ref: "#/components/schemas/Coordinate"
+                - type: "null"
+              description: When this entry is itself an add-on, the coordinate of the app it extends; otherwise `null`.
+            links:
+              type: array
+              items:
+                $ref: "#/components/schemas/Link"
+            license:
+              oneOf:
+                - $ref: "#/components/schemas/License"
+                - type: "null"
+              description: The license the app is distributed under.
+            support:
+              type: array
+              description: |
+                The partners that offer support for the entry, in the order
+                to show them, in the language of the request; narrowed by
+                `country` when it was asked, or for a signed-in caller as the
+                operation says. Absent or empty when there are
+                none. Added in 1.3, with the feature `support`.
+              items:
+                $ref: "#/components/schemas/SupportOffer"
+            customization:
+              $ref: "#/components/schemas/CustomizationSummary"
+    CustomizationSummary:
+      type: object
+      description: |
+        How far the entry can be customized, as its profile declares it
+        (`spec.customization` of the ComponentProfile): the grade and the
+        rungs of the customization ladder it supports. A description, read
+        from the profile as published; the cluster reads the profile
+        itself. Optional; added in 1.6.
+      required: [grade, rungs]
+      properties:
+        grade:
+          type: string
+          enum: [A, B, C, D, unknown]
+          description: The profile's customization grade; `unknown` when the profile states none.
+        rungs:
+          type: array
+          description: The rungs the profile lists as supported, lowest first. Empty when it lists none.
+          items:
+            type: string
+            enum: [L0, L1, L2, L3, L4, L5, L6]
+    Screenshot:
+      type: object
+      required: [url, contentType]
+      properties:
+        url:
+          $ref: "#/components/schemas/Url"
+          description: On one of `mediaOrigins`.
+        contentType:
+          type: string
+          enum: [image/png, image/jpeg, image/webp]
+        width:
+          type: [integer, "null"]
+          description: In pixels, when the store knows it.
+        height:
+          type: [integer, "null"]
+        caption:
+          type: [string, "null"]
+          description: Also the image's alternative text. Plain text.
+          maxLength: 200
+    Version:
+      type: object
+      required: [version, digest, releasedAt, releaseNotes, requirements]
+      properties:
+        version:
+          type: string
+          description: The catalogue version of the entry, as its catalogue source's index states it.
+          maxLength: 64
+        digest:
+          $ref: "#/components/schemas/Digest"
+        releasedAt:
+          type: string
+          format: date-time
+          description: When this version was published. RFC 3339, UTC.
+        releaseNotes:
+          type: string
+          description: What changed. Markdown, the subset `store-markdown-1`. May be empty.
+          maxLength: 20000
+        requirements:
+          $ref: "#/components/schemas/Requirements"
+    Requirements:
+      type: object
+      description: |
+        What the version needs, for a person to read before acquiring. It is
+        a description: what the cluster enforces is what the profile bundle
+        itself declares, and the cluster reads that from the bundle, never
+        from here.
+      properties:
+        platform:
+          type: [string, "null"]
+          description: The Gentian OS versions it runs on, as a range (`>=0.5`).
+        resources:
+          type: [object, "null"]
+          description: The least the app reserves, as Kubernetes quantities.
+          properties:
+            cpu:
+              type: [string, "null"]
+              examples: [500m]
+            memory:
+              type: [string, "null"]
+              examples: [1Gi]
+            storage:
+              type: [string, "null"]
+              examples: [10Gi]
+        notes:
+          type: array
+          description: Anything else, one sentence each. Plain text.
+          items:
+            type: string
+            maxLength: 300
+        offers:
+          type: array
+          description: |
+            Added in 1.8. The integration contracts the app provides to other
+            apps of the tenant (the profile's `spec.provides`). Absent or
+            empty: none stated.
+          items:
+            $ref: "#/components/schemas/ContractMention"
+        canUse:
+          type: array
+          description: |
+            Added in 1.8. The integration contracts the app can consume when
+            another app of the tenant provides one (the profile's
+            `spec.integrations`); all of them optional. Absent or empty: none
+            stated.
+          items:
+            $ref: "#/components/schemas/ContractMention"
+    ContractMention:
+      type: object
+      required: [contract]
+      properties:
+        contract:
+          type: string
+          description: The contract's name, as profiles name it.
+          pattern: "^[a-z0-9-]{1,63}$"
+          examples: [file-store]
+        name:
+          type: [string, "null"]
+          description: The contract's name as people read it, where the store has one; a client shows `contract` otherwise.
+          maxLength: 80
+    AddonRef:
+      type: object
+      required: [coordinate, name, summary]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        name:
+          type: string
+          maxLength: 80
+        summary:
+          type: string
+          maxLength: 300
+        iconUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: The add-on's icon, as `iconUrl` of a summary. Optional; added in 1.4.
+        edition:
+          $ref: "#/components/schemas/Edition"
+          description: The add-on's edition. Optional; added in 1.4.
+        price:
+          $ref: "#/components/schemas/Price"
+          description: The add-on's list price. Optional; added in 1.4.
+    License:
+      type: object
+      required: [name]
+      properties:
+        spdx:
+          type: [string, "null"]
+          description: The SPDX identifier, when the license has one.
+        name:
+          type: string
+          maxLength: 120
+        url:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+    ReviewSummary:
+      type: object
+      required: [count, average, distribution]
+      properties:
+        count:
+          type: integer
+          minimum: 0
+        average:
+          type: [number, "null"]
+          description: The mean rating, 1 to 5, to one decimal; `null` when `count` is 0.
+          minimum: 1
+          maximum: 5
+        recommend:
+          type: object
+          description: How many reviews said they would recommend the app, and how many said not; reviews that did not say are in neither.
+          required: ["yes", "no"]
+          properties:
+            "yes": {type: integer, minimum: 0}
+            "no": {type: integer, minimum: 0}
+        scores:
+          type: object
+          description: The mean of each score over the reviews that gave it.
+          required: [features, easeOfUse, easeOfSetup, support, value]
+          properties:
+            features: {$ref: "#/components/schemas/ScoreSummary"}
+            easeOfUse: {$ref: "#/components/schemas/ScoreSummary"}
+            easeOfSetup: {$ref: "#/components/schemas/ScoreSummary"}
+            support: {$ref: "#/components/schemas/ScoreSummary"}
+            value: {$ref: "#/components/schemas/ScoreSummary"}
+        distribution:
+          type: object
+          description: How many reviews gave each rating. Keys `"1"` to `"5"`, all present.
+          required: ["1", "2", "3", "4", "5"]
+          additionalProperties: false
+          properties:
+            "1": {type: integer, minimum: 0}
+            "2": {type: integer, minimum: 0}
+            "3": {type: integer, minimum: 0}
+            "4": {type: integer, minimum: 0}
+            "5": {type: integer, minimum: 0}
+    CompanySize:
+      type: string
+      description: |
+        How many people work at the company: the size classes of EU
+        statistics (micro, small, medium) with large split at a thousand.
+      enum: ["1-9", "10-49", "50-249", "250-999", "1000+"]
+    Industry:
+      type: string
+      description: |
+        The company's main activity, by the sections of NACE Rev. 2, the
+        EU's classification of economic activities, which is also the list
+        Odoo's partner industries are drawn from. `GET /v1/meta` names each.
+      enum:
+        - agriculture
+        - mining
+        - manufacturing
+        - energy
+        - water-waste
+        - construction
+        - wholesale-retail
+        - transport-logistics
+        - accommodation-food
+        - information-communication
+        - finance-insurance
+        - real-estate
+        - professional-scientific
+        - administrative-support
+        - public-administration
+        - education
+        - health-social
+        - arts-entertainment
+        - other-services
+        - households
+        - extraterritorial
+    Company:
+      type: object
+      required: [name, size, industry]
+      properties:
+        name:
+          type: string
+          description: Plain text.
+          minLength: 1
+          maxLength: 120
+        size:
+          $ref: "#/components/schemas/CompanySize"
+        industry:
+          $ref: "#/components/schemas/Industry"
+    ReviewScores:
+      type: object
+      description: |
+        Stars, 1 to 5, for what a review rates. `support` (quality of
+        support) and `value` (value for money) are for an entry of edition
+        `ee`, and `null` on any other.
+      required: [features, easeOfUse, easeOfSetup, support, value]
+      properties:
+        features: {type: integer, minimum: 1, maximum: 5}
+        easeOfUse: {type: integer, minimum: 1, maximum: 5}
+        easeOfSetup: {type: integer, minimum: 1, maximum: 5}
+        support: {type: [integer, "null"], minimum: 1, maximum: 5}
+        value: {type: [integer, "null"], minimum: 1, maximum: 5}
+    ReviewRequest:
+      type: object
+      required: [recommend, scores, text]
+      properties:
+        recommend:
+          type: boolean
+          description: Would the author recommend the app to others.
+        scores:
+          $ref: "#/components/schemas/ReviewScores"
+        title:
+          type: [string, "null"]
+          maxLength: 120
+        text:
+          type: string
+          description: Plain text. May be empty.
+          maxLength: 5000
+        version:
+          type: [string, "null"]
+    ScoreSummary:
+      type: object
+      required: [average, count]
+      properties:
+        average:
+          type: [number, "null"]
+          description: The mean, 1 to 5, to one decimal; `null` when `count` is 0.
+        count:
+          type: integer
+          minimum: 0
+    Review:
+      type: object
+      required: [id, rating, text, author, date]
+      properties:
+        id:
+          type: string
+        rating:
+          type: integer
+          description: The review's overall stars. For a review written with `scores`, their mean, rounded.
+          minimum: 1
+          maximum: 5
+        recommend:
+          type: [boolean, "null"]
+          description: Whether the author would recommend the app; `null` on a review that did not say.
+        scores:
+          oneOf:
+            - $ref: "#/components/schemas/ReviewScores"
+            - type: "null"
+        reviewer:
+          oneOf:
+            - type: object
+              required: [size, industry]
+              properties:
+                size:
+                  $ref: "#/components/schemas/CompanySize"
+                industry:
+                  $ref: "#/components/schemas/Industry"
+            - type: "null"
+          description: The size and industry of the author's company; never its name.
+        mine:
+          type: boolean
+          description: Present and true on the signed-in person's own review.
+        title:
+          type: [string, "null"]
+          description: Plain text.
+          maxLength: 120
+        text:
+          type: string
+          description: Plain text, as its author wrote it and in the language they wrote it in. Not translated.
+          maxLength: 5000
+        author:
+          type: string
+          description: |
+            The author's display name as the store chooses to show it. It is
+            the only thing about the author this API carries; whether it
+            is a name, initials or a description is the store's decision.
+          maxLength: 80
+        date:
+          type: string
+          format: date
+          description: The day the review was written.
+        language:
+          type: [string, "null"]
+          description: The language of `text`, BCP 47, when the store knows it.
+        version:
+          type: [string, "null"]
+          description: The version the review is about, when the author said.
+    Report:
+      type: object
+      required: [id, kind, title, date, summary, documentUrl]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          description: |
+            What the document is. Open; a client shows a value it does not
+            know as `other`. Values: `security`, `quality`, `accessibility`,
+            `privacy`, `license`, `other`.
+          examples: [security]
+        title:
+          type: string
+          description: Plain text.
+          maxLength: 200
+        issuer:
+          type: [string, "null"]
+          description: Who wrote it. Plain text.
+          maxLength: 120
+        date:
+          type: string
+          format: date
+          description: The day the document is dated.
+        summary:
+          type: string
+          description: What it found, in a few sentences. Plain text.
+          maxLength: 2000
+        version:
+          type: [string, "null"]
+          description: The version of the app it is about, when it is about one.
+        documentUrl:
+          $ref: "#/components/schemas/Url"
+          description: The document itself. Opened in a separate window, never embedded.
+        documentType:
+          type: [string, "null"]
+          description: The document's media type, when the store knows it.
+          examples: [application/pdf]
+    CountryCode:
+      type: string
+      description: An ISO 3166-1 alpha-2 country code, in upper case.
+      pattern: "^[A-Z]{2}$"
+      examples: [CH]
+    SupportOffer:
+      type: object
+      description: |
+        A partner's offer of support for an entry. Plain text throughout.
+        What it costs and on which terms are between the person and the
+        partner, or the store; this API carries only what is shown.
+      required: [id, partner, countries, languages, tiers, priceHint, contactUrl, requestable]
+      properties:
+        id:
+          type: string
+          description: Opaque. What a support request names as `offer`.
+          minLength: 1
+          maxLength: 64
+        partner:
+          $ref: "#/components/schemas/SupportPartner"
+        countries:
+          type: array
+          description: The countries the offer covers. Empty means worldwide.
+          items:
+            $ref: "#/components/schemas/CountryCode"
+        languages:
+          type: array
+          description: The languages support is given in, BCP 47.
+          items:
+            type: string
+        tiers:
+          type: array
+          description: The levels of support offered, in the order to show them.
+          items:
+            $ref: "#/components/schemas/SupportTier"
+        priceHint:
+          type: [string, "null"]
+          description: What the offer costs, as the partner puts it, in a few words.
+          maxLength: 200
+        contactUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: Where to contact the partner. Opened in a separate window, never embedded.
+        requestable:
+          type: boolean
+          description: Whether a request may be sent with `POST /v1/apps/{catalogue}/{app}/support-requests`.
+    SupportPartner:
+      type: object
+      description: Who offers the support.
+      required: [slug, name, url, logoUrl, verified]
+      properties:
+        slug:
+          type: string
+          description: Stable; identifies the partner across offers and languages.
+          pattern: "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$"
+        name:
+          type: string
+          maxLength: 120
+        url:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: The partner's own page. Opened in a separate window.
+        logoUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: On one of `mediaOrigins`; `image/png`, `image/jpeg` or `image/webp` like every image. `null` when the store has none.
+        verified:
+          type: boolean
+          description: Whether the store has verified the partner. What verifying involves is the store's.
+    SupportTier:
+      type: object
+      required: [name, description]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        description:
+          type: [string, "null"]
+          maxLength: 500
+    SupportRequest:
+      type: object
+      required: [offer]
+      additionalProperties: false
+      properties:
+        offer:
+          type: string
+          description: The `id` of a support offer of this entry.
+          minLength: 1
+          maxLength: 64
+        message:
+          type: [string, "null"]
+          description: What the person wants to say to the partner. Plain text.
+          maxLength: 2000
+    SupportRequestReceipt:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          description: The store's reference for the request, to quote when following it up.
+        status:
+          type: string
+          description: Always `received` in 1.3. Open; a client treats an unknown value like `received`.
+          examples: [received]
+    AcquisitionRequest:
+      type: object
+      required: [coordinate]
+      additionalProperties: false
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        version:
+          type: string
+          description: The version to confirm. Absent means the latest the store lists.
+        seats:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: |
+            Added in 1.9. How many people the app is for: the people the
+            tenant's administrator chose, or the tenant's users when it is
+            for everybody. A priced app's checkout is for that many seats,
+            at the price per seat. Absent: the store decides, as before.
+        organization:
+          $ref: "#/components/schemas/TenantOrganization"
+    TenantOrganization:
+      type: object
+      additionalProperties: false
+      description: |
+        Added in 1.14, with the feature `tenant-organization`. Who the tenant
+        is, as its administrators set it under Tenant Settings: what the
+        store makes the person's organization from where they have none, and
+        an unclaimed tenant becomes that organization's. Nothing about the
+        tenant's people. Every field optional; absent, the store makes no
+        organization of its own accord.
+      properties:
+        displayName: {type: string, maxLength: 200, description: What the tenant's people call it.}
+        legalName: {type: string, maxLength: 200, description: The name the organization is registered under.}
+        country: {type: string, pattern: "^[A-Z]{2}$"}
+        website: {type: string, maxLength: 200}
+        email: {type: string, maxLength: 200}
+        phone: {type: string, maxLength: 40}
+        taxId: {type: string, maxLength: 40, description: The VAT number.}
+        address:
+          type: object
+          additionalProperties: false
+          properties:
+            street: {type: string, maxLength: 200}
+            postalCode: {type: string, maxLength: 20}
+            city: {type: string, maxLength: 100}
+            region: {type: string, maxLength: 100}
+    FreeAcquisitionRequest:
+      type: object
+      description: Added in 1.13. The body of `POST /v1/acquisitions/free`.
+      required: [coordinate, tenant]
+      additionalProperties: false
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        version:
+          type: string
+          description: The version to confirm. Absent means the latest the store lists.
+        tenant:
+          type: string
+          pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
+          description: |
+            The tenant's `metadata.uid`, as the cluster's usage statistics
+            report names it (`tenants[].uid`). The store holds it, with the
+            assertion's issuer, to that report.
+        terms:
+          type: object
+          description: |
+            The tenant's acceptance of the store's terms as the cluster
+            recorded it (`spec.storeTerms`). Taken where the latest report
+            does not carry it yet, and recorded as stated in the request.
+          required: [version]
+          additionalProperties: false
+          properties:
+            version:
+              type: string
+              pattern: "^[A-Za-z0-9._-]{1,64}$"
+            acceptedAt:
+              type: string
+              format: date-time
+    AcquisitionStatus:
+      type: string
+      description: |
+        * `pending` — not decided yet. `waitingFor` says on what; while it
+          is `checkout`, a checkout is open and `checkoutUrl` is present.
+        * `confirmed` — the tenant has the app. `confirmation` is present.
+        * `cancelled` — the person left the checkout, or the acquisition
+          was ended later. Ending an acquisition ends the credential
+          issued for it (see `Credential`).
+        * `failed` — the checkout did not complete. `failure` says why.
+
+        `pending` becomes one of the other three and never the reverse.
+        `confirmed` may become `cancelled`. Closed.
+      enum: [pending, confirmed, cancelled, failed]
+    Acquisition:
+      type: object
+      required: [id, coordinate, status, createdAt, updatedAt, checkoutUrl, checkoutExpiresAt, failure, confirmation]
+      properties:
+        id:
+          type: string
+          description: The store's name for this acquisition. Opaque.
+          pattern: "^[A-Za-z0-9_-]{1,64}$"
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        status:
+          $ref: "#/components/schemas/AcquisitionStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the status last changed.
+        seats:
+          type: integer
+          minimum: 1
+          description: How many seats it is for, where the acquisition named them (1.10).
+        waitingFor:
+          type: [string, "null"]
+          description: |
+            What a `pending` acquisition waits for; `null` in every other
+            status. Open: a client treats a value it does not know like
+            `confirmation`, and asks again after `Retry-After`.
+
+            * `confirmation` — the store has not decided yet. It usually
+              has within a second or two.
+            * `approval` — the account does not manage the tenant yet (see
+              `TenantRole`). An owner or administrator of the organization
+              the tenant belongs to, or the store's operator, decides
+              outside this API: the acquisition goes on once the account is
+              approved, or fails with `access-declined` if it is declined.
+            * `checkout` — a payment. `checkoutUrl` is present.
+
+            Added in 1.2. A 1.1 store answers every `pending` acquisition
+            at a checkout and sends no `waitingFor`.
+          enum: [confirmation, approval, checkout, null]
+        checkoutUrl:
+          oneOf:
+            - $ref: "#/components/schemas/Url"
+            - type: "null"
+          description: |
+            Where the person completes the acquisition, at the store.
+            Present exactly while the status is `pending` and `waitingFor`
+            is `checkout`. On one of
+            `checkoutOrigins`. It is opened in a separate window and is
+            usable only by a person signed in to the store.
+        checkoutExpiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: When an unfinished checkout is given up and the acquisition becomes `cancelled`.
+        failure:
+          type: [object, "null"]
+          description: Present exactly when the status is `failed`.
+          required: [reason, detail]
+          properties:
+            reason:
+              type: string
+              description: Open. Values include `payment-declined`, `checkout-expired`, `not-available`, `access-declined`.
+            detail:
+              type: string
+              description: The reason in words, in the language of the request. Plain text.
+        confirmation:
+          oneOf:
+            - $ref: "#/components/schemas/Confirmation"
+            - type: "null"
+          description: Present exactly when the status is `confirmed`.
+    Confirmation:
+      description: |
+        What the store hands the cluster's side when a tenant has an app:
+        which build, and — when the build's artefacts are in a private
+        repository — where they are and the credential that repository
+        checks. It is a statement of facts. It is not signed, the cluster
+        verifies nothing about its origin beyond the TLS connection it came
+        over, and it grants nothing on the cluster.
+
+        What the App Store app does with it, in this order, each step under
+        the signed-in person's own token and subject to the cluster's own
+        checks:
+
+        1. For each distinct `repository` in the confirmation and its
+           `addons`: compute the name it is declared under (see
+           `Repository`; the store names nothing on the cluster), declare
+           it for the tenant at the director
+           (`PUT /v1/tenants/{t}/repositories/{name}` with
+           `{"role": "apps", "type": <type>, "url": <url>}`), then set its
+           credential at the custodian
+           (`PUT /v1/credentials/repository-<name>` with the fields
+           `username` and `password`, the password being `token`). The
+           credential is handed over once and not kept by the app.
+        2. Install at the director
+           (`POST /v1/tenants/{t}/apps/{app}` with
+           `{"coordinate", "digest", "defaultGrant"}`), `coordinate` and
+           `digest` being exactly the ones here.
+        3. When `metering` is present -- an app priced by use -- set it as
+           the app's supplied credential `metering` at the custodian
+           (`PUT /v1/credentials/app-<tenant>-<app>-metering` with the
+           fields `url`, `install` and `key`), once the install has made
+           that requirement, and keep it nowhere. The app signs what it
+           reports of its use with the key; a person can replace the
+           credential but never read it.
+
+        The cluster then fetches the profile bundle from the catalogue
+        source its own Cluster claim names for `<catalogue>`, and installs
+        only if those bytes hash to `digest`.
+      allOf:
+        - $ref: "#/components/schemas/ConfirmedItem"
+        - type: object
+          required: [addons]
+          properties:
+            metering:
+              $ref: "#/components/schemas/Metering"
+            addons:
+              type: array
+              description: |
+                The add-ons this acquisition includes, each with its own
+                coordinate, version and digest. Empty when it includes none.
+              items:
+                $ref: "#/components/schemas/ConfirmedItem"
+    Metering:
+      type: object
+      description: |
+        Where an app priced by use reports what it ran, the name it reports
+        under, and the key it signs its reports with. Present only for such
+        an app, where its repository's credential would be.
+        Opaque to the cluster, which hands it to the app (step 3 above).
+      required: [url, install, key]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: "^https://"
+        install:
+          type: string
+          maxLength: 64
+        key:
+          type: string
+          maxLength: 128
+    ConfirmedItem:
+      type: object
+      required: [coordinate, version, digest]
+      properties:
+        coordinate:
+          $ref: "#/components/schemas/Coordinate"
+        version:
+          type: string
+          description: The version confirmed, for a person to read. The cluster pins `digest`, not this.
+        digest:
+          $ref: "#/components/schemas/Digest"
+        repository:
+          $ref: "#/components/schemas/Repository"
+    Repository:
+      type: object
+      description: |
+        The private repository an app's chart and images are pulled from.
+        Absent for an app whose artefacts are public: a free app's
+        confirmation carries no repository and no credential.
+
+        **The store names nothing on the cluster.** A repository is its
+        `type` and its `url`. The name it is declared under on the cluster
+        is computed there, by the App Store app, from the tenant's name on
+        the cluster and `url`:
+
+            address = url without the leading "oci://", lower-cased
+            slug    = address with every run of characters outside [a-z0-9]
+                      replaced by one "-", leading and trailing "-" removed
+            hash    = the first 8 hexadecimal characters, lower case, of
+                      SHA-256(tenant + LF + address), UTF-8, LF being the
+                      one byte 0x0A
+            stem    = tenant + "-" + slug, cut to its first 31 characters,
+                      trailing "-" removed
+            name    = stem + "-" + hash          (at most 40 characters)
+
+        Tenant `acme` and `oci://registry.store.example/apps` give
+        `acme-registry-store-example-app-991ae7e1`; tenant `demo` and
+        `oci://ghcr.io/example` give `demo-ghcr-io-example-59b6b43d`.
+
+        The same tenant and the same `url` always give the same name, and
+        two tenants never share one. A store therefore hands a tenant the
+        same `url` for the same repository every time, in one spelling.
+      required: [type, url]
+      properties:
+        type:
+          type: string
+          description: |
+            The kind of repository, in the cluster's own spelling. Only
+            `oci` is accepted from a store: an OCI registry holding charts
+            and images. It is the only type a cluster pulls a tenant's app
+            charts and images from with a credential today. The cluster's
+            director also knows `git`, and a
+            client refuses it in a confirmation — on a cluster a git
+            repository of apps is a source of profiles, which is exactly
+            what a store may not supply. Closed.
+          enum: [oci]
+        url:
+          type: string
+          description: |
+            The registry address, `oci://<host>[/<path>]`, with no
+            credentials in it and no trailing slash. It must contain the
+            address the entry's profile bundle itself names for its chart:
+            the same host and port, and a path that is a prefix of the
+            chart's by whole segments. The cluster pulls from where the
+            verified bundle says, and this declaration only supplies the
+            credential for that address. It must not overlap another
+            repository the same tenant has declared: the cluster does not
+            install a chart whose address lies inside two of a tenant's
+            repositories, rather than guess which credential is meant. A
+            chart inside none is pulled with no credential.
+          pattern: "^oci://[^\\s/@]+(/[^\\s@]+)?$"
+          examples: ["oci://registry.store.example/apps"]
+        credential:
+          $ref: "#/components/schemas/Credential"
+    Credential:
+      type: object
+      description: |
+        The tenant's registry credential: what the repository checks on
+        every pull. The store mints it for one tenant; the repository
+        refuses pulls without it. To the cluster it is opaque: the App
+        Store app hands the user name and the token to the cluster's
+        custodian once, the cluster stores them in its vault, hands them to
+        what pulls, and never interprets, logs or returns them.
+
+        It is not the assertion (see the security scheme
+        `partnerAssertion`): that one says who is asking, this one pulls.
+
+        **One per tenant and repository.** The cluster keeps one credential
+        for each repository address a tenant has declared. Every
+        confirmation a store hands one tenant for the same `url` therefore
+        carries the same `username` and a token that pulls everything that
+        tenant has acquired in that repository.
+
+        **It does not expire, for now.** A store issues credentials with no
+        expiry: `expiresAt` is `null`. Two things end one. *Rotation*:
+        `POST /v1/acquisitions/{id}/credential` replaces it, and the
+        replaced one is refused after the overlap stated there. *The end of
+        the acquisition*: a credential stops pulling an app when the
+        tenant's acquisition of it ends (`cancelled`), and is refused
+        altogether once it serves no acquisition.
+
+        Holding it is what makes a private app arrive on a cluster. It does
+        not keep the app to one tenant of that cluster: the cluster's chart
+        installer caches charts by name and version, so a chart one tenant
+        pulled can be installed by another tenant of the same cluster until
+        that process restarts, and an image already on a node can be started
+        by any pod that does not force a pull. The credential is not
+        disclosed by either; the artefact is. Image credentials reach a pod
+        only through a chart that takes `imagePullSecrets` or
+        `global.imagePullSecrets`.
+
+        Absent from a `Repository` in `GET /v1/acquisitions`, and in every
+        answer to an account that does not manage the tenant.
+      required: [username, token, expiresAt]
+      properties:
+        username:
+          type: string
+          description: |
+            The user name the registry expects with the token. One per
+            tenant: the store chooses it, hands the same one to the same
+            tenant every time, and to no other tenant. The cluster treats
+            it as opaque and stores it beside the token. Required: the
+            cluster's chart installer needs a user name and a password, and
+            a token with no user name fails there.
+          minLength: 1
+          maxLength: 255
+        token:
+          type: string
+          description: The secret. No leading or trailing whitespace.
+          minLength: 1
+          maxLength: 4096
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            `null`: the credential does not expire. A store issues every
+            credential with `null` for now. The member stays in the format,
+            and stays required, so that an expiry can be introduced later
+            without changing it; a client that is handed a date shows it
+            and does nothing else on its account.
+    Problem:
+      type: object
+      description: RFC 9457 problem details, with the members this API adds.
+      required: [type, code, title, status]
+      properties:
+        type:
+          type: string
+          description: "`urn:gentian:store:problem:` followed by `code`."
+          examples: ["urn:gentian:store:problem:tenant-refused"]
+        code:
+          type: string
+          description: The stable value a client branches on. Open; a client treats one it does not know by its `status`.
+          examples: [tenant-refused]
+        title:
+          type: string
+          description: A short, fixed summary of the code, in the language of the request.
+        status:
+          type: integer
+          description: The HTTP status, repeated.
+        detail:
+          type: string
+          description: What happened this time, for a person, in the language of the request. Plain text.
+        instance:
+          type: string
+          description: The store's reference for this occurrence, to quote when asking for help.
+        reason:
+          $ref: "#/components/schemas/RefusalReason"
+          description: With `tenant-refused` only.
+        errors:
+          type: array
+          description: With `invalid-request`, the fields that are wrong.
+          items:
+            type: object
+            required: [field, detail]
+            properties:
+              field:
+                type: string
+                description: The parameter's name, or the member's path in the body (`version`).
+              detail:
+                type: string
+  examples:
+    Meta:
+      value:
+        apiVersion: "1.0"
+        name: Example Store
+        partner:
+          issuer: https://id.store.example/auth/realms/customers
+        registrationUrl: https://store.example/register
+        defaultLanguage: en
+        languages: [en, de, fr, it]
+        mediaOrigins: ["https://media.store.example"]
+        checkoutOrigins: ["https://store.example"]
+        features: [reviews, reports, checkout, support]
+        catalogues:
+          - name: gentian
+            url: https://catalogue.example/gentian
+            displayName: Gentian OS
+          - name: publisher
+            url: https://catalogue.publisher.example
+            displayName: Example Publisher
+        links:
+          terms: https://store.example/terms
+          privacy: https://store.example/privacy
+          support: https://store.example/support
+          account: https://accounts.store.example/account
+        termsVersion: "2026-10"
+    TenantServed:
+      value:
+        tenantUrl: https://acme.example
+        known: true
+        lastReportAt: "2026-10-06T05:06:07Z"
+        served: true
+        refusal: null
+        notices:
+          - type: free-license-limit
+            severity: info
+            title: This cluster has no subscription
+            text: Terms text supplied by the store.
+            link:
+              rel: subscription
+              label: About subscriptions
+              url: https://store.example/subscription
+    TenantRefused:
+      value:
+        tenantUrl: https://acme.example
+        known: false
+        lastReportAt: null
+        served: false
+        refusal:
+          reason: no-reports-for-tenant
+          detail: >-
+            No usage statistics report names https://acme.example. The store serves tenants of clusters that report;
+            ask the cluster's administrator whether reporting is on.
+          link:
+            rel: documentation
+            label: Usage statistics
+            url: https://store.example/help/reporting
+        notices: []
+    TenantNotClaimed:
+      value:
+        tenantUrl: https://acme.example
+        known: true
+        lastReportAt: "2026-10-06T05:06:07Z"
+        served: false
+        refusal:
+          reason: tenant-not-claimed
+          detail: >-
+            This account is not associated with https://acme.example. The store lets the account of the
+            tenant's administrator act for a tenant.
+        notices: []
+    AppDetail:
+      value:
+        coordinate: gentian/nextcloud-base-ee
+        family: nextcloud
+        name: Nextcloud
+        summary: Files, calendars and contacts for a team, on your own cluster.
+        iconUrl: https://media.store.example/icons/nextcloud.png
+        categories: [files, collaboration]
+        publisher:
+          name: Example Publisher AG
+          url: https://publisher.example
+        edition: ee
+        editions:
+          - {edition: ce, coordinate: gentian/nextcloud-base-ce}
+          - {edition: ee, coordinate: gentian/nextcloud-base-ee}
+        trustTier: certified
+        latestVersion: 31.0.4
+        price:
+          model: subscription
+          amount: "4.50"
+          currency: CHF
+          per: user
+          period: month
+          note: null
+        rating:
+          count: 2
+          average: 4.5
+          distribution: {"1": 0, "2": 0, "3": 0, "4": 1, "5": 1}
+        addonCount: 1
+        maturityScore: 7
+        installations: 120
+        description: |
+          Nextcloud keeps a team's files, calendars and contacts in one place.
+
+          ## What is included
+
+          - File sync and sharing
+          - Calendar and contacts
+          - **Enterprise** support by the publisher
+
+          See the [administration manual](https://publisher.example/docs).
+        screenshots:
+          - url: https://media.store.example/shots/nextcloud-files.png
+            contentType: image/png
+            width: 1600
+            height: 1000
+            caption: The files view
+        versions:
+          - version: 31.0.4
+            digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+            releasedAt: "2026-09-20T08:00:00Z"
+            releaseNotes: "Fixes two issues in calendar sharing."
+            requirements:
+              platform: ">=0.5"
+              resources: {cpu: 500m, memory: 1Gi, storage: 10Gi}
+              notes: [Needs the tenant's mail service to send invitations.]
+          - version: 31.0.3
+            digest: sha256:9a8b7c6d5e4f30211203f4e5d6c7b8a99a8b7c6d5e4f30211203f4e5d6c7b8a9
+            releasedAt: "2026-08-11T08:00:00Z"
+            releaseNotes: ""
+            requirements:
+              platform: ">=0.5"
+              resources: {cpu: 500m, memory: 1Gi, storage: 10Gi}
+              notes: []
+        addons:
+          - coordinate: gentian/nextcloud-office-ee
+            name: Office
+            summary: Edit documents in the browser.
+            iconUrl: https://media.store.example/icons/nextcloud-office.png
+            edition: ee
+            price:
+              model: subscription
+              amount: "2.00"
+              currency: CHF
+              per: user
+              period: month
+              note: null
+        addonOf: null
+        links:
+          - {rel: homepage, label: null, url: "https://publisher.example"}
+          - {rel: documentation, label: Administration manual, url: "https://publisher.example/docs"}
+          - {rel: source, label: null, url: "https://git.publisher.example/nextcloud"}
+          - {rel: video, label: Getting started, url: "https://www.youtube.com/watch?v=example"}
+        license:
+          spdx: null
+          name: Example Publisher Enterprise License
+          url: https://publisher.example/license
+        support:
+          - id: so_01JA2K7M
+            partner:
+              slug: example-integrations
+              name: Example Integrations GmbH
+              url: https://integrations.example
+              logoUrl: https://media.store.example/partners/example-integrations.png
+              verified: true
+            countries: [CH, DE, AT]
+            languages: [de, en]
+            tiers:
+              - name: Standard
+                description: Answers on working days within one day.
+              - name: Premium
+                description: Answers within four hours, every day.
+            priceHint: On request
+            contactUrl: https://integrations.example/contact
+            requestable: true
+        customization:
+          grade: A
+          rungs: [L0, L1, L3, L4]
+    Confirmation:
+      value:
+        coordinate: gentian/nextcloud-base-ee
+        version: 31.0.4
+        digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+        repository:
+          type: oci
+          url: oci://registry.store.example/apps
+          credential:
+            username: tenant-7c1d9e02ab
+            token: 3q2-EXAMPLE-ONLY-NOT-A-TOKEN-x7Lk
+            expiresAt: null
+        addons:
+          - coordinate: gentian/nextcloud-office-ee
+            version: 31.0.4
+            digest: sha256:0b1c2d3e4f5a69788796a5f4e3d2c1b00b1c2d3e4f5a69788796a5f4e3d2c1b0
+            repository:
+              type: oci
+              url: oci://registry.store.example/apps
+              credential:
+                username: tenant-7c1d9e02ab
+                token: 3q2-EXAMPLE-ONLY-NOT-A-TOKEN-x7Lk
+                expiresAt: null
+    AcquisitionConfirmed:
+      value:
+        id: acq_01JA2M8Y
+        coordinate: gentian/nextcloud-base-ee
+        status: confirmed
+        createdAt: "2026-10-01T09:14:03Z"
+        updatedAt: "2026-10-01T09:16:40Z"
+        checkoutUrl: null
+        checkoutExpiresAt: null
+        failure: null
+        confirmation:
+          coordinate: gentian/nextcloud-base-ee
+          version: 31.0.4
+          digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+          repository:
+            type: oci
+            url: oci://registry.store.example/apps
+            credential:
+              username: tenant-7c1d9e02ab
+              token: 3q2-EXAMPLE-ONLY-NOT-A-TOKEN-x7Lk
+              expiresAt: null
+          addons: []
+    AcquisitionConfirmedNoCredential:
+      value:
+        id: acq_01JA2M8Y
+        coordinate: gentian/nextcloud-base-ee
+        status: confirmed
+        createdAt: "2026-10-01T09:14:03Z"
+        updatedAt: "2026-10-01T09:16:40Z"
+        checkoutUrl: null
+        checkoutExpiresAt: null
+        failure: null
+        confirmation:
+          coordinate: gentian/nextcloud-base-ee
+          version: 31.0.4
+          digest: sha256:3f6c0a1e5b7d9c2a4e6f8091a3b5c7d9e1f20314253647586970a1b2c3d4e5f6
+          repository:
+            type: oci
+            url: oci://registry.store.example/apps
+          addons: []
+    AcquisitionFree:
+      value:
+        id: acq_01JA2N4C
+        coordinate: gentian/xwiki-ce
+        status: confirmed
+        createdAt: "2026-10-01T10:02:11Z"
+        updatedAt: "2026-10-01T10:02:11Z"
+        checkoutUrl: null
+        checkoutExpiresAt: null
+        failure: null
+        confirmation:
+          coordinate: gentian/xwiki-ce
+          version: 16.4.1
+          digest: sha256:5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e
+          addons: []
+    AcquisitionPending:
+      value:
+        id: acq_01JA2M8Y
+        coordinate: gentian/nextcloud-base-ee
+        status: pending
+        createdAt: "2026-10-01T09:14:03Z"
+        updatedAt: "2026-10-01T09:14:03Z"
+        checkoutUrl: https://store.example/checkout/acq_01JA2M8Y
+        checkoutExpiresAt: "2026-10-01T10:14:03Z"
+        failure: null
+        confirmation: null

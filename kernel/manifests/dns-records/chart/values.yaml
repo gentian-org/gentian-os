@@ -1,0 +1,3 @@
+# Filled by the dns-records Application (bootstrap chart) from the Cluster
+# claim's certificates.dnsRecords: {name, type, target}, one per record.
+records: []

@@ -22,7 +22,7 @@
 #
 # A regex over the Composition templates directly finds fewer than either,
 # because the interesting kinds sit behind conditionals (issuerMode,
-# routingMode, isOci, ...). So a single source would produce a role that works
+# isOci, ...). So a single source would produce a role that works
 # until some path nobody has run reaches the API server and is refused.
 #
 # WHAT KEEPS IT CURRENT
@@ -43,8 +43,7 @@
 # let anything create a role granting permissions it does not itself hold.
 # Scoping it means either holding the union of everything every installed
 # chart grants, or `escalate` — which permits minting any role at all and is
-# cluster-admin under a quieter name. See provider-rbac.yaml and
-# docs/roadmap.md §1.16.
+# cluster-admin under a quieter name. See provider-rbac.yaml.
 verbs:
   - get
   - list
@@ -64,6 +63,7 @@ kinds:
       - services         # Service
   - group: argoproj.io
     resources:
+      - applications     # Application
       - applicationsets  # ApplicationSet
       - appprojects      # AppProject
   - group: batch
@@ -72,11 +72,21 @@ kinds:
   - group: cert-manager.io
     resources:
       - certificates     # Certificate
+      - clusterissuers   # ClusterIssuer
   - group: external-secrets.io
     resources:
       - clusterexternalsecrets  # ClusterExternalSecret
       - clustersecretstores    # ClusterSecretStore
       - externalsecrets        # ExternalSecret
+  # Not from a Composition: the tenant operator hands the provider an
+  # IntegrationBinding for each consumer whose provider is installed
+  # (tenant_data_plane_manifests.go), which no render fixture shows.
+  - group: gentianos.io
+    resources:
+      - integrationbindings  # IntegrationBinding
+  - group: generators.external-secrets.io
+    resources:
+      - passwords        # Password
   - group: gateway.envoyproxy.io
     resources:
       - backendtrafficpolicies  # BackendTrafficPolicy

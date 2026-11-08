@@ -1,28 +1,30 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package meta
 
 import (
+	"strings"
+
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ProvisioningJobTTLSeconds is how long finished Batch Jobs remain before the
 // TTL controller deletes them. Keep short so tenant CPU quotas free quickly.
+//
+// Only for Jobs the operator creates itself. A Job a provider-kubernetes Object
+// holds carries none: the Object recreates what the TTL deletes, and the Job
+// would run again every TTL, forever (keepFinishedJobs in the controller).
 const ProvisioningJobTTLSeconds int32 = 600
 
 // ProvisioningJobBackoffLimit allows dependent identity Jobs to survive transient
@@ -54,11 +56,8 @@ const ProvisioningJobActiveDeadlineSeconds int64 = 3600
 // InitJobResources caps CPU/memory for operator-owned provisioning Jobs in
 // platform-kernel.
 //
-// The values are fixed here. This used to say tenant-scoped init Jobs read
-// tenant.initJob.* from gentian-cluster-config via the app-default composition,
-// which was not true of any composition: app-default reads one key from that
-// ConfigMap and it is not this one. The claim fields those keys came from have
-// been removed, so the only sizing is the one below.
+// The values are fixed here: nothing reads a sizing for them from
+// gentian-cluster-config.
 func InitJobResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
@@ -87,4 +86,54 @@ func SecretEnv(name, secret, key string) corev1.EnvVar {
 			},
 		},
 	}
+}
+
+// ProvisioningJob is a Job that configures a service for the platform: one
+// container, run again on failure, bounded by
+// ProvisioningJobActiveDeadlineSeconds and removed ProvisioningJobTTLSeconds
+// after it finishes.
+func ProvisioningJob(name, namespace string, labels map[string]string, container corev1.Container) *batchv1.Job {
+	ttl := ProvisioningJobTTLSeconds
+	deadline := ProvisioningJobActiveDeadlineSeconds
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers:    []corev1.Container{container},
+				},
+			},
+		},
+	}
+}
+
+// JobCondition is the Job's first condition of type t that is True, or nil.
+func JobCondition(job *batchv1.Job, t batchv1.JobConditionType) *batchv1.JobCondition {
+	for i := range job.Status.Conditions {
+		if c := &job.Status.Conditions[i]; c.Type == t && c.Status == corev1.ConditionTrue {
+			return c
+		}
+	}
+	return nil
+}
+
+// JobComplete reports whether the Job completed.
+func JobComplete(job *batchv1.Job) bool { return JobCondition(job, batchv1.JobComplete) != nil }
+
+// JobFailed reports whether the Job failed for good.
+func JobFailed(job *batchv1.Job) bool { return JobCondition(job, batchv1.JobFailed) != nil }
+
+// JobEnded reports whether the Job completed or failed for good.
+func JobEnded(job *batchv1.Job) bool { return JobComplete(job) || JobFailed(job) }
+
+// JobFailure is the reason and message of the Job's failure, or "" while it
+// has not failed.
+func JobFailure(job *batchv1.Job) string {
+	if c := JobCondition(job, batchv1.JobFailed); c != nil {
+		return strings.TrimSpace(c.Reason + " " + c.Message)
+	}
+	return ""
 }

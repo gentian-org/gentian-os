@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # E2E smoke — Keycloak + Dovecot installation health (live cluster required).
 #
-# Usage:  make e2e-p5-keycloak-dovecot
-#         VERIFY_KERNEL_SERVICES=1 ./scripts/e2e-verify-kernel-services.sh
+# Usage:  make verify-kernel-services
+#         VERIFY_KERNEL_SERVICES=1 crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
 #
 # Prerequisites:
-#   - Gentian OS Stage 1 install complete (Suze / Keycloak in platform-kernel)
-#   - For Dovecot checks: MAIL_SERVICE_MODE=kernel and dovecot-dev deployed
+#   - Gentian OS install complete (Keycloak in the authentication namespace)
+#   - For Dovecot checks: MAIL_SERVICE_MODE=system and dovecot-dev deployed
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,7 +34,7 @@ else
 fi
 
 if verify_dovecot_installation; then
-    pass "Dovecot installation verification (or skipped when MAIL_SERVICE_MODE≠kernel)"
+    pass "Dovecot installation verification (or skipped when MAIL_SERVICE_MODE≠system)"
 else
     ERRORS=$((ERRORS + 1))
 fi

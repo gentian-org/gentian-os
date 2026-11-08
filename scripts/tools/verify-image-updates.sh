@@ -36,7 +36,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; NC=$'\033[0m'
 
-APP_NS="${GENTIAN_ARGOCD_NAMESPACE:-argocd}"
+APP_NS="${GENTIAN_ARGOCD_NAMESPACE:-kernel-gitops}"
 APP="${GENTIAN_OS_APPLICATION:-gentian-os}"
 ANN="argocd-image-updater.argoproj.io"
 
@@ -161,7 +161,7 @@ fi
 # Everything above answers "does the cluster follow what CI publishes". This
 # answers the other half, which nothing asked: did CI publish it.
 #
-# `Docker build and push` is gated on the Go job, so a flaky test means no image
+# `Docker publish` waits for the Go jobs and for lint, so a flaky test means no image
 # for that commit and the cluster keeps running the one before. Every check above
 # still passes — correctly, because the cluster IS tracking CI; there is simply
 # nothing new to track. The branch looks merged and the Application reads

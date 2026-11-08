@@ -1,0 +1,83 @@
+{{- /*
+  Who may reach the operator's pods, and on which port.
+
+  The operator's listener (appLifecycle.port) takes commands that delete
+  backups and purge an app's data. It admits a caller by its ServiceAccount
+  (deployment.yaml, APP_LIFECYCLE_*), and this policy is the second control in
+  front of it: only the director's and the usher's pods, in this namespace,
+  can open a connection to that port at all.
+
+  A NetworkPolicy that selects a pod denies every ingress it does not list,
+  so every other port the operator serves is listed too, each as open as it
+  was with no policy -- a rule with ports and no `from` admits any source:
+
+    metrics     scraped by whatever the cluster runs for that
+    health      the kubelet's probes
+    membership  Keycloak's event listener, in the authentication namespace
+    webhook     the API server, for Tenant admission
+
+  Narrowing those is not done here. The API server and the kubelet do not
+  arrive from a pod, so a rule naming their source differs per CNI and per
+  cluster; a ports-only rule is what keeps admission and probes working
+  everywhere.
+
+  It selects the operator's pods only -- by the component label, because the
+  release's other workloads in this namespace carry the same name and
+  instance labels -- and it says nothing about egress. No other pod and no
+  other namespace is selected by anything in this chart.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $webhook := .Values.webhook | default dict }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-operator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: operator
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- /* Rendered only with a caller to name: a rule with an empty `from`
+           admits everybody, which is the opposite of what is meant. With
+           neither deployed the port is listed nowhere and so is closed. */}}
+    {{- if or .Values.director.enabled .Values.usher.enabled }}
+    - from:
+        {{- if .Values.director.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "gentian-os.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: director
+        {{- end }}
+        {{- if .Values.usher.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "gentian-os.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: usher
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.appLifecycle.port }}
+    {{- end }}
+    - ports:
+        # metrics and health: the manager's --metrics-bind-address and
+        # --health-probe-bind-address in deployment.yaml.
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8081
+        {{- if .Values.membershipListener.keysSecretRef.name }}
+        - protocol: TCP
+          port: {{ .Values.membershipListener.port }}
+        {{- end }}
+        {{- if ($webhook.enabled | default false) }}
+        - protocol: TCP
+          port: {{ $webhook.port | default 9443 }}
+        {{- end }}
+{{- end }}

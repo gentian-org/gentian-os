@@ -1,0 +1,26 @@
+# The optional scopes this app's client was given while its profile declared
+# mail.imap.tokenSignIn. The Composition goes on rendering the object once it
+# exists, which is how "mailbox" comes off the client.
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  name: demo-demo-app-keycloak-optional-scopes
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keycloak-optional-scopes
+spec:
+  forProvider:
+    realmId: demo
+    optionalScopes:
+      - address
+      - microprofile-jwt
+      - offline_access
+      - organization
+      - phone
+      - mailbox
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

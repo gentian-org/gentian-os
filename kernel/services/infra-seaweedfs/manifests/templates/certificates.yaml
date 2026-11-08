@@ -1,0 +1,78 @@
+{{- /*
+  The object store's certificates, issued by the cluster's internal CA.
+
+  The master, the volume server, the filer and the S3 gateway speak gRPC to
+  one another and to the Jobs that administer the store, and every such
+  connection is mutual TLS: each side shows a certificate of gentian-ca, the
+  ClusterIssuer every cluster has (installer step A-09), and the master and
+  the filer accept a peer only by its common name (the base values,
+  WEED_GRPC_*_ALLOWED_COMMONNAMES). The chart's own CA chain
+  (global.seaweedfs.enableSecurity) is not used: it would be a second CA,
+  made and kept by the chart, that nothing else trusts or holds.
+
+    seaweedfs-server-tls  the pod's identity, for every component it runs.
+                          One pod runs all four, as one process, so one
+                          certificate serves as each one's server and client
+                          identity; its names are the Services the pod is
+                          reached by. Its peers check the chain, not the
+                          name.
+    seaweedfs-shell-tls   the Jobs that make and destroy buckets and
+                          identities with weed shell
+                          (backup.ObjectStoreClientTLSSecret), and nothing
+                          else: a client certificate only.
+
+  cert-manager renews each at two thirds of its lifetime. The server reads
+  its files again every few hours (WEED_TLS_CERT_REFRESH_INTERVAL, five hours
+  by default) and the Secret is mounted whole, so a renewed certificate is
+  taken up without a restart; a Job reads its certificate when it starts.
+*/ -}}
+{{- $ns := .Values.namespace | default "system-s3" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: seaweedfs-server
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  secretName: seaweedfs-server-tls
+  commonName: seaweedfs-server
+  dnsNames:
+    - seaweedfs-all-in-one
+    - seaweedfs-all-in-one.{{ $ns }}
+    - seaweedfs-all-in-one.{{ $ns }}.svc
+    - seaweedfs-all-in-one.{{ $ns }}.svc.cluster.local
+  usages:
+    - server auth
+    - client auth
+    - digital signature
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: gentian-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: seaweedfs-shell
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  secretName: seaweedfs-shell-tls
+  commonName: seaweedfs-shell
+  usages:
+    - client auth
+    - digital signature
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: gentian-ca
+    kind: ClusterIssuer
+    group: cert-manager.io

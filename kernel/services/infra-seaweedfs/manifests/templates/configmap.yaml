@@ -1,0 +1,227 @@
+# The platform's object store: SeaweedFS, plain values ConfigMaps
+#
+# Read by the Cluster composition's provider-helm Release (valuesFrom), in
+# this order: env, base, cluster. The chart is upstream's, vendored
+# unchanged (charts/infra/seaweedfs); everything the platform decides about
+# it is written here.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seaweedfs-env-values
+  namespace: {{ .Values.namespace | default "system-s3" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    {{- /* Empty: the cluster's default StorageClass. A private-registry pull
+         secret only when this cluster names one: the image is public, and
+         naming a Secret nobody created made every pod report
+         FailedToRetrieveImagePullSecret while pulling fine. */}}
+    allInOne:
+      data:
+        storageClass: {{ .Values.storageClass | quote }}
+    global:
+      imagePullSecrets: {{ .Values.imagePullSecrets | default list | toJson }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seaweedfs-base-values
+  namespace: {{ .Values.namespace | default "system-s3" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    global:
+      seaweedfs:
+        # The chart's ClusterRole lets its service account create, change and
+        # delete every pod of the cluster, for a master migration this
+        # single-pod layout never does. Not made.
+        createClusterRole: false
+        # The server does not call the API server.
+        automountServiceAccountToken: false
+        # Off, and still secured: this switch makes the chart's own CA, its
+        # certificates and a security.toml with signing keys in a ConfigMap.
+        # The certificates are the internal CA's here
+        # (templates/certificates.yaml), the keys the vault's
+        # (templates/externalsecret.yaml), and weed reads both from the
+        # environment below, where a setting overrides the file.
+        enableSecurity: false
+    # One pod running the master, a volume server, the filer and the S3
+    # gateway: weed server, on one claim. The chart's separate components
+    # are rendered unless switched off one by one, and are.
+    master:
+      enabled: false
+      # The server's image, by tag and by the digest of the multi-platform
+      # index that tag held. The platform's Jobs that make and destroy a
+      # bucket run this same image (backup.SeaweedFSImage; a test holds the
+      # two equal).
+      imageOverride: docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+      metricsPort: null
+      defaultReplication: "000"
+      volumeSizeLimitMB: 1000
+      # Every bucket is a collection of its own, and a collection is given
+      # its first volumes when it is first written to. Upstream grows seven
+      # at a time for a store without replication; on a claim of a few
+      # gigabytes that exhausts the volumes a disk is allowed after one or
+      # two buckets, and every further bucket answers "No writable volumes".
+      # One at a time: a bucket takes a volume when it needs one.
+      config: |-
+        [master.volume_growth]
+        copy_1 = 1
+        copy_2 = 2
+        copy_3 = 3
+        copy_other = 1
+    volume:
+      enabled: false
+      metricsPort: null
+      # How many volumes the disk may hold (weed server -volume.max). Zero
+      # lets SeaweedFS count them from the free space and volumeSizeLimitMB,
+      # about forty on the default 40Gi claim. A volume is a file that
+      # grows as it is written, so many cost little; the server stops
+      # writing when the disk is full (minFreeSpacePercent), not before.
+      dataDirs:
+        - name: data1
+          type: emptyDir
+          maxVolumes: 1000
+    filer:
+      enabled: false
+      metricsPort: null
+    s3:
+      enabled: false
+      metricsPort: null
+    allInOne:
+      enabled: true
+      metricsPort: null
+      updateStrategy:
+        type: Recreate
+      # One replica; the chart's anti-affinity is for several.
+      affinity: ""
+      s3:
+        enabled: true
+        # The port apps are handed (provisioner.ObjectStoragePort), on the
+        # pod itself, so that a NetworkPolicy's port -- which names the
+        # pod's port, after a Service has translated it -- and the address
+        # an app is given are the same number.
+        port: 9000
+        enableAuth: true
+        # The administrator's identity, rendered from the vault by
+        # templates/externalsecret.yaml. Every other identity -- one per app
+        # bucket -- is made by the platform's bucket Jobs and kept by the
+        # filer.
+        existingConfigSecret: seaweedfs-s3-config
+      # What weed server would start besides S3 and the platform does not
+      # use: the Iceberg and Lance catalogues on ports of their own, and the
+      # IAM API on the S3 port. Identities are made with weed shell.
+      #
+      # And a bound on what each layer holds of uploads in flight, which is
+      # otherwise none: a bundle arriving faster than it is written piled up
+      # in memory until the pod was killed. Past the bound a writer waits.
+      # Each is well above one part of a multipart upload (16MiB for objects
+      # up to 156GiB), so a single upload is never held back by it.
+      extraArgs:
+        - -s3.port.iceberg=0
+        - -s3.port.lance=0
+        - -s3.iam=false
+        - -s3.concurrentUploadLimitMB=256
+        - -filer.concurrentUploadLimitMB=256
+        - -volume.concurrentUploadLimitMB=256
+      data:
+        type: persistentVolumeClaim
+      # Mutual TLS on every gRPC port, and signed tokens on every write and
+      # read of a volume and of the filer's HTTP port. The certificate is the
+      # pod's one identity (seaweedfs-server-tls) for the master, the volume
+      # server, the filer and the S3 gateway, as server and as client. The
+      # master and the filer accept the pod itself and the Jobs that
+      # administer the store (seaweedfs-shell); the volume server and the S3
+      # gateway's gRPC only the pod. Without an allowed name a component
+      # accepts any certificate the CA issued.
+      extraEnvironmentVars:
+        WEED_GRPC_CA: /etc/sw/tls/ca.crt
+        WEED_GRPC_MASTER_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_MASTER_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_MASTER_ALLOWED_COMMONNAMES: seaweedfs-server,seaweedfs-shell
+        WEED_GRPC_VOLUME_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_VOLUME_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES: seaweedfs-server
+        WEED_GRPC_FILER_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_FILER_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_FILER_ALLOWED_COMMONNAMES: seaweedfs-server,seaweedfs-shell
+        WEED_GRPC_S3_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_S3_KEY: /etc/sw/tls/tls.key
+        WEED_GRPC_S3_ALLOWED_COMMONNAMES: seaweedfs-server
+        WEED_GRPC_CLIENT_CERT: /etc/sw/tls/tls.crt
+        WEED_GRPC_CLIENT_KEY: /etc/sw/tls/tls.key
+      secretExtraEnvironmentVars:
+        WEED_JWT_SIGNING_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: signing_key
+        WEED_JWT_SIGNING_READ_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: signing_read_key
+        WEED_JWT_FILER_SIGNING_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: filer_signing_key
+        WEED_JWT_FILER_SIGNING_READ_KEY:
+          secretKeyRef:
+            name: seaweedfs-jwt
+            key: filer_signing_read_key
+      # The whole Secret, never a subPath of it: a subPath mount is not
+      # updated when cert-manager renews the certificate.
+      extraVolumes: |
+        - name: grpc-tls
+          secret:
+            secretName: seaweedfs-server-tls
+            defaultMode: 0440
+      extraVolumeMounts: |
+        - name: grpc-tls
+          mountPath: /etc/sw/tls
+          readOnly: true
+      # Kyverno's baseline (kernel/security/kyverno/policies) applies to
+      # system namespaces: no privilege escalation, RuntimeDefault seccomp,
+      # every capability dropped, and non-root. The image's own user is
+      # seaweed, 1000; the claim is made writable to it by fsGroup.
+      podSecurityContext:
+        enabled: true
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containerSecurityContext:
+        enabled: true
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        privileged: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seaweedfs-cluster-values
+  namespace: {{ .Values.namespace | default "system-s3" }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    allInOne:
+      # data.size is the Cluster claim's systemServices.objectStore.size,
+      # set on the Release by the composition.
+      resources:
+        limits:
+          cpu: "4"
+          # A bundle upload is written while it arrives; at 2Gi the pod was
+          # killed for memory part-way through a tenant's import.
+          memory: 4Gi
+        requests:
+          cpu: 250m
+          memory: 256Mi

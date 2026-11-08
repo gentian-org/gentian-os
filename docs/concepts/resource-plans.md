@@ -1,0 +1,568 @@
+---
+audience: architect, operator
+type: concept
+---
+
+# Resource plans and usage — design
+
+**Scope:** How a tenant's resource ceiling is chosen, enforced, recorded and invoiced.
+
+**Companion docs:** [admin-console.md](admin-console.md), [multi-tenancy.md](multi-tenancy.md), [app-catalog.md](app-catalog.md), [operations.md](operations.md), [commands.md](../reference/commands.md).
+
+---
+
+## 1. Purpose
+
+A tenant runs under a ceiling: how much CPU, memory and storage its apps may
+claim between them. `Tenant.spec.quotas` becomes a `tenant-quota` ResourceQuota
+in the tenant namespace. On top of it a tenant can change the ceiling, the
+platform records what was in force and when, and it observes what was used
+underneath. All three work the way the App Store adds an app: a
+**named choice** from a **priced catalog**, written to the deployments
+repository through an **API shared by the CLI and the console**.
+
+---
+
+## 2. Why a catalog, and not a number
+
+`Tenant.spec.quotas` accepts any quantity. That is right for the file, and wrong
+for the API: a ceiling that can be any number can be any number that was never
+sold. So the write path accepts a **plan name and nothing else**, and every
+ceiling reachable through the API or the console is one of a known, priced set.
+
+That single constraint is what makes the usage report invoiceable. A month
+resolves to *"one node from the 1st to the 17th, two from the 18th"* — plans
+and SKUs, not quantities somebody downstream has to interpret and price.
+
+Free-form quantities remain available to whoever edits the deployments
+repository by hand, which is the cluster operator, which is the person entitled
+to make an unpriced choice. The console reports such a tenant as **custom** and
+says nothing prices it.
+
+`ResourcePlan` is deliberately **not deployable** — nothing reconciles it, it
+owns no workload. It is the same shape [`AppPackage`](../../api/v1alpha1/apppackage_types.go)
+takes for addons: a curated preset that replaces a combinatorial choice with a
+named one, without becoming an artifact of its own.
+
+```yaml
+apiVersion: gentianos.io/v1alpha1
+kind: ResourcePlan
+metadata:
+  name: nodes-2
+spec:
+  displayName: 2 nodes
+  tier: 10                       # ordering; quantities cannot imply "bigger"
+  productSku: gentian-resources-nodes-2
+  units: 2                       # node units, for a backend that sells nodes
+  quotas:
+    requestsCpu: "4"             # sold — reserved capacity, two node units
+    requestsMemory: 8Gi
+    cpu: "16"                    # burst ceiling — not sold, see §2.2
+    memory: 16Gi
+    storage: 100Gi
+```
+
+The catalog is the cluster's: one file per plan under
+`clusters/<cluster>/resource-plans/` in the deployments repository, which the
+`gentian-resource-plans` Application syncs (§2.4). The operator chart's
+`usage.plans.catalogue` is where it starts.
+
+### 2.2 What a plan sells: reserved capacity, not burst
+
+A plan is a whole number of **node units** — 2 vCPU / 4 GB / 50 GB — so a plan
+is a quantity the platform can go and buy.
+
+That only works because the sold figure is **requests**. Requests are what the
+scheduler reserves: two cores of requests is two cores of a node that nothing
+else can schedule into, which is exactly what a node purchase provides. Limits
+are a burst ceiling — what a container may spike to, with nothing set aside for
+it — and they oversubscribe by design.
+
+The gap is not small. Measured on a workspace running Nextcloud with Collabora,
+the App Store and Open WebUI:
+
+| | CPU | Memory |
+|---|---|---|
+| Reserved (`requests`) | 1.00 | 2.5 Gi |
+| Burst ceiling (`limits`) | 5.95 | 5.5 Gi |
+| Actually consumed | 0.014 | 2.0 Gi |
+
+Sell the middle row and a one-node plan could not hold a single Nextcloud; sell
+the top row and a node unit means what it says. So `ResourcePlan` carries both
+pairs, and only the reserved pair is priced:
+
+| Quota field | ResourceQuota key | Role |
+|---|---|---|
+| `requestsCpu`, `requestsMemory` | `requests.cpu`, `requests.memory` | **Sold.** Maps one-to-one onto purchased nodes |
+| `cpu`, `memory` | `limits.cpu`, `limits.memory` | Blast radius for a runaway container |
+| `storage` | `requests.storage` | Already request-shaped; PVCs reserve what they ask for |
+
+The rule deciding what belongs in a plan is that a plan is a quantity of
+capacity, so its fields are the ones that become ResourceQuota keys. `maxApps`
+becomes none — the Tenant admission webhook enforces it against `spec.apps` —
+so it is a policy limit set per cluster or per tenant, and no plan touches it in
+either direction. Writing it would sell a policy as capacity; nulling it would
+have a plan change quietly delete a cluster's app cap.
+
+The catalog's limits multiples — 4× CPU, 2× memory — come from that table
+rather than from a round number. A tighter ceiling would refuse pods on a plan
+whose *reserved* capacity is barely touched, which is the confusing failure this
+whole design exists to avoid.
+
+Imposing a requests quota on a namespace that already has pods is safe: the
+tenant `LimitRange` sets `defaultRequest` (100m / 128Mi), so a container that
+declares no request still has one and the quota cannot reject it.
+
+### 2.3 The ladder
+
+| Plan | Nodes | Reserved | Burst ceiling | Storage |
+|---|---|---|---|---|
+| `base` | 1 | 2 / 4Gi | 8 / 8Gi | 50Gi |
+| `nodes-2` | 2 | 4 / 8Gi | 16 / 16Gi | 100Gi |
+| `nodes-4` | 4 | 8 / 16Gi | 32 / 32Gi | 200Gi |
+| `nodes-8` | 8 | 16 / 32Gi | 64 / 64Gi | 400Gi |
+| `nodes-16` | 16 | 32 / 64Gi | 128 / 128Gi | 800Gi |
+
+Doubling, so a tenant outgrowing a plan is always offered roughly twice what it
+has — rather than steps that are enormous at the bottom and trivial at the top.
+The measured workspace above fits `base` on every dimension, which is what a
+one-node plan should mean.
+
+At `nodes-16` the burst ceiling stops bounding much on a small cluster; that is
+inherent to a multiplicative ceiling and is why the top plan says to arrange
+anything larger with the platform operator.
+
+**A tenant on `tenant-defaults` reads as `custom`** until a plan is applied,
+because `tenant-defaults` sets no reserved capacity at all. That is the honest reading — nothing prices those
+tenants — and applying a plan settles it. A cluster that wants new tenants to
+start on `base` should set its `tenant-defaults` component to `base`'s
+quantities.
+
+### 2.1 Tier, not quantity
+
+Plans are ordered by `spec.tier`, never by comparing their quantities.
+Quantities can move in different directions between two plans — more CPU, less
+storage — so "bigger" is not derivable from them, and anything that compares
+to compare something total. Tiers need not be contiguous; gaps let a plan be
+inserted later without renumbering ones already sold.
+
+---
+
+### 2.4 Changing the catalog
+
+The director writes the plans for whoever may configure the cluster
+(`can_configure`), each change a commit naming them:
+
+```
+GET    /v1/clusters/{c}/resource-plans          can_audit      the plans, each with the tenants on it
+PUT    /v1/clusters/{c}/resource-plans/{name}   can_configure  add or change one
+DELETE /v1/clusters/{c}/resource-plans/{name}   can_configure  remove one
+```
+
+What a change has to keep:
+
+- **A plan is edited in place, with the tenants on it.** Each tenant on it
+  holds a copy of the quantities in its `resource-plan.yaml` (§3.2), and a
+  change of quotas writes the plan and every one of those copies in one
+  commit, so no tenant is left `drifted` on a ceiling the plan no longer
+  describes. A change a tenant's usage does not fit under is refused with
+  409, naming the tenant and what does not fit, as a move to a smaller plan
+  is. Who is on which plan, and what each uses, is the operator's answer; a
+  change it cannot answer for is refused with 503 rather than made blind.
+- **`retired: true`** withholds a plan from every new choice and keeps it
+  for the tenants on it. Name, description, tier, SKU, units and retirement
+  change at any time.
+- **One default, one tier per plan.** Making a plan the default takes the
+  flag from the one that had it, in the same commit; the default is neither
+  retired nor removed.
+- **A plan is removed only when no tenant is on it.**
+
+`units` is how many node units a plan is. Nothing in the platform reads it:
+a commerce backend that sells a number of nodes moves a tenant to the plan
+whose units are the number bought.
+
+The first catalog comes from the deployment's values: the director writes
+`usage.plans.catalogue` into the directory once, while it holds no plan
+(`DIRECTOR_RESOURCE_PLANS_SEED`), and never again. Step 0 scaffolds the
+directory with an empty kustomization so the Application has a path from the
+first install. On a cluster without a director the chart renders the plans
+from the same values instead.
+
+## 3. The write path
+
+Moving a tenant to a plan is a **commit to `gentian-deployments`**, exactly as
+installing an app is, and it is made by the same writer: the **director**. Only
+the cluster's administrators move a tenant: the director checks that the caller
+holds `can_configure` on the cluster, reads the catalog as it applies to that
+tenant from the operator (§7), refuses a plan the tenant may not move to, and
+commits the patch below as the person who asked. A tenant orders another plan
+where the cluster's notice says (§5). Argo CD syncs it, the
+operator reconciles the ResourceQuota, records the plan change in the tenant's
+usage history (§6.3), and
+[`app_workload_health.go`](../../internal/controller/app_workload_health.go)'s
+fingerprint nudge retries workloads the widened quota now admits.
+
+The operator has no write endpoint for plans. It reads the plan back from git
+like every other change to a tenant, so the only way onto a ceiling is a commit
+that names who chose it and which decision allowed it.
+
+### 3.1 Why not `tenant.yaml`
+
+Quotas written into `tenant.yaml` **do not survive**. Every tenant kustomization
+pulls in the shared `tenant-defaults` component, and a component's patches apply
+*after* the resources they accompany:
+
+```
+resources:  tenant.yaml            cpu: 48   ← what the API wrote
+components: tenant-defaults        cpu: 32   ← what wins
+```
+
+The edit would commit cleanly, push cleanly, sync cleanly and change nothing.
+
+### 3.2 What is written instead
+
+A per-tenant `resource-plan.yaml`, listed under the tenant kustomization's own
+`patches:`, which kustomize applies **after** components:
+
+```
+clusters/<cluster>/tenants/<tenant>/
+├── tenant.yaml            # apps, isolation, mail — hand-maintained
+├── resource-plan.yaml     # the chosen plan, written by the director
+└── kustomization.yaml     # resources: - tenant.yaml
+                           # patches: - path: resource-plan.yaml
+```
+
+```yaml
+# resource-plan.yaml — managed by the director
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: corp
+  annotations:
+    gentianos.io/resource-plan: nodes-2
+    gentianos.io/resource-plan-set-by: "ada@example.com"
+spec:
+  quotas:
+    cpu: "40"
+    memory: "48Gi"
+    storage: "300Gi"
+    maxPods: null          # ← deliberate
+```
+
+**Every quota key is emitted, and keys the plan does not set are emitted as
+`null`** — which is how a strategic merge *removes* a key. Omitting them instead
+would leave the `tenant-defaults` value in place, and the tenant would run on a
+ceiling that is neither the default nor the plan but a silent mixture of both:
+the plan's CPU with the default's storage, priced as the plan.
+
+The patch file and the kustomization that lists it are committed **together**, in
+one commit: a repository synced between the two would either apply a patch
+nothing references or reference a patch that is not there, and Argo would fail
+the whole tenant on the second. A tenant directory without a kustomization gets
+the one every tenant starts with; the director writes it on create as well.
+
+`resource-plan-set-by` names who chose the plan. It is in the patch and not only
+in the commit because the operator reads the Tenant, not git, and it is what
+lets the plan event (§6.3) carry an actor. Re-choosing the plan git already
+records is not a commit, whoever asks: the state asked for already holds, and a
+commit that only renamed the chooser would change the record and not the tenant.
+
+---
+
+## 4. The downgrade guard
+
+Kubernetes does not evict pods to fit a shrunken ResourceQuota. It refuses the
+**next** create. So a downgrade below current use is not rejected by the cluster
+and does not fail loudly: everything keeps running until something restarts, and
+then it silently does not come back.
+
+A plan change is therefore refused when the plan is smaller than what the tenant
+is using, naming the resource and both numbers:
+
+```
+409  limits.cpu: using 34, plan allows 32
+```
+
+The check runs against every key the plan sets, reserved and burst alike: a plan
+that reserves less than the scheduler has already set aside for running pods is
+refused for the same reason as one whose ceiling is too low. It reads
+`ResourceQuota.status.used` through the one shared mapping in
+[`tenantshell.ResourceListFromQuotas`](../../internal/kernel/tenantshell/resources.go).
+Two copies of that mapping would let a plan pass a guard written against
+`requests.cpu` and then be enforced against `limits.cpu`.
+
+Only capacity is checked. An app cap is not part of a plan, so no move between
+plans can put a tenant over one.
+
+The cluster's administrator may pass `--force` (CLI) to shrink a tenant anyway,
+having decided the tenant will be shrunk and accepting the pods that will not
+come back. A retired plan is refused, forced or not.
+
+---
+
+## 5. Ordering another plan
+
+A tenant chooses no plan itself. Its administrator sees the plan, what is
+under it and the catalog, and a notice saying where to order another: a
+text per language and at most one action, a link, an e-mail address or a
+phone number. The cluster's administrators write it, and the director
+commits it to the claims as the cluster's one `PlanOrdering`:
+
+```
+GET    /v1/clusters/{c}/plan-ordering   can_audit
+PUT    /v1/clusters/{c}/plan-ordering   can_configure   {"text": {"en": "..."}, "url": "https://.../{tenant}"}
+DELETE /v1/clusters/{c}/plan-ordering   can_configure
+```
+
+`{tenant}` in the link is replaced with the tenant's name. The operator hands
+the notice out with the tenant's resources (`ordering` on
+`GET /v1/tenants/{t}/resources`); without one, the tenant is told to ask the
+cluster's administrator. Whatever takes the order (a person, or a commerce
+backend that moves tenants once they paid) moves the tenant through the
+director's route in §7.
+
+A component that does it unattended speaks for a cluster administrator who
+linked themselves to it: a component of the platform tenant that declares
+`requires.services.vouching.director` obtains a short-lived token of that
+person for the director (custom-catalogs.md, vouching). `plans-read` reaches
+the plans, every tenant's state and the cluster's report; `plans-apply`
+also moves a tenant, never forced. The person's own `can_configure` is asked
+on every call, and the commit names the component and the reason it gave.
+
+---
+
+## 6. Usage history
+
+### 6.1 What is recorded, and where
+
+A sampler in the operator records, per tenant on a ticker (15 minutes by
+default):
+
+| Field | Source | Used for |
+|---|---|---|
+| `hard` | `ResourceQuota.status.hard` | The ceiling in force |
+| `used` | `ResourceQuota.status.used` | **Committed consumption — what is billed** |
+| `actual` | `metrics.k8s.io`, when installed | Advisory: is the plan the right size? |
+| `plan`, `productSku` | Resolved from the catalog | The label a stretch is priced under |
+
+Rows land in **that tenant's own `{tenant}_shell` database**, the desktop's,
+beside its notifications. A tenant's consumption is tenant data: it goes
+where the rest of that tenant's data goes, it leaves with the tenant, and the
+`TenantExport` that already captures the shell database captures it too. The cost
+is that a cluster-wide roll-up opens one connection per tenant — the honest price
+of the isolation, paid by a screen nobody loads in a loop.
+
+`productSku` is denormalized onto every sample deliberately: a plan's SKU can be
+re-pointed, and an invoice for March must not change because of an edit made in
+June.
+
+### 6.2 What is billed is the ceiling, not the burn
+
+Invoicing is based on **what the tenant is committed to** — the enforced ceiling
+and the requests the cluster has reserved for them — not on live consumption.
+Both come from the API server, so the billing series needs no metrics stack at
+all. Live consumption answers a different question: whether the plan a tenant
+pays for is the plan they need.
+
+That is why metrics-server is optional. See [§8](#8-metrics-server-is-optional-and-not-a-small-prometheus).
+
+### 6.3 Plan events are the billing record
+
+Samples imply a plan change, but only to the resolution of the sampling interval
+and only while the samples are retained. A plan change is the billable event, so
+it is recorded exactly, once, in `tenant_resource_plan_events` — and **never
+pruned**. Samples are pruned at `usage.sampler.retention` (400 days by default);
+plan events accrue at the rate a tenant changes plan, which is a handful of rows
+a year.
+
+The event is written by the **operator when the change lands**, not by the
+director when it is asked for. The tenant reconciler compares the
+`resource-plan` annotation with `status.resourcePlan`, the plan whose event was
+last written, and when they differ records the move — from the recorded plan
+(or, for a history that predates the status field, the store's last event) to
+the annotated one, with the SKU from the catalog and the actor from
+`resource-plan-set-by` — then notes it on the status. So the record describes
+the ceiling the cluster went on to enforce, which is the one a bill can be
+defended with, and it still names who chose it, because the commit carried
+that into the Tenant. A usage store that is not reachable yet leaves the status
+alone and the event is written on a later reconcile; a plan the catalog does
+not know is recorded without a SKU rather than not at all.
+
+### 6.4 The report
+
+`GET /v1/tenants/{t}/resources/report?from=&to=` resolves a window into
+`PlanInterval`s — the unit a bill is made of:
+
+```json
+{ "tenant": "corp", "intervals": [
+  { "plan": "base",     "productSku": "sku-1node",  "from": "2026-01-01T00:00:00Z",
+    "to": "2026-01-18T09:12:00Z", "seconds": 1473120, "partial": true },
+  { "plan": "nodes-2",  "productSku": "sku-2node", "from": "2026-01-18T09:12:00Z",
+    "to": "2026-02-01T00:00:00Z", "seconds": 1176480, "partial": true }
+]}
+```
+
+`partial` marks an interval clipped by the window rather than ended by a plan
+change, so a biller pro-rating a month knows which ends are real.
+
+The plan in force when the window opened comes from the last event before it;
+failing that, from the `fromPlan` of the first event inside it; failing both, the
+report is marked `incomplete` rather than opening with a guess. A recovered
+opening interval carries **no SKU** — the event names the SKU of the plan it
+moved *to* — because a gap is honest and a wrong price is not.
+
+---
+
+## 7. Surfaces
+
+One set of rules, one writer. The plan catalog and the downgrade guard live
+in the operator, which answers them for a tenant; the
+usher relays those answers to whoever may view the tenant, and the director
+validates a choice against them and makes the one write. Nothing reimplements
+the rules.
+
+| Surface | How it reaches them |
+|---|---|
+| **Administration console → Resources** | console API → usher (reads) and director (the write), as the caller |
+| **`kubectl gentian resources`** | port-forward → usher for `plans`, `show`, `report`; director for `set`; with the token of `kubectl gentian login` |
+| **Anything else** | the same endpoints, with a person's token |
+
+The reads are the usher's and the write is the director's, each guarded by the
+relation named:
+
+```
+GET  /v1/tenants/{t}/resources                 can_view       plan, ceiling, committed, live, ordering notice
+GET  /v1/tenants/{t}/resources/plans           can_view       catalogue, with blocked reasons
+GET  /v1/tenants/{t}/resources/usage           can_view       thinned sample series
+GET  /v1/tenants/{t}/resources/report          can_view       billable plan intervals
+PUT  /v1/clusters/{c}/tenants/{t}/resources    can_configure  {"plan": "nodes-2", "force": false}
+GET  /v1/clusters/{c}/resources                can_audit      every tenant's state, for the cluster's view
+GET  /v1/clusters/{c}/resources/report         can_audit      every tenant's billable intervals over one window
+```
+
+The operator's app-lifecycle API keeps the reads (`GET .../resources`,
+`/plans`, `/usage`, `/report`), which is what the usher relays and the director
+validates against. It has no
+`PUT`. Each plan it lists that the tenant may not move to carries `blocked`, the
+reason in words, and `blockedBy` — `fit` or `retired` — which is what the
+director turns into a status:
+
+| Code | Means |
+|---|---|
+| `202` | Committed; the answer names the commit. `200` means the tenant is on that plan already |
+| `409` | The plan does not fit **today** (`fit`) — retry after freeing something, or `force` it; or it is retired |
+| `404` | No such plan on this cluster |
+| `403` | The caller does not hold `can_configure` on the cluster |
+
+A console adds nothing: it forwards the caller's own token and hands back what
+it was answered, including a refusal.
+
+### 7.1 Console
+
+Tenant administrators see their plan, the ceiling paired with what is committed
+under it, live consumption where available, the plan catalog, the usage
+history, the billed intervals, and the cluster's notice on where to order
+another plan. They choose none.
+
+Platform administrators additionally get an **All tenants** table — plan,
+headroom per resource, app count.
+
+Charts are one panel per resource, never one panel with two y-axes: CPU cores and
+gibibytes share no scale. The ceiling is a dashed reference line, not a third
+series — it is the frame the other two are read against.
+
+### 7.2 Audit
+
+A plan change is a commit authored by the person, with the director's
+`Gentian-Authz` trailer naming the request, the subject and the decision that
+allowed it, and a plan event in the tenant's usage history naming the same
+person (§6.3). A refusal is the director's decision-log entry: the attempt is
+the interesting half when the tenant later asks why nothing changed.
+
+---
+
+## 8. metrics-server is optional, and not a small Prometheus
+
+`metrics.k8s.io` serves the **latest value only** — in memory, no persistence, no
+history, no query language. It exists for `kubectl top` and HPA. There is nothing
+in it to upgrade *into* history.
+
+Prometheus, conversely, does not serve `metrics.k8s.io`; HPA against it needs
+prometheus-adapter. The two coexist rather than replace each other.
+
+So the history is **Gentian's own**, sampled into each tenant's shell database,
+and the *reading* is behind an interface:
+
+```
+usage.ActualSource
+ └── MetricsAPISource   (metrics.k8s.io, optional)
+```
+
+Install with `scripts/steps/A-07-metrics-server.sh` and set
+`usage.metricsServer.enabled=true`. Without it the Resources tab shows ceilings
+and committed usage, and says the live comparison is unavailable rather than
+drawing an empty series that reads as "this tenant used nothing".
+
+---
+
+## 9. Configuration
+
+Operator chart (`charts/gentian-os/values.yaml`):
+
+| Value | Default | Effect |
+|---|---|---|
+| `usage.sampler.enabled` | `true` | Record ceilings and consumption |
+| `usage.sampler.interval` | `15m` | How often every tenant is sampled |
+| `usage.sampler.retention` | `9600h` (400d) | Sample retention; plan events are never pruned |
+| `usage.metricsServer.enabled` | `false` | Add the live-consumption series |
+| `usage.plans.enabled` | `true` | Start the cluster with a catalog |
+| `usage.plans.catalogue` | five node tiers | The first catalog: written into git once by the director, or rendered by the chart where no director runs |
+
+Director and usher (the same chart):
+
+| Value | Effect |
+|---|---|
+| `director.appLifecycleURL`, `usher.appLifecycleURL` | The operator's app-lifecycle API, which the usher reads a tenant's resources from and the director validates a plan choice against. Empty derives it from the release's own lifecycle Service. |
+
+---
+
+## 10. Operations
+
+```bash
+# Catalogue, and what one tenant may pick
+kubectl gentian resources plans --tenant corp
+
+# A tenant's ceiling and what is under it
+kubectl gentian resources show --tenant corp
+
+# Move a tenant: through the director, as yourself. Refused if it does not fit.
+kubectl gentian resources set --tenant corp --plan nodes-2
+# (or the administration console's Resources screen, which does the same)
+
+# What a month resolves to for invoicing
+kubectl gentian resources report --tenant corp --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
+
+# Every tenant's billed intervals over one window
+kubectl gentian resources report --all --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
+
+# Where a tenant orders another plan
+kubectl gentian resources ordering set --file notice.json
+
+# The cluster's plans, with the tenants on each; add or change one, remove one
+kubectl gentian resources catalog
+kubectl gentian resources catalog set nodes-3 --file nodes-3.json
+kubectl gentian resources catalog remove nodes-3
+```
+
+**Sampler not recording:** it writes to each tenant's `{tenant}_shell` database
+through the `desktop-database` Secret in the tenant's namespace. A tenant without
+that Secret is skipped and logged; the others are unaffected.
+
+**Plan shows as `custom`:** the tenant's quotas match no plan. Either the tenant
+reserves nothing (see [§2.3](#23-the-ladder)), the
+catalog was re-priced under a tenant already on it, or `tenant.yaml` was
+edited by hand. Applying a plan settles it.
+
+**Plan shows as `drifted`:** the recorded plan and the enforced ceiling
+disagree. The cluster enforces what is there; what is billed is what is
+recorded. Re-applying a plan settles both.

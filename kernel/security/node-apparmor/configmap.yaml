@@ -1,0 +1,87 @@
+# The node script of the node-apparmor DaemonSet (daemonset.yaml beside this
+# file), which says why it exists.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-apparmor
+  labels:
+    app.kubernetes.io/name: node-apparmor
+    app.kubernetes.io/part-of: gentian-os
+data:
+  reload-profile.sh: |
+    #!/bin/sh
+    # Runs in the node's namespaces (nsenter from the DaemonSet beside this file).
+    # Where the kernel stacks container labels
+    # (kernel.apparmor_restrict_unprivileged_unconfined=1), every container runs as
+    # cri-containerd.apparmor.d//&unconfined and containerd's default profile
+    # denies signals between its processes. This reloads that profile as
+    # containerd generates it, plus the two rules of containerd PR #14487.
+    # containerd loads its profile only when it is missing, so the reload holds
+    # until the node reboots; the DaemonSet then runs this again.
+    set -eu
+    name=cri-containerd.apparmor.d
+    sysctl=/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined
+    profiles=/sys/kernel/security/apparmor/profiles
+    fixed=/run/gentian-apparmor/${name}
+    if [ ! -r "${profiles}" ] || ! command -v apparmor_parser >/dev/null 2>&1; then
+        echo "no AppArmor on this node: nothing to do"; exit 0
+    fi
+    if [ "$(cat "${sysctl}" 2>/dev/null || echo 0)" != 1 ]; then
+        echo "${sysctl} is not 1: container labels are not stacked, nothing to do"; exit 0
+    fi
+    if ! grep -q "^${name} " "${profiles}"; then
+        echo "${name} is not loaded yet: containerd loads it with the first container"; exit 0
+    fi
+    if [ -f "${fixed}.loaded" ] && grep -q "^${name} " "${profiles}"; then
+        echo "${name} already carries the stacked-peer rules"; exit 0
+    fi
+    daemon=unconfined
+    pid="$(pidof containerd 2>/dev/null | cut -d' ' -f1 || true)"
+    if [ -n "${pid}" ]; then
+        daemon="$(cut -d' ' -f1 "/proc/${pid}/attr/current" 2>/dev/null || echo unconfined)"
+        [ -n "${daemon}" ] || daemon=unconfined
+    fi
+    mkdir -p "$(dirname "${fixed}")"
+    {
+        [ -e /etc/apparmor.d/abi/3.0 ] && echo "abi <abi/3.0>,"
+        if [ -e /etc/apparmor.d/tunables/global ]; then echo "#include <tunables/global>"; else echo "@{PROC}=/proc/"; fi
+        echo "profile ${name} flags=(attach_disconnected,mediate_deleted) {"
+        [ -e /etc/apparmor.d/abstractions/base ] && echo "  #include <abstractions/base>"
+        cat <<PROFILE
+      network,
+      capability,
+      file,
+      umount,
+      signal (receive) peer=unconfined,
+      signal (receive) peer=runc,
+      signal (receive) peer=crun,
+      signal (receive) peer=${daemon},
+      signal (send,receive) peer=${name},
+      signal (send,receive) peer=${name}//&unconfined,
+
+      deny @{PROC}/* w,
+      deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+      deny @{PROC}/sys/[^k]** w,
+      deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+      deny @{PROC}/sysrq-trigger rwklx,
+      deny @{PROC}/kcore rwklx,
+
+      deny mount,
+
+      deny /sys/[^f]*/** wklx,
+      deny /sys/f[^s]*/** wklx,
+      deny /sys/fs/[^c]*/** wklx,
+      deny /sys/fs/c[^g]*/** wklx,
+      deny /sys/fs/cg[^r]*/** wklx,
+      deny /sys/firmware/** rwklx,
+      deny /sys/devices/virtual/powercap/** rwklx,
+      deny /sys/kernel/security/** rwklx,
+
+      ptrace (trace,tracedby,read,readby) peer=${name},
+      ptrace (trace,tracedby,read,readby) peer=${name}//&unconfined,
+    }
+    PROFILE
+    } > "${fixed}"
+    apparmor_parser -Kr "${fixed}"
+    touch "${fixed}.loaded"
+    echo "reloaded ${name} with the stacked-peer rules (daemon profile: ${daemon})"

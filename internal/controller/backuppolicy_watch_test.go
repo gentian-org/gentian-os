@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -29,12 +23,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 func probe(name, namespace string) client.Object {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(externalSecretGVK)
+	u.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	u.SetName(name)
 	u.SetNamespace(namespace)
 	return u
@@ -152,15 +147,15 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	const vault = "gentian-os/tenants/corp/backup/destination"
 
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
-		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
+	if err := applyExternalSecret(ctx, r.Client, "backup-destination-corp", s3Namespace,
+		vault, "Owner", nil, map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	first := externalSecretVersion(t, r, "backup-destination-corp")
 
 	// A second pass with identical inputs is what a steady-state reconcile is.
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
-		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
+	if err := applyExternalSecret(ctx, r.Client, "backup-destination-corp", s3Namespace,
+		vault, "Owner", nil, map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
 	if second := externalSecretVersion(t, r, "backup-destination-corp"); second != first {
@@ -170,8 +165,8 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	}
 
 	// A real change must still be written, or the object would never converge.
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
-		"gentian-os/tenants/corp/backup/moved", "Owner",
+	if err := applyExternalSecret(ctx, r.Client, "backup-destination-corp", s3Namespace,
+		"gentian-os/tenants/corp/backup/moved", "Owner", nil,
 		map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("changed pass: %v", err)
 	}
@@ -183,9 +178,9 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 func externalSecretVersion(t *testing.T, r *BackupPolicyReconciler, name string) string {
 	t.Helper()
 	es := &unstructured.Unstructured{}
-	es.SetGroupVersionKind(externalSecretGVK)
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
 	if err := r.Get(context.Background(),
-		types.NamespacedName{Name: name, Namespace: kernelNamespace}, es); err != nil {
+		types.NamespacedName{Name: name, Namespace: s3Namespace}, es); err != nil {
 		t.Fatalf("get ExternalSecret: %v", err)
 	}
 	return es.GetResourceVersion()

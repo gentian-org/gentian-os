@@ -1,0 +1,29 @@
+# The kernel provider's resources, marked Ready so function-sequencer emits
+# the ones ordered after them: the provider after its Secret, its mapper after
+# the provider. Without this the render shows the first of the sequence alone.
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-kernel-idp-client
+  annotations:
+    crossplane.io/composition-resource-name: kernel-idp-client
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+kind: IdentityProvider
+metadata:
+  name: render-fixture-kernel-idp
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kernel-idp
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

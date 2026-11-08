@@ -1,98 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/lib/certs.sh — cert-manager, TLS issuers, Envoy Gateway, wildcard certificates.
+# scripts/lib/certs.sh — TLS issuers and wildcard certificates.
 # =============================================================================
 # Sourced by scripts/lib/load.sh. Do not execute directly.
 # =============================================================================
-
-# =============================================================================
-# 2. Install cert-manager via Helm
-# =============================================================================
-install_cert_manager() {
-    if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
-        warn "Cluster infra disabled: skipping cert-manager installation."
-        return
-    fi
-
-    banner "Installing cert-manager"
-
-    if helm status cert-manager -n cert-manager &>/dev/null; then
-        # Existing Helm release may have been created by a previous install.sh run.
-        : "${GENTIAN_MANAGED_CERT_MANAGER:=1}"
-        save_install_state
-        if cert_manager_dns01_converged; then
-            success "cert-manager already installed (Helm release present). Skipping."
-            return
-        fi
-        _reconcile_cert_manager_dns01_args
-        return
-    fi
-
-    # Discover an existing non-Helm cert-manager install by finding the
-    # webhook deployment/service in any namespace.
-    local detected_ns=""
-    detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
-        | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
-        | head -1 || true)
-
-    if [[ -z "${detected_ns}" ]]; then
-        detected_ns=$(kubectl get svc -A -o json 2>/dev/null \
-            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
-            | head -1 || true)
-    fi
-
-    # Only skip Helm if a real cert-manager installation is present.
-    if [[ -n "${detected_ns}" ]]; then
-        CERT_MANAGER_NAMESPACE="${detected_ns}"
-        export CERT_MANAGER_NAMESPACE
-        GENTIAN_MANAGED_CERT_MANAGER="0"
-        save_install_state
-        warn "cert-manager already present but not managed by Helm (e.g. distro addon)."
-        info "Detected cert-manager webhook in namespace ${CERT_MANAGER_NAMESPACE}; using that installation as-is."
-        if [[ -n "$(cert_manager_dns01_args)" ]]; then
-            warn "  Its DNS-01 propagation check is not this installer's to configure. If"
-            warn "  challenges wait on \"not yet propagated\", give it the flags"
-            warn "  $(cert_manager_dns01_args | tr '\n' ' ')"
-        fi
-        return
-    fi
-
-    # Stale CRDs can remain after a partial uninstall; do not treat that as a
-    # valid installation. Proceed with Helm install if webhook/service is absent.
-    local has_existing_crds="0"
-    if kubectl get crd certificates.cert-manager.io &>/dev/null; then
-        has_existing_crds="1"
-        warn "cert-manager CRDs exist, but no cert-manager webhook/service was detected."
-        warn "Proceeding with Helm install while reusing existing CRDs."
-    fi
-
-    helm repo add jetstack "$(gentian_pin cert-manager repo)" --force-update
-    helm repo update jetstack
-    if [[ "${has_existing_crds}" == "1" ]]; then
-        # Existing CRDs may come from distro addons or prior non-Helm installs;
-        # do not ask Helm to import/manage them.
-        _helm_retry upgrade --install cert-manager jetstack/cert-manager \
-            -n cert-manager \
-            --version "$(gentian_pin cert-manager chart)" \
-            --create-namespace \
-            --set crds.enabled=false \
-            --set-json "extraArgs=$(_cert_manager_extra_args_json '[]')" \
-            --wait --timeout 5m
-    else
-        _helm_retry upgrade --install cert-manager jetstack/cert-manager \
-            -n cert-manager \
-            --version "$(gentian_pin cert-manager chart)" \
-            --create-namespace \
-            --set crds.enabled=true \
-            --set-json "extraArgs=$(_cert_manager_extra_args_json '[]')" \
-            --wait --timeout 5m
-    fi
-    CERT_MANAGER_NAMESPACE="cert-manager"
-    export CERT_MANAGER_NAMESPACE
-    GENTIAN_MANAGED_CERT_MANAGER="1"
-    save_install_state
-    success "cert-manager installed."
-}
 
 # =============================================================================
 # cert-manager's DNS-01 propagation check
@@ -133,7 +44,7 @@ _cert_manager_extra_args_json() {
 
 # _cert_manager_release_extra_args — extraArgs as the release holds them.
 _cert_manager_release_extra_args() {
-    helm get values cert-manager -n cert-manager -o json 2>/dev/null |
+    helm get values cert-manager -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" -o json 2>/dev/null |
         jq -c '.extraArgs // []' 2>/dev/null || echo '[]'
 }
 
@@ -141,36 +52,21 @@ _cert_manager_release_extra_args() {
 # with exactly the DNS-01 flags the claim asks for. Read from the release, not
 # the Deployment, because the release is what an upgrade would change.
 cert_manager_dns01_converged() {
-    helm status cert-manager -n cert-manager >/dev/null 2>&1 || return 0
+    helm status cert-manager -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" >/dev/null 2>&1 || return 0
     local current desired
     current="$(_cert_manager_release_extra_args)"
     desired="$(_cert_manager_extra_args_json "${current}")"
     [[ "$(jq -cS . <<< "${current}")" == "$(jq -cS . <<< "${desired}")" ]]
 }
 
-# _reconcile_cert_manager_dns01_args — upgrade the existing release to the flags
-# the claim asks for, and nothing else. The chart version is the one already
-# deployed, not the pin: this step does not upgrade cert-manager behind an
-# operator's back, it only corrects how the running one checks propagation.
-_reconcile_cert_manager_dns01_args() {
-    local version extra
-    version="$(helm list -n cert-manager -o json 2>/dev/null |
-        jq -r '.[] | select(.name == "cert-manager") | .chart' | sed 's/^cert-manager-//')"
-    if [[ -z "${version}" ]]; then
-        warn "cert-manager release has no readable chart version; leaving its DNS-01 flags as they are."
-        return 0
-    fi
-    extra="$(_cert_manager_extra_args_json "$(_cert_manager_release_extra_args)")"
-    info "Reconciling cert-manager's DNS-01 propagation check → ${extra}"
-    helm repo add jetstack "$(gentian_pin cert-manager repo)" --force-update
-    helm repo update jetstack
-    _helm_retry upgrade cert-manager jetstack/cert-manager \
-        -n cert-manager \
-        --version "${version}" \
-        --reuse-values \
-        --set-json "extraArgs=${extra}" \
-        --wait --timeout 5m
-    success "cert-manager DNS-01 propagation check reconciled."
+# gentian_issuer_mode — certificates.issuerMode of this cluster. The claim is
+# authoritative once it exists; the env var is how the installer carries the
+# answer before C-01 has created it.
+gentian_issuer_mode() {
+    local mode
+    mode="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.items[0].spec.certificates.issuerMode}' 2>/dev/null || true)"
+    echo "${mode:-${CERT_ISSUER_MODE:-acme-dns01}}"
 }
 
 # The zone's host. Cloudflare stays the default so a cluster that never named
@@ -201,6 +97,32 @@ gentian_dns_credential_secret_name() {
         "$(gentian_platforms_values)" 2>/dev/null || true
 }
 
+# gentian_cert_manager_namespace — where cert-manager runs on THIS cluster.
+#
+# Not a constant: the layout runs it at the edge beside the Gateway, and a
+# distro addon puts it wherever it likes. The webhook Deployment is the one object every
+# installation has exactly one of, so it is what the question is asked of, and
+# the answer is cached in CERT_MANAGER_NAMESPACE for the rest of the run.
+gentian_cert_manager_namespace() {
+    # CERT_MANAGER_NAMESPACE carries a default from load time, so an unset
+    # variable is not what "unknown" looks like here — a value that no
+    # cert-manager answers to is. Check it before trusting it.
+    if [[ -n "${CERT_MANAGER_NAMESPACE:-}" ]] \
+        && kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" >/dev/null 2>&1; then
+        echo "${CERT_MANAGER_NAMESPACE}"
+        return 0
+    fi
+    local detected
+    detected="$(kubectl get deploy -A -o json 2>/dev/null \
+        | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+        | head -1 || true)"
+    if [[ -n "${detected}" ]]; then
+        CERT_MANAGER_NAMESPACE="${detected}"
+        export CERT_MANAGER_NAMESPACE
+    fi
+    echo "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}"
+}
+
 gentian_dns_credential_vault_path() {
     yq_get ".dnsProviders.$(gentian_dns_provider).credential.vaultPath" \
         "$(gentian_platforms_values)" 2>/dev/null || true
@@ -209,12 +131,21 @@ gentian_dns_credential_vault_path() {
 # Whether this cluster has been given the credential its DNS provider needs.
 #
 # OpenBao is the record, because that is where every other consumer reads it
-# from — the ESO ClusterSecretStore, the credential manager, external-dns.
+# from — the ESO ClusterSecretStore, the custodian, external-dns.
 # Asking the installer's own environment instead is what tied the wildcard to
 # CF_API_TOKEN being exported in the shell that happened to run the install.
 gentian_dns_credential_present() {
     local path; path="$(gentian_dns_credential_vault_path)"
     [[ -n "${path}" && "${path}" != "null" ]] || return 1
+    # BAO_TOKEN is a by-product of initializing the vault, so a run that skips
+    # that step because it is already satisfied arrives here with nothing to
+    # read OpenBao with — and this function's answer, on a cluster that has the
+    # credential, would be "no credential" and the wildcard would be skipped.
+    # Reaching for the token here makes the answer about the cluster again.
+    if [[ -z "${BAO_TOKEN:-}" ]]; then
+        OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" \
+            resolve_openbao_access >/dev/null 2>&1 || return 1
+    fi
     [[ -n "${BAO_TOKEN:-}" ]] || return 1
     bao kv get -mount=secret "${path}" >/dev/null 2>&1
 }
@@ -241,14 +172,16 @@ gentian_set_args_from_pairs() {
 }
 
 gentian_cluster_issuers_manifest() {
-    case "${ACME_ENV:-production}" in
-        staging) echo "cluster-issuers-staging.yaml" ;;
-        # Both issuers in one apply — kernel services can stay on production
-        # while a dev-stage tenant profile points elsewhere (tenantDNS01ClusterIssuer)
-        # at the staging one, without a second install.sh run.
-        both)    printf '%s\n' "cluster-issuers.yaml" "cluster-issuers-staging.yaml" ;;
-        *)       echo "cluster-issuers.yaml" ;;
-    esac
+    # One template per line. ACME_ENV=both installs the staging issuer beside
+    # the production one, so a tenant can be pointed at staging while the
+    # kernel keeps certificates browsers trust.
+    local acme="${ACME_ENV:-production}"
+    if [[ "${acme}" != "staging" ]]; then
+        echo "cluster-issuers.yaml"
+    fi
+    if [[ "${acme}" == "staging" || "${acme}" == "both" ]]; then
+        echo "cluster-issuers-staging.yaml"
+    fi
 }
 
 # Apply (or refresh) kernel ClusterIssuers. Safe to re-run
@@ -261,7 +194,7 @@ apply_gentian_cluster_issuers() {
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
     : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=$(gentian_services_namespace)}"
-    : "${KERNEL_PUBLIC_GATEWAY_NAME:=kernel-public-gateway}"
+    : "${KERNEL_PUBLIC_GATEWAY_NAME:=perimeter}"
     export LETSENCRYPT_EMAIL KERNEL_DOMAIN KERNEL_PUBLIC_GATEWAY_NAMESPACE KERNEL_PUBLIC_GATEWAY_NAME
 
     if ! command -v helm &>/dev/null; then
@@ -269,7 +202,7 @@ apply_gentian_cluster_issuers() {
         exit 1
     fi
 
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" &>/dev/null; then
         local detected_ns=""
         detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
             | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
@@ -280,7 +213,7 @@ apply_gentian_cluster_issuers() {
         fi
     fi
 
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
+    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-$(ns_kernel edge)}" &>/dev/null; then
         error "cert-manager webhook not found; cannot apply ClusterIssuers."
         exit 1
     fi
@@ -293,16 +226,15 @@ apply_gentian_cluster_issuers() {
     while IFS= read -r arg; do dns_args+=("${arg}"); done \
         < <(gentian_set_args_from_pairs dnsParams "${DNS_PARAMS:-}")
 
-    # -s may be repeated: ACME_ENV=both selects both issuer templates, rendered
-    # (and applied) together in this one invocation.
-    local show_args=()
-    while IFS= read -r manifest; do
-        show_args+=(-s "templates/${manifest}")
-    done < <(gentian_cluster_issuers_manifest)
+    # helm renders one template per --show-only, and there may be two.
+    local only=() template
+    for template in $(gentian_cluster_issuers_manifest); do
+        only+=(--show-only "templates/${template}")
+    done
 
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
-        "${show_args[@]}" \
+        "${only[@]}" \
         --set-string letsencryptEmail="${LETSENCRYPT_EMAIL}" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string gatewayNamespace="${KERNEL_PUBLIC_GATEWAY_NAMESPACE}" \
@@ -348,127 +280,6 @@ force_reconcile_dns01_cluster_issuer() {
 }
 
 # =============================================================================
-# 2b. Install kernel cert-manager ClusterIssuers (always — both HTTP-01 and
-# DNS-01-Cloudflare). The wildcard Certificate + cloudflare-api-token
-# ExternalSecret are applied later by `install_kernel_wildcard` (after the
-# OpenBao seeding step has populated the token). See docs/design/multi-tenancy.md §3.
-# =============================================================================
-install_kernel_cert_resources() {
-    if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
-        warn "Cluster infra disabled: skipping kernel cert-manager resources."
-        return
-    fi
-    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
-        warn "KERNEL_DOMAIN unset: skipping kernel cert-manager resources."
-        return
-    fi
-
-    banner "Installing kernel cert-manager ClusterIssuers"
-
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
-        local detected_ns=""
-        detected_ns=$(kubectl get deploy -A -o json 2>/dev/null \
-            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
-            | head -1 || true)
-        if [[ -n "${detected_ns}" ]]; then
-            CERT_MANAGER_NAMESPACE="${detected_ns}"
-            export CERT_MANAGER_NAMESPACE
-        fi
-    fi
-    : "${CERT_MANAGER_NAMESPACE:=cert-manager}"
-    export CERT_MANAGER_NAMESPACE
-
-    if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" &>/dev/null; then
-        error "cert-manager webhook deployment not found in namespace ${CERT_MANAGER_NAMESPACE}."
-        error "Fix cert-manager first, then re-run install.sh."
-        exit 1
-    fi
-
-    # Wait for cert-manager webhook to be ready (Certificate/ClusterIssuer
-    # admission would otherwise be rejected by an uninitialized webhook).
-    info "Waiting for cert-manager webhook to be ready in namespace ${CERT_MANAGER_NAMESPACE}..."
-    kubectl rollout status -n "${CERT_MANAGER_NAMESPACE}" deploy/cert-manager-webhook --timeout=180s >/dev/null \
-        || warn "cert-manager-webhook not Ready within 180s (continuing)."
-
-    apply_gentian_cluster_issuers
-    local http01_name="letsencrypt-http01"
-    [[ "${ACME_ENV:-production}" == "staging" ]] && http01_name="letsencrypt-staging-http01"
-    if [[ "$(gentian_dns_provider)" == "none" ]]; then
-        success "ClusterIssuer ${http01_name} applied."
-        info "  No DNS provider: this cluster issues per-host certificates, not wildcards."
-    else
-        success "ClusterIssuers ${http01_name} and $(gentian_dns01_cluster_issuer_name) applied."
-    fi
-}
-
-# =============================================================================
-# 2c. Install Envoy Gateway (Gateway API edge stack)
-# =============================================================================
-install_envoy_gateway() {
-    if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
-        warn "Cluster infra disabled: skipping Envoy Gateway installation."
-        return
-    fi
-
-    : "${ROUTING_MODE:=gateway}"
-    export ROUTING_MODE
-    if [[ "${ROUTING_MODE}" != "gateway" ]]; then
-        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
-        exit 1
-    fi
-
-    banner "Installing Envoy Gateway and Gateway API CRDs"
-
-    local ns="${ENVOY_GATEWAY_NAMESPACE}"
-    local chart_version="${ENVOY_GATEWAY_CHART_VERSION}"
-    local svc_type="ClusterIP"
-    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
-        svc_type="LoadBalancer"
-    fi
-
-    if helm status eg -n "${ns}" &>/dev/null; then
-        success "Envoy Gateway Helm release already present in ${ns}."
-    else
-        info "Installing Envoy Gateway ${chart_version} (service type ${svc_type})..."
-        _helm_retry upgrade --install eg "$(gentian_pin envoy-gateway repo)" \
-            --version "${chart_version}" \
-            -n "${ns}" \
-            --create-namespace \
-            --set "config.envoyGateway.gateway.controllerName=${GENTIAN_GATEWAY_CONTROLLER_NAME}" \
-            --set deployment.replicas=1 \
-            --set "kubernetesService.type=${svc_type}" \
-            --wait --timeout 5m
-        success "Envoy Gateway installed in namespace ${ns}."
-    fi
-
-    info "Waiting for Envoy Gateway controller deployment..."
-    if ! kubectl rollout status -n "${ns}" deploy/envoy-gateway --timeout=180s >/dev/null 2>&1; then
-        warn "Envoy Gateway deployment not Ready within 180s (continuing)."
-    fi
-
-    info "Verifying Gateway API CRDs..."
-    local crd
-    for crd in \
-        gatewayclasses.gateway.networking.k8s.io \
-        gateways.gateway.networking.k8s.io \
-        httproutes.gateway.networking.k8s.io; do
-        if kubectl get crd "${crd}" &>/dev/null; then
-            kubectl wait --for=condition=Established "crd/${crd}" --timeout=120s >/dev/null 2>&1 \
-                || warn "CRD ${crd} not Established within 120s."
-        else
-            warn "Gateway API CRD ${crd} not found after Envoy Gateway install."
-        fi
-    done
-    success "Envoy Gateway and Gateway API CRDs ready (ROUTING_MODE=gateway)."
-    info "  GatewayClass: ${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
-    info "  Controller:   ${GENTIAN_GATEWAY_CONTROLLER_NAME}"
-    info "  Status:       kubectl get gatewayclass,gateway -A"
-
-    _pin_static_ip_edge_address
-}
-
-
-# =============================================================================
 # Edge address, per provider
 #
 # Claiming a specific address for a LoadBalancer Service is not portable: every
@@ -510,21 +321,111 @@ _detect_platform() {
 }
 
 
-# Pin the Envoy data-plane LoadBalancer to NODE_IP (NETWORK_MODE=static-ip only).
+# apply_envoy_gateway_crds — the pinned chart's CRDs, applied before the chart.
 #
-# Without this the cloud controller allocates an arbitrary public IP for the
-# Envoy Service, so NODE_IP — which is what DNS and gentian-cluster-config point
-# at — never matches the address traffic actually arrives on. See
-# kernel/manifests/gateway/chart for the full rationale.
+# Helm installs a chart's CRDs once and never again: an upgrade leaves the ones
+# in the cluster as they are. A newer Envoy Gateway then runs against the older
+# release's definitions, and the API server drops every field of a policy those
+# definitions do not know -- silently, so the policy is accepted and does
+# something else. Envoy Gateway's own upgrade procedure is the same thing:
+# definitions first, then the controller.
 #
-# Must run before the operator creates kernel-public-gateway: loadBalancerIP is
-# honoured at Service creation only, never on update.
-_pin_static_ip_edge_address() {
-    [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] || return 0
+# Both sets come out of the one pinned chart, Envoy Gateway's own and the
+# Gateway API's, so there is no second version to keep in step. Server-side,
+# because several of them are too large for the annotation a client-side apply
+# keeps; forcing conflicts, because on an upgrade Helm is the recorded owner of
+# every field and would otherwise win.
+apply_envoy_gateway_crds() {
+    local version repo crds rc=0
+    version="$(gentian_pin envoy-gateway chart)"
+    repo="$(gentian_pin envoy-gateway repo)"
+    crds="$(mktemp)"
+    if ! _helm_retry show crds "${repo}" --version "${version}" >"${crds}"; then
+        rm -f "${crds}"
+        error "Could not read the CRDs of Envoy Gateway ${version} from ${repo}."
+        return 1
+    fi
+    if ! grep -q '^kind: CustomResourceDefinition' "${crds}"; then
+        rm -f "${crds}"
+        error "Envoy Gateway ${version} (${repo}) printed no CRDs; refusing to install the controller over whatever the cluster has."
+        return 1
+    fi
+    info "Envoy Gateway ${version}: applying its CRDs and the Gateway API's before the chart."
+    kubectl apply --server-side --force-conflicts -f "${crds}" >/dev/null || rc=$?
+    rm -f "${crds}"
+    if [[ "${rc}" != "0" ]]; then
+        error "Applying the CRDs of Envoy Gateway ${version} failed."
+        return "${rc}"
+    fi
+    kubectl wait --for=condition=Established --timeout=120s \
+        crd/securitypolicies.gateway.envoyproxy.io \
+        crd/envoyproxies.gateway.envoyproxy.io \
+        crd/gateways.gateway.networking.k8s.io \
+        crd/httproutes.gateway.networking.k8s.io >/dev/null
+}
 
+# envoy_gateway_crds_current — check() half: the cluster's SecurityPolicy
+# definition has the fields the operator writes.
+#
+# Asked of the definition and not of a version label, because this is the thing
+# that goes wrong: a stale definition accepts the operator's policies with the
+# fields it does not know removed. The two named here arrived in different
+# releases and are the newest the operator depends on.
+envoy_gateway_crds_current() {
+    kubectl get crd securitypolicies.gateway.envoyproxy.io -o json 2>/dev/null | jq -e '
+        [.spec.versions[] | select(.served)
+         | .schema.openAPIV3Schema.properties.spec.properties.oidc.properties
+         | (has("forwardIDToken") and has("cookieConfig"))] | length > 0 and all' >/dev/null 2>&1
+}
+
+# edge_filter_order_ok — check() half: the edge's EnvoyProxy runs the session
+# filter ahead of the bouncer. See the EnvoyProxy template for why the edge is
+# not installed without it.
+edge_filter_order_ok() {
+    local order
+    order="$(kubectl get envoyproxy gentian-edge -n "$(ns_kernel edge)" \
+        -o jsonpath='{range .spec.filterOrder[*]}{.name}{">"}{.before}{" "}{end}' 2>/dev/null)"
+    [[ " ${order}" == *" envoy.filters.http.oauth2>envoy.filters.http.ext_authz "* ]]
+}
+
+# apply_edge_envoyproxy — the EnvoyProxy the kernel's GatewayClass points at,
+# and the GatewayClass itself.
+#
+# Two shapes, one per network mode.
+#
+# static-ip: the data plane is a LoadBalancer. Without this the cloud
+# controller allocates an arbitrary public address, so NODE_IP — which is what
+# DNS and gentian-cluster-config point at — never matches the address traffic
+# actually arrives on. See kernel/manifests/gateway/chart for the full
+# rationale. It must run before the operator creates the edge Gateways:
+# loadBalancerIP is honored at Service creation only, never on update.
+#
+# tunnel: nothing outside the cluster connects to the data plane at all — the
+# tunnel daemon runs beside it and dials out. A LoadBalancer there asks for an
+# address from a cloud that is not there: on a cluster with no load-balancer
+# controller the Service sits Pending forever, and a Gateway with no address is
+# never Programmed, so every route it carries stays unserved. ClusterIP is both
+# what the tunnel needs and something every cluster can give.
+apply_edge_envoyproxy() {
     local ns="${ENVOY_GATEWAY_NAMESPACE}"
-    local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-kernel-public-gateway}"
+    local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-perimeter}"
     local gw_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+    local svc_type=ClusterIP
+    [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] && svc_type=LoadBalancer
+
+    if [[ "${svc_type}" == "ClusterIP" ]]; then
+        info "Edge data plane: ClusterIP (NETWORK_MODE=${NETWORK_MODE:-tunnel}; the tunnel dials out)."
+        helm template gentian-edge "${SCRIPT_DIR}/kernel/manifests/gateway/chart" \
+            -f "$(gentian_platforms_values)" \
+            --set "namespace=${ns}" \
+            --set-string "envoy.serviceType=ClusterIP" \
+            | kubectl apply -f -
+        kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/gateway/gatewayclass.yaml"
+        kubectl patch gatewayclass "${gw_class}" --type=merge -p \
+            "{\"spec\":{\"parametersRef\":{\"group\":\"gateway.envoyproxy.io\",\"kind\":\"EnvoyProxy\",\"name\":\"gentian-edge\",\"namespace\":\"${ns}\"}}}"
+        success "EnvoyProxy gentian-edge applied; GatewayClass ${gw_class} points at it."
+        return 0
+    fi
 
     # Detection first, and unconditionally.
     #
@@ -550,7 +451,7 @@ _pin_static_ip_edge_address() {
         # loadBalancerIP is create-time only, so pinning an already-provisioned
         # data plane silently does nothing. Say so rather than reporting success
         # — the profile below is still applied, because annotations, unlike the
-        # address, are honoured on update.
+        # address, are honored on update.
         if kubectl get svc -n "${ns}" \
             -l "gateway.envoyproxy.io/owning-gateway-name=${gw_name}" \
             -o name 2>/dev/null | grep -q .; then
@@ -578,6 +479,7 @@ _pin_static_ip_edge_address() {
         --set-string "nodeIp=${NODE_IP:-}" \
         --set-string "platform=${PLATFORM:-}" \
         --set-string "addressRef=${EDGE_ADDRESS_REF:-}" \
+        --set-string "envoy.serviceType=LoadBalancer" \
         "${extra[@]+"${extra[@]}"}" \
         | kubectl apply -f -
 
@@ -594,15 +496,12 @@ _pin_static_ip_edge_address() {
 }
 
 wait_for_gateway_platform() {
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        return 0
-    fi
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         warn "KERNEL_DOMAIN unset; skipping gateway platform wait."
         return 0
     fi
 
-    banner "Waiting for kernel Gateway API platform (ROUTING_MODE=gateway)"
+    banner "Waiting for kernel Gateway API platform"
     local ns
     ns="$(_gentian_os_services_namespace)"
     local deadline=$(( SECONDS + 300 ))
@@ -616,23 +515,23 @@ wait_for_gateway_platform() {
     done
     if ! kubectl get gatewayclass gentian-envoy >/dev/null 2>&1; then
         warn "GatewayClass gentian-envoy not found after 300s."
-        warn "  Check operator logs: kubectl logs -n gentian-system deploy/gentian-os | grep gateway-platform"
+        warn "  Check operator logs: kubectl logs -n $(ns_kernel control) deploy/gentian-os | grep gateway-platform"
         return 1
     fi
     success "GatewayClass gentian-envoy present."
 
-    info "Waiting for Gateway kernel-public-gateway in ${ns} (up to 300s)..."
+    info "Waiting for Gateway authenticated in ${ns} (up to 300s)..."
     while (( SECONDS < deadline )); do
-        if kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
+        if kubectl get gateway -n "${ns}" authenticated >/dev/null 2>&1; then
             break
         fi
         sleep 5
     done
-    if ! kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
-        warn "Gateway kernel-public-gateway not found after 300s."
+    if ! kubectl get gateway -n "${ns}" authenticated >/dev/null 2>&1; then
+        warn "Gateway authenticated not found after 300s."
         return 1
     fi
-    success "Gateway kernel-public-gateway present."
+    success "Gateway authenticated present."
 
     info "Waiting for kernel HTTPRoutes (up to 300s)..."
     while (( SECONDS < deadline )); do
@@ -652,33 +551,28 @@ wait_for_gateway_platform() {
 }
 
 print_gateway_tunnel_hints() {
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        return 0
-    fi
     local ns; ns="$(gentian_services_namespace)"
-    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
     info "  in namespace ${envoy_ns}, not a legacy Ingress controller."
-    info "  Discover the Service after kernel-public-gateway is Programmed:"
-    info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
+    info "  Discover the Service after the edge Gateways are Programmed:"
+    info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gatewayclass=gentian-envoy"
     info "  Typical origin: https://<envoy-svc>.${envoy_ns}.svc.cluster.local:443"
-    info "  Verify: kubectl get gateway -n ${ns} kernel-public-gateway -o yaml | grep -A5 conditions"
+    info "  Verify: kubectl get gateway -n ${ns} authenticated -o yaml | grep -A5 conditions"
 }
 
 # Point CoreDNS kernel HTTPS hairpin entries at the Envoy Gateway ClusterIP.
 # mail.<kernelDomain> is left unchanged (Dovecot). The operator reconciles this
 # continuously; install/update runs it once so clusters recover before sync.
 _reconcile_kernel_https_coredns_hairpin() {
-    [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
-    local services_ns; services_ns="$(gentian_services_namespace)"
-    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
+    local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
     local mail_domain="mail.${KERNEL_DOMAIN}"
     local edge_ip
     edge_ip=$(kubectl get svc -n "${envoy_ns}" \
-        -l "gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway,gateway.envoyproxy.io/owning-gateway-namespace=${services_ns}" \
+        -l "gateway.envoyproxy.io/owning-gatewayclass=gentian-envoy" \
         -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || true)
     if [[ -z "${edge_ip}" ]]; then
         warn "Envoy kernel Gateway Service not found; skipping CoreDNS hairpin update."
@@ -781,13 +675,16 @@ sys.stdout.write(corefile[:i] + new_block + corefile[j + len(end):])
 # Namespaces that do not exist are skipped: they are not a gap, they are a
 # shape this cluster does not have.
 _kernel_wildcard_targets() {
-    local app_ns="gentian-${ENV:-dev}"
-    local ns seen=""
-    for ns in "${app_ns}" "$(gentian_services_namespace)" argocd; do
-        [[ " ${seen} " == *" ${ns} "* ]] && continue
-        seen+=" ${ns}"
-        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
-        printf '%s\n' "${ns}"
+    # Which namespaces hold a copy is a property of the layout: the Gateway
+    # reads one, and so does whatever else terminates TLS for a kernel host.
+    # C-03 states it in GENTIAN_WILDCARD_TARGETS. Without it there is nothing
+    # to guess at -- the list this used to fall back to belonged to the layout
+    # that no longer exists, and copying a wildcard into namespaces a cluster
+    # does not have is how a step reports satisfied for nothing.
+    local target
+    for target in ${GENTIAN_WILDCARD_TARGETS:-}; do
+        kubectl get namespace "${target}" >/dev/null 2>&1 || continue
+        printf '%s\n' "${target}"
     done
 }
 
@@ -805,7 +702,7 @@ _kernel_wildcard_targets() {
 # certificate — so it costs one GET per namespace and needs no openssl.
 kernel_wildcard_propagated() {
     local want ns have
-    want="$(kubectl get secret wildcard-kernel-tls -n cert-manager \
+    want="$(kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" \
         -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
     # Nothing issued yet is not "propagated"; the caller decides what that means.
     [[ -n "${want}" ]] || return 1
@@ -824,12 +721,12 @@ kernel_wildcard_propagated() {
 # Certificate has not been issued yet returns without complaint, because the
 # caller that is about to issue one will call this again afterwards.
 propagate_kernel_wildcard() {
-    kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1 || return 0
+    kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" >/dev/null 2>&1 || return 0
     local ns
     while IFS= read -r ns; do
         [[ -n "${ns}" ]] || continue
         info "Propagating wildcard-tls into namespace ${ns}..."
-        kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
+        kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json \
             | python3 -c "
 import sys, json
 s = json.load(sys.stdin)
@@ -860,7 +757,7 @@ install_kernel_wildcard() {
     fi
     if ! gentian_dns_credential_present; then
         info "No credential for DNS provider ${dns_provider}; skipping wildcard ISSUANCE."
-        info "  Supply it to the credential manager and re-run: ./install.sh --only C-01"
+        info "  Supply it to the custodian and re-run: ./install.sh --only C-01"
         # Distribution is not issuance and does not need the credential. A
         # certificate cert-manager has already renewed still has to reach the
         # namespaces that serve it, and this is the step that owns that copy --
@@ -892,24 +789,25 @@ install_kernel_wildcard() {
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
         -s templates/dns-credentials-externalsecret.yaml \
+        --set-string certManagerNamespace="$(gentian_cert_manager_namespace)" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string dnsProvider="${dns_provider}" \
         "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
 
     # 2) Wait for the underlying Secret to materialize (ESO refresh).
-    info "Waiting for Secret cert-manager/${secret_name} (max 120s)..."
+    info "Waiting for Secret $(gentian_cert_manager_namespace)/${secret_name} (max 120s)..."
     local i
     for i in {1..60}; do
-        if kubectl get secret "${secret_name}" -n cert-manager &>/dev/null; then
+        if kubectl get secret "${secret_name}" -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
             success "${secret_name} materialized after ${i}x2s."
             break
         fi
         sleep 2
     done
-    if ! kubectl get secret "${secret_name}" -n cert-manager &>/dev/null; then
+    if ! kubectl get secret "${secret_name}" -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
         warn "${secret_name} did not materialize within 120s; check ExternalSecret status:"
-        warn "  kubectl describe externalsecret ${secret_name} -n cert-manager"
+        warn "  kubectl describe externalsecret ${secret_name} -n $(gentian_cert_manager_namespace)"
         warn "Continuing — wildcard Certificate will issue once the Secret appears."
     fi
 
@@ -937,49 +835,205 @@ install_kernel_wildcard() {
     # printed its error, applied nothing, and the step went on to announce the
     # Certificate as applied. So the kernel wildcard Certificate was never
     # created by this path at all.
+    #
+    # A wildcard kept from an earlier install goes back first, so cert-manager
+    # adopts it instead of ordering a new one (see save_kernel_wildcard).
+    restore_kernel_wildcard "${DNS01_CLUSTER_ISSUER}"
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
         -s templates/wildcard-kernel-cert.yaml \
+        --set-string certManagerNamespace="$(gentian_cert_manager_namespace)" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string dns01ClusterIssuer="${DNS01_CLUSTER_ISSUER}" \
         --set-string dnsProvider="${dns_provider}" \
         "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
-    success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
-    info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"
+    success "Kernel wildcard Certificate wildcard-kernel applied in $(gentian_cert_manager_namespace)."
+    info "Issuance status:  kubectl get certificate wildcard-kernel -n $(gentian_cert_manager_namespace)"
 
     # 4) Propagate wildcard-kernel-tls → wildcard-tls in kernel app namespaces.
     #    The Tenant operator issues per-tenant wildcard certs (tenant-*-wildcard-tls),
     #    but the kernel service namespaces are not managed by the operator.
     #    Wait up to 180 s for the cert to be issued first.
-    info "Waiting for wildcard-kernel-tls to be issued (max 180s)..."
-    local i
-    for i in {1..90}; do
-        if kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
-            success "wildcard-kernel-tls Secret exists after ${i}x2s."
-            break
+    # Current, not merely present. A Secret from the previous issuer exists
+    # throughout a reissue -- after a switch from staging to production it
+    # stayed for the eight minutes DNS-01 took -- and waiting only for
+    # existence copied that old certificate to the Gateway and moved on, so
+    # the cluster served staging until somebody re-ran C-03. DNS-01 needs the
+    # TXT records to propagate, which takes minutes, not the 180s this was.
+    local timeout="${GENTIAN_WILDCARD_WAIT_SECS:-900}"
+    local deadline=$(( SECONDS + timeout )) reported=0
+    info "Waiting for wildcard-kernel-tls to be issued by ${DNS01_CLUSTER_ISSUER} (max $(( timeout / 60 ))m)..."
+    until kernel_wildcard_current; do
+        if (( SECONDS > deadline )); then break; fi
+        if (( SECONDS - reported >= 60 )); then
+            reported=${SECONDS}
+            info "  $(kubectl get certificate wildcard-kernel -n "$(gentian_cert_manager_namespace)" \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null)"
         fi
-        sleep 2
+        sleep 5
     done
-    local app_ns="gentian-${ENV:-dev}"
-    if ! kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
+    if ! kernel_wildcard_current; then
         warn "wildcard-kernel-tls not yet issued (LE rate-limited or still pending)."
         warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
         return
     fi
-    # Remove stale fallback Certificate CR if present from a prior install.
-    if kubectl get certificate wildcard-dev-tls -n "${app_ns}" &>/dev/null; then
-        kubectl delete certificate wildcard-dev-tls -n "${app_ns}"
-        success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
-    fi
+    save_kernel_wildcard
     propagate_kernel_wildcard
+}
 
-    # ACME staging: trust bundle for in-cluster OIDC clients.
-    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        local staging_ca_script="${SCRIPT_DIR}/scripts/bootstrap/create-trust-anchor-secret.sh"
-        if [[ -x "${staging_ca_script}" ]]; then
-            info "Creating gentian-trust-anchor-tls in ${app_ns} (ACME staging)..."
-            "${staging_ca_script}" "${app_ns}" || warn "gentian-trust-anchor-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."
-        fi
+# =============================================================================
+# The kernel wildcard, kept on this host across purges
+# =============================================================================
+#
+# Let's Encrypt allows five certificates per week for the same set of names,
+# and a purge throws the wildcard away with its namespace -- so a debugging
+# week of reinstalls ran out of production certificates, and dev clusters used
+# staging instead, whose chain nothing in the cluster trusts. Keeping the
+# issued certificate here and handing it back to cert-manager before it orders
+# a new one makes a reinstall cost nothing: cert-manager adopts a Secret whose
+# certificate matches the Certificate's names and issuer, and renews it only
+# when it is due, which is once in some sixty days however often the cluster
+# is rebuilt.
+#
+# One file per kernel domain, mode 0600, beside the break-glass key that is
+# already on this host. It is overwritten rather than accumulated, removed
+# the moment it can no longer be used (expired, other names, other ACME
+# environment), and removed by --purge --cluster-infra -- the same flag that
+# removes the published DNS records, for the same reason.
+
+# kernel_wildcard_current — the wildcard Secret holds what the Certificate
+# asks for now: Ready, and issued by the issuer it names. cert-manager records
+# the issuer on the Secret, so a certificate left from a previous issuer --
+# present, valid, and wrong -- does not pass.
+kernel_wildcard_current() {
+    local ns want ready have
+    ns="$(gentian_cert_manager_namespace)"
+    # `|| true` inside: the substitution runs in a subshell that inherits the
+    # ERR trap, so a Certificate that is gone -- every purge after the edge
+    # namespace went -- printed the installer's abort banner from in there,
+    # though the answer is the ordinary "nothing to keep".
+    read -r want ready < <(kubectl get certificate wildcard-kernel -n "${ns}" \
+        -o jsonpath='{.spec.issuerRef.name} {.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+    [[ -n "${want}" && "${ready}" == "True" ]] || return 1
+    have="$(kubectl get secret wildcard-kernel-tls -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.cert-manager\.io/issuer-name}' 2>/dev/null)"
+    [[ "${have}" == "${want}" ]]
+}
+
+gentian_wildcard_cache_file() {
+    printf '%s/%s.json' "${GENTIAN_CERT_CACHE:-${HOME}/.gentian/certs}" "${KERNEL_DOMAIN:?}"
+}
+
+# save_kernel_wildcard — keep the issued wildcard for the next install.
+#
+# The Secret as cert-manager wrote it, annotations included: they name the
+# issuer and the Certificate, and cert-manager compares them before deciding
+# whether a Secret it finds is its own.
+save_kernel_wildcard() {
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    # Only what the claim asks for: mid-reissue the Secret still holds the
+    # previous issuer's certificate, and keeping that would keep the wrong one.
+    kernel_wildcard_current || return 0
+    local file json tmp
+    file="$(gentian_wildcard_cache_file)"
+    json="$(kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json 2>/dev/null \
+        | jq -c 'select((.data["tls.crt"] // "") != "" and (.data["tls.key"] // "") != "")
+                 | {apiVersion, kind, type, data,
+                    metadata: {name: .metadata.name,
+                               labels: (.metadata.labels // {}),
+                               annotations: ((.metadata.annotations // {})
+                                 | with_entries(select(.key | startswith("cert-manager.io/"))))}}' \
+        2>/dev/null)" || return 0
+    [[ -n "${json}" ]] || return 0
+    [[ -f "${file}" && "$(cat "${file}")" == "${json}" ]] && return 0
+    mkdir -p "$(dirname "${file}")" && chmod 700 "$(dirname "${file}")" || return 0
+    tmp="$(mktemp "${file}.XXXXXX")" || return 0
+    chmod 600 "${tmp}"
+    if ! { printf '%s\n' "${json}" > "${tmp}" && mv -f "${tmp}" "${file}"; }; then
+        rm -f "${tmp}"
+        return 0
     fi
+    info "Kept the kernel wildcard in ${file} for the next install (rate limits)."
+}
+
+# _cached_wildcard_unusable <file> <issuer> — why the copy cannot be reused,
+# or nothing when it can.
+_cached_wildcard_unusable() {
+    local file="$1" issuer="$2" crt key want have ca
+    command -v openssl >/dev/null 2>&1 || { echo "openssl is not installed"; return 0; }
+    crt="$(jq -r '.data["tls.crt"] // empty' "${file}" 2>/dev/null | base64 -d 2>/dev/null)"
+    key="$(jq -r '.data["tls.key"] // empty' "${file}" 2>/dev/null | base64 -d 2>/dev/null)"
+    [[ -n "${crt}" && -n "${key}" ]] || { echo "it is not a readable TLS Secret"; return 0; }
+
+    # A day's margin: a certificate that expires mid-install is no saving.
+    openssl x509 -noout -checkend 86400 <<< "${crt}" >/dev/null 2>&1 \
+        || { echo "it has expired or expires within a day"; return 0; }
+    [[ "$(openssl x509 -noout -pubkey <<< "${crt}" 2>/dev/null)" == \
+       "$(openssl pkey -pubout <<< "${key}" 2>/dev/null)" ]] \
+        || { echo "its key does not match its certificate"; return 0; }
+
+    # Exactly the names the Certificate asks for; anything else and
+    # cert-manager would reissue anyway.
+    want="$(printf '%s\n' "${KERNEL_DOMAIN}" "*.${KERNEL_DOMAIN}" | sort)"
+    have="$(openssl x509 -noout -ext subjectAltName <<< "${crt}" 2>/dev/null \
+        | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p' | sort)"
+    [[ "${have}" == "${want}" ]] || { echo "it covers other names ($(echo "${have}" | tr '\n' ' '))"; return 0; }
+
+    # The ACME environment the claim names now: a staging certificate kept
+    # from before a switch to production is exactly the one not to restore.
+    ca="$(openssl x509 -noout -issuer <<< "${crt}" 2>/dev/null)"
+    if [[ "${issuer}" == *staging* ]]; then
+        [[ "${ca}" == *STAGING* ]] || echo "it is a production certificate and the claim asks for staging"
+    else
+        [[ "${ca}" != *STAGING* ]] || echo "it is a staging certificate and the claim asks for production"
+    fi
+    return 0
+}
+
+# restore_kernel_wildcard <cluster-issuer> — hand a kept wildcard back to
+# cert-manager before the Certificate is applied, so it is adopted rather than
+# ordered again. Never fatal: without a usable copy, cert-manager issues as it
+# always did.
+restore_kernel_wildcard() {
+    local issuer="$1" ns file why
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    file="$(gentian_wildcard_cache_file)"
+    [[ -f "${file}" ]] || return 0
+    ns="$(gentian_cert_manager_namespace)"
+    # A live Secret is cert-manager's own and newer than any copy.
+    kubectl get secret wildcard-kernel-tls -n "${ns}" >/dev/null 2>&1 && return 0
+
+    why="$(_cached_wildcard_unusable "${file}" "${issuer}")"
+    if [[ -n "${why}" ]]; then
+        info "Not reusing the kept kernel wildcard: ${why}. Removing ${file}."
+        rm -f "${file}"
+        return 0
+    fi
+    # The issuer annotations follow the claim: the copy was checked against
+    # its ACME environment above, and a matching name is what lets
+    # cert-manager adopt it.
+    if jq --arg ns "${ns}" --arg issuer "${issuer}" \
+        '.metadata.namespace = $ns
+         | .metadata.annotations["cert-manager.io/issuer-name"] = $issuer
+         | .metadata.annotations["cert-manager.io/issuer-kind"] = "ClusterIssuer"
+         | .metadata.annotations["cert-manager.io/issuer-group"] = "cert-manager.io"
+         | .metadata.annotations["cert-manager.io/certificate-name"] = "wildcard-kernel"' \
+        "${file}" | kubectl apply -f - >/dev/null; then
+        success "Reused the kept kernel wildcard (valid until $(jq -r '.data["tls.crt"]' "${file}" \
+            | base64 -d | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)); cert-manager adopts it instead of ordering."
+    else
+        warn "Could not restore the kept kernel wildcard; cert-manager will issue a new one."
+    fi
+}
+
+# purge_kernel_wildcard_cache — under --purge --cluster-infra only.
+purge_kernel_wildcard_cache() {
+    [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    local file; file="$(gentian_wildcard_cache_file)"
+    [[ -f "${file}" ]] || return 0
+    rm -f "${file}" && success "Removed ${file}."
+    rmdir "$(dirname "${file}")" 2>/dev/null || true
 }

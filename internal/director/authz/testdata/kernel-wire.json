@@ -1,0 +1,918 @@
+[
+  {
+    "name": "check allowed",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/check",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 101,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+      }
+    ],
+    "result": [
+      true,
+      null
+    ]
+  },
+  {
+    "name": "check denied",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/check",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 101,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+      }
+    ],
+    "result": [
+      false,
+      null
+    ]
+  },
+  {
+    "name": "check refused",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/check",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 101,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+      }
+    ],
+    "result": [
+      false,
+      {
+        "error": "openfga check: status 403: {\"code\":\"x\",\"message\":\"m\"}",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "check answered 204",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/check",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 101,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+      }
+    ],
+    "result": [
+      false,
+      {
+        "error": "openfga check: status 204: ",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "check answered garbage",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/check",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 101,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+      }
+    ],
+    "result": [
+      false,
+      {
+        "error": "openfga check: invalid character 'o' in literal null (expecting 'u')",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "check without a token",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/check",
+        "contentType": "application/json",
+        "contentLength": 81,
+        "body": "{\"tuple_key\":{\"user\":\"\",\"relation\":\"\",\"object\":\"\"},\"authorization_model_id\":\"M1\"}"
+      }
+    ],
+    "result": [
+      true,
+      null
+    ]
+  },
+  {
+    "name": "check unreachable",
+    "requests": null,
+    "result": [
+      false,
+      {
+        "error": "openfga check: Post \"http://127.0.0.1:1/stores/S1/check\": dial tcp 127.0.0.1:1: connect: connection refused",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "read everything, two pages",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 32,
+        "body": "{\"page_size\":100,\"tuple_key\":{}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 67,
+        "body": "{\"continuation_token\":\"t+/=\\u0026x\",\"page_size\":100,\"tuple_key\":{}}"
+      }
+    ],
+    "result": [
+      [
+        {
+          "user": "user:a",
+          "relation": "r",
+          "object": "o:1"
+        },
+        {
+          "user": "user:b",
+          "relation": "r",
+          "object": "o:2"
+        }
+      ],
+      null
+    ]
+  },
+  {
+    "name": "read by user and type",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 65,
+        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:\",\"user\":\"user:a\"}}"
+      }
+    ],
+    "result": [
+      [
+        {
+          "user": "user:b",
+          "relation": "r",
+          "object": "o:2"
+        }
+      ],
+      null
+    ]
+  },
+  {
+    "name": "read by relation and object",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 70,
+        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\",\"relation\":\"member\"}}"
+      }
+    ],
+    "result": [
+      [
+        {
+          "user": "user:b",
+          "relation": "r",
+          "object": "o:2"
+        }
+      ],
+      null
+    ]
+  },
+  {
+    "name": "read by all three",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 86,
+        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\",\"relation\":\"member\",\"user\":\"user:a\"}}"
+      }
+    ],
+    "result": [
+      [
+        {
+          "user": "user:b",
+          "relation": "r",
+          "object": "o:2"
+        }
+      ],
+      null
+    ]
+  },
+  {
+    "name": "read past an empty page",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 50,
+        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 78,
+        "body": "{\"continuation_token\":\"more\",\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
+      }
+    ],
+    "result": [
+      [
+        {
+          "user": "user:b",
+          "relation": "r",
+          "object": "o:2"
+        }
+      ],
+      null
+    ]
+  },
+  {
+    "name": "read fails on the second page",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 50,
+        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 85,
+        "body": "{\"continuation_token\":\"t+/=\\u0026x\",\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
+      }
+    ],
+    "result": [
+      null,
+      {
+        "error": "openfga /stores/S1/read: status 500: boom",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "read unreachable",
+    "requests": null,
+    "result": [
+      null,
+      {
+        "error": "openfga /stores/S1/read: Post \"http://127.0.0.1:1/stores/S1/read\": dial tcp 127.0.0.1:1: connect: connection refused",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "read answered garbage",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/read",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 50,
+        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\"}}"
+      }
+    ],
+    "result": [
+      null,
+      {
+        "error": "unexpected EOF",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "write in chunks, deletes first",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/write",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 5948,
+        "body": "{\"authorization_model_id\":\"M1\",\"deletes\":{\"tuple_keys\":[{\"user\":\"user:u0\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u1\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u2\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u3\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u4\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u5\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u6\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u7\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u8\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u9\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u10\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u11\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u12\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u13\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u14\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u15\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u16\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u17\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u18\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u19\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u20\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u21\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u22\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u23\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u24\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u25\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u26\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u27\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u28\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u29\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u30\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u31\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u32\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u33\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u34\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u35\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u36\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u37\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u38\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u39\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u40\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u41\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u42\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u43\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u44\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u45\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u46\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u47\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u48\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u49\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u50\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u51\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u52\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u53\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u54\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u55\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u56\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u57\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u58\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u59\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u60\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u61\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u62\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u63\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u64\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u65\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u66\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u67\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u68\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u69\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u70\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u71\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u72\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u73\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u74\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u75\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u76\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u77\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u78\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u79\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u80\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u81\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u82\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u83\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u84\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u85\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u86\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u87\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u88\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u89\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u90\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u91\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u92\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u93\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u94\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u95\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u96\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u97\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u98\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u99\",\"relation\":\"member\",\"object\":\"group:g\"}]}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/write",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 3058,
+        "body": "{\"authorization_model_id\":\"M1\",\"deletes\":{\"tuple_keys\":[{\"user\":\"user:u100\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u101\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u102\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u103\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u104\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u105\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u106\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u107\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u108\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u109\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u110\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u111\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u112\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u113\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u114\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u115\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u116\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u117\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u118\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u119\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u120\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u121\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u122\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u123\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u124\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u125\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u126\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u127\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u128\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u129\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u130\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u131\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u132\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u133\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u134\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u135\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u136\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u137\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u138\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u139\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u140\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u141\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u142\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u143\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u144\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u145\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u146\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u147\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u148\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u149\",\"relation\":\"member\",\"object\":\"group:g\"}]}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/write",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 5947,
+        "body": "{\"authorization_model_id\":\"M1\",\"writes\":{\"tuple_keys\":[{\"user\":\"user:u0\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u1\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u2\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u3\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u4\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u5\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u6\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u7\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u8\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u9\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u10\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u11\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u12\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u13\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u14\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u15\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u16\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u17\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u18\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u19\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u20\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u21\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u22\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u23\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u24\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u25\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u26\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u27\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u28\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u29\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u30\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u31\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u32\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u33\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u34\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u35\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u36\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u37\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u38\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u39\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u40\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u41\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u42\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u43\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u44\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u45\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u46\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u47\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u48\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u49\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u50\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u51\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u52\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u53\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u54\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u55\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u56\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u57\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u58\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u59\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u60\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u61\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u62\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u63\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u64\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u65\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u66\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u67\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u68\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u69\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u70\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u71\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u72\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u73\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u74\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u75\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u76\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u77\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u78\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u79\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u80\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u81\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u82\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u83\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u84\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u85\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u86\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u87\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u88\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u89\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u90\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u91\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u92\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u93\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u94\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u95\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u96\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u97\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u98\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u99\",\"relation\":\"member\",\"object\":\"group:g\"}]}}"
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/write",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 1257,
+        "body": "{\"authorization_model_id\":\"M1\",\"writes\":{\"tuple_keys\":[{\"user\":\"user:u100\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u101\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u102\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u103\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u104\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u105\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u106\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u107\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u108\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u109\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u110\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u111\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u112\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u113\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u114\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u115\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u116\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u117\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u118\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u119\",\"relation\":\"member\",\"object\":\"group:g\"}]}}"
+      }
+    ],
+    "result": null
+  },
+  {
+    "name": "write only writes",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/write",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 173,
+        "body": "{\"authorization_model_id\":\"M1\",\"writes\":{\"tuple_keys\":[{\"user\":\"user:u0\",\"relation\":\"member\",\"object\":\"group:g\"},{\"user\":\"user:u1\",\"relation\":\"member\",\"object\":\"group:g\"}]}}"
+      }
+    ],
+    "result": null
+  },
+  {
+    "name": "write nothing",
+    "requests": null,
+    "result": null
+  },
+  {
+    "name": "write refused",
+    "requests": [
+      {
+        "method": "POST",
+        "uri": "/stores/S1/write",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 116,
+        "body": "{\"authorization_model_id\":\"M1\",\"deletes\":{\"tuple_keys\":[{\"user\":\"user:u0\",\"relation\":\"member\",\"object\":\"group:g\"}]}}"
+      }
+    ],
+    "result": {
+      "error": "openfga /stores/S1/write: status 400: {\"code\":\"validation_error\",\"message\":\"bad\"}",
+      "notFound": false
+    }
+  },
+  {
+    "name": "changes of a type from a token",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/changes?continuation_token=a%2Bb%2F%3D%26c\u0026page_size=100\u0026type=group",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      [
+        {
+          "Tuple": {
+            "user": "user:a",
+            "relation": "member",
+            "object": "group:g"
+          },
+          "Write": true,
+          "Timestamp": "2025-01-01T00:00:00Z"
+        },
+        {
+          "Tuple": {
+            "user": "user:b",
+            "relation": "member",
+            "object": "group:g"
+          },
+          "Write": false,
+          "Timestamp": "2025-01-02T00:00:00Z"
+        }
+      ],
+      "next",
+      null
+    ]
+  },
+  {
+    "name": "changes of everything from the start",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/changes?page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      [],
+      "",
+      null
+    ]
+  },
+  {
+    "name": "changes refused",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/changes?page_size=100\u0026type=group",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      null,
+      "",
+      {
+        "error": "openfga /stores/S1/changes: status 404: gone",
+        "notFound": true
+      }
+    ]
+  },
+  {
+    "name": "bootstrap keeps the recorded store and its model",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "S1",
+      "M9",
+      null
+    ]
+  },
+  {
+    "name": "bootstrap replaces a recorded store that is gone",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 18,
+        "body": "{\"name\":\"gentian\"}"
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S2/authorization-models?page_size=1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S2/authorization-models",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 0,
+        "body": "\u003cthe embedded model.json\u003e"
+      }
+    ],
+    "result": [
+      "S2",
+      "M2",
+      null
+    ]
+  },
+  {
+    "name": "bootstrap replaces a recorded store answered under another id",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores",
+        "contentType": "application/json",
+        "contentLength": 18,
+        "body": "{\"name\":\"gentian\"}"
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S2/authorization-models?page_size=1",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      "",
+      {
+        "error": "read models: openfga /stores/S2/authorization-models: status 500: models down",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "bootstrap fails reading the recorded store",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S%201",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      "",
+      {
+        "error": "read store S 1: openfga /stores/S 1: status 500: down",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "bootstrap fails creating a store",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 18,
+        "body": "{\"name\":\"gentian\"}"
+      }
+    ],
+    "result": [
+      "",
+      "",
+      {
+        "error": "create store \"gentian\": openfga /stores: status 409: exists",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "bootstrap without a record creates the store and adopts the oldest",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores?page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores?continuation_token=p%2B2%2F%3D\u0026page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 18,
+        "body": "{\"name\":\"gentian\"}"
+      },
+      {
+        "method": "GET",
+        "uri": "/stores?page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/theirs/authorization-models?page_size=1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/theirs/authorization-models",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 0,
+        "body": "\u003cthe embedded model.json\u003e"
+      }
+    ],
+    "result": [
+      "theirs",
+      "M3",
+      null
+    ]
+  },
+  {
+    "name": "bootstrap without a record keeps its own store when the second listing fails",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores?page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 18,
+        "body": "{\"name\":\"gentian\"}"
+      },
+      {
+        "method": "GET",
+        "uri": "/stores?page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/mine/authorization-models?page_size=1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "mine",
+      "M9",
+      null
+    ]
+  },
+  {
+    "name": "bootstrap without a record fails listing",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores?page_size=100",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      "",
+      {
+        "error": "list stores: openfga /stores: status 401: who",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "bootstrap fails writing the model",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "POST",
+        "uri": "/stores/S1/authorization-models",
+        "authorization": "Bearer tok",
+        "contentType": "application/json",
+        "contentLength": 0,
+        "body": "\u003cthe embedded model.json\u003e"
+      }
+    ],
+    "result": [
+      "",
+      "",
+      {
+        "error": "write model: openfga /stores/S1/authorization-models: status 400: {\"message\":\"invalid\"}",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "pinned takes the recorded model",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "S1",
+      "M1",
+      null
+    ]
+  },
+  {
+    "name": "pinned searches the store when the record is not this binary's",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M%201%2F%3Fx",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50\u0026continuation_token=q%2B1%2F%3D%26x",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "S1",
+      "M9",
+      null
+    ]
+  },
+  {
+    "name": "pinned looks once: the record is gone and so is the model",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      {
+        "error": "authz: store S1 does not hold the model this service was built with yet; the operator writes it",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "pinned looks once: the record is not a model",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      {
+        "error": "authz: store S1 does not hold the model this service was built with yet; the operator writes it",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "pinned looks once: reading the record fails",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      {
+        "error": "read model M1: openfga /stores/S1/authorization-models/M1: status 500: down",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "pinned looks once: listing fails",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      {
+        "error": "read models: openfga /stores/S1/authorization-models: status 500: down",
+        "notFound": false
+      }
+    ]
+  },
+  {
+    "name": "pinned looks once: five pages and no further",
+    "requests": [
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models/M1",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50\u0026continuation_token=2",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50\u0026continuation_token=3",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50\u0026continuation_token=4",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      },
+      {
+        "method": "GET",
+        "uri": "/stores/S1/authorization-models?page_size=50\u0026continuation_token=5",
+        "authorization": "Bearer tok",
+        "contentLength": 0
+      }
+    ],
+    "result": [
+      "",
+      {
+        "error": "authz: store S1 does not hold the model this service was built with yet; the operator writes it",
+        "notFound": false
+      }
+    ]
+  }
+]

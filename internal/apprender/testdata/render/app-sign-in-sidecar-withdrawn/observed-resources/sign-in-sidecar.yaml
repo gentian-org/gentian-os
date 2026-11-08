@@ -1,0 +1,23 @@
+# The sidecar's registration at the realm, composed for this app while its
+# profile declared a sign-in sidecar. The profile no longer declares one and
+# the claim carries none, so the Composition does not render the client
+# again -- which is how Crossplane removes it from the realm (deletionPolicy
+# Delete). The sidecar itself is the operator's to remove.
+---
+apiVersion: samlclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: demo-demo-app-sign-in-client
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-sign-in-client
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    realmId: demo
+    clientId: https://demo.demo.platform.example.test/sso
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

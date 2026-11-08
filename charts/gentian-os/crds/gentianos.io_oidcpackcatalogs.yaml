@@ -28,9 +28,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          OIDCPackCatalog is a cluster-scoped catalogue of OIDC packs for tenant apps.
+          OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps.
           Shipped from gentian-apps (profiles/<app>/oidc-catalog.yaml) and consumed
-          by the operator and app-default composition for pack Jobs and ClientDefaultScopes.
+          by the operator for pack Jobs and an app's client default scopes.
         properties:
           apiVersion:
             description: |-
@@ -53,14 +53,6 @@ spec:
             description: OIDCPackCatalogSpec holds mapper templates and per-clientId
               pack definitions.
             properties:
-              extraManagedByAttributeGroups:
-                description: |-
-                  ExtraManagedByAttributeGroups lists additional cn=managed-by-attribute-* groups
-                  provisioned per tenant that are not tied to an OIDC pack entitlementGroup (e.g.
-                  portal admin groups).
-                items:
-                  type: string
-                type: array
               mapperTemplates:
                 additionalProperties:
                   description: OIDCMapperTemplate describes one Keycloak protocol
@@ -95,7 +87,7 @@ spec:
                     what lets a service pack omit them; these keep an APP pack from omitting them
                     by accident, which previously the Required markers guaranteed.
                     The presence checks are deliberately cheap — CEL costs are estimated against
-                    worst-case string lengths, and comparing these three to '' as well pushed the
+                    worst-case string lengths, and comparing these three to the empty string as well pushed the
                     rule over the API server's budget. MinLength on each field rejects an empty
                     string when the key IS present, so presence is all this needs to test.
                   properties:
@@ -176,10 +168,6 @@ spec:
             type: object
           status:
             description: OIDCPackCatalogStatus is optional observed state.
-            properties:
-              packCount:
-                description: PackCount is the number of entries in spec.packs.
-                type: integer
             type: object
         type: object
     served: true

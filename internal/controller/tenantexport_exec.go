@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -19,8 +13,10 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -30,7 +26,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 // AppExecer runs a command inside an app's pod. An interface so tests can
@@ -112,8 +107,22 @@ func (e *PodExecer) Exec(ctx context.Context, namespace, pod, container string, 
 // with the right container is a better target than any other pod: after a
 // restore the app is often unready precisely because the hook has not run.
 func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, appName, container string) (*corev1.Pod, error) {
+	namespace, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return nil, err
+	}
+	pod, err := runningPodIn(ctx, r.Client, namespace, appName, container)
+	if err != nil {
+		return nil, fmt.Errorf("%w in tenant %q", err, tenantName)
+	}
+	return pod, nil
+}
+
+// runningPodIn is a running pod of an app in a namespace, a ready one
+// first, with the named container where one is named.
+func runningPodIn(ctx context.Context, c client.Reader, namespace, appName, container string) (*corev1.Pod, error) {
 	pods := &corev1.PodList{}
-	if err := r.List(ctx, pods, client.InNamespace(backup.TenantNamespace(tenantName))); err != nil {
+	if err := c.List(ctx, pods, client.InNamespace(namespace)); err != nil {
 		return nil, err
 	}
 	var fallback *corev1.Pod
@@ -144,8 +153,11 @@ func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, app
 	if fallback != nil {
 		return fallback, nil
 	}
-	return nil, fmt.Errorf("no running pod for app %q in tenant %q", appName, tenantName)
+	return nil, fmt.Errorf("%w for app %q", errNoRunningPod, appName)
 }
+
+// errNoRunningPod is runningPodIn finding no pod of the app to run in.
+var errNoRunningPod = errors.New("no running pod")
 
 func podHasContainer(pod *corev1.Pod, name string) bool {
 	for _, c := range pod.Spec.Containers {
@@ -156,7 +168,17 @@ func podHasContainer(pod *corev1.Pod, name string) bool {
 	return false
 }
 
-// execAppCommand runs one of a profile's hooks in the app's own pod.
+// AppCommandTimeout bounds one of a profile's hooks: a pause, a resume, a
+// post-restore command or a verification. The hook runs inside the
+// reconcile, and one that hangs would hold the export or restore -- and the
+// app paused -- for as long as it hangs. Long enough for an app's own
+// post-restore work, which may wait for the app to finish starting first.
+// A hook that runs out of it has failed, as one that exits non-zero has; the
+// process in the pod is not killed by the exec ending.
+const AppCommandTimeout = 15 * time.Minute
+
+// execAppCommand runs one of a profile's hooks in the app's own pod, for at
+// most AppCommandTimeout (execTimeout where a test sets it).
 func (r *TenantReconciler) execAppCommand(
 	ctx context.Context,
 	tenantName, appName string,
@@ -174,5 +196,15 @@ func (r *TenantReconciler) execAppCommand(
 	if container == "" && len(pod.Spec.Containers) > 0 {
 		container = pod.Spec.Containers[0].Name
 	}
-	return r.Exec.Exec(ctx, pod.Namespace, pod.Name, container, argv)
+	timeout := r.execTimeout
+	if timeout <= 0 {
+		timeout = AppCommandTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := r.Exec.Exec(ctx, pod.Namespace, pod.Name, container, argv)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return out, fmt.Errorf("the command did not finish within %s: %w", timeout, err)
+	}
+	return out, err
 }

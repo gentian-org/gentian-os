@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package trustanchor
@@ -142,7 +136,7 @@ func TestBuildBundleExcludesServerLeaf(t *testing.T) {
 
 func TestEnsureTrustAnchorSecretNoOpWithoutLeaf(t *testing.T) {
 	c := fake.NewClientBuilder().Build()
-	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "gentian-dev", "cert-manager", "wildcard-kernel-tls")
+	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "kernel-edge", "kernel-edge", "wildcard-kernel-tls")
 	if err != nil {
 		t.Fatalf("EnsureTrustAnchorSecret: %v", err)
 	}
@@ -154,11 +148,11 @@ func TestEnsureTrustAnchorSecretNoOpWithoutLeaf(t *testing.T) {
 func TestEnsureTrustAnchorSecretCreatesTargetSecret(t *testing.T) {
 	_, leafPEM := testIssuerChainServer(t)
 	c := fake.NewClientBuilder().WithObjects(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: DefaultLeafSecret, Namespace: DefaultCertManagerNS},
+		ObjectMeta: metav1.ObjectMeta{Name: DefaultLeafSecret, Namespace: "kernel-edge"},
 		Data:       map[string][]byte{"tls.crt": leafPEM},
 	}).Build()
 
-	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "gentian-dev", DefaultCertManagerNS, DefaultLeafSecret)
+	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "kernel-edge", "kernel-edge", DefaultLeafSecret)
 	if err != nil {
 		t.Fatalf("EnsureTrustAnchorSecret: %v", err)
 	}
@@ -167,7 +161,7 @@ func TestEnsureTrustAnchorSecretCreatesTargetSecret(t *testing.T) {
 	}
 
 	got := &corev1.Secret{}
-	if err := c.Get(context.Background(), client.ObjectKey{Name: SecretName, Namespace: "gentian-dev"}, got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Name: SecretName, Namespace: "kernel-edge"}, got); err != nil {
 		t.Fatalf("get created secret: %v", err)
 	}
 	if len(got.Data["ca.crt"]) == 0 {

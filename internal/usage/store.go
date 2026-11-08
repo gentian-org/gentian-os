@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package usage records what a tenant's ceiling was and what it consumed
@@ -45,7 +39,7 @@ type Sample struct {
 	// none. Stored per sample rather than only on change, so a query over an
 	// interval never has to look outside it to know what was being paid for.
 	Plan string `json:"plan,omitempty"`
-	// ProductSku is the plan's SKU at the time of sampling. Denormalised
+	// ProductSku is the plan's SKU at the time of sampling. Denormalized
 	// deliberately: a plan's SKU can be re-pointed, and an invoice for March
 	// must not change because of an edit made in June.
 	ProductSku string `json:"productSku,omitempty"`
@@ -110,6 +104,13 @@ type Store struct {
 
 // NewStore returns a store for a tenant database URL.
 func NewStore(dsn string) *Store { return &Store{dsn: dsn} }
+
+// Connect opens the tenant's database.
+//
+// Exported because the notifications the console publishes live in the same
+// database, in a table the desktop owns: one resolver for "which database is
+// this tenant's" beats two that agree until one moves.
+func (s *Store) Connect(ctx context.Context) (*pgx.Conn, error) { return s.connect(ctx) }
 
 func (s *Store) connect(ctx context.Context) (*pgx.Conn, error) {
 	// The Secret carries a SQLAlchemy-shaped URL because the portal is what
@@ -229,10 +230,8 @@ func (s *Store) Samples(ctx context.Context, from, to time.Time, step time.Durat
 		if err := rows.Scan(&sample.ObservedAt, &sample.Plan, &sample.ProductSku, &hard, &used, &actual); err != nil {
 			return nil, fmt.Errorf("scan usage sample: %w", err)
 		}
-		_ = json.Unmarshal(hard, &sample.Hard)
-		_ = json.Unmarshal(used, &sample.Used)
-		if len(actual) > 0 {
-			_ = json.Unmarshal(actual, &sample.Actual)
+		if err := decodeQuantities(&sample, hard, used, actual); err != nil {
+			return nil, fmt.Errorf("usage sample of %s: %w", sample.ObservedAt.UTC().Format(time.RFC3339), err)
 		}
 		out = append(out, sample)
 	}
@@ -242,6 +241,24 @@ func (s *Store) Samples(ctx context.Context, from, to time.Time, step time.Durat
 	// DISTINCT ON forces an ORDER BY on the bucket, which is already
 	// chronological, so the result arrives oldest first as callers expect.
 	return out, nil
+}
+
+// decodeQuantities reads a sample's stored quantities into it. A column that
+// does not decode is an error: read as nothing, it would be a sample of zero
+// usage, and a report or an invoice would count it as one.
+func decodeQuantities(sample *Sample, hard, used, actual []byte) error {
+	if err := json.Unmarshal(hard, &sample.Hard); err != nil {
+		return fmt.Errorf("decode hard: %w", err)
+	}
+	if err := json.Unmarshal(used, &sample.Used); err != nil {
+		return fmt.Errorf("decode used: %w", err)
+	}
+	if len(actual) > 0 {
+		if err := json.Unmarshal(actual, &sample.Actual); err != nil {
+			return fmt.Errorf("decode actual: %w", err)
+		}
+	}
+	return nil
 }
 
 // PlanEvents returns plan changes in [from, to), oldest first.

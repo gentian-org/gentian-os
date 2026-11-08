@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -29,9 +23,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -41,45 +37,36 @@ const (
 	cnpgGroup              = "postgresql.cnpg.io"
 	cnpgVersion            = "v1"
 	cnpgDatabaseKind       = "Database"
-	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
+	// portalShellAppName names the desktop's database as exports and restores
+	// address it. The tenant reconciler no longer provisions it: the desktop
+	// is a component, and its database is that component's granted
+	// requirement (admin-console.md §1.2), fulfilled where the component is.
+	portalShellAppName = backup.DesktopStore
 )
 
 // cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
-var cnpgClusterName = envOrDefault("CNPG_CLUSTER_NAME", "postgres")
+var cnpgClusterName = envvar.Or("CNPG_CLUSTER_NAME", "postgres")
 
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	portalShellDone, err := r.ensurePortalShellDatabase(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure portal shell database: %w", err)
-	}
-	if !portalShellDone {
-		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
-			"ProvisioningPortalShell", "Waiting for portal shell PostgreSQL database")
-		return r.requeueForPendingJob(ctx, tenant.Name, roleJobName(tenant.Name, portalShellAppName)), nil
-	}
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
 	if len(pgApps) == 0 {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
-			"PortalShellReady", "Portal shell database ready; no app databases required")
+			"NoDatabaseRequired", "No app databases required")
 		return ctrl.Result{}, nil
 	}
-
-	nsName := tenantNamespaceName(tenant)
 	allDone := true
 	var pendingJobs []string
 
 	for _, appName := range pgApps {
 		dbName := databaseName(tenant, appName)
 
-		roleJobDone, err := r.ensureRoleJob(ctx, tenant, nsName, dbName, appName)
+		roleJobDone, err := r.ensureRoleJob(ctx, tenant, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure role Job for app %s: %w", appName, err)
 		}
@@ -89,7 +76,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 			continue
 		}
 
-		dbReady, err := r.ensureDatabaseCR(ctx, tenant, nsName, dbName, appName)
+		dbReady, err := r.ensureDatabaseCR(ctx, tenant, dbName, appName)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure Database CR for app %s: %w", appName, err)
 		}
@@ -112,54 +99,53 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 // collectPostgresApps returns profile names of apps that require a per-tenant
 // PostgreSQL database.
 func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
-	if err != nil {
-		return nil, err
-	}
-	var pgApps []string
-	for _, app := range tenant.Spec.Apps {
-		profile, ok := appProfileFromIndex(profileIndex, app.Profile)
-		if !ok {
-			continue
-		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Database != nil &&
-			profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
-			pgApps = append(pgApps, app.Profile)
-		}
-	}
-	return pgApps, nil
+	return r.collectKernelApps(ctx, tenant, CollectForProvision, matchPostgresProfile, nil, nil)
+}
+
+func matchPostgresProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return backup.ProfileStores(profile).Database == gentianov1alpha1.DatabaseEnginePostgreSQL
 }
 
 // schemaPreferenceFor reports the search_path order an app's profile asked for.
 // Unset means the app's own schema comes first, which is the safe default: it is
-// what an app doing its own schema isolation expects, and it is the behaviour
+// what an app doing its own schema isolation expects, and it is the behavior
 // every app had before the preference was declarable.
-func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.SchemaPreference {
-	if profile == nil || profile.Spec.KernelRequirements == nil ||
-		profile.Spec.KernelRequirements.Database == nil {
+func schemaPreferenceFor(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.SchemaPreference {
+	if profile == nil || profile.Services() == nil ||
+		profile.Services().Database == nil {
 		return gentianov1alpha1.SchemaPreferenceAppSchema
 	}
-	if pref := profile.Spec.KernelRequirements.Database.SchemaPreference; pref != "" {
+	if pref := profile.Services().Database.SchemaPreference; pref != "" {
 		return pref
 	}
 	return gentianov1alpha1.SchemaPreferenceAppSchema
+}
+
+// connectionLimitFor is the most connections the app's account may hold on
+// the shared server: the profile's, or the default. One app's pools must not
+// be able to take the server from every other tenant's apps.
+func connectionLimitFor(profile *gentianov1alpha1.ComponentProfile) int32 {
+	if profile != nil && profile.Services() != nil && profile.Services().Database != nil &&
+		profile.Services().Database.ConnectionLimit != nil {
+		return *profile.Services().Database.ConnectionLimit
+	}
+	return gentianov1alpha1.DefaultDatabaseConnectionLimit
 }
 
 // allowsDynamicDatabaseCreation reports whether the app may create databases of
 // its own at runtime. Only apps whose whole purpose is letting a user make
 // databases should ask for it — every database created this way is owned by the
 // app role, which is what lets the purge find and drop them again.
-func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.AppProfile) bool {
-	if profile == nil || profile.Spec.KernelRequirements == nil ||
-		profile.Spec.KernelRequirements.Database == nil {
+func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile == nil || profile.Services() == nil ||
+		profile.Services().Database == nil {
 		return false
 	}
-	return profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
+	return profile.Services().Database.AllowDynamicDatabaseCreation
 }
 
 // ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.
-func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
+func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentianov1alpha1.Tenant, dbName, appName string) (bool, error) {
 	crName := databaseCRName(tenant.Name, appName)
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(schema.GroupVersionKind{
@@ -167,7 +153,7 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 		Version: cnpgVersion,
 		Kind:    cnpgDatabaseKind,
 	})
-	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: postgresNamespace}, existing)
 	if errors.IsNotFound(err) {
 		return false, nil
 	}
@@ -178,24 +164,64 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 }
 
 // ensureRoleJob waits for the Crossplane-owned psql role Job.
-func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) (bool, error) {
+func (r *TenantReconciler) ensureRoleJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, dbName, appName string) (bool, error) {
 	return r.waitForProvisioningJob(ctx, tenant.Name, roleJobName(tenant.Name, appName))
 }
 
 // deleteDatabase handles database cleanup on tenant deletion.
-// DeletionPolicy=Delete: deletes all tenant-labeled CloudNativePG Database CRs
-// (including databases from previously uninstalled apps).
+// DeletionPolicy=Delete: drops every PostgreSQL database and role the tenant
+// was ever provisioned, then deletes the tenant-labeled CloudNativePG Database
+// CRs. The CRs alone were what used to go, and CloudNativePG's default
+// reclaim policy retains the database behind a deleted CR, so a purged tenant
+// kept every table and a login role nobody could remove from the console.
 // DeletionPolicy=Retain: no-op — databases and data are preserved.
 func (r *TenantReconciler) deleteDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
+	apps, err := r.collectPostgresAppsForDelete(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := r.ensureDeleteJobs(ctx, postgresNamespace, tenant, apps, pgDeleteJobName, makePostgresDeleteJob); err != nil {
+		return err
+	}
 	return r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name)
+}
+
+// collectPostgresAppsForDelete is every app a database was provisioned for:
+// the ones the spec names now, the ones the tenant's record of what was
+// provisioned names, and the ones a Database CR still records -- the last two
+// cover apps uninstalled without a purge, and the CR also the desktop's own
+// database, which is no app's.
+func (r *TenantReconciler) collectPostgresAppsForDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	apps, err := r.collectKernelApps(ctx, tenant, CollectForDelete, matchPostgresProfile, nil,
+		func(p backup.Provisioned) bool { return p.DatabaseEngine == gentianov1alpha1.DatabaseEnginePostgreSQL })
+	if err != nil {
+		return nil, err
+	}
+	dbList := &unstructured.UnstructuredList{}
+	dbList.SetGroupVersionKind(schema.GroupVersionKind{Group: cnpgGroup, Version: cnpgVersion, Kind: cnpgDatabaseKind + "List"})
+	if err := r.List(ctx, dbList, client.InNamespace(postgresNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
+		return nil, fmt.Errorf("list Database CRs for tenant %s: %w", tenant.Name, err)
+	}
+	for i := range dbList.Items {
+		if app := dbList.Items[i].GetLabels()[appLabel]; app != "" {
+			apps = appendUniqueStrings(apps, app)
+		}
+	}
+	return apps, nil
+}
+
+// makePostgresDeleteJob drops an app's database, every database its role
+// still owns, and the role: the Job the purge of one app runs too.
+func makePostgresDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+	return backup.PostgresDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
 // --- CR constructors ---------------------------------------------------------
 
-func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string) *unstructured.Unstructured {
+func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, dbName, appName string) *unstructured.Unstructured {
 	roleName := roleUserName(tenant.Name, appName)
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
@@ -204,7 +230,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 		Kind:    cnpgDatabaseKind,
 	})
 	obj.SetName(databaseCRName(tenant.Name, appName))
-	obj.SetNamespace(kernelNamespace) // must be in the same namespace as the CNPG Cluster
+	obj.SetNamespace(postgresNamespace) // must be in the same namespace as the CNPG Cluster
 	obj.SetLabels(map[string]string{
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
@@ -223,103 +249,53 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // makeRoleJob creates a psql Job that creates the per-app PostgreSQL role
 // and grants full privileges on the provisioned database.
 //
-// When rolePassword is non-empty (Inc 21a — Seeder enabled) the Job applies
-// that exact password to the role via CREATE/ALTER ROLE, so the live
-// PostgreSQL password equals the OpenBao-seeded value. When empty, the Job
-// generates a random password locally (legacy behaviour).
-func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	deadline := meta.ProvisioningJobActiveDeadlineSeconds
+// When withPassword is set (Seeder enabled) the Job applies the password
+// the vault holds for the app to the role via CREATE/ALTER ROLE, so the live
+// PostgreSQL password equals the OpenBao-seeded value. The pod reads it from
+// the Secret of the Job's name, which the Job owns (jobSecret); it is in no
+// Job spec, no ConfigMap and no composed Object. Without it the Job
+// generates a random password locally (legacy behavior).
+func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName string, withPassword bool, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) *batchv1.Job {
 	roleName := roleUserName(tenant.Name, appName)
-	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB), nsName)
-	if rolePassword != "" {
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "ROLE_PW",
-			Value: rolePassword,
-		})
+	jobName := roleJobName(tenant.Name, appName)
+	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB, connLimit))
+	if withPassword {
+		container.Env = append(container.Env, meta.SecretEnv("ROLE_PW", jobName, jobSecretPasswordKey))
 	}
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      roleJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				appLabel:       appName,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			ActiveDeadlineSeconds:   &deadline,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
+	return newKernelProvisioningJob(jobName, postgresNamespace, tenant, appName, container)
 }
 
 // psqlContainer returns a Container that runs a psql script via the postgres provisioner image.
 // Credentials are injected from the postgres-admin Secret in the kernel namespace.
-func psqlContainer(name, script, tenantNamespace string) corev1.Container {
+func psqlContainer(name, script string) corev1.Container {
 	return corev1.Container{
-		Name:    name,
-		Image:   kernel.PostgresProvisionerImage(),
-		Command: []string{"/bin/bash", "-c", script},
-		Env: []corev1.EnvVar{
-			{
-				Name: "PGHOST",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "host",
-					},
-				},
-			},
-			{
-				Name: "PGPORT",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "port",
-					},
-				},
-			},
-			{
-				Name: "PGUSER",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "username",
-					},
-				},
-			},
-			{
-				Name: "PGPASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: postgresAdminSecret},
-						Key:                  "password",
-					},
-				},
-			},
-		},
+		Name:            name,
+		Image:           kernel.PostgresProvisionerImage(),
+		Command:         []string{"/bin/bash", "-c", script},
+		SecurityContext: meta.RestrictedContainer(),
+		// The admin connection is the inventory's, as every Job's that
+		// reaches the shared server is.
+		Env: backup.PostgresAdminEnv(),
 	}
 }
 
 // --- Shell scripts -----------------------------------------------------------
 
-func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) string {
+// connLimit caps the connections the role may hold (CONNECTION LIMIT); 0 is
+// none, for the platform's own services, whose pools are known.
+func buildRoleScript(dbName, roleName string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool, connLimit int32) string {
 	// When ROLE_PW is provided (Inc 21a — Seeder enabled) the script applies
 	// that exact password to the role via CREATE/ALTER ROLE WITH PASSWORD,
 	// keeping the live PostgreSQL password in lockstep with OpenBao. When
 	// unset, a random password is generated locally and discarded after Job
-	// completion (legacy behaviour — apps without seeded OpenBao cannot
+	// completion (legacy behavior — apps without seeded OpenBao cannot
 	// connect, but backends that only need the database to exist still work).
 	// The app's own schema first, unless the profile asked for public first
 	// (spec.kernelRequirements.database.schemaPreference).
+	pgLimit := int32(-1)
+	if connLimit > 0 {
+		pgLimit = connLimit
+	}
 	searchPath := fmt.Sprintf("\\\"%s\\\", public", dbName)
 	if schemaPref == gentianov1alpha1.SchemaPreferencePublic {
 		searchPath = fmt.Sprintf("public, \\\"%s\\\"", dbName)
@@ -331,10 +307,10 @@ if [ -z "${ROLE_PW:-}" ]; then
 fi
 ROLE_EXISTS=$(psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='%s'" postgres)
 if [ "${ROLE_EXISTS}" != "1" ]; then
-  psql -c "CREATE ROLE \"%s\" WITH LOGIN PASSWORD '${ROLE_PW}';" postgres
+  psql -c "CREATE ROLE \"%s\" WITH LOGIN CONNECTION LIMIT %d PASSWORD '${ROLE_PW}';" postgres
   echo "role %s created"
 else
-  psql -c "ALTER ROLE \"%s\" WITH LOGIN PASSWORD '${ROLE_PW}';" postgres
+  psql -c "ALTER ROLE \"%s\" WITH LOGIN CONNECTION LIMIT %d PASSWORD '${ROLE_PW}';" postgres
   echo "role %s password updated"
 fi
 DB_EXISTS=$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='%s'" postgres)
@@ -349,7 +325,7 @@ psql -d "%s" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS \"%s\" AUTHORIZA
 psql -d "%s" -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA \"%s\" TO \"%s\";"
 psql -c "ALTER ROLE \"%s\" SET search_path TO %s;" postgres
 echo "schema %s ensured"
-echo "privileges granted"`, roleName, roleName, roleName, roleName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
+echo "privileges granted"`, roleName, roleName, pgLimit, roleName, roleName, pgLimit, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, dbName, dbName, roleName, roleName, searchPath, dbName)
 
 	// Stated both ways rather than only when enabled: a profile that turns the
 	// permission back off must actually lose it, and this Job is the only thing
@@ -397,4 +373,8 @@ func roleUserName(tenantName, appName string) string {
 
 func roleJobName(tenantName, appName string) string {
 	return fmt.Sprintf("pg-role-%s-%s", tenantName, appName)
+}
+
+func pgDeleteJobName(tenantName, appName string) string {
+	return backup.PostgresDestroyJobName(tenantName, appName)
 }

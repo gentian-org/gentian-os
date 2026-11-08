@@ -45,11 +45,64 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: gentian-os
 spec:
+  # The authenticated and perimeter Gateways are two policy domains on one
+  # fleet: the cluster has one address, and two Envoy Services would
+  # contend for it (networking.md §1).
+  mergeGateways: true
+  # The session first, the access check after it.
+  #
+  # Envoy Gateway's own order puts ext_authz, which is the bouncer, ahead of
+  # its OAuth2 filter, which is the session. In that order the bouncer is asked
+  # about a request before anything has decided whether it has a session, and
+  # can only be shown the session's cookies -- which the OAuth2 filter
+  # encrypts. In this order the OAuth2 filter answers its own callback and
+  # logout paths, sends a request with no session to sign in, refreshes one
+  # whose token has run out, and hands the bouncer the session's current
+  # token; the bouncer verifies it and refuses a request that carries none.
+  #
+  # The operator's policies and the bouncer are both written for this order.
+  # Without it nothing is opened -- the bouncer refuses what arrives with no
+  # token -- but nobody can sign in either, which is why A-05 will not report
+  # the edge installed without it.
+  filterOrder:
+    - name: envoy.filters.http.oauth2
+      before: envoy.filters.http.ext_authz
+  # The access log as JSON, one line per request on stdout, so a forwarder
+  # keeps fields rather than text (docs/security/audit-events.md §3.2). What is
+  # left out is left out on purpose: the query string, which carries sign-in
+  # codes; cookies and the Authorization header, which carry sessions. The
+  # person is the subject the bouncer set, an issuer UUID, and only on a
+  # request it allowed. A refusal is the bouncer's own audit record.
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: JSON
+            json:
+              time: "%START_TIME%"
+              request_id: "%REQ(X-REQUEST-ID)%"
+              method: "%REQ(:METHOD)%"
+              host: "%REQ(:AUTHORITY)%"
+              path: "%REQ_WITHOUT_QUERY(:PATH)%"
+              status: "%RESPONSE_CODE%"
+              flags: "%RESPONSE_FLAGS%"
+              duration_ms: "%DURATION%"
+              bytes_sent: "%BYTES_SENT%"
+              upstream: "%UPSTREAM_CLUSTER%"
+              client: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              subject: "%REQ(X-GENTIAN-SUBJECT)%"
+              user_agent: "%REQ(USER-AGENT)%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout
   provider:
     type: Kubernetes
     kubernetes:
       envoyDeployment:
         replicas: {{ .Values.envoy.replicas }}
+        container:
+          image: {{ .Values.envoy.image | quote }}
         pod:
           topologySpreadConstraints:
             # ScheduleAnyway: a hard constraint on a one-node or cordoned
@@ -63,14 +116,14 @@ spec:
                 matchLabels:
                   app.kubernetes.io/name: envoy
       envoyService:
-        type: LoadBalancer
-        {{- if $pinIP }}
+        type: {{ .Values.envoy.serviceType | default "LoadBalancer" }}
+        {{- if and $pinIP (eq (.Values.envoy.serviceType | default "LoadBalancer") "LoadBalancer") }}
         # Only where the platform accepts an address by IP. AWS NLBs and Azure
         # standard load balancers do not, so they carry the address in an
         # annotation instead and this field would be a lie.
         loadBalancerIP: {{ .Values.nodeIp | quote }}
         {{- end }}
-        {{- with $ann }}
+        {{- with (ternary $ann dict (eq (.Values.envoy.serviceType | default "LoadBalancer") "LoadBalancer")) }}
         annotations:
           {{- range $k, $v := . }}
           {{ $k }}: {{ $v | quote }}

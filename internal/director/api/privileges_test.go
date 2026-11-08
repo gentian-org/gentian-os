@@ -1,0 +1,364 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package api_test
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/security"
+)
+
+const egressPath = "/v1/tenants/demo/privileges/nextcloud/egress/smtp-relay"
+const waiverPath = "/v1/tenants/demo/privileges/nextcloud/podSecurity/run-as-root"
+
+func reason(text string) string { return `{"reason":"` + text + `"}` }
+
+// The tenant's perimeter approver answers for egress: the traffic leaves
+// through the tenant's perimeter, and can_approve_privilege is model v1's
+// verb for it. tom is demo's, as the account of its realm; mia, who is not,
+// is refused.
+func TestThePerimeterApproverApprovesEgress(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, _ := h.do(t, "PUT", egressPath, h.token(t, "tenant-demo", "mia"), reason("a member asking")); code != http.StatusForbidden {
+		t.Fatalf("a member approved egress: %d", code)
+	}
+
+	code, body := h.do(t, "PUT", egressPath, tom, reason("agreed in the security review on the 14th"))
+	if code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	code, body = h.do(t, "GET", "/v1/tenants/demo/privileges", tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	list, _ := body["privileges"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("privileges = %v", body["privileges"])
+	}
+	got, _ := list[0].(map[string]any)
+	if got["privilege"] != "egress/smtp-relay" || got["install"] != "nextcloud" {
+		t.Fatalf("grant = %v", got)
+	}
+	// The approver is the token's subject, never the body's.
+	if got["approver"] != "tom" {
+		t.Fatalf("approver = %v, want the caller", got["approver"])
+	}
+	// And the commit records the relation that actually authorized it, not
+	// the can_view the route carries.
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
+	if !strings.Contains(trailer, "can_approve_privilege tenant:demo") {
+		t.Fatalf("the commit does not name the authority:\n%s", trailer)
+	}
+}
+
+// The cluster's administrator approves egress in every tenant, the ones that
+// administer themselves too: the perimeter is the cluster's. tina, who
+// administers solo, does not.
+func TestTheClusterAdministratorApprovesEgressInEveryTenant(t *testing.T) {
+	h := start(t)
+	path := "/v1/tenants/solo/privileges/element/egress/smtp-relay"
+	if code, _ := h.do(t, "PUT", path, h.token(t, "tenant-solo", "tina"), reason("my own tenant, after all")); code != http.StatusForbidden {
+		t.Fatalf("a tenant administrator approved egress: %d", code)
+	}
+	code, body := h.do(t, "PUT", path, h.token(t, "gentian", "alice"), reason("the relay is the cluster's own"))
+	if code != http.StatusAccepted {
+		t.Fatalf("PUT by the cluster's administrator = %d %v", code, body)
+	}
+}
+
+// A pod-security waiver weakens what protects the node, and every tenant on
+// it. A tenant administrator's authority inside their own tenant is not that,
+// however complete it is there.
+func TestATenantAdministratorCannotWaivePodSecurity(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	code, body := h.do(t, "PUT", waiverPath, tom, reason("it would be convenient for us"))
+	if code != http.StatusForbidden {
+		t.Fatalf("PUT = %d %v, want 403", code, body)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "security officer") {
+		t.Fatalf("refusal = %q; it should say whose approval this is", msg)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused grant committed anyway")
+	}
+	// And the same on the way out: revoking is the same authority as granting.
+	if code, _ := h.do(t, "DELETE", waiverPath, tom, ""); code != http.StatusForbidden {
+		t.Fatalf("DELETE = %d, want 403", code)
+	}
+}
+
+// The security officer answers for it, and does not have to be a tenant
+// administrator to do so -- which is the whole reason the check follows the
+// kind rather than the route's relation.
+func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
+	h := start(t)
+	sam := h.token(t, "gentian", "sam")
+
+	code, body := h.do(t, "PUT", waiverPath, sam, reason("the converter forks as root; reviewed 2026-09-20"))
+	if code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
+	if !strings.Contains(trailer, "can_approve cluster:") {
+		t.Fatalf("the commit does not name the security officer's verb:\n%s", trailer)
+	}
+	// Withdrawing it is the same authority, and puts the component back where
+	// it was before the approval.
+	if code, body := h.do(t, "DELETE", waiverPath, sam, ""); code != http.StatusAccepted {
+		t.Fatalf("DELETE = %d %v", code, body)
+	}
+}
+
+// A pod-security waiver the cluster does not permit yet is approved in one
+// step by the security officer: the allowlist entry the request names and the
+// grant on the install, both recorded with the officer's verb. An allowlist
+// entry belongs to a pod-security approval and to nothing else.
+func TestTheSecurityOfficerPermitsAndGrantsAWaiverInOneStep(t *testing.T) {
+	h := start(t)
+	sam := h.token(t, "gentian", "sam")
+	body := `{"reason":"the converter forks as root; reviewed 2026-11-06",` +
+		`"allowlist":{"profile":"nextcloud","policy":"gentian-require-non-root","scope":"collabora"}}`
+
+	if code, answer := h.do(t, "PUT", waiverPath, sam, body); code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, answer)
+	}
+	allowlist := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if !strings.Contains(allowlist, "profile: nextcloud") || !strings.Contains(allowlist, "scope: collabora") {
+		t.Fatalf("the waiver is not on the allowlist:\n%s", allowlist)
+	}
+	log := dt.Git(t, "", "--git-dir", h.remote, "log", "-2", "--format=%B", "main")
+	if strings.Count(log, "can_approve cluster:") != 2 {
+		t.Fatalf("both commits do not name the security officer's verb:\n%s", log)
+	}
+	code, answer := h.do(t, "GET", "/v1/tenants/demo/privileges", sam, "")
+	if list, _ := answer["privileges"].([]any); code != http.StatusOK || len(list) != 1 {
+		t.Fatalf("the grant is not declared: %d %v", code, answer)
+	}
+
+	// Approved again, the entry is not added twice.
+	if code, answer := h.do(t, "PUT", waiverPath, sam, body); code/100 != 2 {
+		t.Fatalf("PUT again = %d %v", code, answer)
+	}
+	allowlist = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/platform-security-policy.yaml")
+	if strings.Count(allowlist, "profile: nextcloud") != 1 {
+		t.Fatalf("the entry was added twice:\n%s", allowlist)
+	}
+
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", egressPath, h.token(t, "tenant-demo", "tom"),
+		`{"reason":"agreed in the security review","allowlist":{"profile":"nextcloud","policy":"p","scope":"s"}}`); code != http.StatusBadRequest {
+		t.Fatalf("an egress approval carried an allowlist entry: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused approval moved the repository")
+	}
+}
+
+// A role holder of a tenant's realm approves with a token of that realm, and
+// with no other: the same subject signed in by another realm is nobody here.
+func TestARoleHolderApprovesOnlyWithATokenOfItsOwnRealm(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", waiverPath, h.token(t, "tenant-solo", "ines"), reason("same subject, another realm")); code != http.StatusForbidden || h.tip(t) != before {
+		t.Fatalf("PUT from another realm = %d, want 403", code)
+	}
+	if code, body := h.do(t, "PUT", waiverPath, h.token(t, "tenant-demo", "ines"), reason("reviewed by the officer of demo")); code != http.StatusAccepted {
+		t.Fatalf("PUT from the holder's realm = %d %v", code, body)
+	}
+}
+
+// Configuring the cluster is not approving for it. The model's own fixture
+// says alice has can_configure and can_approve: false, and this is what that
+// distinction is worth.
+func TestConfiguringTheClusterIsNotApprovingForIt(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	alice := h.token(t, "gentian", "alice")
+
+	if code, _ := h.do(t, "PUT", waiverPath, alice, reason("I run this cluster, after all")); code != http.StatusForbidden {
+		t.Fatalf("PUT = %d, want 403", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused grant committed anyway")
+	}
+}
+
+// A grant needs a reason in the approver's own words. The profile already said
+// why it wants the privilege; this is the record of why somebody agreed, and
+// it is the only part of the entry a caller supplies.
+func TestAGrantNeedsAReason(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	for name, body := range map[string]string{
+		"none":       `{}`,
+		"too short":  reason("ok"),
+		"whitespace": `{"reason":"           "}`,
+		"not json":   `nonsense`,
+	} {
+		if code, _ := h.do(t, "PUT", egressPath, tom, body); code != http.StatusBadRequest {
+			t.Errorf("%s: PUT = %d, want 400", name, code)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused grant committed anyway")
+	}
+}
+
+// An expiry that has already passed grants nothing, so committing it would
+// read as an approval while the component went on waiting.
+func TestAnExpiryInThePastIsRefused(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	body := `{"reason":"agreed for one quarter only","expiresAt":"2020-01-01T00:00:00Z"}`
+	if code, out := h.do(t, "PUT", egressPath, tom, body); code != http.StatusBadRequest {
+		t.Fatalf("PUT = %d %v, want 400", code, out)
+	}
+	if code, _ := h.do(t, "PUT", egressPath, tom, `{"reason":"agreed for one quarter","expiresAt":"tomorrow"}`); code != http.StatusBadRequest {
+		t.Fatalf("an unparseable expiry = %d, want 400", code)
+	}
+}
+
+// A kind that is not one of the three is a 404: the route exists, the
+// privilege named on it does not.
+func TestAnUnknownPrivilegeKindIsNotFound(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/rootShell/everything",
+		tom, reason("a kind somebody invented"))
+	if code != http.StatusNotFound {
+		t.Fatalf("PUT = %d, want 404", code)
+	}
+}
+
+// Somebody who cannot see the tenant cannot approve for it either, which the
+// route's own relation settles before any of the above runs.
+func TestApprovingNeedsToSeeTheTenantAtAll(t *testing.T) {
+	h := start(t)
+	before := h.tip(t)
+	tina := h.token(t, "tenant-solo", "tina")
+
+	if code, _ := h.do(t, "PUT", egressPath, tina, reason("I would like this for my own tenant")); code != http.StatusForbidden {
+		t.Fatalf("PUT = %d, want 403", code)
+	}
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/privileges", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("GET = %d, want 403", code)
+	}
+	if code, _ := h.do(t, "PUT", egressPath, "", reason("no token at all here")); code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated PUT = %d, want 401", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused grant committed anyway")
+	}
+}
+
+// What the operator tells a console about each pending request
+// (security.PrivilegeApprover) is what this API then allows, request by
+// request: the perimeter approver for one, the security officer for some,
+// break-glass for what writes through the cluster's API, and never two of
+// them. A console that offers the button by that answer offers it to exactly
+// whom the director would let through.
+func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
+	for _, ref := range []string{
+		security.PrivilegeEgress + "/something",
+		security.PrivilegePodSecurity + "/something",
+		security.PrivilegeClusterRoles + "/something",
+		security.PrivilegeClusterRoles + "/tenant-exports",
+		security.PrivilegeAPIExtensions + "/something",
+	} {
+		h := start(t)
+		path := "/v1/tenants/demo/privileges/nextcloud/" + ref
+		for _, who := range []struct {
+			name, realm, user, approver string
+		}{
+			{"perimeter approver", "tenant-demo", "tom", security.PrivilegeApproverPerimeter},
+			{"security officer", "gentian", "sam", security.PrivilegeApproverSecurityOfficer},
+			{"break-glass", "gentian", "bea", security.PrivilegeApproverBreakGlass},
+		} {
+			token := h.token(t, who.realm, who.user)
+			body := reason("reviewed and agreed for this install")
+			if strings.HasPrefix(ref, security.PrivilegeAPIExtensions+"/") {
+				body = `{"reason":"reviewed and agreed for this install","digest":"sha256:` + strings.Repeat("a", 64) + `"}`
+			}
+			code, answer := h.do(t, "PUT", path, token, body)
+			want := http.StatusForbidden
+			if security.PrivilegeApprover(ref) == who.approver {
+				want = http.StatusAccepted
+			}
+			if code != want {
+				t.Errorf("%s approving %s = %d %v, want %d", who.name, ref, code, answer, want)
+			}
+		}
+	}
+}
+
+// Every tenant's grants in one list, each with its tenant, for whoever may
+// audit the cluster -- and not for a tenant's administrator.
+func TestTheClustersGrantedPrivilegesAreListedAcrossTenants(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, body := h.do(t, "PUT", egressPath, tom, reason("agreed in the security review")); code != http.StatusAccepted {
+		t.Fatalf("PUT = %d %v", code, body)
+	}
+	path := "/v1/clusters/" + dt.Cluster + "/privileges"
+	code, body := h.do(t, "GET", path, h.token(t, "gentian", "alice"), "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	list, _ := body["privileges"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("privileges = %v", body["privileges"])
+	}
+	got, _ := list[0].(map[string]any)
+	if got["tenant"] != "demo" || got["install"] != "nextcloud" || got["privilege"] != "egress/smtp-relay" || got["approver"] != "tom" {
+		t.Fatalf("grant = %v", got)
+	}
+	if code, _ := h.do(t, "GET", path, tom, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant administrator listing the cluster's grants: %d, want 403", code)
+	}
+}
+
+// An approval of an API extension names the definitions it approved, and
+// carries them into git; another kind names none.
+func TestAnAPIExtensionsApprovalNamesWhatItApproved(t *testing.T) {
+	h := start(t)
+	bea := h.token(t, "gentian", "bea")
+	sam := h.token(t, "gentian", "sam")
+	path := "/v1/tenants/demo/privileges/nextcloud/apiExtensions/schedules"
+	digest := "sha256:" + strings.Repeat("b", 64)
+
+	if code, _ := h.do(t, "PUT", path, bea, reason("reviewed and agreed for this install")); code != http.StatusBadRequest {
+		t.Errorf("an approval naming no digest = %d", code)
+	}
+	if code, _ := h.do(t, "PUT", path, bea, `{"reason":"reviewed and agreed for this install","digest":"md5:abc"}`); code != http.StatusBadRequest {
+		t.Errorf("a digest that is not one = %d", code)
+	}
+	if code, body := h.do(t, "PUT", path, bea, `{"reason":"reviewed and agreed for this install","digest":"`+digest+`"}`); code != http.StatusAccepted {
+		t.Fatalf("bea's approval = %d %v", code, body)
+	}
+	if !strings.Contains(h.remoteFile(t, "demo", "privileges.yaml"), "digest: "+digest) {
+		t.Error("the approval does not record what it approved")
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/podSecurity/x", sam,
+		`{"reason":"reviewed and agreed for this install","digest":"`+digest+`"}`); code != http.StatusBadRequest {
+		t.Errorf("a digest on another kind = %d", code)
+	}
+}

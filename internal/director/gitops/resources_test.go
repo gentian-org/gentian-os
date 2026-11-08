@@ -1,0 +1,335 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package gitops_test
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
+)
+
+func planMeta(email string) gitops.Meta {
+	return gitops.Meta{
+		Author:    gitops.Person{Name: "Tom", Email: email},
+		Subject:   "u-tom",
+		RequestID: "req-plan-1",
+		Decision:  "can_configure cluster:demo-cluster",
+	}
+}
+
+var nodes2 = gitops.Plan{Name: "nodes-2", Quotas: map[string]string{
+	"requestsCpu": "8", "requestsMemory": "32Gi", "cpu": "16", "memory": "64Gi", "storage": "100Gi", "maxPods": "60",
+}}
+
+// A plan is two files in one commit: the patch, and the kustomization that
+// applies it last. A tenant directory without a kustomization gets one.
+func TestChoosingAPlanIsOneCommitOfPatchAndKustomization(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	res, err := g.SetResourcePlan(ctx, "demo", nodes2, planMeta("tom@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "updated" || !res.Changed || res.Commit != dt.Git(t, "", "--git-dir", remote, "rev-parse", "main") {
+		t.Fatalf("result = %+v", res)
+	}
+	dir := "clusters/" + dt.Cluster + "/tenants/demo/"
+	patch := dt.RemoteFile(t, remote, dir+"resource-plan.yaml")
+	for _, want := range []string{
+		"kind: Tenant", "name: demo",
+		"gentianos.io/resource-plan: nodes-2",
+		`gentianos.io/resource-plan-set-by: "tom@example.com"`,
+		`requestsCpu: "8"`, `storage: "100Gi"`, "maxPods: 60",
+	} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("patch is missing %q:\n%s", want, patch)
+		}
+	}
+	kustomization := dt.RemoteFile(t, remote, dir+"kustomization.yaml")
+	if want := "resources:\n- tenant.yaml\npatches:\n- path: resource-plan.yaml"; !strings.HasSuffix(kustomization, want) {
+		t.Fatalf("kustomization:\n%s", kustomization)
+	}
+	// Both files in the one commit.
+	files := dt.Git(t, "", "--git-dir", remote, "show", "--name-only", "--format=", "main")
+	if !strings.Contains(files, "resource-plan.yaml") || !strings.Contains(files, "kustomization.yaml") {
+		t.Fatalf("commit touched:\n%s", files)
+	}
+}
+
+// The plan git records is the tenant's plan. Choosing it again, by anyone,
+// changes nothing; choosing another rewrites the patch and only the patch.
+func TestReChoosingTheRecordedPlanIsNotACommit(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	if _, err := g.SetResourcePlan(ctx, "demo", nodes2, planMeta("tom@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	tip := dt.Git(t, "", "--git-dir", remote, "rev-parse", "main")
+
+	res, err := g.SetResourcePlan(ctx, "demo", nodes2, planMeta("alice@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Changed || res.Status != "unchanged" || dt.Git(t, "", "--git-dir", remote, "rev-parse", "main") != tip {
+		t.Fatalf("a re-choice moved the repository: %+v", res)
+	}
+
+	nodes1 := gitops.Plan{Name: "nodes-1", Quotas: map[string]string{"requestsCpu": "4", "cpu": "8"}}
+	res, err = g.SetResourcePlan(ctx, "demo", nodes1, planMeta("alice@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Changed {
+		t.Fatalf("result = %+v", res)
+	}
+	files := dt.Git(t, "", "--git-dir", remote, "show", "--name-only", "--format=", "main")
+	if strings.Contains(files, "kustomization.yaml") {
+		t.Fatalf("the kustomization was rewritten although it already listed the patch:\n%s", files)
+	}
+	patch := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/tenants/demo/resource-plan.yaml")
+	// What the plan leaves unset is null, so the ceiling is the plan's alone.
+	for _, want := range []string{"resource-plan: nodes-1", `requestsCpu: "4"`, "requestsMemory: null", "memory: null", "storage: null", "maxPods: null"} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("patch is missing %q:\n%s", want, patch)
+		}
+	}
+	if strings.Contains(patch, "maxApps") {
+		t.Error("a plan must not touch the app cap")
+	}
+}
+
+func TestAPlanForAnUnknownTenantOrWithoutANameIsRefused(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	if _, err := g.SetResourcePlan(ctx, "nobody", nodes2, planMeta("tom@example.com")); err == nil {
+		t.Fatal("a plan was written for a tenant that does not exist")
+	}
+	if _, err := g.SetResourcePlan(ctx, "demo", gitops.Plan{Name: " "}, planMeta("tom@example.com")); err == nil {
+		t.Fatal("a plan without a name was written")
+	}
+	if _, err := g.SetResourcePlan(ctx, "Demo!", nodes2, planMeta("tom@example.com")); err == nil {
+		t.Fatal("an invalid tenant name was accepted")
+	}
+}
+
+// A tenant brought on through the director starts as a kustomization, the
+// same shape the bootstrap scaffolds, so the day a plan is chosen adds a
+// patch to a list rather than turning a plain directory into one.
+func TestANewTenantStartsWithItsKustomization(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	if _, err := g.CreateTenant(context.Background(), gitops.NewTenant{Name: "acme"}, tenantMeta()); err != nil {
+		t.Fatal(err)
+	}
+	k := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/tenants/acme/kustomization.yaml")
+	if !strings.Contains(k, "kind: Kustomization") || !strings.Contains(k, "- tenant.yaml") {
+		t.Fatalf("kustomization:\n%s", k)
+	}
+}
+
+// The waiver allowlist's write path, tested here because nobody in the
+// authorization fixture holds can_set_admission: it is break-glass, so the
+// API test can only prove the refusal, and this proves what lands when
+// somebody does hold it.
+func TestTheWaiverAllowlistIsWrittenAsOneObject(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	res, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{
+		{Profile: "element", Policy: "gentian-require-non-root", Scope: "synapse"},
+	}, gitops.Meta{Author: gitops.Person{Name: "Beth", Email: "beth@example.com"}, Subject: "beth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Changed {
+		t.Fatalf("result = %+v", res)
+	}
+	declared, err := g.PlatformSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != 1 || declared[0].Profile != "element" || declared[0].Scope != "synapse" {
+		t.Fatalf("read back = %+v", declared)
+	}
+
+	// An empty list is a real statement -- nothing escapes -- and is written
+	// as one rather than left as an absent file that reads as "not decided".
+	if _, err := g.SetPlatformSecurity(ctx, nil, gitops.Meta{Subject: "beth"}); err != nil {
+		t.Fatal(err)
+	}
+	declared, err = g.PlatformSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != 0 {
+		t.Fatalf("emptying the list left %+v", declared)
+	}
+}
+
+// The two lists of the cluster's security policy are one object and two
+// writes, and neither write may empty the other's list.
+func TestPermittedClusterRolesAndWaiversDoNotOverwriteEachOther(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	meta := gitops.Meta{Author: gitops.Person{Name: "Beth", Email: "beth@example.com"}, Subject: "beth"}
+
+	if _, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{
+		{Profile: "element", Policy: "gentian-require-non-root", Scope: "synapse"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{
+		{Profile: "dashboard", Role: "read-nodes"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	waivers, err := g.PlatformSecurity(ctx)
+	if err != nil || len(waivers) != 1 {
+		t.Fatalf("permitting a cluster role changed the waivers: %+v (%v)", waivers, err)
+	}
+
+	if _, err := g.SetPlatformSecurity(ctx, nil, meta); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := g.PlatformClusterRoles(ctx)
+	if err != nil || len(roles) != 1 || roles[0].Profile != "dashboard" || roles[0].Role != "read-nodes" {
+		t.Fatalf("emptying the waivers changed the permitted cluster roles: %+v (%v)", roles, err)
+	}
+
+	// A name that is not a name is refused, and nothing is written.
+	if _, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{{Profile: "dashboard", Role: "*"}}, meta); err == nil {
+		t.Fatal("a wildcard was taken as a role")
+	}
+}
+
+// The deployment's values start the allowlist once, while the claims hold
+// none; they never overwrite one somebody wrote, an emptied one included.
+func TestTheDeploymentsValuesStartTheAllowlistOnce(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	seed := []gitops.MacWaiver{{Profile: "nextcloud-base-ce", Policy: "gentian-require-seccomp", Scope: "collabora"}}
+
+	res, err := g.SeedPlatformSecurity(ctx, seed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Changed {
+		t.Fatalf("an absent allowlist was not started: %+v", res)
+	}
+	declared, err := g.PlatformSecurity(ctx)
+	if err != nil || len(declared) != 1 || declared[0].Scope != "collabora" {
+		t.Fatalf("read back = %+v (%v)", declared, err)
+	}
+
+	if _, err := g.SetPlatformSecurity(ctx, nil, gitops.Meta{Subject: "beth"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err = g.SeedPlatformSecurity(ctx, seed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Changed {
+		t.Fatalf("the values overwrote the allowlist somebody emptied: %+v", res)
+	}
+	if declared, _ := g.PlatformSecurity(ctx); len(declared) != 0 {
+		t.Fatalf("emptied allowlist now reads %+v", declared)
+	}
+
+	// Nothing declared is nothing to write, and a waiver without a scope is refused.
+	other := dt.Remote(t, "demo")
+	fresh := gitops.NewGitOps(dt.Clone(t, other), other, dt.Cluster, director)
+	if res, err := fresh.SeedPlatformSecurity(ctx, nil, nil); err != nil || res.Changed {
+		t.Fatalf("an empty seed wrote: %+v (%v)", res, err)
+	}
+	if _, err := fresh.SeedPlatformSecurity(ctx, []gitops.MacWaiver{{Profile: "a", Policy: "b"}}, nil); err == nil {
+		t.Fatal("a waiver without a scope was seeded")
+	}
+}
+
+// A save carries the other list as the remote holds it. Read from a checkout
+// of a moment ago, it would put back what another writer has just removed.
+func TestASecurityPolicySaveKeepsTheOtherListAsTheRemoteHoldsIt(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t, "demo")
+	first := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	second := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+
+	roles := []gitops.ClusterRoleAllowance{{Profile: "headlamp", Role: "viewer"}}
+	if _, err := first.SetPlatformClusterRoles(ctx, roles, meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	// The second director's checkout now counts as fresh for a read.
+	if got, err := second.PlatformClusterRoles(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("roles = %v, err = %v", got, err)
+	}
+	if _, err := first.SetPlatformClusterRoles(ctx, nil, meta("u-ada")); err != nil {
+		t.Fatal(err)
+	}
+	waivers := []gitops.MacWaiver{{Profile: "nextcloud", Policy: "seccomp", Scope: "unconfined"}}
+	if _, err := second.SetPlatformSecurity(ctx, waivers, meta("u-bob")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := first.PlatformClusterRoles(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a removed role came back: %v, err = %v", got, err)
+	}
+	file := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/kernel/claims/"+gitops.PlatformSecurityFile)
+	if strings.Contains(file, "headlamp") || !strings.Contains(file, "nextcloud") {
+		t.Fatalf("the file holds:\n%s", file)
+	}
+}
+
+// Both lists saved at once from two directors: both land.
+func TestConcurrentSecurityPolicySavesBothLand(t *testing.T) {
+	ctx := context.Background()
+	remote := dt.Remote(t, "demo")
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i, save := range []func(*gitops.GitOps) error{
+		func(g *gitops.GitOps) error {
+			_, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{{Profile: "nextcloud", Policy: "seccomp", Scope: "unconfined"}}, meta("u-ada"))
+			return err
+		},
+		func(g *gitops.GitOps) error {
+			_, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{{Profile: "headlamp", Role: "viewer"}}, meta("u-bob"))
+			return err
+		},
+	} {
+		g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+		wg.Add(1)
+		go func(i int, save func(*gitops.GitOps) error) {
+			defer wg.Done()
+			errs <- save(g)
+		}(i, save)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/kernel/claims/"+gitops.PlatformSecurityFile)
+	if !strings.Contains(file, "headlamp") || !strings.Contains(file, "nextcloud") {
+		t.Fatalf("one save was lost:\n%s", file)
+	}
+}

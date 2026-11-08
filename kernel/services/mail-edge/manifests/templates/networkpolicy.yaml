@@ -1,0 +1,113 @@
+{{- /*
+  What may reach the proxy, and what the proxy may reach.
+
+  This is the one policy of the mail namespaces that says anything about
+  egress, and the one place where "from anywhere" is meant.
+
+  Ingress -- any source, on the listeners and on nothing else:
+
+    smtp (2525)        port 25 of the load balancer: mail servers on the
+                       internet.
+    submission (2587)  port 587: mail clients, and the apps and Keycloak
+                       realms of the cluster, which are handed the public
+                       name.
+    imaps (2993)       port 993: mail clients, and the apps that read mail.
+
+  No source is named because none can be: a connection through the load
+  balancer arrives from the internet, and one from a pod that dialled the
+  public name arrives from wherever the cluster's proxy mode puts it. The
+  health port (8404) is not listed: the kubelet asks from the pod's own node,
+  which no NetworkPolicy applies to, and nothing else has business with it.
+
+  Egress -- the proxy opens a connection to exactly three ports of two
+  servers, and resolves their names:
+
+    Postfix, in the mail namespace   10025 (inbound mail), 10587 (submission)
+    Dovecot, in the mail namespace   10993 (IMAPS)
+    DNS                              53, UDP and TCP, to whichever resolver
+                                     the cluster gives its pods
+
+  The three are the PROXY-protocol listeners, and only those. The proxy
+  cannot reach the ports the cluster's own pods use (587, 143, 993), where a
+  connection from this pod would be taken for a pod of the cluster, nor
+  Dovecot's delivery port and authentication service, nor anything else in
+  any namespace, nor the internet. A proxy somebody has broken into can pass
+  connections to the mail servers under a false client address, and that is
+  the whole of what it can do.
+
+  The mail servers hold the other end of each rule: their policies admit this
+  namespace's proxy on these ports and on no other
+  (kernel/services/postfix and kernel/services/dovecot, networkpolicy.yaml).
+
+  Sync wave -1: before the Deployment (9), so the proxy is never up without
+  it.
+*/ -}}
+{{- $enabled := splitList "," (include "mail-edge.enabled" .) | compact }}
+{{- if and $enabled (ne (toString .Values.networkPolicy.enabled) "false") }}
+{{- $postfix := list }}
+{{- $dovecot := list }}
+{{- range $name := $enabled }}
+{{- $l := index $.Values.listeners $name }}
+{{- if eq $l.backend "postfix" }}{{ $postfix = append $postfix $l.backendPort }}{{ end }}
+{{- if eq $l.backend "dovecot" }}{{ $dovecot = append $dovecot $l.backendPort }}{{ end }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mail-edge
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system-dmz
+    gentianos.io/function: mail-dmz
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mail-edge.selector" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        {{- range $name := $enabled }}
+        - protocol: TCP
+          port: {{ (index $.Values.listeners $name).listen }}
+        {{- end }}
+  egress:
+    {{- if $postfix }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.mailNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mail
+              app.kubernetes.io/instance: postfix-{{ .Values.env }}
+      ports:
+        {{- range $port := $postfix }}
+        - protocol: TCP
+          port: {{ $port }}
+        {{- end }}
+    {{- end }}
+    {{- if $dovecot }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.mailNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dovecot
+              app.kubernetes.io/instance: dovecot-{{ .Values.env }}
+      ports:
+        {{- range $port := $dovecot }}
+        - protocol: TCP
+          port: {{ $port }}
+        {{- end }}
+    {{- end }}
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -34,6 +28,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 )
 
 const (
@@ -51,7 +46,7 @@ const (
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 
 // CustomizationReconciler computes the derived state behind the customization debt
 // report: whether a record is overdue for review, whether the app it targets has
@@ -62,19 +57,23 @@ const (
 // tested against, does the target still exist — are properties of the live cluster,
 // not of the file.
 type CustomizationReconciler struct {
+	// Definitions holds this reconciler while the cluster's resource
+	// definitions would drop fields it writes (internal/schemacheck). Nil
+	// holds nothing.
+	Definitions *crdcheck.Holder
 	client.Client
 	Scheme *runtime.Scheme
 
-	// Now is injectable so review-date behaviour is testable.
+	// Now is injectable so review-date behavior is testable.
 	Now func() time.Time
 }
 
-// SetupWithManager registers the Customization controller. AppProfile changes are
+// SetupWithManager registers the Customization controller. ComponentProfile changes are
 // mapped back to the records that target them, so bumping a chart version
 // immediately re-evaluates every customization riding on it.
 func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	mapProfileToRecords := func(ctx context.Context, obj client.Object) []reconcile.Request {
-		profile, ok := obj.(*gentianov1alpha1.AppProfile)
+		profile, ok := obj.(*gentianov1alpha1.ComponentProfile)
 		if !ok {
 			return nil
 		}
@@ -98,10 +97,10 @@ func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Customization{}).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
+			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapProfileToRecords),
 		).
-		Complete(r)
+		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.Customization{}, r))
 }
 
 // Reconcile evaluates one Customization record and writes its derived status.
@@ -121,13 +120,13 @@ func (r *CustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("resolve target profile: %w", err)
 	}
 
-	status := r.evaluate(&record, profile, profileFound, r.ladderSurfaceFor(ctx, profile))
+	status := r.evaluate(&record, profile, profileFound, surfaceOf(profile))
+	status.ObservedGeneration = record.Generation
 	if statusUnchanged(record.Status, status) {
 		return ctrl.Result{RequeueAfter: customizationResyncInterval}, nil
 	}
 
 	record.Status = status
-	record.Status.ObservedGeneration = record.Generation
 	if err := r.Status().Update(ctx, &record); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update Customization status: %w", err)
 	}
@@ -140,11 +139,11 @@ func (r *CustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 func (r *CustomizationReconciler) resolveTargetProfile(
 	ctx context.Context,
 	name string,
-) (*gentianov1alpha1.AppProfile, bool, error) {
+) (*gentianov1alpha1.ComponentProfile, bool, error) {
 	if name == "" {
 		return nil, false, nil
 	}
-	var profile gentianov1alpha1.AppProfile
+	var profile gentianov1alpha1.ComponentProfile
 	err := r.Get(ctx, client.ObjectKey{Name: name}, &profile)
 	if errors.IsNotFound(err) {
 		return nil, false, nil
@@ -155,47 +154,19 @@ func (r *CustomizationReconciler) resolveTargetProfile(
 	return &profile, true, nil
 }
 
-// ladderSurfaceFor returns the customization surface that governs this profile.
-//
-// An addon inherits its base's ladder. It is activation state inside the base —
-// same image, same drop-in directories, same plugin API — so grading it separately
-// would fork a mutable fact, which is why addon profiles deliberately carry only
-// spec.customization.addon and never restate grade or supportedRungs.
-//
-// Reading spec.customization directly therefore saw no supportedRungs on an addon
-// and fell back to the [L0, L4] default, so a record targeting one was rejected as
-// "target app does not declare support for rung L3" for an app whose base supports
-// exactly that. CI resolved the inheritance and the operator did not, so the two
-// disagreed about the same record.
-//
-// Editions are not addons and inherit nothing: nextcloud-base-ee shares a family
-// name with nextcloud-base-ce and no artifact, so it carries its own declaration.
-func (r *CustomizationReconciler) ladderSurfaceFor(
-	ctx context.Context,
-	profile *gentianov1alpha1.AppProfile,
-) *gentianov1alpha1.CustomizationSurface {
-	if profile == nil || profile.Spec.Customization == nil {
+// surfaceOf is the customization surface a profile declares, nil when it
+// declares none or there is no profile.
+func surfaceOf(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.CustomizationSurface {
+	if profile == nil {
 		return nil
 	}
-	surface := profile.Spec.Customization
-	addon := surface.Addon
-	if addon == nil || addon.Of == "" {
-		return surface
-	}
-	base, found, err := r.resolveTargetProfile(ctx, addon.Of)
-	if err != nil || !found || base.Spec.Customization == nil {
-		// The base is missing or uncharacterised. Fall through to the addon's own
-		// surface rather than inventing one; the default applies as it would for
-		// any uncharacterised app.
-		return surface
-	}
-	return base.Spec.Customization
+	return profile.Spec.Customization
 }
 
 // evaluate computes the full derived status for a record.
 func (r *CustomizationReconciler) evaluate(
 	record *gentianov1alpha1.Customization,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	profileFound bool,
 	surface *gentianov1alpha1.CustomizationSurface,
 ) gentianov1alpha1.CustomizationStatus {
@@ -205,9 +176,9 @@ func (r *CustomizationReconciler) evaluate(
 	// maintained for an app nobody installs.
 	if !profileFound {
 		status.Phase = gentianov1alpha1.CustomizationPhaseInvalid
-		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationValid, metav1.ConditionFalse,
 			"TargetNotFound",
-			fmt.Sprintf("AppProfile %q does not exist", record.Spec.Target.Profile))
+			fmt.Sprintf("ComponentProfile %q does not exist", record.Spec.Target.Profile))
 		return status
 	}
 
@@ -219,10 +190,10 @@ func (r *CustomizationReconciler) evaluate(
 
 	if len(policyErrs) > 0 {
 		status.Phase = gentianov1alpha1.CustomizationPhaseInvalid
-		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationValid, metav1.ConditionFalse,
 			"PolicyViolation", joinErrors(policyErrs))
 	} else {
-		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionTrue,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationValid, metav1.ConditionTrue,
 			"PolicySatisfied", "Record satisfies the customization ladder policy")
 	}
 
@@ -235,7 +206,7 @@ func (r *CustomizationReconciler) evaluate(
 	// produce — surface it as its own phase so it stands out in the debt report.
 	if record.Spec.UpstreamFirst != nil && record.Spec.UpstreamFirst.AppliedUpstream {
 		status.Phase = gentianov1alpha1.CustomizationPhaseSuperseded
-		setRecordCondition(&status, conditionCustomizationCurrent, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationCurrent, metav1.ConditionFalse,
 			"AppliedUpstream", "Upstream has accepted this change — schedule removal of the local delta")
 		return status
 	}
@@ -245,7 +216,7 @@ func (r *CustomizationReconciler) evaluate(
 		if status.Phase == "" {
 			status.Phase = gentianov1alpha1.CustomizationPhaseNeedsReview
 		}
-		setRecordCondition(&status, conditionCustomizationCurrent, metav1.ConditionFalse,
+		setStatusCondition(&status.Conditions, 0, conditionCustomizationCurrent, metav1.ConditionFalse,
 			"NeedsReview", strings.Join(reasons, "; "))
 		return status
 	}
@@ -253,7 +224,7 @@ func (r *CustomizationReconciler) evaluate(
 	if status.Phase == "" {
 		status.Phase = gentianov1alpha1.CustomizationPhaseActive
 	}
-	setRecordCondition(&status, conditionCustomizationCurrent, metav1.ConditionTrue,
+	setStatusCondition(&status.Conditions, 0, conditionCustomizationCurrent, metav1.ConditionTrue,
 		"Current", "Within review window and matching the target as pinned")
 	return status
 }
@@ -312,11 +283,11 @@ func upstreamStale(record *gentianov1alpha1.Customization) bool {
 
 // targetVersionDrift reports that the profile now pins a version this record was
 // never tested against — the upgrade blast radius signal.
-func targetVersionDrift(record *gentianov1alpha1.Customization, profile *gentianov1alpha1.AppProfile) bool {
+func targetVersionDrift(record *gentianov1alpha1.Customization, profile *gentianov1alpha1.ComponentProfile) bool {
 	if profile == nil || len(record.Spec.TestedAgainst) == 0 {
 		return false
 	}
-	current := profile.Spec.Chart.Version
+	current := profile.Chart().Version
 	if current == "" {
 		return false
 	}
@@ -384,36 +355,11 @@ func currentReasons(status gentianov1alpha1.CustomizationStatus) []string {
 	return reasons
 }
 
-func setRecordCondition(
-	status *gentianov1alpha1.CustomizationStatus,
-	condType string,
-	state metav1.ConditionStatus,
-	reason, message string,
-) {
-	condition := metav1.Condition{
-		Type:               condType,
-		Status:             state,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
-	}
-	for i := range status.Conditions {
-		if status.Conditions[i].Type != condType {
-			continue
-		}
-		if status.Conditions[i].Status == state {
-			condition.LastTransitionTime = status.Conditions[i].LastTransitionTime
-		}
-		status.Conditions[i] = condition
-		return
-	}
-	status.Conditions = append(status.Conditions, condition)
-}
-
 // statusUnchanged compares the fields that matter, ignoring condition timestamps so
 // an unchanged record does not generate a write on every resync.
 func statusUnchanged(oldStatus, newStatus gentianov1alpha1.CustomizationStatus) bool {
-	if oldStatus.Phase != newStatus.Phase ||
+	if oldStatus.ObservedGeneration != newStatus.ObservedGeneration ||
+		oldStatus.Phase != newStatus.Phase ||
 		oldStatus.ReviewOverdue != newStatus.ReviewOverdue ||
 		oldStatus.UpstreamStale != newStatus.UpstreamStale ||
 		oldStatus.TargetVersionDrift != newStatus.TargetVersionDrift ||

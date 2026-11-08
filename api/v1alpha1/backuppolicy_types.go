@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -22,20 +24,20 @@ import (
 
 // BackupDestination names object storage to write bundles to.
 //
-// The platform's own MinIO is the default and needs none of this. A
+// The platform's own object store is the default and needs none of this. A
 // destination is stated when bundles should live somewhere else — which, on a
-// cluster whose MinIO shares a disk with the data it protects, is the only
-// arrangement that survives losing that disk.
+// cluster whose object store shares a disk with the data it protects, is the
+// only arrangement that survives losing that disk.
 //
 // There is deliberately no credential field. The keys for an endpoint are a
 // CredentialRequirement, which the operator derives from this policy and the
-// credential manager fills: the requirement validates the keys before anything
+// custodian fills: the requirement validates the keys before anything
 // depends on them, rotation is one write at one path, and ESO's sync status is
 // the satisfaction probe. A Secret reference here would have been a second,
 // hand-managed way to hold the same credential with none of that.
 type BackupDestination struct {
 	// Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io or
-	// https://minio.example.org:9000. Empty means the platform's own storage.
+	// https://s3.example.org:9000. Empty means the platform's own storage.
 	//
 	// A scheme is required: "s3.example.org" is ambiguous about TLS, and a
 	// backup silently sent in plaintext is worse than one that fails.
@@ -50,12 +52,35 @@ type BackupDestination struct {
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
 	Bucket string `json:"bucket,omitempty"`
 
-	// Region, for providers that require one — Exoscale SOS and AWS do, MinIO
-	// does not.
+	// Region, for providers that require one — Exoscale SOS and AWS do, the
+	// platform's own store does not.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
+
+	// AddressingStyle is how a bucket is named in a request to Endpoint:
+	// path (https://host/bucket/key, the default when empty) or virtualHost
+	// (https://bucket.host/key), for a provider that serves only the
+	// latter. Recorded on every bundle written here, so that its restore and
+	// its deletion address the bucket as it was written.
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
 }
+
+// S3AddressingStyle is how a bucket is named in a request to an S3 endpoint.
+// +kubebuilder:validation:Enum=path;virtualHost
+type S3AddressingStyle string
+
+const (
+	// S3AddressingPath names the bucket in the path: https://host/bucket/key.
+	S3AddressingPath S3AddressingStyle = "path"
+	// S3AddressingVirtualHost names it in the host: https://bucket.host/key.
+	S3AddressingVirtualHost S3AddressingStyle = "virtualHost"
+)
+
+// VirtualHost reports whether requests name the bucket in the host. Empty is
+// path, the default.
+func (s S3AddressingStyle) VirtualHost() bool { return s == S3AddressingVirtualHost }
 
 // IsSet reports whether this destination asks for anything other than the
 // platform's own storage.
@@ -67,47 +92,6 @@ func (d *BackupDestination) IsSet() bool {
 // A bucket rename within the platform's own storage does not.
 func (d *BackupDestination) NeedsCredential() bool {
 	return d != nil && d.Endpoint != ""
-}
-
-// BackupRetention decides which bundles survive a sweep.
-//
-// KeepLast alone answers "how far back can I go" only in nights. The tiers
-// below answer it in months without storing a bundle a night: keep every
-// recent one, then one a day, one a week, one a month, one a year — density
-// falling with age, which is how far back anyone actually needs to reach.
-type BackupRetention struct {
-	// KeepLast retains this many most recent finished exports regardless of
-	// age. Zero relies entirely on the tiers below; with no tiers either,
-	// nothing is deleted — a decision rather than a default, and the right one
-	// only when something else prunes.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	KeepLast int32 `json:"keepLast,omitempty"`
-
-	// KeepDaily, KeepWeekly, KeepMonthly and KeepYearly each retain the most
-	// recent export within that many distinct periods. A bundle kept by any
-	// tier survives; the tiers are a union, not a sequence.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	KeepDaily int32 `json:"keepDaily,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	KeepWeekly int32 `json:"keepWeekly,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	KeepMonthly int32 `json:"keepMonthly,omitempty"`
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	KeepYearly int32 `json:"keepYearly,omitempty"`
-}
-
-// IsSet reports whether any retention rule was stated.
-func (r *BackupRetention) IsSet() bool {
-	if r == nil {
-		return false
-	}
-	return r.KeepLast > 0 || r.KeepDaily > 0 || r.KeepWeekly > 0 ||
-		r.KeepMonthly > 0 || r.KeepYearly > 0
 }
 
 // BackupEncryption decides who can read the bundles a policy produces.
@@ -154,7 +138,9 @@ func (e *BackupEncryption) IsSet() bool {
 // restated. Two types meant two schemas, two status shapes and a merge that
 // could disagree with itself.
 //
-// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && self.tenant != '') : (!has(self.tenant) || self.tenant == '')",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
+// The emptiness test is size(): see component_types.go for why a pair of
+// straight single quotes in a marker does not survive gofmt.
+// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && size(self.tenant) > 0) : (!has(self.tenant) || size(self.tenant) == 0)",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
 type BackupPolicySpec struct {
 	// Scope decides whether this is the cluster default or one tenant's
 	// override, and with it who may edit the policy and which OpenBao path its
@@ -174,22 +160,6 @@ type BackupPolicySpec struct {
 	// default for a tenant policy, the platform's own storage for the cluster.
 	// +optional
 	Destination *BackupDestination `json:"destination,omitempty"`
-
-	// Schedule is a five-field cron expression, in UTC. Empty inherits; use
-	// SuspendSchedule to mean none.
-	// +optional
-	// +kubebuilder:validation:MaxLength=128
-	Schedule string `json:"schedule,omitempty"`
-
-	// SuspendSchedule turns scheduled backups off, distinctly from inheriting.
-	// Without it "no schedule" and "not stated" would be the same value, and a
-	// tenant could not opt out of a cluster-wide schedule.
-	// +optional
-	SuspendSchedule bool `json:"suspendSchedule,omitempty"`
-
-	// Retention decides which bundles survive. Unset inherits.
-	// +optional
-	Retention *BackupRetention `json:"retention,omitempty"`
 
 	// Encryption names the keys bundles are encrypted to. Unset inherits, and
 	// inheriting all the way up means the cluster's own key.
@@ -218,15 +188,13 @@ func (s *BackupPolicySpec) OverrideAllowed() bool {
 // BackupPolicyStatus reports what this policy resolved to and whether it can
 // actually be used.
 type BackupPolicyStatus struct {
-	// EffectiveEndpoint, EffectiveBucket and EffectiveSchedule are the values
-	// in force after inheritance, published so an admin reads what applies
-	// rather than recomputing the merge.
+	// EffectiveEndpoint and EffectiveBucket are the values in force after
+	// inheritance, published so an admin reads what applies rather than
+	// recomputing the merge.
 	// +optional
 	EffectiveEndpoint string `json:"effectiveEndpoint,omitempty"`
 	// +optional
 	EffectiveBucket string `json:"effectiveBucket,omitempty"`
-	// +optional
-	EffectiveSchedule string `json:"effectiveSchedule,omitempty"`
 
 	// EffectiveRecipients are the age public keys in force, empty when the
 	// cluster's own key is used. Published because "which key are my backups
@@ -238,8 +206,8 @@ type BackupPolicyStatus struct {
 
 	// CredentialRequirement names the requirement carrying this destination's
 	// keys, and CredentialSatisfied reports whether it has been filled. A
-	// destination whose credential is unsatisfied is a policy that will fail
-	// at 03:00; surfaced here it is a red field in the console instead.
+	// destination whose credential is unsatisfied is a policy whose next
+	// export will fail; surfaced here it is a red field in the console instead.
 	// +optional
 	CredentialRequirement string `json:"credentialRequirement,omitempty"`
 	// +optional
@@ -255,8 +223,7 @@ type BackupPolicyStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
-// BackupPolicy is where a tenant's bundles go, how often, and how long they
-// are kept.
+// BackupPolicy is where a tenant's bundles go and who can read them.
 //
 // Cluster-scoped for both scopes, as CredentialRequirement is: the console
 // mediates access by spec.tenant, and the credential itself is governed by the
@@ -279,7 +246,6 @@ type BackupPolicyStatus struct {
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.status.effectiveEndpoint`
 // +kubebuilder:printcolumn:name="Bucket",type=string,JSONPath=`.status.effectiveBucket`
-// +kubebuilder:printcolumn:name="Schedule",type=string,JSONPath=`.status.effectiveSchedule`
 // +kubebuilder:printcolumn:name="Credential",type=boolean,JSONPath=`.status.credentialSatisfied`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type BackupPolicy struct {

@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/recovery.sh — do the recovery, instead of reading how to
 # =============================================================================
-# The procedures in docs/recovery-playbook.md, as commands. Three things go
+# The procedures in docs/guides/recovery.md, as commands. Three things go
 # wrong at three different scales, and each needs a different key from a
 # different place:
 #
@@ -19,6 +19,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# The namespace the object store is in, by its function: a name written here
+# is a name that stays behind when the layout changes, which is how this
+# script came to look for the object store's credentials in a namespace that no longer
+# exists.
+NAMESPACES_FILE="${REPO_ROOT}/kernel/namespaces.yaml"
+# shellcheck source=scripts/lib/namespaces.sh
+source "${SCRIPT_DIR}/lib/namespaces.sh"
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
 DIM=$'\033[2m'; NC=$'\033[0m'
@@ -79,10 +87,13 @@ inspect
 Reaching the bundle straight from object storage, with no cluster
   --s3-endpoint URL  e.g. https://sos-ch-dk-2.exo.io
   --s3-bucket NAME
-  --s3-prefix NAME   the bundle's prefix, e.g. policy-20260904-0300
+  --s3-prefix NAME   the bundle's prefix, e.g. policy-20260904-0300, or
+                     corp/policy-20260904-0300 in a bucket tenants share
   --s3-region NAME
+  --s3-addressing-style path|virtualHost   how the bucket is named (default path)
   --s3-access-key K  or AWS_ACCESS_KEY_ID
-  --s3-secret-key S  or AWS_SECRET_ACCESS_KEY
+  --s3-secret-key S  or AWS_SECRET_ACCESS_KEY (preferred: a key given as a flag
+                     shows in the process list and in shell history)
 
   Credentials are taken from these flags first, then the environment, then the
   cluster -- so this works when there is no cluster left to ask.
@@ -92,9 +103,10 @@ Examples
   scripts/recovery.sh inspect --tenant corp --from-vault
 
   # nothing but a bucket, a key and the printed QR code
+  read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
+  AWS_ACCESS_KEY_ID=EXO... \
   scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
-                              --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
-                              --s3-access-key EXO... --s3-secret-key ... \
+                              --s3-bucket bigbucket --s3-prefix corp/policy-20260904-0300 \
                               --qr backup-key.png
   scripts/recovery.sh tenant  --tenant corp --export policy-20260904-0300 \
                               --qr backup-key.png --confirm corp
@@ -164,7 +176,7 @@ PY
 
 # identity_from_vault — the escrowed copy, when the cluster keeps one.
 identity_from_vault() {
-    need bao "See docs/commands.md §7 for reaching OpenBao." || return 1
+    need bao "See docs/reference/commands.md §9, Reaching OpenBao with the bao CLI." || return 1
     local out
     out="$(bao kv get -mount=secret -field=identity "${VAULT_IDENTITY_PATH}" 2>/dev/null || true)"
     if [[ -z "${out}" ]]; then
@@ -219,6 +231,7 @@ resolve_key() {
 # ── bundle location ──────────────────────────────────────────────────────────
 
 BUNDLE_ENDPOINT=""; BUNDLE_BUCKET=""; BUNDLE_PREFIX=""; BUNDLE_REGION=""; BUNDLE_SECRET=""
+BUNDLE_STYLE=""
 BUNDLE_MODE=""
 
 # locate_bundle — from --bundle, or from the export's own status.
@@ -228,8 +241,9 @@ locate_bundle() {
         BUNDLE_BUCKET="${OPT_S3_BUCKET}"
         BUNDLE_PREFIX="${OPT_S3_PREFIX}"
         BUNDLE_REGION="${OPT_S3_REGION}"
+        BUNDLE_STYLE="${OPT_S3_STYLE}"
         [[ -n "${BUNDLE_ENDPOINT}" ]] || { error "--s3-bucket needs --s3-endpoint."; return 1; }
-        [[ -n "${BUNDLE_PREFIX}" ]]  || { error "--s3-bucket needs --s3-prefix."; return 1; }
+        [[ -n "${BUNDLE_PREFIX}" || "${COMMAND}" == "list" ]] || { error "--s3-bucket needs --s3-prefix."; return 1; }
         return 0
     fi
     need kubectl || return 1
@@ -237,13 +251,16 @@ locate_bundle() {
     local ns="tenant-${OPT_TENANT}"
     # Newest by completion time, not by name. kubectl lists in name order, so
     # taking the last line picks whatever sorts last -- which on a tenant with
-    # both scheduled and manual exports is the wrong backup, silently.
+    # both scheduled and manual exports is the wrong backup, silently. The
+    # snapshots taken before an app moves to a new build are left out: they
+    # hold that one app, not the tenant.
     if [[ -z "${OPT_EXPORT}" ]]; then
         local newest
         newest="$(kubectl get tenantexports.gentianos.io -n "${ns}" -o json 2>/dev/null | jq -r '
             [ .items[]
               | select(.status.phase == "Ready")
-              | select(.status.completedAt != null) ]
+              | select(.status.completedAt != null)
+              | select((.metadata.labels["gentianos.io/export-reason"] // "") != "move") ]
             | sort_by(.status.completedAt) | last
             | if . == null then "" else "\(.metadata.name) \(.status.completedAt)" end')"
         OPT_EXPORT="$(printf '%s' "${newest}" | cut -d' ' -f1)"
@@ -259,25 +276,29 @@ locate_bundle() {
     BUNDLE_BUCKET="$(printf '%s'   "${json}" | jq -r '.status.bundle.bucket // ""')"
     BUNDLE_PREFIX="$(printf '%s'   "${json}" | jq -r '.status.bundle.prefix // ""')"
     BUNDLE_REGION="$(printf '%s'   "${json}" | jq -r '.status.bundle.region // ""')"
+    BUNDLE_STYLE="$(printf '%s'    "${json}" | jq -r '.status.bundle.addressingStyle // ""')"
     BUNDLE_SECRET="$(printf '%s'   "${json}" | jq -r '.status.bundle.credentialSecret // ""')"
     BUNDLE_MODE="$(printf '%s'     "${json}" | jq -r '.status.encryption.mode // ""')"
     [[ -n "${BUNDLE_BUCKET}" ]] || { error "Export ${OPT_EXPORT} records no bundle."; return 1; }
 }
 
-# mc_alias — point mc at the bundle's storage.
+# rclone_remote — point rclone at the bundle's storage, as the remote
+# gtnrecovery (a name rclone can be given from the environment).
 #
 # Credentials come from the flags first, then the environment, and only then
 # from the cluster. That order is the whole point: the case this script exists
 # for is a cluster that is gone, and reaching for kubectl first would make the
 # tool useless exactly when it is needed. The cluster path stays because it
 # saves looking anything up while the cluster is still there.
-mc_alias() {
-    need mc "mc is the MinIO client, for reading bundles out of object storage:
-  curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc && chmod +x ~/.local/bin/mc
-  macOS: brew install minio/stable/mc" || return 1
-    local ak="" sk="" kn="platform-kernel"
+rclone_remote() {
+    need rclone "rclone reads bundles out of object storage, any S3 store:
+  brew install rclone   /   apt install rclone   /   https://rclone.org/install/" || return 1
+    local ak="" sk="" kn
+    # Beside the object store: where a destination's credential is
+    # materialized, and where the capture Jobs read it.
+    kn="$(ns_system s3)" || return 1
 
-    # An empty endpoint means the platform's own MinIO, whose address is a
+    # An empty endpoint means the platform's own object store, whose address is a
     # cluster-internal Service name. Nothing outside the cluster resolves it, so
     # forward a port and talk to that instead.
     if [[ -z "${BUNDLE_ENDPOINT}" ]]; then
@@ -302,7 +323,21 @@ mc_alias() {
         error "  AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
         return 1
     fi
-    mc alias set gtn-recovery "${BUNDLE_ENDPOINT}" "${ak}" "${sk}" --api S3v4 >/dev/null
+    # Through rclone's environment, so no key is on a command line; for this
+    # script's commands alone. Path-style addressing, unless the bundle was
+    # written virtual-host style.
+    export RCLONE_CONFIG_GTNRECOVERY_TYPE=s3 RCLONE_CONFIG_GTNRECOVERY_PROVIDER=Other
+    export RCLONE_CONFIG_GTNRECOVERY_ENDPOINT="${BUNDLE_ENDPOINT}"
+    export RCLONE_CONFIG_GTNRECOVERY_ACCESS_KEY_ID="${ak}" RCLONE_CONFIG_GTNRECOVERY_SECRET_ACCESS_KEY="${sk}"
+    export RCLONE_S3_NO_CHECK_BUCKET=true RCLONE_CONFIG=/dev/null
+    if [[ -n "${BUNDLE_REGION}" ]]; then
+        export RCLONE_CONFIG_GTNRECOVERY_REGION="${BUNDLE_REGION}"
+    fi
+    if [[ "${BUNDLE_STYLE}" == "virtualHost" ]]; then
+        export RCLONE_CONFIG_GTNRECOVERY_FORCE_PATH_STYLE=false
+    else
+        export RCLONE_CONFIG_GTNRECOVERY_FORCE_PATH_STYLE=true
+    fi
 }
 
 # age_decrypt <file> — print the plaintext, whichever key kind we hold.
@@ -333,25 +368,26 @@ age_decrypt() {
     cat "${WORK}/plain"
 }
 
-# platform_storage_forward — reach the platform's own MinIO from outside.
+# platform_storage_forward — reach the platform's own object store from outside.
 #
 # Its endpoint is http://<svc>.<ns>.svc.cluster.local:9000, which resolves only
-# inside the cluster. The Service is forwarded to a local port and the alias
+# inside the cluster. The Service is forwarded to a local port and the remote
 # points there; the forward dies with the script.
 platform_storage_forward() {
     need kubectl || return 1
-    local raw host svc ns port lport=19000
-    raw="$(kubectl get secret minio-admin -n platform-kernel \
+    local raw host svc ns port lport=19000 s3ns
+    s3ns="$(ns_system s3)" || return 1
+    raw="$(kubectl get secret s3-admin -n "${s3ns}" \
         -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${raw}" ]] || { error "Cannot read the minio-admin endpoint in platform-kernel."; return 1; }
+    [[ -n "${raw}" ]] || { error "Cannot read the s3-admin endpoint in ${s3ns}."; return 1; }
 
     host="${raw#*://}"; port="${host##*:}"; host="${host%%:*}"
     svc="${host%%.*}"; ns="${host#*.}"; ns="${ns%%.*}"
     [[ -n "${svc}" && -n "${ns}" ]] || { error "Cannot parse ${raw}"; return 1; }
 
-    OPT_S3_AK="$(kubectl get secret minio-admin -n platform-kernel -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
-    OPT_S3_SK="$(kubectl get secret minio-admin -n platform-kernel -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the minio-admin credentials."; return 1; }
+    OPT_S3_AK="$(kubectl get secret s3-admin -n "${s3ns}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
+    OPT_S3_SK="$(kubectl get secret s3-admin -n "${s3ns}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
+    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the s3-admin credentials."; return 1; }
 
     info "forwarding ${svc}.${ns}:${port} to localhost:${lport}"
     kubectl port-forward -n "${ns}" "svc/${svc}" "${lport}:${port}" >/dev/null 2>&1 &
@@ -377,10 +413,12 @@ platform_storage_forward() {
 cmd_list() {
     if [[ -n "${OPT_S3_BUCKET}" ]]; then
         locate_bundle || return 1
-        mc_alias || return 1
+        rclone_remote || return 1
         banner "Bundles in ${BUNDLE_BUCKET}"
         info "listed from storage: whether each finished is not recorded here"
-        mc ls "gtn-recovery/${BUNDLE_BUCKET}/" | sed 's/^/  /'
+        # A bucket shared by tenants keeps each one's bundles under its name.
+        local under="${OPT_S3_PREFIX:-${OPT_TENANT:+${OPT_TENANT}/}}"
+        rclone lsf --dirs-only "gtnrecovery:${BUNDLE_BUCKET}/${under}" | sed "s|^|  ${under}|"
         return 0
     fi
 
@@ -425,15 +463,15 @@ cmd_inspect() {
     [[ "${BUNDLE_MODE}" == "passphrase" && "${OPT_PASSPHRASE}" != "1" ]] &&
         warn "This bundle is passphrase-encrypted; pass --passphrase."
 
-    mc_alias || return 1
-    local base="gtn-recovery/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
+    rclone_remote || return 1
+    local base="gtnrecovery:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"
 
     banner "bundle-info.json (never encrypted)"
-    mc cat "${base}/bundle-info.json" || { error "Cannot read the bundle."; return 1; }
+    rclone cat "${base}/bundle-info.json" || { error "Cannot read the bundle."; return 1; }
 
     resolve_key || return 1
     banner "manifest.json"
-    mc cat "${base}/manifest.json.age" > "${WORK}/manifest.age" || return 1
+    rclone cat "${base}/manifest.json.age" > "${WORK}/manifest.age" || return 1
     age_decrypt "${WORK}/manifest.age" || return 1
     echo ""
     success "The bundle is readable and this key opens it."
@@ -547,7 +585,7 @@ cmd_show_key() {
 OPT_KIT=""; OPT_TENANT=""; OPT_EXPORT=""; OPT_APPS=""
 OPT_CONFIRM=""; OPT_KEY_FILE=""; OPT_QR=""; OPT_PASSPHRASE="0"
 OPT_DRY_RUN="0"
-OPT_S3_ENDPOINT=""; OPT_S3_BUCKET=""; OPT_S3_PREFIX=""; OPT_S3_REGION=""
+OPT_S3_ENDPOINT=""; OPT_S3_BUCKET=""; OPT_S3_PREFIX=""; OPT_S3_REGION=""; OPT_S3_STYLE=""
 OPT_S3_AK=""; OPT_S3_SK=""
 
 [[ $# -gt 0 ]] || { usage; exit 1; }
@@ -586,6 +624,7 @@ while [[ $# -gt 0 ]]; do
         --s3-bucket)     shift; OPT_S3_BUCKET="${1:-}" ;;
         --s3-prefix)     shift; OPT_S3_PREFIX="${1:-}" ;;
         --s3-region)     shift; OPT_S3_REGION="${1:-}" ;;
+        --s3-addressing-style) shift; OPT_S3_STYLE="${1:-}" ;;
         --s3-access-key) shift; OPT_S3_AK="${1:-}" ;;
         --s3-secret-key) shift; OPT_S3_SK="${1:-}" ;;
         -h|--help)    usage; exit 0 ;;

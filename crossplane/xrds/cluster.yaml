@@ -24,12 +24,50 @@ spec:
               type: object
               required:
                 - kernelDomain
+              # One rule, and it is about physics. A tunnel carries HTTP and HTTPS and
+              # nothing else: it cannot receive a connection on 25, so the
+              # cluster cannot be an MX, and it cannot publish submission on
+              # 587. A cluster that asked for its own mail stack behind one
+              # would get Postfix, a LoadBalancer nothing routes to, and an MX
+              # record naming an address that never answers -- senders retry
+              # for days and then bounce, which is the most expensive way for
+              # this to fail.
+              #
+              # The installer has always refused this combination
+              # (mail_network_mode_compatible), but only on paths driven by
+              # MAIL_SERVICE_MODE. On v5 the mode comes from this claim and no
+              # step reads that variable, so the guard did not reach the
+              # cluster that needs it.
+              x-kubernetes-validations:
+                - rule: >-
+                    !(has(self.mail) && has(self.mail.serviceMode) &&
+                    self.mail.serviceMode == 'system' &&
+                    has(self.networkMode) && self.networkMode == 'tunnel')
+                  message: >-
+                    mail.serviceMode 'system' cannot run behind networkMode
+                    'tunnel': a tunnel carries HTTP and HTTPS only, so the cluster
+                    can neither receive mail on port 25 nor publish submission on
+                    587. Use 'external' with an smtp-relay credential, or switch
+                    to networkMode 'static-ip' with a reachable SMTP ingress.
+                # The same physics for TURN: a tunnel carries no UDP, so a TURN
+                # edge behind one is a load balancer nothing reaches. A
+                # component that declares TURN there waits and says why; this
+                # refuses only the claim that asks for the edge regardless.
+                - rule: >-
+                    !(has(self.systemServices) && has(self.systemServices.always) &&
+                    'turn' in self.systemServices.always &&
+                    has(self.networkMode) && self.networkMode == 'tunnel')
+                  message: >-
+                    systemServices.always cannot name 'turn' behind networkMode
+                    'tunnel': a tunnel carries HTTP and HTTPS only, and TURN
+                    needs UDP and ports of its own. Switch to networkMode
+                    'static-ip', or leave TURN out.
               properties:
                 identity:
                   type: object
                   # The object itself defaults, not just its fields. A nested default
-                  # only materialises when its parent is present, so without this the
-                  # internalUrl default below is unreachable on any cluster whose claim
+                  # only materializes when its parent is present, so without this the
+                  # kernelRealm default below is unreachable on any cluster whose claim
                   # does not mention identity — which is every one of them. spec.oidc
                   # shows the same shape: its realm has defaulted to "kernel" since it
                   # was written and no composite has ever carried the value.
@@ -69,12 +107,338 @@ spec:
                         need the /auth form. Keeping them separate keys is deliberate:
                         collapsing them would silently give one consumer the other's
                         contract.
-                      default: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth
+
+                        No default. It used to carry a namespace name, which the API
+                        server then materialised onto every composite -- including the
+                        ones where that namespace does not exist, so a tenant realm's
+                        broker IdP would fetch tokens from an address that resolves to
+                        nothing. Left unset, the composition derives it from
+                        kernel/namespaces.yaml, the way it derives the edge namespace.
+                partners:
+                  type: object
+                  description: >
+                    Bounds and defaults of the tenants' partners (Tenant
+                    spec.partners, AD-17): realms of other clusters a tenant's
+                    realm links its people's accounts with.
+                  properties:
+                    allowedIssuers:
+                      type: array
+                      maxItems: 64
+                      description: >
+                        The issuers a tenant may name as a partner; "*"
+                        matches any run of characters except "/", so
+                        "https://id.example.net/auth/realms/*" allows every
+                        realm there and "https://*.example.net/auth/realms/*"
+                        every realm on a host under example.net. Empty: none.
+                        A partner outside these is refused by the director and
+                        not composed by the operator.
+                      items:
+                        type: string
+                    defaults:
+                      type: array
+                      maxItems: 8
+                      description: >
+                        Partners every tenant issues towards, those made
+                        later included; a tenant's own entry of the same name
+                        replaces one. The installer declares the store's
+                        vendor here with the store's extra services, and
+                        allows its issuer; --no-extra-services leaves it out.
+                      items:
+                        type: object
+                        required: [name, issuer]
+                        properties:
+                          name:
+                            type: string
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            maxLength: 40
+                          issuer:
+                            type: string
+                            pattern: '^https://[^/\s]+/[^\s?#]*[^/\s?#]$'
+                catalogue:
+                  type: object
+                  description: >
+                    Where this cluster may fetch profiles from (AD-14). A
+                    tenant installing "main/nextcloud-base-ce" gets the bundle
+                    from the source named "main", and the director refuses a
+                    coordinate whose source is not listed here.
+
+                    This lives on the claim rather than in the director's
+                    environment so that naming a catalogue source is a
+                    reviewable commit with an author and a date, and so that
+                    "what could this cluster install from" can be answered
+                    without cluster access.
+
+                    A source named here is offered to every tenant: the
+                    cluster lists its entries to them as installable from
+                    here. That is what the cluster offers, not a license.
+                    Whether an installed app arrives is decided where its
+                    artefacts are pulled, by the credential the tenant holds
+                    for their repository.
+                  properties:
+                    storeUrl:
+                      type: string
+                      description: >
+                        Where people are sent for the entries this cluster
+                        cannot serve itself. A cluster lists only its own
+                        catalogues' community (ce) and private (pe) entries;
+                        maintained (me) and enterprise (ee) editions exist
+                        because somebody maintains or licenses them, which is
+                        the App Store's business, so the cluster names the
+                        store rather than describing them badly.
+
+                        Unset means this cluster belongs to no store, which is
+                        supported: its own catalogues are then all there is.
+                    extraServices:
+                      type: boolean
+                      default: true
+                      description: >
+                        Whether the installer places the store's extra
+                        services from its catalogue: the Operations Console
+                        (platform tenant), the App Store app and the
+                        Subscription Center (every other tenant, while the
+                        cluster offers a store). false is what
+                        --no-extra-services records, so that a later run
+                        without the flag keeps them out. Read by the
+                        installer; the operator places whatever profiles the
+                        cluster's catalogue holds.
+                    updates:
+                      type: object
+                      description: >
+                        How installed apps move to newer builds
+                        (docs/concepts/versioning.md §4). The cluster's
+                        administrator sets a mode for every app and may name
+                        another per app; a tenant's entry may carry an
+                        override the cluster's administrator wrote. latest:
+                        the platform moves the app to the newest build its
+                        version line admits, inside the window. manual: the
+                        cluster's administrator moves it. tenant: the
+                        tenant's administrator may.
+                      properties:
+                        mode:
+                          type: string
+                          enum: [latest, manual, tenant]
+                          default: latest
+                          description: The mode for every app not named under apps.
+                        window:
+                          type: object
+                          description: >
+                            When the platform moves apps in latest mode, as a
+                            daily window in a time zone. Absent, any time.
+                          properties:
+                            start:
+                              type: string
+                              pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+                              description: The window opens, "02:00".
+                            end:
+                              type: string
+                              pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+                              description: The window closes, "05:00"; before start, it crosses midnight.
+                            timezone:
+                              type: string
+                              default: UTC
+                              description: An IANA time zone, "Europe/Zurich".
+                        apps:
+                          type: array
+                          description: Apps whose mode differs from the cluster's.
+                          items:
+                            type: object
+                            required: [name, mode]
+                            properties:
+                              name:
+                                type: string
+                                description: The profile's name.
+                              mode:
+                                type: string
+                                enum: [latest, manual, tenant]
+                    sources:
+                      type: array
+                      description: >
+                        The catalogues this cluster knows. Each states where
+                        it is read from once: url or oci. An entry whose url
+                        is not https, whose oci is not an artifact and a
+                        repository, which states both or neither, or which
+                        has no name, is ignored. A catalogue is never kept in
+                        the deployments repository, which holds the
+                        cluster's state only.
+                      items:
+                        type: object
+                        required:
+                          - name
+                        properties:
+                          name:
+                            type: string
+                            description: >
+                              The catalogue's slug: the first half of a
+                              coordinate.
+                          url:
+                            type: string
+                            description: >
+                              Base https URL the bundle is fetched from. The
+                              bytes are untrusted -- the digest an install
+                              asks for is what admits them -- so this may be
+                              any host.
+                          addedBy:
+                            type: string
+                            enum: [store]
+                            description: >
+                              store: the installer added this source because
+                              the store this cluster names (storeUrl) lists
+                              it in GET /v1/meta. Absent: the cluster's
+                              administrator added it. The installer adds a
+                              source of a name the claim does not have, and
+                              never changes or removes one, whoever added it.
+                          oci:
+                            type: object
+                            required:
+                              - repository
+                              - artifact
+                            description: >
+                              In place of url: an OCI artifact the catalogue
+                              is kept as (artifact type
+                              application/vnd.gentianos.catalogue.v1, one
+                              layer, a gzip'd tar of index.yaml and
+                              profiles/), read with the credential of a
+                              repository declared for the cluster. The
+                              registry is held to the rules of an address:
+                              https on 443, a public host. The bytes are held
+                              to the digest like any other.
+                            properties:
+                              repository:
+                                type: string
+                                maxLength: 63
+                                pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                                description: >
+                                  The name of a repository declared for the
+                                  cluster (not for a tenant), whose address the
+                                  artifact lies inside.
+                              artifact:
+                                type: string
+                                maxLength: 1024
+                                pattern: '^[a-z0-9.-]+(:443)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$'
+                                description: >
+                                  The reference without a scheme:
+                                  <registry host>/<repository>:<tag>, or
+                                  @sha256:<digest> in place of or after the tag.
                 kernelDomain:
                   type: string
                   description: >
                     Cluster-wide platform DNS suffix, e.g. "platform.example.com".
                     All kernel services are reachable under this domain.
+                clusterUID:
+                  type: string
+                  pattern: '^[0-9a-f]{32}$'
+                  description: >
+                    This cluster's random id: 32 hex characters the installer
+                    writes here once and never changes. Unlike the cluster's
+                    name, no two clusters share it. The operator records it in
+                    every bundle it signs, and a restore brings back the rights
+                    granted in a tenant only from a bundle signed by this
+                    cluster and taken on a cluster of this id. Changing it makes
+                    every earlier bundle read as another cluster's.
+                platformRoles:
+                  type: object
+                  # So the schema's per-role defaults materialise: a property's
+                  # default is only applied when the object holding it exists.
+                  default: {}
+                  description: >
+                    Which Keycloak group in the kernel realm holds each of the
+                    two platform roles held by a group. The operator projects
+                    these into OpenFGA as the cluster's role relations, so a
+                    person's authority over the cluster follows from their
+                    group membership and from nothing else. Every other
+                    cluster role is held by name (platformAccess.roleHolders).
+                  properties:
+                    admin:
+                      type: string
+                      default: "gentian:platform:admin"
+                      description: >
+                        The cluster's administrators: the claim, plans,
+                        ceilings, tenant deployment. Defaults to the group the
+                        install's bootstrap administrator is placed in.
+                    breakGlass:
+                      type: string
+                      description: >
+                        Admission overlays and raw file edits. No standing
+                        membership is expected; this names the group that is
+                        filled only when it is needed.
+                platformAccess:
+                  type: object
+                  description: >
+                    Who on the cluster holds which cluster role by name: a
+                    person of the platform tenant, or an administrator of
+                    another tenant, given a role by the cluster's
+                    administrator. Written by the director; the operator
+                    writes each entry into the authorization graph as the
+                    account of that tenant's realm, which only a token issued
+                    by that realm is matched against.
+                  properties:
+                    roleHolders:
+                      type: array
+                      maxItems: 256
+                      description: >
+                        Keyed by role, tenant and the account's subject in
+                        the tenant's realm, which outlives a changed address;
+                        username and email say who it is to a person reading
+                        the claim. securityOfficer and auditor are held over
+                        the cluster; serviceAdmin and sharedAppsAdmin over the
+                        cluster and by people of the platform tenant only;
+                        perimeterApprover over the cluster by a person of the
+                        platform tenant, and over their own tenant
+                        (tenant:<t>) by a tenant's administrator;
+                        tenantAuditor, reading one tenant's evidence, by a
+                        person of the platform tenant over the tenant the
+                        entry names (tenant:<t>, never platform), so one
+                        account audits one tenant. An entry whose expiresAt
+                        has passed grants nothing.
+                      items:
+                        type: object
+                        required: [role, tenant, subject, username]
+                        properties:
+                          role:
+                            type: string
+                            enum: [securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover, tenantAuditor, breakGlass]
+                          scope:
+                            type: string
+                            pattern: '^(cluster|tenant:[a-z0-9]([-a-z0-9]*[a-z0-9])?)$'
+                            maxLength: 70
+                          tenant:
+                            type: string
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            maxLength: 63
+                          subject:
+                            type: string
+                            pattern: '^[A-Za-z0-9._-]{1,128}$'
+                          username:
+                            type: string
+                            maxLength: 255
+                          email:
+                            type: string
+                            maxLength: 255
+                          reason:
+                            type: string
+                            maxLength: 500
+                          expiresAt:
+                            type: string
+                            format: date-time
+                    accessReview:
+                      type: object
+                      description: >
+                        The last review of who holds a role over the cluster:
+                        the members of the admin and breakGlass groups and the
+                        role holders above. Written by the director when a
+                        person who may audit the cluster records one; the
+                        commit lists what they were shown. A review is due
+                        once nextReviewAt has passed, or while there is none.
+                      properties:
+                        reviewedAt:
+                          type: string
+                          format: date-time
+                        reviewedBy:
+                          type: string
+                          maxLength: 255
+                        nextReviewAt:
+                          type: string
+                          format: date-time
                 masterPasswordSecretRef:
                   type: object
                   description: >
@@ -96,8 +460,12 @@ spec:
                     server:
                       type: string
                       description: >
-                        OpenBao service address reachable from within the cluster.
-                      default: "http://openbao.openbao.svc.cluster.local:8200"
+                        OpenBao service address reachable from within the
+                        cluster. Left unset, the Composition uses
+                        https://openbao.<secrets namespace>.svc.cluster.local:8200.
+                        No schema default: the API server would fill one in
+                        wherever the claim has an openbao block, and an
+                        address that does not follow the namespace would win.
                     kvMount:
                       type: string
                       description: Path of the KV v2 secret engine mount.
@@ -110,6 +478,23 @@ spec:
                       type: string
                       description: Kubernetes API server address seen from OpenBao.
                       default: "https://kubernetes.default.svc"
+                    storage:
+                      type: string
+                      enum: [raft, file]
+                      description: >
+                        Where the vault keeps its data, read by the installer
+                        (B-01). raft is integrated storage, which the platform
+                        snapshots every day; a new claim states it. file is a
+                        directory of files and has no consistent online
+                        snapshot; it is the default so that a claim written
+                        before this field keeps the backend its data is in.
+                        One setting for both OpenBao instances, the vault and
+                        the transit seal that unseals it; the installer moves
+                        neither until its own volume says its data was moved.
+                        Moving a cluster with data from file to raft is a
+                        migration (docs/guides/recovery.md §5), not an edit of
+                        this field: Raft started on file data is an empty vault.
+                      default: file
                 argocd:
                   type: object
                   description: ArgoCD configuration.
@@ -117,7 +502,7 @@ spec:
                     namespace:
                       type: string
                       description: Namespace where ArgoCD is deployed.
-                      default: "argocd"
+                      default: "kernel-gitops"
                     sourceRepos:
                       type: array
                       description: Extra source repositories to allow in the tenants AppProject.
@@ -130,7 +515,7 @@ spec:
                     namespace:
                       type: string
                       description: Namespace where ESO is deployed.
-                      default: "external-secrets"
+                      default: "kernel-secrets"
                     serviceAccount:
                       type: string
                       description: ServiceAccount name used by ESO.
@@ -144,11 +529,93 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
+                logForwarding:
+                  type: object
+                  description: >
+                    Where the platform's logs go (docs/security/audit-events.md
+                    §4). The Composition renders a log forwarder in the
+                    observability namespace while a destination is named, and
+                    removes it when none is; the director may set both fields.
+                  properties:
+                    destination:
+                      type: object
+                      properties:
+                        endpoint:
+                          type: string
+                          pattern: '^(https://\S+)?$'
+                          description: >
+                            An HTTPS URL taking newline-delimited JSON over
+                            POST, gzip-compressed, with a bearer token from the
+                            log-destination credential. Each request carries
+                            X-Gentian-Stream: audit or operations. Empty: no
+                            forwarder.
+                        streams:
+                          type: array
+                          items:
+                            type: string
+                            enum: [audit, operations]
+                          description: >
+                            Which streams to send: audit, the platform's audit
+                            records (an envelope with audit true); operations,
+                            every other line. Both when absent or empty.
+                monitoring:
+                  type: object
+                  description: >
+                    The platform's own metrics and alerts
+                    (docs/security/audit-events.md §5). The Cluster Composition
+                    composes kube-prometheus-stack into the observability
+                    namespace while enabled, and removes it when not.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: >
+                        true installs Prometheus, Alertmanager, node-exporter
+                        and kube-state-metrics with the platform's alert rules.
+                        Every ServiceMonitor and PrometheusRule in the cluster
+                        is picked up. About 0.4 CPU, 1.5 GiB and a 20 GiB volume.
+                    alerts:
+                      type: object
+                      properties:
+                        webhook:
+                          type: string
+                          description: >
+                            Where Alertmanager sends alerts, as an HTTPS URL
+                            taking Alertmanager's webhook body. Empty holds
+                            them in Alertmanager.
+                metricsServer:
+                  type: object
+                  description: >
+                    The metrics-server the installer puts in kube-system
+                    (step A-07) when the cluster does not already serve
+                    metrics.k8s.io. Read by the installer from this file; no
+                    Composition consumes it.
+                  properties:
+                    kubeletInsecureTLS:
+                      type: boolean
+                      description: >
+                        true starts metrics-server with --kubelet-insecure-tls:
+                        it then accepts whatever certificate answers on a
+                        node's kubelet port, and whoever can intercept traffic
+                        on the node network can pose as a kubelet, report false
+                        metrics and read the token metrics-server presents.
+
+                        Left unset, the installer tries verification first
+                        and sets the flag only where it cannot work: where the
+                        kubelets' serving certificates name no IP address and
+                        the node names do not resolve from a pod (seen on
+                        Infomaniak's managed Kubernetes). metrics-server then
+                        logs "x509: cannot validate certificate for <ip>
+                        because it doesn't contain any IP SANs"; A-07 sees
+                        that, reinstalls it with the flag and warns.
+
+                        false keeps verification on there too: A-07 then
+                        stops with that message instead.
                 # ── Cluster modes ────────────────────────────────────────
                 # Consumed directly by Compositions, which is why these live on
                 # the claim rather than in the Helm values chain. Everything
                 # here came from cluster-settings.env, a shell file the
-                # installer read and no reconciler could see (§2).
+                # installer read and no reconciler could see.
                 tenancyMode:
                   type: string
                   description: Whether the cluster hosts one tenant or many.
@@ -156,6 +623,36 @@ spec:
                     - single
                     - multi
                   default: multi
+                mainAddress:
+                  type: object
+                  description: >
+                    The cluster's main address: its bare domain, the first
+                    thing anybody typing the cluster's address meets.
+                  properties:
+                    tenant:
+                      type: string
+                      pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+                      description: >
+                        The one tenant that may put a public website on the
+                        main address, under either tenancy mode. Its approver
+                        publishes the website (apex: true, with the
+                        acknowledgement the director asks for), and the
+                        platform keeps /sign-in, /branding/ and the two
+                        certificate paths under /.well-known/ there.
+
+                        Unset is the tenancy mode's default: on a
+                        single-tenancy cluster the user tenant, whose
+                        address the main address is; on a multi-tenancy
+                        cluster nobody, and the main address is the sign-in
+                        form that asks who is asking.
+
+                        Naming a tenant on a multi-tenancy cluster is the
+                        cluster administrator's decision about every tenant:
+                        a script on the bare domain can set cookies browsers
+                        send to every subdomain, so to every tenant's desktop
+                        and sign-in. Name a tenant only where the cluster's
+                        operator controls that website's scripts, as on a
+                        cluster of one organisation.
                 networkMode:
                   type: string
                   description: >
@@ -166,20 +663,18 @@ spec:
                     - tunnel
                     - static-ip
                   default: tunnel
-                routingMode:
-                  type: string
-                  description: Which ingress implementation kernel routes use.
-                  enum:
-                    - gateway
-                    - ingress
-                  default: gateway
                 secretMode:
                   type: string
                   description: >
-                    derived reproduces every kernel credential by HMAC-SHA256 of
-                    the master password, so a rebuild yields the same values.
-                    random generates them once, which breaks that property and
-                    is only for clusters that never rebuild.
+                    How the platform makes a credential nothing has stored yet,
+                    the kernel's and each app's. derived computes it from the
+                    master password and the salt, so a rebuild yields the same
+                    values. random draws each one once and keeps it in OpenBao
+                    only, so OpenBao has to be backed up: a rebuild does not
+                    bring it back. A tenant's backup carries its apps' own
+                    secrets, in both modes, and no other credential. Chosen at
+                    the first install; a later change leaves every existing
+                    credential as it is.
                   enum:
                     - derived
                     - random
@@ -226,6 +721,36 @@ spec:
                     kernel/platforms.yaml under requiredParams, and a missing
                     one refuses to render rather than emitting a Service that
                     stays Pending with no event explaining why.
+
+                    One key is read on every platform: metallb. MetalLB's
+                    namespace is exempt from the baseline policies wherever it
+                    exists, unless this is "false".
+                controlPlane:
+                  type: object
+                  description: >
+                    What is known about the control plane the platform does not
+                    run. A managed API server cannot be inspected from inside
+                    the cluster, so the claim records it and pre-flight reads it
+                    (scripts/lib/common.sh, check_secrets_at_rest). The claim
+                    is committed, so the record is dated and reviewable.
+                  properties:
+                    secretsAtRest:
+                      type: string
+                      enum: [provider, cluster, none]
+                      description: >
+                        Whether Kubernetes Secrets are encrypted at rest in
+                        etcd. provider: a managed control plane whose provider
+                        states it; say where under evidence. cluster: your own
+                        API server runs with --encryption-provider-config.
+                        none: not encrypted, or not known. Unset is unknown.
+                        Where the API server is visible, what it runs with
+                        wins over this field.
+                    evidence:
+                      type: string
+                      description: >
+                        Where the provider states it and when it was read, or
+                        where the cluster's EncryptionConfiguration lives. Free
+                        text; it is what an auditor is shown.
                 addressRef:
                   type: string
                   description: >
@@ -288,6 +813,50 @@ spec:
                         irreplaceable: losing every copy loses every backup,
                         with no recourse. Choose it when the cluster is the
                         likelier loss and you are certain of your kit custody.
+                systemServices:
+                  type: object
+                  description: >
+                    Which system engines run. An engine that is not always
+                    on is composed the first time an installed component
+                    declares it, and stays until a person purges it; the
+                    operator keeps that set. PostgreSQL and the object store
+                    run on every cluster and are not named here.
+                  properties:
+                    always:
+                      type: array
+                      description: >
+                        Engines composed whether or not a component declares
+                        them, for a cluster that wants one ready before the
+                        first install. A purge does not remove an engine named
+                        here.
+                      items:
+                        type: string
+                        enum: ["mariadb", "cache", "authorization", "turn"]
+                      x-kubernetes-list-type: set
+                    objectStore:
+                      type: object
+                      description: >
+                        The platform's object store (SeaweedFS in system-s3),
+                        where every backup, bundle, import and app bucket is
+                        written.
+                      properties:
+                        size:
+                          type: string
+                          description: >
+                            The size of the object store's volume. Raised on a
+                            running cluster, the volume grows in place where
+                            the storage class allows expansion; it never
+                            shrinks, so a smaller value than the one set is
+                            refused. Full, the store refuses every write, and
+                            reclaiming deleted data needs about 1Gi free.
+                          default: "40Gi"
+                          pattern: '^[0-9]+(Gi|Ti)$'
+                          x-kubernetes-validations:
+                            - rule: quantity(self).compareTo(quantity(oldSelf)) >= 0
+                              message: >-
+                                systemServices.objectStore.size cannot shrink:
+                                a volume is grown in place and never made
+                                smaller.
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.
@@ -295,6 +864,30 @@ spec:
                     enabled:
                       type: boolean
                       default: false
+                    console:
+                      type: object
+                      description: >
+                        The model gateway's own console (models, keys, spend),
+                        served at llm.<kernelDomain> for platform
+                        administrators.
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: >
+                            Whether the console has a public route. Off by
+                            default: the gateway is a system service, reached
+                            from inside the cluster by the apps that declared
+                            it and by the operator, and nothing the platform
+                            does needs the console.
+
+                            True routes llm.<kernelDomain> to the gateway
+                            behind the kernel sign-in, for accounts that may
+                            configure the cluster, publishes that host, admits
+                            the edge to the gateway and shows such an
+                            administrator a tile for it. The route carries the
+                            gateway's whole API as well as its pages. Read
+                            only when enabled is true.
+                          default: false
                     gpuAcceleration:
                       type: boolean
                       description: >
@@ -303,20 +896,19 @@ spec:
                         what a CPU-only cluster wants; the sizing fields below
                         are read only when it is true.
                       default: false
-                    gpuTimeSliceReplicas:
-                      type: integer
-                      description: >
-                        How many workloads share one physical GPU. Time slicing,
-                        not partitioning — they contend for the whole device
-                        rather than getting a fraction of it.
-                      default: 1
                     instances:
                       type: array
                       description: >
-                        The models this cluster serves. One Deployment, Service
-                        and PVC each, and removing an entry removes its workload
-                        — the cached weights survive, so re-adding the same name
-                        does not re-download tens of gigabytes.
+                        The models this cluster serves on its own GPUs, one
+                        vLLM instance each, which the platform runs in the
+                        gateway's namespace. The model gateway offers a model
+                        per entry, named after modelId in lower case with "/"
+                        as "-" (Qwen/Qwen2.5-7B-Instruct is
+                        qwen-qwen2.5-7b-instruct), and calls it at the Service
+                        vllm-<name>-inference, port 8000, in the gateway's
+                        namespace. Removing an entry removes the model from
+                        the gateway and stops its instance; the instance's
+                        cached weights are kept.
 
                         Read only when gpuAcceleration is true. An empty list is
                         a CPU-only cluster, which is the default.
@@ -345,27 +937,69 @@ spec:
                             type: string
                             description: PVC size for the downloaded weights.
                             default: 60Gi
+                          memoryLimit:
+                            type: string
+                            description: >
+                              Memory the instance may use, e.g. 32Gi. Loading
+                              the weights is the peak, about the model's size
+                              on disk. Absent takes the platform's
+                              default, 20Gi, which fits a 7B-class model.
                           imageTag:
                             type: string
-                            description: vLLM image tag.
-                            default: latest
+                            description: >
+                              Another release of vLLM's image than the
+                              platform's, by tag (e.g. v0.32.0-cu129 for a
+                              node whose NVIDIA driver predates CUDA 13).
+                              Absent runs the release the platform pins.
                           toolCallParser:
                             type: string
                             description: >
                               vLLM tool-call parser for this model, e.g. hermes.
                               Empty disables tool calling.
                       default: []
+                    personBudget:
+                      type: object
+                      description: >
+                        What one person may spend at the model gateway: the
+                        default for everybody who has no budget of their
+                        own. The desktop's assistant and Open WebUI tell the
+                        gateway whose request it is; a request over the
+                        budget is refused. Absent, nobody is held to a
+                        budget per person. Costs are the gateway's prices: a
+                        provider's model has one, a model this cluster serves
+                        itself costs nothing, and only the limits per minute
+                        hold for it.
+                      properties:
+                        maxBudget:
+                          type: number
+                          minimum: 0
+                          description: Spend per period, in US dollars.
+                        budgetDuration:
+                          type: string
+                          pattern: '^[0-9]+(s|m|h|d|w|mo)$'
+                          description: >
+                            The period after which spend starts again from
+                            nothing, e.g. 30d or 1mo. Absent, it never does.
+                        rpmLimit:
+                          type: integer
+                          minimum: 1
+                          description: Requests per minute.
+                        tpmLimit:
+                          type: integer
+                          minimum: 1
+                          description: Tokens per minute.
                     providers:
                       type: array
                       description: >
                         External, OpenAI-compatible inference providers this
                         cluster routes to, alongside (or instead of) the vLLM
-                        instances above. One LiteLLM model registration per
-                        entry in models, reconciled from this list — adding an
-                        entry registers it, removing one deregisters it, and
-                        nothing else may register a provider model. Editing
-                        LiteLLM's Admin Console instead produces an entry the
-                        next reconcile deletes.
+                        instances above. The model gateway offers one model
+                        per entry in models, named <provider>/<model name>, and
+                        takes its models from this claim alone: adding an entry
+                        adds the model, removing one removes it, and the
+                        gateway's console and API can add none. A change
+                        replaces the gateway's pods, which read the list when
+                        they start.
 
                         Independent of gpuAcceleration: a CPU-only cluster with
                         no instances is exactly the case these serve. The API
@@ -382,8 +1016,10 @@ spec:
                               Short provider id, used as the prefix of every
                               model name it registers (infomaniak/gemma-4-31b)
                               so the gateway's model list says where a model is
-                              served from.
+                              served from. Also the name of its credential,
+                              llm-provider-<name>, hence the length.
                             pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                            maxLength: 40
                           displayName:
                             type: string
                             description: Human name for the provider, for operator-facing output.
@@ -392,7 +1028,11 @@ spec:
                             description: >
                               The OpenAI-compatible base URL, up to but not
                               including /chat/completions — the same value an
-                              OpenAI client would take. For Infomaniak AI
+                              OpenAI client would take. An address on the
+                              public internet: the director refuses one that
+                              is not (a name or an address inside the cluster
+                              or a private network, a port other than 443,
+                              credentials in the URL). For Infomaniak AI
                               Services that is
                               https://api.infomaniak.com/2/ai/<product-id>/openai/v1,
                               where the path segment is the AI Tools product id
@@ -401,18 +1041,27 @@ spec:
                           apiKeyProperty:
                             type: string
                             description: >
-                              Which property of the llm-provider-credentials
-                              kernel credential holds this provider's API token
-                              (e.g. infomaniak_api_key). The property must exist
-                              in OpenBao at gentian-os/kernel/llm-providers
-                              before the models can answer; the reconcile says
-                              so rather than registering a model that 401s.
+                              The property of the shared provider credential
+                              (OpenBao, gentian-os/kernel/llm-providers) that
+                              holds this provider's API token. It is the
+                              provider's own and follows from its name: the
+                              name with "-" as "_", and "_api_key"
+                              (infomaniak_api_key). A provider that names
+                              anything else gets no model at the gateway, so
+                              that no provider reads another's token. The token
+                              is entered in the administration console under
+                              the credential llm-provider-<name>, which the
+                              Cluster composition declares for every provider
+                              listed here. Until it is supplied the models are
+                              listed and a call to one is answered with an
+                              authentication error. The gateway restarts by
+                              itself when the token is supplied or changed.
                             pattern: '^[a-z0-9_]+$'
                           models:
                             type: array
                             description: >
                               The provider's models to expose. An empty list
-                              registers nothing, which is how a provider is
+                              offers nothing, which is how a provider is
                               staged before its credential exists.
                             items:
                               type: object
@@ -507,25 +1156,43 @@ spec:
                       type: string
                       description: >
                         Keycloak group whose members receive the cluster-admin
-                        policy. Defaults to the group the platform already
-                        provisions the administrator into — D-06-portal-login
-                        creates it and adds administrator@<kernelDomain>, so a
-                        cluster admin can log in without being added to anything
-                        by hand.
-                      default: "/gentian:platform:superadmin"
+                        policy. Leave unset: the composition uses
+                        spec.platformRoles.admin, which is the group the
+                        platform actually provisions the administrator into.
+
+                        No default, and that is the point. This carried
+                        "/gentian:platform:superadmin" before S1 renamed the
+                        role, and the API server had already materialised that
+                        onto every composite — where it stayed, because a
+                        changed default does not reach an object that already
+                        has the field. The result was silent and total: the
+                        administrator signed in, held gentian:platform:admin,
+                        and OpenBao's cluster-admin role wanted a group nobody
+                        was in, so no exchange ever granted cluster-admin and
+                        the handover proof was never written.
+
+                        Two fields that must agree will eventually disagree.
+                        Derived from platformRoles.admin so there is only one.
                     additionalAudiences:
                       type: array
                       items:
                         type: string
                       description: >
                         Further client IDs whose tokens OpenBao accepts, beyond
-                        clientId. The console authenticates with its own Keycloak
-                        client, so its tokens carry its own audience; without it
-                        listed here every console request fails the token
-                        exchange. Group membership still gates what a token can
-                        do — this only decides which clients may present one.
+                        clientId. A console relaying a person's own token to the
+                        custodian presents whatever audience that token
+                        carries; without it listed here every such request fails
+                        the exchange, with "the token's audience is not one this
+                        cluster's roles accept". Group membership still gates
+                        what a token can do — this only decides which clients
+                        may present one.
+
+
+                        gentian-director is the audience of the zone token the
+                        edge forwards, which is what a component behind the edge
+                        relays.
                       default:
-                        - gentian-portal
+                        - gentian-director
                     realm:
                       type: string
                       description: >
@@ -552,7 +1219,7 @@ spec:
                         Token claim naming the tenant a user administers. It is
                         mapped into OpenBao alias metadata, which is both what
                         the tenant-admin policy templates its path from and what
-                        the credential manager filters the catalogue by — so the
+                        the custodian filters the catalogue by — so the
                         write path and the read path cannot disagree.
                       default: tenant
 
@@ -595,12 +1262,13 @@ spec:
                         both         render both issuers and let a Certificate
                                      name the one it wants.
 
-                        Read by the installer from this file at A-06, before the
-                        Cluster XR exists — the same way networkMode and nodeIp
-                        are read at A-05 and A-07. No Composition consumes it;
-                        the cluster issuers are shell-applied, and this is where
-                        the cluster says which endpoint it is on rather than the
-                        installer's pointer file saying so on its behalf.
+                        Read by the installer from this file when it applies
+                        the cluster issuers (step A-09), before the Cluster XR
+                        exists — the same way it reads networkMode and nodeIp.
+                        No Composition consumes it; the cluster issuers are
+                        shell-applied, and this is where the cluster says which
+                        endpoint it is on rather than the installer's pointer
+                        file saying so on its behalf.
                       enum:
                         - staging
                         - production
@@ -615,7 +1283,7 @@ spec:
 
                         Public resolvers by default, because the cluster's own
                         DNS cannot answer for the zone: the CoreDNS hairpin
-                        (docs/design/routing.md) serves the kernel domain from a
+                        (docs/concepts/routing.md) serves the kernel domain from a
                         hosts block, and a hosts entry answers every query type
                         for its name — the zone apex's SOA and NS come back
                         empty, cert-manager finds no authoritative nameservers,
@@ -623,8 +1291,8 @@ spec:
                         forever. Set "cluster" only for a zone public resolvers
                         cannot see, such as an internal rfc2136 server.
 
-                        Read by the installer at A-05, which passes it to the
-                        cert-manager release it manages.
+                        Read by the installer when it installs cert-manager
+                        (step A-02), which passes it to the release it manages.
                       pattern: '^(cluster|[^,\s]+(,[^,\s]+)*)$'
                       default: "1.1.1.1:53,8.8.8.8:53"
                     dnsProvider:
@@ -661,34 +1329,36 @@ spec:
                         Azure's subscription and resource group, the nameserver
                         for a self-hosted zone. Required keys are declared per
                         provider in kernel/platforms.yaml.
-                    externalDns:
-                      type: boolean
-                      default: true
+                    dnsZones:
+                      type: array
                       description: >
-                        Whether external-dns writes this cluster's records.
-
-                        On by default, because it is the only thing that writes
-                        them. Every hostname this cluster serves is published
-                        from the HTTPRoutes the operator writes, and records
-                        with no HTTP object behind them — mail — arrive as
-                        DNSEndpoint CRs. One mechanism, all eight providers in
-                        kernel/platforms.yaml, both network modes.
-
-                        It was off by default while the operator wrote records
-                        itself, to keep two controllers off one record set. That
-                        writer existed for Cloudflare only, so a cluster on any
-                        other zone host had nothing writing records at all, and
-                        a static-ip cluster had nothing either — the adapter
-                        needs a tunnel to point at. Both were silent: names
-                        simply never resolved.
-
-                        Turn it off only where an operator publishes this
-                        cluster's records by hand, or where something outside
-                        the platform already does.
-
-                        Independent of certificates.dnsProvider: that decides
-                        who can solve a DNS-01 challenge, which is needed for a
-                        wildcard whether or not anything writes records.
+                        Zones external-dns may write besides the kernel
+                        domain's: the registrable domains of the tenants this
+                        cluster serves on a domain of their own (a
+                        TenantDomain whose zone is not the kernel domain's).
+                        external-dns filters by zone, and a record outside the
+                        filter is skipped without a word; the operator routes
+                        such a tenant and its certificate is issued, and
+                        nothing resolves. The DNS credential has to cover
+                        every zone listed. Read by the installer when it
+                        installs external-dns (step B-01).
+                      items:
+                        type: string
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$'
+                    dnsRecords:
+                      type: array
+                      description: >
+                        Records external-dns publishes with nothing on the
+                        cluster behind them, such as a CNAME to a site hosted
+                        elsewhere, each as "<name> <type> <target>":
+                        docs.example.org CNAME example.github.io. The type is
+                        A or CNAME, and the name lies in the kernel domain's
+                        zone or one under dnsZones. Published unproxied. Read
+                        by the installer when it installs external-dns (step
+                        B-01); removing an entry removes the record.
+                      items:
+                        type: string
+                        pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,} (A|CNAME) [a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
                     caBundleSecretRef:
                       type: object
                       description: >
@@ -701,7 +1371,7 @@ spec:
                           default: gentian-root-ca-tls
                         namespace:
                           type: string
-                          default: cert-manager
+                          default: kernel-edge
 
                 # ── Mail ─────────────────────────────────────────────────────
                 mail:
@@ -714,11 +1384,18 @@ spec:
                     serviceMode:
                       type: string
                       description: >
-                        external relays through an upstream provider; kernel
-                        runs Postfix in-cluster.
+                        external relays through an upstream provider; system
+                        runs Postfix and Dovecot in-cluster, in system-mail and
+                        system-mail-dmz.
+
+                        This was called "kernel", which was wrong under the
+                        layout: the stack is a system-tier service and no
+                        kernel namespace is involved. There is no alias — a
+                        claim that still says kernel is refused, which is
+                        better than one that silently means something else.
                       enum:
                         - external
-                        - kernel
+                        - system
                       default: external
                     egressHost:
                       type: string
@@ -752,6 +1429,126 @@ spec:
             status:
               type: object
               properties:
+                platform:
+                  type: object
+                  description: >-
+                    The platform this cluster runs, written by the operator
+                    from its own build: the version line every compatibility
+                    check compares against, and the build. Read, never set.
+                  properties:
+                    version:
+                      type: string
+                      description: The platform's version as released, 0.5.0, or 0.5.0-dev for a development build.
+                    versionLine:
+                      type: string
+                      description: The major and minor of the release the operator is built towards, "0.5".
+                    build:
+                      type: string
+                      description: The commit the operator was built from, or its release version.
+                    reportedAt:
+                      type: string
+                      description: When the operator last wrote this.
+                    latestRelease:
+                      type: string
+                      description: The newest release the platform's feed publishes, "0.6.0"; what a person compares versionLine with.
+                    latestReleaseNotes:
+                      type: string
+                      description: Where that release's notes are.
+                openbaoSnapshots:
+                  type: object
+                  description: >-
+                    The vault's daily snapshot, written by the operator every
+                    ten minutes from the snapshot bucket and the vault itself
+                    (docs/guides/recovery.md §4). What a console shows to say
+                    a snapshot is missing or stale. Read, never set.
+                  properties:
+                    instance:
+                      type: string
+                      description: The instance this reports on, openbao (the vault) or openbao-transit (its seal).
+                    state:
+                      type: string
+                      description: >-
+                        Current (the newest is younger than staleAfter), Stale,
+                        Missing (none in the bucket), NotRaft (the instance is
+                        on file storage and none is taken), Unknown (the bucket
+                        could not be read) or Disabled (the seal's snapshots
+                        are switched off, openbaoSnapshots.transit.enabled).
+                    storage:
+                      type: string
+                      description: The instance's storage, raft or file; empty when nothing says.
+                    newest:
+                      type: string
+                      description: The newest snapshot's object key in the bucket.
+                    newestAt:
+                      type: string
+                      description: When it was written.
+                    ageSeconds:
+                      type: integer
+                      description: How old it is, in seconds, when checkedAt was.
+                    count:
+                      type: integer
+                      description: How many snapshots the bucket holds.
+                    bucket:
+                      type: string
+                      description: The bucket in the platform's object store.
+                    staleAfter:
+                      type: string
+                      description: How old the newest may be before it is stale.
+                    message:
+                      type: string
+                      description: What the state means, and where to look.
+                    checkedAt:
+                      type: string
+                      description: When the operator last wrote this.
+                transitSnapshots:
+                  type: object
+                  description: >-
+                    The same for the transit seal that unseals the vault
+                    (openbao-transit), whose snapshots are under
+                    openbao-transit/ in the same bucket. The operator does not
+                    reach the seal: its storage is what the seal's snapshot
+                    job last found. Without a current snapshot of the seal, no
+                    snapshot of the vault can be unsealed after the seal's
+                    volume is lost. Read, never set.
+                  properties:
+                    instance:
+                      type: string
+                      description: The instance this reports on, openbao (the vault) or openbao-transit (its seal).
+                    state:
+                      type: string
+                      description: >-
+                        Current (the newest is younger than staleAfter), Stale,
+                        Missing (none in the bucket), NotRaft (the instance is
+                        on file storage and none is taken), Unknown (the bucket
+                        could not be read) or Disabled (the seal's snapshots
+                        are switched off, openbaoSnapshots.transit.enabled).
+                    storage:
+                      type: string
+                      description: The instance's storage, raft or file; empty when nothing says.
+                    newest:
+                      type: string
+                      description: The newest snapshot's object key in the bucket.
+                    newestAt:
+                      type: string
+                      description: When it was written.
+                    ageSeconds:
+                      type: integer
+                      description: How old it is, in seconds, when checkedAt was.
+                    count:
+                      type: integer
+                      description: How many snapshots the bucket holds.
+                    bucket:
+                      type: string
+                      description: The bucket in the platform's object store.
+                    staleAfter:
+                      type: string
+                      description: How old the newest may be before it is stale.
+                    message:
+                      type: string
+                      description: What the state means, and where to look.
+                    checkedAt:
+                      type: string
+                      description: When the operator last wrote this.
                 kernelNamespaces:
                   type: array
                   description: Namespaces provisioned by this Cluster XR.

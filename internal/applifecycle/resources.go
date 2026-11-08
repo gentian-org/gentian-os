@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package applifecycle
@@ -20,15 +14,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/resourceplan"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
@@ -40,17 +38,34 @@ type PlanSummary struct {
 	Description string            `json:"description,omitempty"`
 	Tier        int32             `json:"tier"`
 	ProductSku  string            `json:"productSku,omitempty"`
+	Units       int32             `json:"units,omitempty"`
+	Retired     bool              `json:"retired,omitempty"`
 	Quotas      map[string]string `json:"quotas"`
 	// Current marks the plan the tenant is on.
 	Current bool `json:"current,omitempty"`
-	// Selectable is false when the plan exists but this caller may not move to
-	// it. Returned rather than filtered out so a tenant admin can see the
-	// upgrade that exists above their entitlement instead of wondering whether
-	// the platform offers one at all.
+	// Selectable is false when the plan exists but the tenant cannot be moved
+	// to it now. Returned rather than filtered out, so the tenant sees what
+	// the cluster offers and why one of them would not take.
 	Selectable bool `json:"selectable"`
 	// Blocked, when set, says why Selectable is false in the caller's terms.
 	Blocked string `json:"blocked,omitempty"`
+	// BlockedBy names the rule behind Blocked, for a caller that has to act
+	// on it rather than show it: the director forces a plan that does not
+	// fit when asked to, and a retired one never, and it cannot tell those
+	// apart from a sentence.
+	BlockedBy PlanBlock `json:"blockedBy,omitempty"`
 }
+
+// PlanBlock is why a plan is not selectable for a tenant.
+type PlanBlock string
+
+const (
+	// PlanBlockedFit: the tenant's committed usage does not fit under the plan.
+	PlanBlockedFit PlanBlock = "fit"
+	// PlanBlockedRetired: the plan is kept for the tenants on it and offered
+	// to no other.
+	PlanBlockedRetired PlanBlock = "retired"
+)
 
 // ResourceStateResult is a tenant's ceiling, consumption and plan.
 type ResourceStateResult struct {
@@ -78,52 +93,39 @@ type ResourceStateResult struct {
 	// checked against the plan: an app cap is the Tenant webhook's policy
 	// limit, not part of the capacity a plan sells.
 	InstalledApps int `json:"installedApps"`
+	// Ordering is where the tenant orders another plan, as the cluster's
+	// administrators state it; absent when they state nothing, and the
+	// tenant asks them.
+	Ordering *OrderingNotice `json:"ordering,omitempty"`
 }
 
-// SetPlanRequest moves a tenant to a plan.
-type SetPlanRequest struct {
-	Tenant string
-	Plan   string
-	Actor  string
-	// SelfService marks a request made by a tenant administrator rather than a
-	// cluster operator. It withholds plans flagged SelfServiceDisabled; it does
-	// not relax any check, because the downgrade guard protects the tenant's
-	// own workloads and a cluster operator has no more business breaking them.
-	SelfService bool
-	// Force skips the downgrade guard. Reserved for a cluster operator who has
-	// decided the tenant will be shrunk regardless — the pods that cannot be
-	// recreated afterwards are then a known cost rather than a surprise.
-	Force bool
+// OrderingNotice is the cluster's PlanOrdering as one tenant reads it: the
+// address with the tenant's name in it.
+type OrderingNotice struct {
+	Text  map[string]string `json:"text"`
+	URL   string            `json:"url,omitempty"`
+	Email string            `json:"email,omitempty"`
+	Phone string            `json:"phone,omitempty"`
 }
 
-// SetPlanResult reports the outcome of a plan change.
-type SetPlanResult struct {
-	Status string `json:"status"`
-	Tenant string `json:"tenant"`
-	Plan   string `json:"plan"`
-	// PreviousPlan is what the tenant was on, empty when it was on none.
-	PreviousPlan string `json:"previousPlan,omitempty"`
-	File         string `json:"file,omitempty"`
-	Message      string `json:"message,omitempty"`
-}
+// +kubebuilder:rbac:groups=gentianos.io,resources=planorderings,verbs=get;list;watch
 
-// ErrPlanNotFound is returned for a plan name absent from the catalogue.
-var ErrPlanNotFound = errors.New("resource plan not found")
-
-// ErrPlanNotSelectable is returned when a plan exists but the caller may not
-// move this tenant to it.
-var ErrPlanNotSelectable = errors.New("resource plan is not selectable for this tenant")
-
-// tenantPlanLocks serializes plan changes per tenant. Two concurrent changes
-// would each read the tenant's current plan before either had written, and the
-// loser's plan event would record a transition that never happened.
-var tenantPlanLocks sync.Map
-
-func lockTenantPlan(tenant string) func() {
-	v, _ := tenantPlanLocks.LoadOrStore(tenant, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// orderingFor reads the cluster's notice for one tenant, nil when there is
+// none.
+func (s *Service) orderingFor(ctx context.Context, tenant string) (*OrderingNotice, error) {
+	var doc gentianov1alpha1.PlanOrdering
+	if err := s.client.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlanOrderingName}, &doc); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &OrderingNotice{
+		Text:  doc.Spec.Text,
+		URL:   strings.ReplaceAll(doc.Spec.URL, "{tenant}", url.PathEscape(tenant)),
+		Email: doc.Spec.Email,
+		Phone: doc.Spec.Phone,
+	}, nil
 }
 
 // ResourceState reports a tenant's current ceiling, consumption and plan.
@@ -137,16 +139,25 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 		return nil, err
 	}
 	resolution := catalogue.Resolve(tenant)
+	// The apps the tenant installed, as its quota counts them: a component
+	// the platform places is not one.
+	installed, err := placement.Installed(ctx, s.client, tenant.Spec.Apps)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &ResourceStateResult{
 		Tenant:        tenant.Name,
 		AnnotatedPlan: resolution.Annotated,
 		Drifted:       resolution.Drifted,
 		Custom:        resolution.Custom,
-		InstalledApps: len(tenant.Spec.Apps),
+		InstalledApps: len(installed),
 	}
 	if resolution.Plan != nil {
 		result.Plan = resolution.Plan.Name
+	}
+	if result.Ordering, err = s.orderingFor(ctx, tenant.Name); err != nil {
+		return nil, err
 	}
 
 	quota, err := s.tenantQuota(ctx, tenant)
@@ -175,12 +186,38 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 	return result, nil
 }
 
-// Plans lists the catalogue as it applies to one tenant.
-func (s *Service) Plans(
-	ctx context.Context,
-	tenantName string,
-	selfService bool,
-) ([]PlanSummary, error) {
+// TenantUnavailable is a tenant whose state could not be reported, and why.
+type TenantUnavailable struct {
+	Tenant string `json:"tenant"`
+	Reason string `json:"reason"`
+}
+
+// AllResourceStates reports every tenant the cluster holds, by name.
+func (s *Service) AllResourceStates(ctx context.Context) ([]*ResourceStateResult, []TenantUnavailable, error) {
+	var tenants gentianov1alpha1.TenantList
+	if err := s.client.List(ctx, &tenants); err != nil {
+		return nil, nil, fmt.Errorf("list tenants: %w", err)
+	}
+	names := make([]string, 0, len(tenants.Items))
+	for i := range tenants.Items {
+		names = append(names, tenants.Items[i].Name)
+	}
+	sort.Strings(names)
+	states := make([]*ResourceStateResult, 0, len(names))
+	unavailable := []TenantUnavailable{}
+	for _, name := range names {
+		state, err := s.ResourceState(ctx, name)
+		if err != nil {
+			unavailable = append(unavailable, TenantUnavailable{Tenant: name, Reason: err.Error()})
+			continue
+		}
+		states = append(states, state)
+	}
+	return states, unavailable, nil
+}
+
+// Plans lists the catalog as it applies to one tenant.
+func (s *Service) Plans(ctx context.Context, tenantName string) ([]PlanSummary, error) {
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
 		return nil, err
@@ -194,8 +231,6 @@ func (s *Service) Plans(
 	if resolution.Plan != nil {
 		currentName = resolution.Plan.Name
 	}
-	maxTier := resourceplan.MaxTier(tenant)
-
 	quota, err := s.tenantQuota(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -214,104 +249,30 @@ func (s *Service) Plans(
 			Description: plan.Spec.Description,
 			Tier:        plan.Spec.Tier,
 			ProductSku:  plan.Spec.ProductSku,
+			Units:       plan.Spec.Units,
+			Retired:     plan.Spec.Retired,
 			Quotas:      quotaMap(&plan.Spec.Quotas),
 			Current:     plan.Name == currentName,
 			Selectable:  true,
 		}
 		switch {
-		case selfService && plan.Spec.SelfServiceDisabled:
+		case plan.Spec.Retired && plan.Name != currentName:
 			summary.Selectable = false
-			summary.Blocked = "this plan is arranged with the platform operator, not self-service"
-		case maxTier != nil && plan.Spec.Tier > *maxTier:
-			summary.Selectable = false
-			summary.Blocked = "this plan is above the tenant's current entitlement"
+			summary.Blocked = "this plan is retired: kept for the tenants on it, offered to no other"
+			summary.BlockedBy = PlanBlockedRetired
 		default:
 			if err := resourceplan.CheckFit(plan, used); err != nil {
 				var downgrade *resourceplan.DowngradeError
 				if errors.As(err, &downgrade) {
 					summary.Selectable = false
 					summary.Blocked = downgrade.Error()
+					summary.BlockedBy = PlanBlockedFit
 				}
 			}
 		}
 		out = append(out, summary)
 	}
 	return out, nil
-}
-
-// SetPlan moves a tenant to a plan by committing the change to GitOps.
-//
-// The write is the same mechanism an app install uses — an edit to the
-// deployments repository, pushed, and left for Argo to sync — so a tenant's
-// ceiling has exactly one source of truth and a plan chosen in the console
-// cannot be reverted by the next sync.
-func (s *Service) SetPlan(ctx context.Context, req SetPlanRequest) (*SetPlanResult, error) {
-	defer lockTenantPlan(req.Tenant)()
-
-	tenant, err := s.getTenant(ctx, req.Tenant)
-	if err != nil {
-		return nil, err
-	}
-	catalogue, err := resourceplan.Load(ctx, s.client)
-	if err != nil {
-		return nil, err
-	}
-	plan := catalogue.Get(req.Plan)
-	if plan == nil {
-		return nil, fmt.Errorf("%w: %s", ErrPlanNotFound, req.Plan)
-	}
-	if req.SelfService && plan.Spec.SelfServiceDisabled {
-		return nil, fmt.Errorf("%w: %s is arranged with the platform operator", ErrPlanNotSelectable, plan.Name)
-	}
-	if maxTier := resourceplan.MaxTier(tenant); maxTier != nil && plan.Spec.Tier > *maxTier {
-		return nil, fmt.Errorf("%w: %s is above the tenant's entitlement", ErrPlanNotSelectable, plan.Name)
-	}
-
-	resolution := catalogue.Resolve(tenant)
-	previous := ""
-	if resolution.Plan != nil {
-		previous = resolution.Plan.Name
-	}
-
-	if !req.Force {
-		quota, err := s.tenantQuota(ctx, tenant)
-		if err != nil {
-			return nil, err
-		}
-		var used corev1.ResourceList
-		if quota != nil {
-			used = quota.Status.Used
-		}
-		if err := resourceplan.CheckFit(plan, used); err != nil {
-			return nil, err
-		}
-	}
-
-	status, file, changed, err := s.git.SetResourcePlan(ctx, req.Tenant, plan, req.Actor)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &SetPlanResult{
-		Status:       status,
-		Tenant:       req.Tenant,
-		Plan:         plan.Name,
-		PreviousPlan: previous,
-		File:         file,
-	}
-	if !changed {
-		result.Message = "the tenant is already on this plan"
-		return result, nil
-	}
-	result.Message = "committed to the deployments repository; Argo CD applies it on the next sync"
-
-	// The plan event is recorded now rather than when the sync lands, because
-	// now is when the decision was made and by whom. A sync that fails leaves
-	// an event describing an intent the samples will contradict, which is
-	// visible; waiting for the sync would instead lose the actor, which is not
-	// recoverable from anywhere else.
-	s.recordPlanEvent(ctx, req.Tenant, previous, plan, req.Actor)
-	return result, nil
 }
 
 // UsageHistory returns thinned samples over a window.
@@ -321,7 +282,7 @@ func (s *Service) UsageHistory(
 	from, to time.Time,
 	step time.Duration,
 ) ([]usage.Sample, error) {
-	store, err := usage.StoreForTenant(ctx, s.client, s.opts.KernelNamespace, tenantName)
+	store, err := usage.StoreForTenant(ctx, s.client, layout.Tenant(tenantName), tenantName)
 	if err != nil {
 		return nil, err
 	}
@@ -334,46 +295,35 @@ func (s *Service) UsageReport(
 	tenantName string,
 	from, to time.Time,
 ) (*usage.Report, error) {
-	store, err := usage.StoreForTenant(ctx, s.client, s.opts.KernelNamespace, tenantName)
+	store, err := usage.StoreForTenant(ctx, s.client, layout.Tenant(tenantName), tenantName)
 	if err != nil {
 		return nil, err
 	}
 	return usage.BuildReport(ctx, store, tenantName, from, to)
 }
 
-func (s *Service) recordPlanEvent(
-	ctx context.Context,
-	tenantName, previous string,
-	plan *gentianov1alpha1.ResourcePlan,
-	actor string,
-) {
-	store, err := usage.StoreForTenant(ctx, s.client, s.opts.KernelNamespace, tenantName)
-	if err != nil {
-		log.FromContext(ctx).WithName("resources").Error(err,
-			"could not open the usage store to record a plan change", "tenant", tenantName)
-		return
+// AllUsageReports resolves the window for every tenant the cluster holds.
+func (s *Service) AllUsageReports(ctx context.Context, from, to time.Time) ([]*usage.Report, []TenantUnavailable, error) {
+	var tenants gentianov1alpha1.TenantList
+	if err := s.client.List(ctx, &tenants); err != nil {
+		return nil, nil, fmt.Errorf("list tenants: %w", err)
 	}
-	if err := store.EnsureSchema(ctx); err != nil {
-		log.FromContext(ctx).WithName("resources").Error(err,
-			"could not prepare the usage schema", "tenant", tenantName)
-		return
+	names := make([]string, 0, len(tenants.Items))
+	for i := range tenants.Items {
+		names = append(names, tenants.Items[i].Name)
 	}
-	err = store.RecordPlanEvent(ctx, usage.PlanEvent{
-		OccurredAt: time.Now().UTC(),
-		FromPlan:   previous,
-		ToPlan:     plan.Name,
-		ProductSku: plan.Spec.ProductSku,
-		Actor:      actor,
-	})
-	if err != nil {
-		// Not fatal to the plan change: the ceiling is already committed to
-		// git and will be enforced. What is lost is the billing record's
-		// precision, which the samples partially reconstruct — so the change
-		// stands and the gap is logged rather than the change being refused
-		// after it has already been pushed.
-		log.FromContext(ctx).WithName("resources").Error(err,
-			"plan change committed but not recorded in the usage history", "tenant", tenantName)
+	sort.Strings(names)
+	reports := make([]*usage.Report, 0, len(names))
+	unavailable := []TenantUnavailable{}
+	for _, name := range names {
+		report, err := s.UsageReport(ctx, name, from, to)
+		if err != nil {
+			unavailable = append(unavailable, TenantUnavailable{Tenant: name, Reason: err.Error()})
+			continue
+		}
+		reports = append(reports, report)
 	}
+	return reports, unavailable, nil
 }
 
 func (s *Service) getTenant(ctx context.Context, name string) (*gentianov1alpha1.Tenant, error) {

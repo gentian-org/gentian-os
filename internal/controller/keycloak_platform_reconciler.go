@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -45,7 +39,6 @@ type KeycloakPlatformReconciler struct {
 	KernelDomain string
 	TenancyMode  string
 	KernelRealm  string
-	RoutingMode  string
 }
 
 func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -56,16 +49,25 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 
 	if err := reconcileKeycloakIDPGatewayRoute(ctx, r.Client, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "Keycloak IdP HTTPRoute frame-ancestors reconcile failed")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	if err := r.ensureAllBrowserSecurityHeaders(ctx); err != nil {
 		logger.Error(err, "Keycloak browser security headers failed")
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
+	}
+
+	// The registrar's per-realm credentials. Here rather than in the tenant
+	// reconciler because the set is per REALM and several tenants may share
+	// one, and because the kernel realm needs a credential before any tenant
+	// exists -- this loop is the only thing that walks every realm.
+	if err := r.ensureRegistrarRealmCredentials(ctx); err != nil {
+		logger.Error(err, "registrar realm credentials failed")
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
-		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
 	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
@@ -80,7 +82,7 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		Client:      r.Client,
 		KernelRealm: kernelRealm,
 	}
-	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
+	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm, tr.kernelRealmLocales(ctx, kernelRealm)); err != nil {
 		return fmt.Errorf("kernel browser security headers: %w", err)
 	}
 
@@ -93,12 +95,13 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant)); err != nil {
+		// No locales for a tenant realm: tenant-default composes the Realm and
+		// declares them from the same spec.locales. Two writers of one field
+		// is the bug this file's own comment records for session lifetimes.
+		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant), nil); err != nil {
 			return fmt.Errorf("tenant %s browser security headers: %w", tenant.Name, err)
 		}
-		tr.deleteRetiredJobs(ctx, tenantBrowserSecurityJobName(tenant.Name))
 	}
-	tr.deleteRetiredJobs(ctx, kernelBrowserSecurityJobName())
 	return nil
 }
 
@@ -134,7 +137,7 @@ func (r *KeycloakPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 		).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
+			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 		).
 		Complete(r)

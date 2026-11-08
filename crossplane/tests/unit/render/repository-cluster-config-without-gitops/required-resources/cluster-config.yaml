@@ -1,0 +1,12 @@
+# A cluster configuration that says where the kernel runs and not where Argo CD
+# does. Half a layout is no layout: nothing is delivered.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: kernel-provisioning
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  kernel.controlNamespace: kernel-control
+  kernel.layout: v5

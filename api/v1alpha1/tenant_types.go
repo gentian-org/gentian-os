@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -23,22 +25,292 @@ import (
 )
 
 // TenantSpec defines the desired state of a Tenant.
+// TenantAdmin is the handover of a tenant's administrator account.
+type TenantAdmin struct {
+	// RequireMFA makes enrolling a second factor part of activating the
+	// account. Defaults to true.
+	// +optional
+	// +kubebuilder:default=true
+	RequireMFA *bool `json:"requireMFA,omitempty"`
+}
+
+// TenantSignUp is whether people make their own accounts in the tenant's
+// realm.
+type TenantSignUp struct {
+	// Enabled opens the realm's registration page: anybody on the internet
+	// may make an account, with an e-mail address as the login, a message to
+	// that address to confirm it, and a proof-of-work check against scripted
+	// sign-ups. An account made that way is in none of the tenant's groups:
+	// it has no desktop, no rights on the platform, and is not counted as a
+	// user of the tenant. It is for a tenant whose apps serve the public --
+	// customers with accounts -- and not for a workspace, whose people are
+	// invited. Off by default; off, every account is made by an invitation.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Home is where the people of such a tenant are sent instead of its
+	// desktop: the page of the app they made their account for, e.g. a
+	// website's account page. The tenant's bare domain redirects there, and
+	// a browser refused at the tenant's desktop -- a signed-up account has
+	// none -- is sent there rather than shown the refusal. Only with
+	// Enabled; unset, both lead to the desktop as for any tenant.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^?#\s]*)?$`
+	Home string `json:"home,omitempty"`
+}
+
+// TenantPartner is another realm -- usually of another cluster -- this
+// tenant's realm has a declared relation with (docs/guides/identity-brokering.md,
+// AD-17). Per direction it is one switch: Issue, this tenant's people towards
+// the partner; Accept, the partner's people here. A person links their two
+// accounts once, by signing in at the partner through this realm; apps then
+// call each other on that person's behalf with assertions that carry a
+// pairwise subject and nothing else about the person. No secret crosses
+// between the clusters, and no group or role.
+//
+// Only an issuer the Cluster claim allows (spec.partners.allowedIssuers) is
+// composed.
+// +kubebuilder:validation:XValidation:rule="!has(self.accept) || self.accept.accounts != 'organization' || has(self.accept.domain)",message="an organization names its domain"
+type TenantPartner struct {
+	// Name is the partner's name here: the realm's scope and identity
+	// provider for it are partner-<name>.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// Issuer is the partner's realm, https://<host>/<path to the realm>.
+	// Its endpoints and keys are read under it.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=500
+	// +kubebuilder:validation:Pattern=`^https://[^/:\s]+(:[0-9]+)?/[^\s?#]*[^/\s?#]$`
+	Issuer string `json:"issuer"`
+
+	// As is the name the partner gives this realm: its broker endpoint for
+	// this realm is <issuer>/broker/partner-<as>/endpoint, the one address
+	// the partner client sends a person back to. Default: the tenant's
+	// metadata.uid, which the usage statistics report tells a store.
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	As string `json:"as,omitempty"`
+
+	// Issue lets this tenant's people sign in at the partner and its apps ask
+	// for assertions towards it: the partner client (client ID = Issuer) and
+	// the scope partner-<name>, with a pairwise subject and the partner's
+	// issuer as the only audience. Which apps may ask is what their profiles
+	// declare (requires.services.partners.call).
+	// +optional
+	Issue bool `json:"issue,omitempty"`
+
+	// Accept lets the partner's people arrive here: the identity provider
+	// partner-<name>, with the JWT authorization grant. Unset: they do not.
+	// +optional
+	Accept *TenantPartnerAccept `json:"accept,omitempty"`
+}
+
+// PartnerAccounts is what a person's first arrival from a partner becomes.
+// +kubebuilder:validation:Enum=link;create;organization
+type PartnerAccounts string
+
+const (
+	// PartnerAccountsLink links an account that exists here, once its owner
+	// signed in to it; no account is made.
+	PartnerAccountsLink PartnerAccounts = "link"
+	// PartnerAccountsCreate makes the account at the first arrival, or links
+	// an existing one as PartnerAccountsLink does.
+	PartnerAccountsCreate PartnerAccounts = "create"
+	// PartnerAccountsOrganization makes every arrival a member of an
+	// organization of this realm for the partner, with Domain.
+	PartnerAccountsOrganization PartnerAccounts = "organization"
+)
+
+// TenantPartnerAccept is the receiving side of a partner.
+type TenantPartnerAccept struct {
+	// Accounts is what a first arrival becomes; see PartnerAccounts.
+	// +kubebuilder:validation:Required
+	Accounts PartnerAccounts `json:"accounts"`
+
+	// Domain is the organization's domain (organization only): the domain
+	// of its people's addresses.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
+	Domain string `json:"domain,omitempty"`
+
+	// DisplayName is the organization's name as people read it
+	// (organization only). Default: the partner's name.
+	// +optional
+	// +kubebuilder:validation:MaxLength=120
+	DisplayName string `json:"displayName,omitempty"`
+}
+
+// TenantComponentRef names a component of a tenant by the profile it runs.
+type TenantComponentRef struct {
+	// Tenant is the tenant the component runs in.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Tenant string `json:"tenant"`
+
+	// Profile is the profile it runs.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Profile string `json:"profile"`
+}
+
+// TenantGroup is a group of the tenant's realm declared in git. The platform
+// makes it; people are put in it in the Admin Console, and an app's profile
+// or a TenantSignInFrom names it. It is not renamed or deleted from the
+// console: git holds it.
+type TenantGroup struct {
+	// Name is the group's name in the realm. Not one the platform's own
+	// groups take (gentian...).
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="names beginning with gentian are the platform's own groups"
+	Name string `json:"name"`
+}
+
+// TenantSignInFrom is another tenant of this cluster whose people sign in to
+// this one with their account there, and the groups of this tenant they are
+// in for it. It takes both tenants: this one names the other here, and the
+// other names this one in its spec.signInTo. Either alone opens nothing.
+//
+// The platform makes, in the other tenant's realm, the client this realm
+// signs in with (authenticated by a JWT this realm signs: no secret), and in
+// this realm an identity provider, tenant-<other>, that trusts the other
+// realm's verified addresses and puts each person who arrives in the groups
+// named, at every sign-in. An account that is already here under the same
+// address is linked only once its owner proves it.
+type TenantSignInFrom struct {
+	// Tenant is the other tenant.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Tenant string `json:"tenant"`
+
+	// Groups are the groups of this tenant its people are in: a name of
+	// spec.groups, or members (the tenant's members, who may enter it). The
+	// tenant's administrators and its perimeter approvers are never given
+	// this way.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Groups []string `json:"groups,omitempty"`
+}
+
+// SignUpEnabled reports whether people make their own accounts in this
+// tenant's realm (spec.signUp.enabled); off unless the tenant says so.
+func (t *Tenant) SignUpEnabled() bool {
+	return t.Spec.SignUp != nil && t.Spec.SignUp.Enabled
+}
+
+// SignUpHome is where this tenant's people are sent instead of its desktop
+// (spec.signUp.home); empty unless sign-up is enabled and a home is set.
+func (t *Tenant) SignUpHome() string {
+	if !t.SignUpEnabled() {
+		return ""
+	}
+	return t.Spec.SignUp.Home
+}
+
+// TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.
+type TenantDeletion struct {
+	// KeepBundles keeps the tenant's backup bucket and the bundles in it
+	// when everything else is deleted: the offboarding case, where the
+	// tenant was handed a copy and a provider keeps one under contract.
+	// Off by default -- a purge that leaves the backups behind has not
+	// purged.
+	// +optional
+	KeepBundles bool `json:"keepBundles,omitempty"`
+}
+
+// KeepsBundles reports whether a Delete spares the backup bucket.
+func (t *Tenant) KeepsBundles() bool {
+	return t.Spec.Deletion != nil && t.Spec.Deletion.KeepBundles
+}
+
+// AdminRequiresMFA reports whether the administrator must enrol a second
+// factor; true unless the tenant says otherwise.
+func (t *Tenant) AdminRequiresMFA() bool {
+	if t.Spec.Admin == nil || t.Spec.Admin.RequireMFA == nil {
+		return true
+	}
+	return *t.Spec.Admin.RequireMFA
+}
+
 type TenantSpec struct {
-	// DisplayName is a human-readable name for this tenant/organisation.
+	// DisplayName is a human-readable name for this tenant/organization.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	DisplayName string `json:"displayName"`
 
-	// Domain is the optional custom domain for this tenant's app zone (e.g.
-	// `acme.com`). When unset, the effective domain depends on cluster
-	// tenancy mode: multi → `<tenant-name>.<KERNEL_DOMAIN>`; single →
-	// `<KERNEL_DOMAIN>` (flat URLs). See docs/design/multi-tenancy.md §3.
-	// In both cases the operator issues a per-tenant wildcard TLS certificate
-	// for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
+	// Admin is how the tenant's administrator account is handed over. The
+	// account is created with no password: its holder sets one through a
+	// single-use, expiring link, mailed to a recovery address when the person
+	// activating it gives one and otherwise shown, once, to them. The address
+	// is not here: a person's address committed to git outlives the account.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
-	Domain string `json:"domain,omitempty"`
+	Admin *TenantAdmin `json:"admin,omitempty"`
+
+	// SignUp is whether people make their own accounts in the realm. Unset
+	// or off, they are invited; see TenantSignUp.
+	// +optional
+	SignUp *TenantSignUp `json:"signUp,omitempty"`
+
+	// Partners are realms outside this tenant it has a relation with; see
+	// TenantPartner. Written by the director, as the patch partners.yaml
+	// beside the tenant. The Cluster claim's spec.partners.defaults are
+	// partners of every tenant besides these; an entry here of the same
+	// name replaces one.
+	// +optional
+	// +kubebuilder:validation:MaxItems=1000
+	// +listType=map
+	// +listMapKey=name
+	Partners []TenantPartner `json:"partners,omitempty"`
+
+	// PartnerCommissioners are the components, of this tenant or another,
+	// that may ask the director to add a receiving partner (accept only) or
+	// take one away. A component is admitted only when its profile declares
+	// requires.services.partners.commission as well: the administrator who
+	// names it here grants, and the profile asks. Declared by hand in git;
+	// nothing writes it.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	PartnerCommissioners []TenantComponentRef `json:"partnerCommissioners,omitempty"`
+
+	// Groups are groups of the tenant's realm declared in git; see
+	// TenantGroup.
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	// +listType=map
+	// +listMapKey=name
+	Groups []TenantGroup `json:"groups,omitempty"`
+
+	// SignInTo are other tenants of this cluster this tenant's people may
+	// sign in to with their account here: this tenant's half of the other's
+	// spec.signInFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	SignInTo []string `json:"signInTo,omitempty"`
+
+	// SignInFrom are other tenants of this cluster whose people sign in here;
+	// see TenantSignInFrom.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=tenant
+	SignInFrom []TenantSignInFrom `json:"signInFrom,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
@@ -48,19 +320,354 @@ type TenantSpec struct {
 	// +optional
 	Mail *TenantMail `json:"mail,omitempty"`
 
+	// StoreTerms records that the tenant accepted the App Store's terms:
+	// which version, and when. Written by the director when a person who
+	// may install apps accepts them in the App Store, and carried in the
+	// usage statistics report. Recorded, not enforced: nothing on the
+	// cluster turns on it.
+	// +optional
+	StoreTerms *TenantStoreTerms `json:"storeTerms,omitempty"`
+
 	// Quotas sets resource limits for this tenant.
 	// +optional
 	Quotas *TenantQuotas `json:"quotas,omitempty"`
 
-	// DeletionPolicy controls behaviour when the Tenant CR is deleted.
+	// Security is the realm policy this tenant runs under: how strong a
+	// password has to be, how long a session lasts, what happens after
+	// repeated failures. Unset leaves Keycloak's own defaults.
+	//
+	// Declared here rather than set through Keycloak's admin API, which is
+	// what the console used to do. The composition turns this into the
+	// realm's fields, so the policy is reviewable in git, survives a realm
+	// being rebuilt, and needs no credential anywhere: the thing that changes
+	// it is a commit, and the thing that applies it is the reconciler that
+	// owns the realm.
+	// +optional
+	Security *TenantSecurity `json:"security,omitempty"`
+
+	// DeletionPolicy controls behavior when the Tenant CR is deleted.
 	// Defaults to Retain.
 	// +optional
 	// +kubebuilder:default=Retain
 	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
 
+	// Deletion refines what a Delete leaves behind.
+	// +optional
+	Deletion *TenantDeletion `json:"deletion,omitempty"`
+
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// Catalogue is where this tenant may install from beside the catalogs
+	// the whole cluster offers: the catalogs only this tenant sees, and
+	// whether its own administrators may add them.
+	//
+	// The director reads and writes it, in the tenant's manifest in git.
+	// Nothing in the cluster acts on it: what an install may use is decided
+	// when the director resolves a coordinate, and what a tenant may roll out
+	// is decided by the origin a materialized profile carries.
+	// +optional
+	Catalogue *TenantCatalogue `json:"catalogue,omitempty"`
+
+	// PlatformAccess is what the tenant opens to the platform's own people
+	// beyond the director: whether the platform's administrators may sign in
+	// to the tenant. The tenant's own administrators write it, through the
+	// director, in the tenant's manifest in git; it is not the tenant's
+	// operated_by consent and is set and withdrawn on its own.
+	// +optional
+	PlatformAccess *TenantPlatformAccess `json:"platformAccess,omitempty"`
+
+	// Locales are the languages this tenant's realm renders its login and
+	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
+	// platform's own set.
+	//
+	// Languages rather than locales: Keycloak serves de-CH from its German
+	// catalog, and a realm listing regional codes offers a picker full of
+	// entries that render identically.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:Pattern=`^[a-z]{2}(-[A-Za-z0-9]{2,8})?$`
+	Locales []string `json:"locales,omitempty"`
+
+	// Country is the country the tenant is in, as an ISO 3166-1 alpha-2 code
+	// in upper case (CH, DE). A component whose profile names
+	// valueMapping.platform.countryKey is told it; the App Store app asks a
+	// store for the support offered there. Unset: no country is assumed.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z]{2}$`
+	Country string `json:"country,omitempty"`
+
+	// Organization is who the tenant is: the facts an app needs to set itself
+	// up for this organization rather than a placeholder (its company, its
+	// currency, its clock). Its administrators fill it in under Tenant
+	// Settings; a component whose profile names
+	// valueMapping.platform.organizationKey is told it. An app reads it when
+	// it sets itself up, so a later change does not rewrite what the app
+	// already holds.
+	// +optional
+	Organization *TenantOrganization `json:"organization,omitempty"`
+
+	// Privileges are the privilege requests a person granted for this
+	// tenant's components (AD-5). They live here because a grant has to
+	// survive the thing it applies to: a Component is rebuilt from its
+	// profile and can be deleted and recreated, while the record that a named
+	// person said yes on a named date must not be. The Tenant comes from git,
+	// so this is also what makes an approval a commit rather than an edit
+	// somebody made to a live object.
+	//
+	// The operator copies each entry onto the Component named by Install. A
+	// grant for a component that does not exist is kept and ignored, because
+	// an app can be uninstalled and reinstalled and re-asking for an approval
+	// that was already given is how approvals become a formality.
+	// +optional
+	// +listType=map
+	// +listMapKey=install
+	// +listMapKey=privilege
+	// +kubebuilder:validation:MaxItems=256
+	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
+
+	// Grants are what each app of the tenant may consume from the others,
+	// and which of them may consume from it, as the tenant's administrators
+	// granted it (can_grant). The director writes them as the patch
+	// grants.yaml beside the tenant; the operator makes each the AppGrant of
+	// its app in the tenant's namespace, and removes an AppGrant it made
+	// whose entry is gone.
+	// +optional
+	// +listType=map
+	// +listMapKey=app
+	// +kubebuilder:validation:MaxItems=256
+	Grants []TenantAppGrant `json:"grants,omitempty"`
+
+	// Exposures are the perimeter surfaces a perimeter approver published
+	// (AD-6): what this tenant has on the internet, from when, until when,
+	// and who said so.
+	//
+	// Here for the same reason the grants are: the decision has to outlive
+	// the thing it applies to, and it has to be a commit rather than an edit
+	// somebody made to a live object. The operator copies each entry onto the
+	// Component it names, and the Component's reconcile is what stands the
+	// proxy up in the tenant's DMZ.
+	//
+	// It is also the registry. Every URL this tenant publishes is one of
+	// these, which is what lets "what of ours is on the internet" be answered
+	// by the thing that put it there.
+	// +optional
+	// +listType=map
+	// +listMapKey=install
+	// +listMapKey=exposureName
+	// +kubebuilder:validation:MaxItems=256
+	Exposures []TenantExposure `json:"exposures,omitempty"`
+}
+
+// TenantExposure is one published surface, against one of the tenant's
+// components.
+//
+// The fields are spelled out rather than embedded so the two list map keys can
+// be the component and the entry: together they are what makes a published
+// surface unique, and letting the API server enforce that is better than a
+// controller finding two answers to how long something is on the internet.
+type TenantExposure struct {
+	// Install names the Component this publishes from.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	Install string `json:"install"`
+
+	// ExposureName names an entry of that component's profile that asks for
+	// approval: one whose surface is perimeter, or one behind sign-in that
+	// declares the Authorization header the app's own. Only a perimeter
+	// entry is ever published: the operator checks the entry's surface,
+	// because enabling a gateway entry by name would otherwise put the
+	// component's authenticated surface on the internet.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	ExposureName string `json:"exposureName"`
+
+	// Kind is what was approved, set by the director from what the profile's
+	// entry declared when the approver said yes: a public address, a public
+	// address that passes the caller's Authorization header to the app, or
+	// an entry behind sign-in whose Authorization header is the app's own.
+	// Empty is a public address, which is all an approval was before kinds
+	// were recorded. The operator acts on an approval only while the entry
+	// still declares this kind, so a profile that later asks for more is
+	// not given it on the strength of an earlier yes.
+	// +optional
+	Kind ExposureKind `json:"kind,omitempty"`
+
+	// Owner is the subject that published it, set by the director from the
+	// caller's token.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Owner string `json:"owner"`
+
+	// ExpiresAt is when it stops answering, for a surface published for a
+	// while. Optional: one meant to stay has none.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// ReviewAt is when the owner and the approver look at it again. Always
+	// set; overdue is reported and takes nothing down.
+	ReviewAt metav1.Time `json:"reviewAt"`
+
+	// Reason is why this is public, in the approver's words.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason,omitempty"`
+
+	// PublishedAt is when it was first published. It does not change when
+	// the entry is reviewed.
+	// +optional
+	PublishedAt *metav1.Time `json:"publishedAt,omitempty"`
+
+	// LastReviewedBy is the subject that last confirmed this should stay
+	// public, and LastReviewedAt when. Publishing is the first review, and
+	// the owner may well be the reviewer every time: what is asked for is a
+	// regular look, not a second person.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
+	// +optional
+	LastReviewedAt *metav1.Time `json:"lastReviewedAt,omitempty"`
+
+	// Apex is the approver saying that this surface is for the cluster's
+	// main address: the bare domain. The profile's entry must say apex too;
+	// neither alone publishes anything. It is honored for the one tenant
+	// that may hold the main address -- the one the Cluster claim names, or
+	// the user tenant of a single-tenancy cluster -- and for one surface at
+	// a time.
+	// +optional
+	Apex bool `json:"apex,omitempty"`
+
+	// ApexAcknowledgedBy is the subject that acknowledged the rule for a
+	// website on the main address, and ApexAcknowledgedAt when: only a site
+	// whose scripts the organization itself controls. A script on the bare
+	// domain can set cookies the browser sends to the sign-in addresses, and
+	// the platform cannot check what a site loads, so the approver is told
+	// and says so. Set by the director from the caller's token, on an apex
+	// entry only. It is a record: the operator publishes by Apex, and an
+	// entry approved before the rule was asked carries neither.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	ApexAcknowledgedBy string `json:"apexAcknowledgedBy,omitempty"`
+	// +optional
+	ApexAcknowledgedAt *metav1.Time `json:"apexAcknowledgedAt,omitempty"`
+
+	// Alias is a second address for this surface, directly under the
+	// cluster's own domain: the one label of <alias>.<kernelDomain>. The
+	// surface answers there as well as at its own address, with the same
+	// paths and held to the same limits. It is the cluster administrator's
+	// to set, not the approver's, on a surface that is already published:
+	// a name under the cluster's domain is the cluster's to give. A label
+	// the platform keeps, or one a tenant is named, publishes nothing.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Alias string `json:"alias,omitempty"`
+
+	// AliasSetBy is the subject that set the alias, and AliasSetAt when.
+	// Set by the director from the caller's token. A record: the operator
+	// publishes by Alias.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	AliasSetBy string `json:"aliasSetBy,omitempty"`
+	// +optional
+	AliasSetAt *metav1.Time `json:"aliasSetAt,omitempty"`
+}
+
+// Enablement is this entry as the Component carries it.
+func (e *TenantExposure) Enablement() ExposureEnablement {
+	return ExposureEnablement{
+		ExposureName: e.ExposureName,
+		Kind:         e.Kind,
+		Owner:        e.Owner,
+		ExpiresAt:    e.ExpiresAt,
+		ReviewAt:     e.ReviewAt,
+		Apex:         e.Apex,
+		Alias:        e.Alias,
+	}
+}
+
+// TenantPrivilegeGrant is one grant, against one of the tenant's components.
+//
+// The fields of PrivilegeGrant are spelled out rather than embedded so that
+// this is one flat object in the CRD and the two list map keys can be the
+// component and the privilege -- together they are what makes a grant unique,
+// and letting the API server enforce that is better than a controller
+// discovering two answers to the same question.
+// TenantAppGrant is one app's grant, with who gave it and when.
+type TenantAppGrant struct {
+	AppGrantSpec `json:",inline"`
+
+	// GrantedBy is the Keycloak subject who granted it, set by the director
+	// from the caller's token, never supplied by a caller. Empty only on a
+	// grant carried over from before grants were recorded here; its commit
+	// still names who made it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	GrantedBy string `json:"grantedBy,omitempty"`
+
+	// GrantedAt is when.
+	// +optional
+	GrantedAt *metav1.Time `json:"grantedAt,omitempty"`
+
+	// Reason in the granter's words, where they gave one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason,omitempty"`
+}
+
+type TenantPrivilegeGrant struct {
+	// Install names the Component this grant is for, which is the component's
+	// object name in the tenant's namespace.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	Install string `json:"install"`
+
+	// Privilege names one entry of the profile's request, as <kind>/<name>.
+	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=80
+	Privilege string `json:"privilege"`
+
+	// Approver is the Keycloak subject who said yes, set by the director from
+	// the caller's token. Never supplied by a caller: a grant that could name
+	// its own approver would record nothing.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Approver string `json:"approver"`
+
+	ApprovedAt metav1.Time `json:"approvedAt"`
+
+	// Reason in the approver's words, not the profile's. The profile already
+	// said why it wants the privilege; this is why somebody agreed.
+	// +kubebuilder:validation:MinLength=10
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason"`
+
+	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+	// reviews.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// Digest pins an apiExtensions grant to the definitions it approved:
+	// sha256 of the request as the approver read it
+	// (security.APIExtensionDigest). A request whose definitions changed is
+	// not answered by it, and the install waits for a new approval.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest,omitempty"`
+}
+
+// Grant is this entry as the Component carries it.
+func (g *TenantPrivilegeGrant) Grant() PrivilegeGrant {
+	return PrivilegeGrant{
+		Privilege:  g.Privilege,
+		Approver:   g.Approver,
+		ApprovedAt: g.ApprovedAt,
+		Reason:     g.Reason,
+		ExpiresAt:  g.ExpiresAt,
+		Digest:     g.Digest,
+	}
 }
 
 // TenantIsolation describes the namespace and identity boundaries.
@@ -77,8 +684,11 @@ type TenantIsolation struct {
 	Namespace string `json:"namespace,omitempty"`
 
 	// KeycloakRealm is the Keycloak realm name for this tenant.
-	// Defaults to the tenant name.
+	// Defaults to the tenant name. A DNS label: the identity Jobs pass it to
+	// shell scripts and Keycloak URLs.
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$`
 	KeycloakRealm string `json:"keycloakRealm,omitempty"`
 
 	// DatabasePrefix is the prefix for all database names belonging to this tenant.
@@ -94,16 +704,23 @@ type TenantIsolation struct {
 	S3Prefix string `json:"s3Prefix,omitempty"`
 }
 
+// TenantStoreTerms is one acceptance of a store's terms.
+type TenantStoreTerms struct {
+	// Version is the version of the terms the store named when they were
+	// accepted.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]{1,64}$`
+	Version string `json:"version"`
+
+	// AcceptedAt is when they were accepted.
+	AcceptedAt metav1.Time `json:"acceptedAt"`
+}
+
 // TenantMail configures the mail stack for this tenant.
 type TenantMail struct {
 	// Mode selects the mail delivery strategy. Defaults to selfhosted.
 	// +optional
 	// +kubebuilder:default=selfhosted
 	Mode MailMode `json:"mode,omitempty"`
-
-	// Domain is the mail domain. Defaults to spec.domain.
-	// +optional
-	Domain string `json:"domain,omitempty"`
 
 	// SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
 	// kernel namespace that contains SMTP relay credentials for external mail
@@ -165,29 +782,244 @@ type TenantQuotas struct {
 	MaxPods int32 `json:"maxPods,omitempty"`
 }
 
+// TenantOrganization is who a tenant is, as its apps are told it. Its
+// country and languages are the Tenant's own spec.country and spec.locales.
+type TenantOrganization struct {
+	// LegalName is the name the organization is registered under (Example AG),
+	// beside the tenant's display name, which is what its people call it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	LegalName string `json:"legalName,omitempty"`
+
+	// Currency is the organization's currency, ISO 4217 (CHF, EUR).
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z]{3}$`
+	Currency string `json:"currency,omitempty"`
+
+	// TimeZone is the organization's time zone, an IANA name (Europe/Zurich).
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`
+	TimeZone string `json:"timeZone,omitempty"`
+
+	// FiscalYearStartMonth is the month the organization's fiscal year begins
+	// in, 1 to 12. Unset: January.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=12
+	FiscalYearStartMonth int32 `json:"fiscalYearStartMonth,omitempty"`
+
+	// Address is where the organization is. Its country is spec.country.
+	// +optional
+	Address *TenantAddress `json:"address,omitempty"`
+
+	// Website is the organization's public site, an http(s) address.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^https?://[^\s]+$`
+	Website string `json:"website,omitempty"`
+
+	// Email is the organization's contact address.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^[^@\s]+@[^@\s]+$`
+	Email string `json:"email,omitempty"`
+
+	// Phone is the organization's phone number, preferably international
+	// (+41 44 123 45 67).
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	Phone string `json:"phone,omitempty"`
+
+	// TaxID is the organization's VAT number (CHE-123.456.789 MWST,
+	// DE123456789).
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	TaxID string `json:"taxId,omitempty"`
+
+	// RegistrationNumber is its number in the commercial register
+	// (CHE-123.456.789, HRB 12345).
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	RegistrationNumber string `json:"registrationNumber,omitempty"`
+}
+
+// TenantAddress is a postal address without its country.
+type TenantAddress struct {
+	// Street is the street and number, a line per line of the address.
+	// +optional
+	// +kubebuilder:validation:MaxLength=200
+	Street string `json:"street,omitempty"`
+	// PostalCode is the postal code.
+	// +optional
+	// +kubebuilder:validation:MaxLength=20
+	PostalCode string `json:"postalCode,omitempty"`
+	// City is the city or town.
+	// +optional
+	// +kubebuilder:validation:MaxLength=100
+	City string `json:"city,omitempty"`
+	// Region is the state, canton or province, where the address has one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=100
+	Region string `json:"region,omitempty"`
+}
+
+// TenantPlatformAccess is what a tenant opens to the platform's own people.
+type TenantPlatformAccess struct {
+	// AdminsEnter says the members of the platform's administrators' group
+	// may sign in to this tenant, through the kernel realm, and hold its
+	// admins group for as long as they hold that one: the tenant's realm
+	// composes the identity provider "kernel" while this is on. Off unless
+	// the tenant's own administrators turn it on.
+	// +optional
+	AdminsEnter bool `json:"adminsEnter,omitempty"`
+}
+
+// PlatformAdminsEnter says whether the platform's administrators may sign in
+// to this tenant (spec.platformAccess.adminsEnter).
+func (t *Tenant) PlatformAdminsEnter() bool {
+	return t.Spec.PlatformAccess != nil && t.Spec.PlatformAccess.AdminsEnter
+}
+
+// TenantCatalogue is a tenant's own catalogs and who may add them.
+type TenantCatalogue struct {
+	// Delegated says the tenant's own administrators may add and remove
+	// catalogs for this tenant. Off unless the cluster's administrator
+	// turns it on; a tenant's administrator cannot.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
+
+	// Sources are the catalogs only this tenant sees.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Sources []TenantCatalogueSource `json:"sources,omitempty"`
+}
+
+// TenantCatalogueSource is one catalog of a tenant: an address that serves
+// index.yaml and profiles/<name>.yaml, or an OCI artifact that holds them,
+// read with the credential of a repository the tenant declared. A catalog
+// is never kept in the cluster's deployments repository, which holds the
+// cluster's state only: there is no field for a directory of it, and a
+// source that names one where an address or an artifact belongs is refused.
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.url) ? 1 : 0) + (has(self.oci) ? 1 : 0) == 1",message="a catalogue states where it is read from once: url or oci (a directory of the deployments repository, path, is not a catalogue source)"
+type TenantCatalogueSource struct {
+	// Name is the catalog's name: the first half of a coordinate,
+	// <name>/<app>. It is not the name of a catalog of the whole cluster,
+	// nor of another catalog of this tenant.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// URL is the https address the catalog is served from.
+	// +kubebuilder:validation:Pattern=`^https://`
+	// +kubebuilder:validation:MaxLength=2048
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// OCI is an OCI artifact the catalog is kept as, in place of an
+	// address: read with the credential of a repository declared for this
+	// tenant, and with no other.
+	// +optional
+	OCI *CatalogueOCISource `json:"oci,omitempty"`
+
+	// AddedBy says who added it: the cluster's administrator, or the
+	// tenant's own under delegation. A tenant's administrator removes only
+	// what the tenant added.
+	// +kubebuilder:validation:Enum=cluster;tenant
+	// +kubebuilder:default=cluster
+	// +optional
+	AddedBy string `json:"addedBy,omitempty"`
+}
+
+// CatalogueOCISource is a catalog kept as an OCI artifact: one layer, a
+// gzip'd tar of index.yaml and profiles/<name>.yaml, of the artifact type
+// application/vnd.gentianos.catalogue.v1.
+type CatalogueOCISource struct {
+	// Repository is the name of the repository whose credential the
+	// artifact is read with: one declared for the tenant, for a tenant's
+	// catalog; one declared for the cluster, for a catalog of the whole
+	// cluster. The artifact must lie inside its address.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Repository string `json:"repository"`
+
+	// Artifact is the reference, without a scheme:
+	// <registry host>/<repository>:<tag>, or @sha256:<digest> in place of
+	// or after the tag. It is pulled over https, on port 443, from a public
+	// host.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9.-]+(:443)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(@sha256:[a-f0-9]{64})?$`
+	// +kubebuilder:validation:MaxLength=1024
+	Artifact string `json:"artifact"`
+}
+
+// Who added a tenant's catalog.
+const (
+	CatalogueAddedByCluster = "cluster"
+	CatalogueAddedByTenant  = "tenant"
+)
+
 // TenantApp specifies a desired application installation for a tenant.
 //
 // +kubebuilder:validation:XValidation:rule="has(self.profile) || has(self.profileRef)",message="either profile or profileRef is required"
 type TenantApp struct {
-	// Profile is the name of the AppProfile CR to install.
+	// Profile is the name of the ComponentProfile to install.
 	// When profileRef is set, the operator resolves it to a concrete profile name
 	// and may populate this field for observability.
 	// +optional
 	Profile string `json:"profile,omitempty"`
 
-	// ProfileRef selects an AppProfile by catalogue identity (family, version, edition,
+	// ProfileRef selects a ComponentProfile by catalog identity (family, version, edition,
 	// offering tier). Takes precedence over profile when resolving installs.
 	// +optional
 	ProfileRef *ProfileReference `json:"profileRef,omitempty"`
 
+	// Digest pins the profile bundle this app was installed from: the build
+	// the install asked for. It is a field of the install and not part of the
+	// profile's name, so the same app keeps one name across builds.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest,omitempty"`
+
+	// UpdateMode overrides, for this tenant and this app, how the app moves
+	// to newer builds: latest (the platform moves it), manual (the
+	// cluster's administrator does) or tenant (the tenant's administrator
+	// may). Written by the cluster's administrator through the director;
+	// absent, the cluster's policy for the app applies.
+	// +optional
+	// +kubebuilder:validation:Enum=latest;manual;tenant
+	UpdateMode string `json:"updateMode,omitempty"`
+
+	// MovedAt is when the pin was last moved to another build, RFC 3339,
+	// and MovedBy who or what moved it: a person's id, or the policy that
+	// did ("policy:latest"). Written by the director with the digest; the
+	// Component carries both onto its rollout record, and a move the
+	// platform rolled back is tried again only when a later MovedAt asks.
+	// +optional
+	// +kubebuilder:validation:MaxLength=40
+	MovedAt string `json:"movedAt,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	MovedBy string `json:"movedBy,omitempty"`
+
+	// Catalogue is the catalog the pinned build was fetched from: the first
+	// half of its coordinate, <catalogue>/<profile>. It is written with the
+	// digest by an install that fetched the bundle from that catalog's
+	// source, and is absent on every other entry.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Catalogue string `json:"catalogue,omitempty"`
+
 	// Config provides per-tenant overrides for this app installation.
-	// Values here are merged over the AppProfile's extraValues.
+	// Values here are merged over the profile's package.extraValues.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Config *TenantAppConfig `json:"config,omitempty"`
 
 	// Addons lists the addon profiles activated inside this app for this tenant —
-	// customization-ladder rung L3. Each entry names an AppProfile carrying
+	// customization-ladder rung L3. Each entry names a ComponentProfile carrying
 	// gentianos.io/deployment-role: addon in the same family as this app.
 	//
 	// Addons are activation state *inside* the installed app, not separate
@@ -196,12 +1028,123 @@ type TenantApp struct {
 	// (Odoo `-i`, Nextcloud `occ app:enable`).
 	//
 	// The App Store writes this list — pre-filled from an AppPackage preset when
-	// one is chosen, then editable afterwards. Entries the tenant is not entitled
-	// to are rejected; entitlement is what gates an ee addon, not compatibility.
-	// See gentian-os/docs/app-customization.md §4.2.
+	// one is chosen, then editable afterwards. Every entry that resolves is
+	// activated, whatever its edition: the platform gates none, and a paid
+	// addon arrives only where the tenant holds a credential for the
+	// repository it is pulled from. See gentian-os/docs/guides/app-customization.md §4.2.
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
+
+	// AddonPins pins addons of this app to the build each was installed
+	// from, like digest and catalog do for the app itself. It is keyed by
+	// the addon's name and stands beside addons rather than inside it: addons
+	// stays the list of names every reader walks, and an addon with no entry
+	// here is activated unpinned, as before.
+	//
+	// A pinned addon is rolled out only from a profile shown to be that
+	// build. Until it is, the base it activates inside is held as it runs.
+	// An entry naming an addon that is not in addons pins nothing.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonPins []AddonPin `json:"addonPins,omitempty"`
+
+	// DefaultGrant says every member of the tenant has access to this app by
+	// default. The people who are members when the app's group first exists
+	// are added to it, once, and the group is marked so that somebody invited
+	// later has the app pre-selected. It is applied once per install
+	// (status.defaultGrantedApps): a person an administrator removes from the
+	// group afterwards stays removed.
+	//
+	// Absent or false, access is given per person.
+	// +optional
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
+
+	// Placed says the platform put this app here, because its profile is
+	// placeable (ComponentProfile spec.placement). The director's placement
+	// worker writes and removes such an entry and nobody else changes it:
+	// it is not uninstalled, moved, purged or given add-ons by hand. An
+	// export leaves it out, and the cluster an import lands on places its
+	// own.
+	// +optional
+	Placed bool `json:"placed,omitempty"`
+
+	// AddonGrants says which addons of this app every member of the tenant
+	// has access to by default. An addon is entitled by its own group, as an
+	// app is, and defaultGrant on an entry here is that addon's defaultGrant:
+	// applied once per install, noted with the apps' (status.defaultGrantedApps).
+	// Keyed by the addon's name and beside addons, as addonPins is; an addon
+	// with no entry is given per person. An entry naming an addon that is not
+	// in addons grants nothing.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=128
+	AddonGrants []AddonGrant `json:"addonGrants,omitempty"`
+}
+
+// AddonGrant is who has one addon of an app by default.
+type AddonGrant struct {
+	// Name is the addon's profile name, as addons lists it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// DefaultGrant says every member of the tenant has access to this addon
+	// by default, as an app's defaultGrant does for the app.
+	// +optional
+	DefaultGrant bool `json:"defaultGrant,omitempty"`
+}
+
+// AddonDefaultGranted answers whether an addon of this app is declared for
+// everyone: listed in addons and granted by default in addonGrants.
+func (a TenantApp) AddonDefaultGranted(addon string) bool {
+	listed := false
+	for _, name := range a.Addons {
+		listed = listed || name == addon
+	}
+	if !listed {
+		return false
+	}
+	for _, g := range a.AddonGrants {
+		if g.Name == addon && g.DefaultGrant {
+			return true
+		}
+	}
+	return false
+}
+
+// AddonPin is the build one addon was installed from.
+type AddonPin struct {
+	// Name is the addon's profile name, as addons lists it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Digest pins the addon's profile bundle: the build the install asked
+	// for.
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
+	Digest string `json:"digest"`
+
+	// Catalogue is the catalog the pinned build was fetched from: the first
+	// half of its coordinate, <catalogue>/<name>.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Catalogue string `json:"catalogue,omitempty"`
+}
+
+// PinOf answers the digest an addon of this app is pinned to, or "" for an
+// addon that is not pinned.
+func (a TenantApp) PinOf(addon string) string {
+	for _, pin := range a.AddonPins {
+		if pin.Name == addon {
+			return pin.Digest
+		}
+	}
+	return ""
 }
 
 // TenantAppConfig holds per-tenant application overrides.
@@ -211,21 +1154,21 @@ type TenantAppConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// ExtraValues deep-merges Helm values over the AppProfile defaults.
+	// ExtraValues deep-merges Helm values over the profile's defaults.
 	// Must not contain secrets — use valueMapping for credentials.
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// DropIns supply tenant-authored files into drop-in directories the target
-	// AppProfile declares as tenantEditable. This is rung L1 at tenant scope —
+	// ComponentProfile declares as tenantEditable. This is rung L1 at tenant scope —
 	// the highest rung a tenant admin may reach unaided, and the only one where
 	// self-service makes sense: content, never code.
 	//
 	// Each entry must name a declared, tenantEditable drop-in; filenames are
 	// restricted to the 90-99 range so platform and profile files keep priority.
 	// Content lands in a ConfigMap and is therefore not secret material.
-	// See docs/app-customization.md §2.2.1.
+	// See docs/guides/app-customization.md §2.2.1.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -234,7 +1177,7 @@ type TenantAppConfig struct {
 
 // TenantAppDropIn is tenant-authored content for one declared drop-in directory.
 type TenantAppDropIn struct {
-	// Name must match an AppProfile.spec.customization.dropIns[].name entry that
+	// Name must match a ComponentProfile.spec.customization.dropIns[].name entry that
 	// sets tenantEditable: true. Tenants cannot invent mount paths — that would be
 	// repackaging (L4) at tenant scope.
 	// +kubebuilder:validation:Required
@@ -250,9 +1193,108 @@ type TenantAppDropIn struct {
 	Files map[string]string `json:"files"`
 }
 
+// TenantSecurity is the realm policy a tenant administrator may set.
+//
+// Every field maps to something the Keycloak realm already has. Nothing here
+// is a Gentian invention on top: the console shows the realm's own controls,
+// and the composition is what carries them across.
+type TenantSecurity struct {
+	// Password is how strong a password must be.
+	// +optional
+	Password *PasswordPolicy `json:"password,omitempty"`
+
+	// Session is how long one lasts.
+	// +optional
+	Session *SessionPolicy `json:"session,omitempty"`
+
+	// BruteForce is what happens after repeated failures.
+	// +optional
+	BruteForce *BruteForcePolicy `json:"bruteForce,omitempty"`
+}
+
+// PasswordPolicy becomes Keycloak's own password policy string.
+//
+// Split into fields rather than carried as that string, because a screen has
+// to offer the parts and a reviewer has to read the diff. The composition
+// assembles it; "length(12) and digits(1)" is not something anybody should
+// have to write by hand into a tenant manifest.
+type PasswordPolicy struct {
+	// MinLength is the shortest password accepted. Zero leaves it unstated.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=128
+	MinLength int32 `json:"minLength,omitempty"`
+
+	// RequireDigits, RequireLowercase, RequireUppercase and
+	// RequireSpecialChars each demand at least one of that kind.
+	// +optional
+	RequireDigits bool `json:"requireDigits,omitempty"`
+	// +optional
+	RequireLowercase bool `json:"requireLowercase,omitempty"`
+	// +optional
+	RequireUppercase bool `json:"requireUppercase,omitempty"`
+	// +optional
+	RequireSpecialChars bool `json:"requireSpecialChars,omitempty"`
+
+	// HistoryCount refuses a password the person has used in their last N.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=64
+	HistoryCount int32 `json:"historyCount,omitempty"`
+
+	// MaxAgeDays forces a change after that many days. Zero means never,
+	// which is what current guidance actually recommends: rotation on a
+	// timer makes people choose worse passwords, and it is here because
+	// some compliance regimes still demand it.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=3650
+	MaxAgeDays int32 `json:"maxAgeDays,omitempty"`
+}
+
+// SessionPolicy is how long a sign-in lasts.
+type SessionPolicy struct {
+	// IdleMinutes ends a session that has done nothing for this long.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=43200
+	IdleMinutes int32 `json:"idleMinutes,omitempty"`
+
+	// MaxHours ends it regardless of activity.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=8760
+	MaxHours int32 `json:"maxHours,omitempty"`
+
+	// RememberMe offers the longer session the realm is configured for.
+	// +optional
+	RememberMe bool `json:"rememberMe,omitempty"`
+}
+
+// BruteForcePolicy is what happens after repeated failures.
+type BruteForcePolicy struct {
+	// Enabled turns detection on. Off is Keycloak's default and is worth
+	// stating deliberately: without it, a password can be guessed at the
+	// speed of the network.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// MaxLoginFailures before the account is locked out.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	MaxLoginFailures int32 `json:"maxLoginFailures,omitempty"`
+
+	// LockoutDurationSeconds is how long a lockout lasts.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=604800
+	LockoutDurationSeconds int32 `json:"lockoutDurationSeconds,omitempty"`
+}
+
 // TenantStatus holds the observed state of a Tenant.
 type TenantStatus struct {
-	// Phase summarises the overall lifecycle state.
+	// Phase summarizes the overall lifecycle state.
 	// +optional
 	Phase TenantPhase `json:"phase,omitempty"`
 
@@ -266,6 +1308,17 @@ type TenantStatus struct {
 	// ProvisionedApps lists apps that have been successfully provisioned.
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
+
+	// DefaultGrantedApps lists the apps whose default grant
+	// (spec.apps[].defaultGrant) has been applied: the tenant's members at
+	// that moment were added to the app's group. An app listed here is not
+	// granted again, which is what keeps a person removed from the group
+	// since then removed. An entry leaves the list when the app is
+	// uninstalled or no longer declares the grant, so declaring it again
+	// applies it again.
+	// +optional
+	// +listType=set
+	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
 
 	// AppCount is the total number of apps requested in spec.
 	// +optional
@@ -286,6 +1339,12 @@ type TenantStatus struct {
 	// tenant whose domain changes shows the new one here once reconciled.
 	// +optional
 	AdminEmail string `json:"adminEmail,omitempty"`
+
+	// Domain is the custom domain a TenantDomain binds this tenant to, copied
+	// here by the operator so every consumer of EffectiveDomain reads it from
+	// the tenant itself. Empty when no TenantDomain names this tenant.
+	// +optional
+	Domain string `json:"domain,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -294,6 +1353,22 @@ type TenantStatus struct {
 	// Operators must publish these values in the tenant's DNS zone.
 	// +optional
 	Mail *TenantMailStatus `json:"mail,omitempty"`
+
+	// MailboxDomain is the domain this tenant's people have mailboxes under
+	// on the cluster's own mail server. Empty when the tenant has none: the
+	// cluster runs no mail server of its own, or the tenant's mail is not
+	// hosted on it. It is what tells whoever removes a person that there is
+	// a mailbox to decide about.
+	// +optional
+	MailboxDomain string `json:"mailboxDomain,omitempty"`
+
+	// ResourcePlan is the plan whose selection was last recorded in the
+	// tenant's usage history: the value of the resource-plan annotation at
+	// the time the plan event was written. It differing from the annotation
+	// is what tells the reconciler a change has landed that the billing
+	// record does not know about yet.
+	// +optional
+	ResourcePlan string `json:"resourcePlan,omitempty"`
 }
 
 // TenantMailStatus holds DNS record data emitted by the mail reconciler for
@@ -316,7 +1391,7 @@ type TenantMailStatus struct {
 
 // Tenant is the Schema for the tenants API.
 //
-// Tenant is cluster-scoped and represents a customer organisation. Creating a
+// Tenant is cluster-scoped and represents a customer organization. Creating a
 // Tenant CR triggers the orchestrator's full provisioning pipeline: namespace
 // creation, Keycloak realm, per-app databases/buckets/cache, and
 // ArgoCD Application (or Crossplane App claim) CRs for each requested app.
@@ -362,10 +1437,16 @@ const TenantAdminLocalPart = "admin"
 
 // AdminEmailOrDefault is the tenant administrator's address — and its login.
 //
-// admin@<tenant-domain>: admin@corp.gtn.host in multi mode, admin@<kernelDomain>
-// in single, spec.domain when a tenant has a vanity one. The tenant's own
+// admin@<tenant-domain>: admin@corp.gtn.host for a tenant with a domain of
+// its own, the custom domain when a TenantDomain binds one. The tenant's own
 // domain is what makes `admin` unambiguous, so no tenant name appears in the
 // local part; it would name the tenant twice.
+//
+// One tenant has no domain of its own: the user tenant of a single-tenancy
+// cluster lives on the cluster's domain, where admin@<kernelDomain> is
+// already the platform administrator, in the kernel realm. Its administrator
+// is user-admin@<kernelDomain> (SingleUserAdminLocalPart): another realm, and
+// an address that is not the platform administrator's.
 //
 // Derived, never configured. spec.adminEmail is gone: an address an operator
 // could type is an address pointing outside the tenant, and this account is
@@ -381,6 +1462,9 @@ func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
 		// No domain configured at all: .invalid is reserved by RFC 2606 and can
 		// never resolve, which is the honest representation of "unknown".
 		domain = t.Name + ".invalid"
+	}
+	if kernelDomain != "" && domain == kernelDomain {
+		return SingleUserAdminLocalPart + "@" + domain
 	}
 	return TenantAdminLocalPart + "@" + domain
 }
@@ -400,32 +1484,26 @@ func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing
-// for this tenant. It returns spec.domain if set. When spec.domain is unset,
-// multi-tenancy mode uses "<tenant-name>.<kernelDomain>"; single-tenancy mode
-// uses "<kernelDomain>" (flat app hostnames). An empty kernelDomain combined
-// with an empty spec.domain returns the empty string — callers must treat that
-// as a configuration error and skip ingress provisioning.
+// for this tenant: the custom domain a TenantDomain bound it to (status.domain)
+// when there is one; otherwise "<tenant-name>.<kernelDomain>", except for the
+// one user tenant of a single-tenancy cluster (OnClusterDomain), whose domain
+// is "<kernelDomain>" itself (flat app hostnames). The platform tenant is
+// "platform.<kernelDomain>" under either mode. An empty kernelDomain without
+// a custom domain returns the empty string — callers must treat that as a
+// configuration error and skip ingress provisioning.
 //
-// See docs/design/multi-tenancy.md §3.
+// See docs/concepts/multi-tenancy.md §3.
 func (t *Tenant) EffectiveDomain(kernelDomain, tenancyMode string) string {
-	if t.Spec.Domain != "" {
-		return t.Spec.Domain
+	if t.Status.Domain != "" {
+		return t.Status.Domain
 	}
 	if kernelDomain == "" {
 		return ""
 	}
-	if NormalizeTenancyMode(tenancyMode) == TenancyModeSingle {
+	if t.OnClusterDomain(tenancyMode) {
 		return kernelDomain
 	}
 	return t.Name + "." + kernelDomain
-}
-
-// HasVanityDomain reports whether the tenant has an explicit custom app domain
-// configured (i.e. spec.domain is set). When false, EffectiveDomain() derives
-// the zone from tenancy mode and tenant name. TLS uses the same per-tenant
-// wildcard model in both cases; only the effective domain string differs.
-func (t *Tenant) HasVanityDomain() bool {
-	return t.Spec.Domain != ""
 }
 
 func init() {

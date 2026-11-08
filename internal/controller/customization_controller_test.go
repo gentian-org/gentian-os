@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -25,9 +19,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/customization"
 )
 
 // TestParseLadderDateAcceptsYAMLNormalizedForm guards against a real failure
@@ -109,93 +103,55 @@ func TestRungAboveRecommendedFlagsUnjustifiedNewCapability(t *testing.T) {
 	}
 }
 
-// An addon inherits its base's ladder. It carries only spec.customization.addon —
-// restating grade or supportedRungs would fork a mutable fact — so reading its own
-// surface yields the [L0, L4] default and rejects records the base plainly supports.
-// CI resolved this inheritance and the operator did not, so the two disagreed about
-// the same record.
+// TestCustomizationObservedGenerationFollowsAnUnchangedVerdict guards the
+// short-circuit for an unchanged status: a spec edit that leaves the verdict
+// as it was still has to advance observedGeneration, or the record reads as
+// never having been looked at since the edit.
+func TestCustomizationObservedGenerationFollowsAnUnchangedVerdict(t *testing.T) {
+	t.Parallel()
 
-func addonProfile(name, of string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Customization: &gentianov1alpha1.CustomizationSurface{
-				Addon: &gentianov1alpha1.CustomizationAddon{ID: "crm", Of: of},
-			},
-		},
-	}
-}
-
-func baseProfile(name string, rungs ...gentianov1alpha1.CustomizationRung) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Customization: &gentianov1alpha1.CustomizationSurface{
-				Grade:          gentianov1alpha1.GradeA,
-				SupportedRungs: rungs,
-			},
-		},
-	}
-}
-
-func newLadderReconciler(objs ...client.Object) *CustomizationReconciler {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
-	return &CustomizationReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build(),
-		Scheme: scheme,
-	}
-}
-
-func TestLadderSurfaceFollowsAddonToItsBase(t *testing.T) {
-	t.Parallel()
-	base := baseProfile("odoo-base-ce",
-		gentianov1alpha1.RungConfigure, gentianov1alpha1.RungExtension)
-	addon := addonProfile("odoo-crm-ce", "odoo-base-ce")
-	r := newLadderReconciler(base, addon)
-
-	surface := r.ladderSurfaceFor(context.Background(), addon)
-	if surface == nil || len(surface.SupportedRungs) != 2 {
-		t.Fatalf("expected the base's rungs, got %+v", surface)
-	}
-	if !customization.SupportsRung(surface, gentianov1alpha1.RungExtension) {
-		t.Fatal("addon must inherit L3 from its base — this is the bug being fixed")
-	}
-}
-
-func TestLadderSurfaceLeavesANonAddonAlone(t *testing.T) {
-	t.Parallel()
-	// An edition shares a family name and nothing else, so it must be read as it
-	// stands rather than borrowing another profile's reachability.
-	ee := &gentianov1alpha1.AppProfile{
-		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ee"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Customization: &gentianov1alpha1.CustomizationSurface{
-				Grade:          gentianov1alpha1.GradeUnknown,
-				SupportedRungs: []gentianov1alpha1.CustomizationRung{gentianov1alpha1.RungConfigure, gentianov1alpha1.RungRepackage},
-			},
+	record := &gentianov1alpha1.Customization{
+		ObjectMeta: metav1.ObjectMeta{Name: "patch-a", Generation: 1},
+		Spec: gentianov1alpha1.CustomizationSpec{
+			Summary: "first",
+			Target:  gentianov1alpha1.CustomizationTarget{Profile: "absent"},
 		},
 	}
-	ce := baseProfile("nextcloud-base-ce",
-		gentianov1alpha1.RungConfigure, gentianov1alpha1.RungExtension)
-	r := newLadderReconciler(ce, ee)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(record).
+		WithStatusSubresource(record).Build()
+	r := &CustomizationReconciler{Client: c, Scheme: scheme}
+	ctx := context.Background()
+	req := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(record)}
 
-	surface := r.ladderSurfaceFor(context.Background(), ee)
-	if customization.SupportsRung(surface, gentianov1alpha1.RungExtension) {
-		t.Fatal("an edition must not inherit L3 from a same-family profile")
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
 	}
-}
-
-func TestLadderSurfaceFallsBackWhenTheBaseIsMissing(t *testing.T) {
-	t.Parallel()
-	addon := addonProfile("odoo-crm-ce", "odoo-base-ce")
-	r := newLadderReconciler(addon) // base absent
-
-	surface := r.ladderSurfaceFor(context.Background(), addon)
-	if surface == nil {
-		t.Fatal("expected the addon's own surface rather than nil")
+	got := &gentianov1alpha1.Customization{}
+	if err := c.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
 	}
-	if customization.SupportsRung(surface, gentianov1alpha1.RungExtension) {
-		t.Fatal("a missing base must not grant rungs")
+	if got.Status.ObservedGeneration != 1 || got.Status.Phase != gentianov1alpha1.CustomizationPhaseInvalid {
+		t.Fatalf("after the first pass: observedGeneration=%d phase=%q", got.Status.ObservedGeneration, got.Status.Phase)
+	}
+
+	// A spec edit that does not change the verdict: the target is still absent.
+	got.Spec.Summary = "second"
+	got.Generation = 2
+	if err := c.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if err := c.Get(ctx, req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Generation != 2 {
+		t.Fatalf("the test's own edit did not land: generation=%d", got.Generation)
+	}
+	if got.Status.ObservedGeneration != 2 {
+		t.Fatalf("observedGeneration = %d after reconciling generation 2 with the same verdict", got.Status.ObservedGeneration)
 	}
 }

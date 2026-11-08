@@ -57,6 +57,7 @@ rules:
     verbs:
     - get
     - list
+    - create
     - delete
   - apiGroups:
     - ''
@@ -81,9 +82,81 @@ rules:
     verbs:
     - get
   - apiGroups:
+    - ''
+    resources:
+    - serviceaccounts
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - apiextensions.crossplane.io
+    resources:
+    - compositions
+    verbs:
+    - get
+    - list
+    - delete
+  - apiGroups:
+    - apiextensions.k8s.io
+    resources:
+    - customresourcedefinitions
+    verbs:
+    - get
+    - create
+    - update
+  - apiGroups:
+    - apiextensions.k8s.io
+    resources:
+    - customresourcedefinitions
+    resourceNames:
+    - appgrants.gentianos.io
+    - apppackages.gentianos.io
+    - apps.gentianos.io
+    - backuppolicies.gentianos.io
+    - brandings.gentianos.io
+    - bundlesources.gentianos.io
+    - clusters.gentianos.io
+    - componentprofiles.gentianos.io
+    - components.gentianos.io
+    - credentialrequirements.gentianos.io
+    - customizations.gentianos.io
+    - integrationbindings.gentianos.io
+    - mailboxremovals.gentianos.io
+    - oidcpackcatalogs.gentianos.io
+    - planorderings.gentianos.io
+    - platformsecuritypolicies.gentianos.io
+    - profilebuilds.gentianos.io
+    - repositories.gentianos.io
+    - resourceplans.gentianos.io
+    - tenantdomains.gentianos.io
+    - tenantexports.gentianos.io
+    - tenantrestores.gentianos.io
+    - tenants.gentianos.io
+    - xapps.gentianos.io
+    - xclusters.gentianos.io
+    - xrepositories.gentianos.io
+    - xtenants.gentianos.io
+    verbs:
+    - get
+  - apiGroups:
     - apps
     resources:
     - deployments
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - apps
+    resources:
     - statefulsets
     verbs:
     - get
@@ -104,6 +177,20 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - argoproj.io
+    resources:
+    - applicationsets
+    verbs:
+    - get
+    - list
+    - patch
+  - apiGroups:
+    - authentication.k8s.io
+    resources:
+    - tokenreviews
+    verbs:
+    - create
+  - apiGroups:
     - batch
     resources:
     - jobs
@@ -119,6 +206,18 @@ rules:
     - cert-manager.io
     resources:
     - certificates
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - client.keycloak.crossplane.io
+    resources:
+    - protocolmappers
     verbs:
     - get
     - list
@@ -176,6 +275,7 @@ rules:
     resources:
     - backendtrafficpolicies
     - clienttrafficpolicies
+    - securitypolicies
     verbs:
     - get
     - list
@@ -185,9 +285,9 @@ rules:
     - patch
     - delete
   - apiGroups:
-    - gateway.networking.k8s.io
+    - gateway.envoyproxy.io
     resources:
-    - gatewayclasses
+    - httproutefilters
     verbs:
     - get
     - list
@@ -198,8 +298,20 @@ rules:
   - apiGroups:
     - gateway.networking.k8s.io
     resources:
+    - backendtlspolicies
+    - gatewayclasses
     - gateways
     - gateways/status
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - gateway.networking.k8s.io
+    resources:
     - httproutes
     - httproutes/status
     - referencegrants
@@ -214,16 +326,14 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appcatalogues
     - appgrants
     - apps
     - backuppolicies
+    - components
     - credentialrequirements
     - integrationbindings
     - platformsecuritypolicies
-    - repositories
     - tenantexports
-    - tenantexportschedules
     - tenantrestores
     - tenants
     - xtenants
@@ -238,17 +348,20 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appcatalogues/status
     - appgrants/status
     - backuppolicies/status
+    - brandings/status
+    - bundlesources/status
+    - components/status
     - customizations/status
     - integrationbindings/status
+    - mailboxremovals/status
     - platformsecuritypolicies/status
-    - resourceplans/status
+    - profilebuilds/status
     - tenantexports/status
-    - tenantexportschedules/status
     - tenantrestores/status
     - tenants/status
+    - xclusters/status
     verbs:
     - get
     - update
@@ -256,7 +369,33 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appgrants/finalizers
+    - brandings
+    - clusters
+    - planorderings
+    - profilebuilds
+    - repositories
+    - resourceplans
+    - tenantdomains
+    - xclusters
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - bundlesources
+    - componentprofiles
+    - oidcpackcatalogs
+    verbs:
+    - get
+    - list
+    - watch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - components/finalizers
     - integrationbindings/finalizers
     - platformsecuritypolicies/finalizers
     - tenantexports/finalizers
@@ -267,7 +406,6 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appprofiles
     - customizations
     verbs:
     - get
@@ -275,17 +413,40 @@ rules:
     - watch
     - update
     - patch
+    - delete
   - apiGroups:
     - gentianos.io
     resources:
-    - clusters
-    - oidcpackcatalogs
-    - resourceplans
+    - mailboxremovals
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
     - xapps
     verbs:
     - get
     - list
     - watch
+    - update
+    - patch
+  - apiGroups:
+    - group.keycloak.crossplane.io
+    resources:
+    - groups
+    - roles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
   - apiGroups:
     - helm.crossplane.io
     resources:
@@ -294,6 +455,9 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
     - delete
   - apiGroups:
     - kubernetes.crossplane.io
@@ -303,6 +467,32 @@ rules:
     - get
     - list
     - watch
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - kv.vault.upbound.io
+    resources:
+    - secretv2s
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - kyverno.io
+    resources:
+    - policies
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
   - apiGroups:
     - metrics.k8s.io
     resources:
@@ -326,7 +516,22 @@ rules:
   - apiGroups:
     - openidclient.keycloak.crossplane.io
     resources:
+    - clientdefaultscopes
+    - clientoptionalscopes
     - clients
+    - clientscopes
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - postgresql.cnpg.io
+    resources:
+    - clusters
     verbs:
     - get
     - list
@@ -335,6 +540,115 @@ rules:
     - postgresql.cnpg.io
     resources:
     - databases
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterrolebindings
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-api-extensions
+    verbs:
+    - update
+    - bind
+    - escalate
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-api-extensions-reader
+    verbs:
+    - update
+    - escalate
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-profile-role-tenant-exports
+    verbs:
+    - bind
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
+    - gentian-tenant-apps-helm
+    verbs:
+    - bind
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - rolebindings
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - roles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - realm.keycloak.crossplane.io
+    resources:
+    - clientpolicyprofilepolicies
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - role.keycloak.crossplane.io
+    resources:
+    - roles
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - samlclient.keycloak.crossplane.io
+    resources:
+    - clients
     verbs:
     - get
     - list

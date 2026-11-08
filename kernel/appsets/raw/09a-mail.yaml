@@ -1,0 +1,126 @@
+---
+# The platform's own mail stack: Postfix and Dovecot, in the system tier.
+#
+# Skipped entirely unless mail.serviceMode is `system` — the wrapper drops this
+# file by name, because raw files are copied verbatim and a Helm conditional
+# cannot live inside one. A cluster that relays through a provider runs neither
+# and composes neither namespace.
+#
+# Postfix and Dovecot land in system-mail and have no load balancer. What the
+# internet reaches is the proxy in system-mail-dmz (kernel/services/mail-edge):
+# it takes 25, 587 and 993, holds no mail, no user and no key, and passes each
+# connection to the server it belongs to with the client's address in a
+# PROXY-protocol header. The operator writes the mail DNS records into the DMZ
+# as well, from the address of the proxy's load balancer.
+#
+# Sync wave 9, beside identity: Dovecot verifies a Keycloak realm's submission
+# credential, so it has nothing to check before Keycloak is up, and Postfix asks
+# Dovecot.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-mail
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      # Each chart with the namespace it is synced into, as the function the
+      # layout resolves. The operator writes every object a mail server mounts
+      # into the namespace named here for its chart, and a test holds the two
+      # together (internal/controller/mail_objects_test.go).
+      - list:
+          elements:
+          - app: dovecot
+            namespace: sys.mail.placeholder
+          - app: postfix
+            namespace: sys.mail.placeholder
+          # The proxy that faces the internet, in the DMZ: the only chart of
+          # the three with a load balancer.
+          - app: mail-edge
+            namespace: sys.mail-dmz.placeholder
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            # Where the stack runs. Both charts take this one value and the
+            # operator has to agree with it: it writes Postfix's virtual
+            # mailbox maps and Dovecot's tenant OIDC values into this
+            # namespace, and a Pod can only mount a ConfigMap from its own.
+            # The operator addresses it by function (layout.System("mail")),
+            # so this is that name.
+            - name: servicesNamespace
+              value: '{{.namespace}}'
+            # The two namespaces by name, for the rules between them: the
+            # servers admit the proxy of the DMZ on their PROXY-protocol
+            # ports, and the proxy may reach those ports of the servers and
+            # nothing else. Every chart is passed both and reads the one it
+            # needs.
+            - name: edge.namespace
+              value: 'sys.mail-dmz.placeholder'
+            - name: mailNamespace
+              value: 'sys.mail.placeholder'
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            - name: mailServiceMode
+              value: 'system'
+            - name: storageClass
+              value: 'storage.class.placeholder'
+            # Direct delivery, not a relay: a cluster running its own stack
+            # needs no upstream, and an empty host IS direct delivery. Set
+            # only when the claim also names a smarthost.
+            - name: relayHost
+              value: 'mail.relay.placeholder'
+            - name: egressHost
+              value: 'mail.egress.placeholder'
+            # Each chart carries the NetworkPolicy that says who may connect
+            # to its server, synced with the values the server is installed
+            # from. The switch is the stores' (kernel/appsets/values.yaml
+            # storeNetworkPolicies): one setting turns all of them off.
+            - name: networkPolicy.enabled
+              value: 'store.networkpolicies.placeholder'
+            # The upstream mail server chart's pin, from versions.yaml: the
+            # postfix chart's Release installs it. As strings, so that a
+            # version is never read as a number.
+            - name: versions.postfix.chart
+              value: 'versions.postfix.chart.placeholder'
+              forceString: true
+            - name: versions.postfix.repo
+              value: 'versions.postfix.repo.placeholder'
+              forceString: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+        retry:
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+          limit: 10

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -28,34 +22,43 @@ import (
 )
 
 func TestCollectOIDCIngressSubdomainsByTenant(t *testing.T) {
-	xwiki := &gentianov1alpha1.AppProfile{
+	xwiki := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "xwiki"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "wiki"},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Expose: []gentianov1alpha1.ExposureSpec{{
+				Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "wiki",
+			}},
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "wiki-oidc-client"},
 				},
-			},
+			}},
 		},
 	}
-	element := &gentianov1alpha1.AppProfile{
+	element := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "element"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "chat"},
-			AdditionalIngresses: []gentianov1alpha1.IngressSpec{
-				{SubDomain: "matrix"},
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Expose: []gentianov1alpha1.ExposureSpec{{
+				Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "chat",
+			}, {
+				Name: "extra", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "matrix",
+			}},
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "chat-oidc-client"},
 				},
-			},
+			}},
 		},
 	}
 	tenant := gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "xwiki"},
 				{Profile: "element"},
@@ -100,11 +103,15 @@ func TestOIDCRedirectURISubdomain(t *testing.T) {
 }
 
 func TestCollectOIDCIngressSubdomainsFromRedirectURI(t *testing.T) {
-	element := &gentianov1alpha1.AppProfile{
+	element := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "element"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "chat"},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Expose: []gentianov1alpha1.ExposureSpec{{
+				Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "chat",
+			}},
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
 						ClientID: "chat-oidc-client",
@@ -113,7 +120,7 @@ func TestCollectOIDCIngressSubdomainsFromRedirectURI(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 	subs := oidcIngressSubdomainsFromProfile(element)

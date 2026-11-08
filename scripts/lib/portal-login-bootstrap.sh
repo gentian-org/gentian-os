@@ -1,95 +1,257 @@
 #!/bin/bash
 # shellcheck disable=SC2034
-# Portal login bootstrap — Keycloak OIDC client, kernel user, gentian-portal ArgoCD app.
+# Kernel realm bootstrap — the realm, its clients, the administrator and the kernel UIs' sign-in.
 # Sourced from install.sh Step 14 (Stage 1 login dogfood).
 
 set -euo pipefail
 
-_platform_admin_derive_password() {
-    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_pw
-        existing_pw=$(bao kv get -mount=secret -field=admin_password identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_pw}" ]]; then
-            echo "${existing_pw}"
-        else
-            local new_pw
-            new_pw=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin admin_password="${new_pw}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin admin_password="${new_pw}" >/dev/null 2>&1
-            echo "${new_pw}"
-        fi
-    else
-        echo -n "portal-bootstrap:administrator_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+# =============================================================================
+# Where each thing lives.
+#
+# This file used to name one namespace for the portal, Keycloak, OpenFGA, the
+# wildcard certificate and the bootstrap Job alike, about twenty times over.
+# Each of those is a different function, and the layout gives each its own, so
+# each is asked for separately.
+#
+# The step that runs this exports what the layout resolved. Answering from the
+# layout directly would be the same thing said twice, and a default would be a
+# third place for it to be wrong.
+# =============================================================================
+_pl_ns() {
+    local var="$1" fn="$2"
+    if [[ -n "${!var:-}" ]]; then
+        echo "${!var}"
+        return 0
     fi
+    ns_kernel "${fn}"
+}
+_pl_identity_ns()      { _pl_ns IDENTITY_NAMESPACE authentication; }
+_pl_gitops_ns()        { _pl_ns GITOPS_NAMESPACE gitops; }
+_pl_edge_ns()          { _pl_ns EDGE_NAMESPACE edge; }
+_pl_control_ns()       { _pl_ns GENTIAN_SYSTEM_NAMESPACE control; }
+_pl_observability_ns() { _pl_ns OBSERVABILITY_NAMESPACE observability; }
+
+# The platform administrator has no derived password any more. The account is
+# created without one, and its holder sets one through a single-use, expiring
+# link -- mailed to a recovery address or shown once at the handover (see
+# issue_platform_admin_activation) -- the way every member and every tenant
+# administrator is let in. A password recomputable from the master password is
+# one more person than the holder who can sign in as them.
+
+# The key the Keycloak event listener signs its statements with, and the public
+# half the director believes them by.
+#
+# Derived like every other kernel credential, so a cluster rebuilt from the
+# same master password arrives at the same pair and the two halves cannot drift
+# apart. An Ed25519 private key in PKCS#8 is a fixed 16-byte prefix followed by
+# a 32-byte seed, and the derivation (_derived, scripts/lib/derive.sh) is
+# exactly 32 bytes, so the seed is the derivation and openssl does the rest.
+ensure_keycloak_listener_keypair() {
+    local key_id="${KEYCLOAK_LISTENER_KEY_ID:-gentian-listener}"
+    local seed der pem pub tmp
+    seed=$(_derived portal-bootstrap listener_signing_seed)
+    tmp="$(mktemp -d)"
+    printf '%s' "302e020100300506032b657004220420${seed}" | xxd -r -p > "${tmp}/key.der"
+    if ! openssl pkey -inform DER -in "${tmp}/key.der" -out "${tmp}/listener.pem" 2>/dev/null; then
+        rm -rf "${tmp}"
+        error "Could not build the listener signing key; openssl has no Ed25519 support."
+        return 1
+    fi
+    pub=$(openssl pkey -in "${tmp}/listener.pem" -pubout -outform DER 2>/dev/null | tail -c 32 | base64 -w0)
+
+    # The private half goes where Keycloak runs, the public half where the
+    # director runs. Neither namespace ever sees the other's.
+    kubectl create secret generic keycloak-event-listener-key -n "$(_pl_identity_ns)" \
+        --from-file=listener.pem="${tmp}/listener.pem" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    kubectl create secret generic director-listener-keys -n "$(_pl_control_ns)" \
+        --from-literal=keys="${key_id}=${pub}" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    rm -rf "${tmp}"
+    success "Keycloak event listener key ${key_id} in place."
 }
 
-_portal_bff_derive_secret() {
-    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=bff_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo "${existing_sec}"
-        else
-            local new_sec
-            new_sec=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin bff_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin bff_client_secret="${new_sec}" >/dev/null 2>&1
-            echo "${new_sec}"
-        fi
-    else
-        echo -n "portal-bootstrap:bff_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+# _portal_random_secret <field> <namespace> <secret> <key> — a client secret
+# under secretMode random: drawn once, then the same on every later call.
+#
+# Nothing reproduces a random secret, so it is looked for in the two places
+# that hold it before a new one is drawn: the vault, under <field>, and the
+# Kubernetes Secret its reader mounts. The vault alone was not enough. This
+# shell has a vault token only while it is the run that seeded the vault; a
+# run resumed at this step has none, every read came back empty, and each call
+# drew a new secret -- so Headlamp's kubeconfig, written by a later call than
+# the one that configured Keycloak, named a secret Keycloak had never seen.
+_portal_random_secret() {
+    local field="$1" ns="$2" name="$3" key="$4" value stored
+    stored=$(bao kv get -mount=secret -field="${field}" identity/portal-admin 2>/dev/null || true)
+    value="${stored}"
+    if [[ -z "${value}" ]]; then
+        value=$(kubectl get secret "${name}" -n "${ns}" -o "jsonpath={.data.${key}}" 2>/dev/null \
+            | base64 -d 2>/dev/null || true)
     fi
+    if [[ -z "${value}" ]]; then
+        value=$(openssl rand -hex 24)
+    fi
+    if [[ -z "${stored}" ]]; then
+        jq -n --arg f "${field}" --rawfile v <(printf '%s' "${value}") '{($f): $v}' \
+            | bao kv patch -mount=secret identity/portal-admin - >/dev/null 2>&1 || \
+            jq -n --arg f "${field}" --rawfile v <(printf '%s' "${value}") '{($f): $v}' \
+            | bao kv put -mount=secret identity/portal-admin - >/dev/null 2>&1 || true
+    fi
+    echo -n "${value}"
+}
+
+_headlamp_derive_secret() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        _portal_random_secret headlamp_client_secret "$(_pl_observability_ns)" headlamp-oidc OIDC_CLIENT_SECRET
+        return 0
+    fi
+    _derived portal-bootstrap headlamp_client_secret
+}
+
+_grafana_derive_secret() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        _portal_random_secret grafana_client_secret "$(_pl_observability_ns)" grafana-oidc client_secret
+        return 0
+    fi
+    _derived portal-bootstrap grafana_client_secret
+}
+
+# The Secret the platform's Grafana signs in with (the monitoring
+# Application reads it by name), in the namespace Grafana runs in. Written
+# whatever the claim says about monitoring, as the realm's client is: a
+# cluster that switches monitoring on later needs no installer step.
+ensure_grafana_oidc_secret() {
+    local ns secret
+    ns="$(_pl_observability_ns)"
+    secret="$(_grafana_derive_secret)"
+    # >&2: this function's stdout is its return value (see
+    # ensure_litellm_sso_secret for what kubectl's own line did to one).
+    kubectl create secret generic grafana-oidc -n "${ns}" \
+        --from-literal=client_id="grafana" \
+        --from-file=client_secret=<(printf '%s' "${secret}") \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    echo "${secret}"
+}
+
+# The kernel zone's confidential client and its secret are no longer written
+# here. A zone is produced by the tenant that owns it: the platform tenant
+# adopts the kernel realm (AD-10), so the kernel zone's client, its redirect
+# URIs, its audience mapper and the edge-kernel-oidc Secret the SecurityPolicies
+# read all come from crossplane/compositions/tenant-default.yaml, the same way
+# every other tenant's zone does. What this library still does for the zone is
+# create the realm the client lives in, which has to exist first.
+
+# The placeholder the chart writes where the client secret belongs. D-03's
+# check() reads it too, before this library is sourced, so it carries the same
+# literal as a default there.
+HEADLAMP_KUBECONFIG_PLACEHOLDER="PLACEHOLDER_REPLACED_BY_THE_INSTALLER"
+
+# Put the derived client secret into the kubeconfig Headlamp reads.
+#
+# The chart renders the Secret with a placeholder, because the value is
+# derived from the master password and no chart can know it. This rewrites
+# that one line in place and leaves the rest of the file exactly as the chart
+# wrote it, so the two cannot drift.
+#
+# MUST RUN AFTER THE LAST RENDER OF THE BOOTSTRAP CHART. D-03 renders that
+# chart a second time, to turn Headlamp's OIDC on now that the realm exists,
+# and that render carries the placeholder. Filling the secret in before it
+# means the render puts the placeholder straight back: the step reports
+# success, the Secret looks written, and the person is told to sign in again
+# for ever. The caller checks the result rather than trusting the write.
+ensure_headlamp_kubeconfig() {
+    local ns secret config
+    ns="$(_pl_observability_ns)"
+    secret="$(_headlamp_derive_secret)"
+    if [[ -z "${secret}" ]]; then
+        error "no Headlamp client secret could be derived; the kubeconfig would authenticate with nothing."
+        return 1
+    fi
+    config="$(kubectl get secret headlamp-kubeconfig -n "${ns}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if [[ -z "${config}" ]]; then
+        warn "headlamp-kubeconfig is not present; Headlamp will ask for a token until the chart renders it."
+        return 0
+    fi
+    if ! grep -q "client-secret:" <<<"${config}"; then
+        warn "headlamp-kubeconfig carries no client-secret line; is the chart up to date?"
+        return 0
+    fi
+    # Rewrite the one line, leaving the indentation the chart wrote.
+    local updated line out=""
+    while IFS= read -r line; do
+        case "${line}" in
+        *client-secret:*) out+="${line%%client-secret:*}client-secret: ${secret}"$'\n' ;;
+        *) out+="${line}"$'\n' ;;
+        esac
+    done <<<"${config}"
+    updated="${out%$'\n'}"
+    if [[ "${updated}" != "${config}" ]]; then
+        kubectl create secret generic headlamp-kubeconfig -n "${ns}" \
+            --from-file=config=<(printf '%s' "${updated}") \
+            --dry-run=client -o yaml | kubectl apply -f - >&2
+        # A mounted Secret is re-read from the API server, but only on the
+        # kubelet's own schedule; a restart makes the new file immediate.
+        kubectl rollout restart deployment/headlamp -n "${ns}" >/dev/null 2>&1 || true
+    fi
+    # Read it back. A write that another apply has already overwritten is the
+    # failure this whole function exists to catch, and it is invisible unless
+    # someone looks.
+    local stored
+    stored="$(kubectl get secret headlamp-kubeconfig -n "${ns}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if grep -q "${HEADLAMP_KUBECONFIG_PLACEHOLDER}" <<<"${stored}"; then
+        error "headlamp-kubeconfig still carries the placeholder after being written."
+        error "  Something re-applied the chart's copy over it. Headlamp would exchange"
+        error "  its code with no credential and Keycloak would answer unauthorized_client."
+        return 1
+    fi
+    success "Headlamp exchanges its code with the client secret its kubeconfig names."
+}
+
+# The Secret Headlamp reads, in the namespace Headlamp runs in. Keys are the
+# environment variable names, because the chart loads it with envFrom.
+ensure_headlamp_oidc_secret() {
+    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
+    local kernel_realm="${KERNEL_REALM:-kernel}"
+    local ns secret
+    ns="$(_pl_observability_ns)"
+    secret="$(_headlamp_derive_secret)"
+    # The kubeconfig Headlamp builds its token exchange from is NOT written
+    # here. It names the client AND its secret, because Headlamp exchanges the
+    # code with what the kubeconfig's auth-provider says and not with its own
+    # -oidc-client-secret flag. But the chart renders that file, and D-03
+    # renders the chart again after this point, so writing it here is writing
+    # it too early. ensure_headlamp_kubeconfig does it after the last render.
+    kubectl create secret generic headlamp-oidc -n "${ns}" \
+        --from-literal=OIDC_CLIENT_ID="headlamp" \
+        --from-file=OIDC_CLIENT_SECRET=<(printf '%s' "${secret}") \
+        --from-literal=OIDC_ISSUER_URL="https://id.${kernel_domain}/auth/realms/${kernel_realm}" \
+        --from-literal=OIDC_SCOPES="openid,profile,email,groups" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    echo "${secret}"
 }
 
 _argocd_oidc_derive_secret() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=argocd_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo "${existing_sec}"
-        else
-            local new_sec
-            new_sec=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin argocd_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin argocd_client_secret="${new_sec}" >/dev/null 2>&1
-            echo "${new_sec}"
-        fi
+        _portal_random_secret argocd_client_secret "$(_pl_edge_ns)" gentian-argocd client_secret
+        echo
     else
-        echo -n "portal-bootstrap:argocd_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+        _derived portal-bootstrap argocd_client_secret
     fi
 }
 
 _litellm_sso_derive_secret() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=litellm_sso_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo "${existing_sec}"
-        else
-            local new_sec
-            new_sec=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin litellm_sso_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin litellm_sso_client_secret="${new_sec}" >/dev/null 2>&1
-            echo "${new_sec}"
-        fi
+        _portal_random_secret litellm_sso_client_secret "$(ns_system llm)" litellm-dashboard-sso client_secret
+        echo
     else
-        echo -n "portal-bootstrap:litellm_sso_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+        _derived portal-bootstrap litellm_sso_client_secret
     fi
 }
 
-ensure_portal_bff_secret() {
-    local ns="platform-kernel"
-    local secret
-    secret="$(_portal_bff_derive_secret)"
-    kubectl create secret generic gentian-portal-bff -n "${ns}" \
-        --from-literal=client_id="gentian-portal-bff" \
-        --from-literal=client_secret="${secret}" \
-        --dry-run=client -o yaml | kubectl apply -f -
-    echo "${secret}"
-}
-
 ensure_argocd_oidc_secret() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_edge_ns)"
     local secret
     secret="$(_argocd_oidc_derive_secret)"
     # >&2 on both, for the reason spelled out in ensure_litellm_sso_secret:
@@ -100,18 +262,28 @@ ensure_argocd_oidc_secret() {
     # by the same bug, in the same way, at the same time.
     kubectl create secret generic gentian-argocd -n "${ns}" \
         --from-literal=client_id="gentian-argocd" \
-        --from-literal=client_secret="${secret}" \
+        --from-file=client_secret=<(printf '%s' "${secret}") \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     # Also patch the actual argocd-secret in the argocd namespace
-    kubectl patch secret argocd-secret -n argocd --type merge \
+    kubectl patch secret argocd-secret -n "$(_pl_gitops_ns)" --type merge \
         -p "{\"stringData\":{\"oidc.keycloak.clientSecret\":\"${secret}\"}}" >&2
     echo "${secret}"
 }
 
 ensure_litellm_sso_secret() {
-    local ns="platform-kernel"
+    local ns
+    # Where its one reader runs: the proxy in the llm system namespace mounts
+    # it by name. v5 wrote it to the edge namespace, so on a fresh install the
+    # proxy sat in CreateContainerConfigError on "secret not found".
+    ns="$(ns_system llm)"
     local secret
     secret="$(_litellm_sso_derive_secret)"
+    # No llm namespace means the cluster serves no models (llm.enabled=false):
+    # nothing to mount it. The Keycloak client still gets the derived secret.
+    if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
+        echo "${secret}"
+        return 0
+    fi
     # >&2 on the apply, and this is not cosmetic. This function's stdout IS its
     # return value -- callers do secret="$(ensure_litellm_sso_secret)" -- so
     # kubectl's own "secret/litellm-dashboard-sso configured" line was captured
@@ -123,16 +295,17 @@ ensure_litellm_sso_secret() {
     # surfacing to the browser as an opaque 500.
     kubectl create secret generic litellm-dashboard-sso -n "${ns}" \
         --from-literal=client_id="litellm-dashboard" \
-        --from-literal=client_secret="${secret}" \
+        --from-file=client_secret=<(printf '%s' "${secret}") \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     echo "${secret}"
 }
 
 _keycloak_internal_service_url() {
-    local ns="${1:-platform-kernel}"
+    local ns
+    ns="${1:-$(_pl_identity_ns)}"
     local release="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}"
     local svc port
-    # keycloakx Helm chart publishes {release}-keycloakx-http (Suze default release name).
+    # keycloakx Helm chart publishes {release}-keycloakx-http (the identity ApplicationSet's release name).
     for svc in "${release}-keycloakx-http" \
         $(kubectl get svc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
             | grep -E 'keycloak.*http' | head -1) \
@@ -150,8 +323,24 @@ _keycloak_internal_service_url() {
     return 1
 }
 
+# The image the realm Jobs below run: storage-tools, which carries curl and
+# jq, at the reference the running operator gives its own identity Jobs.
+# Without an operator to ask, the tag this run renders for it.
+_keycloak_job_image() {
+    local image
+    image=$(kubectl get deploy gentian-os -n "$(ns_kernel control)" \
+        -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env[?(@.name=="STORAGE_TOOLS_IMAGE")].value}' 2>/dev/null || true)
+    if [[ -n "${image}" ]]; then
+        echo "${image}"
+        return 0
+    fi
+    resolve_gentian_os_image_tag
+    echo "ghcr.io/gentian-org/storage-tools:${GENTIAN_OS_IMAGE_TAG}"
+}
+
 wait_for_keycloak_http_service() {
-    local ns="${1:-platform-kernel}"
+    local ns
+    ns="${1:-$(_pl_identity_ns)}"
     local timeout_sec="${2:-300}"
     local deadline=$((SECONDS + timeout_sec))
     while (( SECONDS < deadline )); do
@@ -165,31 +354,22 @@ wait_for_keycloak_http_service() {
 }
 
 ensure_keycloak_admin_secret_url() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_identity_ns)"
     local url current
 
     # The first wait is the long one, because on a fresh install this is a race
     # with Argo CD rather than a fault.
     #
-    # Keycloak arrives through gentian-appsets -> gentian-suze -> keycloak-idp,
-    # and that chain took eleven minutes on a real cluster. The old budget was
-    # 120s here plus 180s after a heal — under half of it — so the step reported
-    # "No Keycloak HTTP service found" and stopped an install whose Keycloak
-    # appeared a couple of minutes later. Nothing was wrong; it was early.
-    #
-    # The heal is still worth attempting, but only once the wait has genuinely
-    # expired: ensure_suze_idp_workloads cannot help while the Suze claim itself
-    # has not been applied yet, which is exactly the state a too-short wait
-    # catches.
+    # Keycloak arrives through gentian-appsets -> gentian-identity ->
+    # keycloak-idp, and that chain took eleven minutes on a real cluster
+    # when a Crossplane claim still sat between the two. The old budget was
+    # 120s here — under half of it — so the step reported "No Keycloak HTTP
+    # service found" and stopped an install whose Keycloak appeared a couple
+    # of minutes later. Nothing was wrong; it was early.
     local kc_wait="${GENTIAN_KEYCLOAK_WAIT_SECS:-900}"
     info "Waiting up to $(( kc_wait / 60 ))m for Keycloak to appear (Argo CD is still rolling out on a fresh install)..."
-    if ! url=$(wait_for_keycloak_http_service "${ns}" "${kc_wait}"); then
-        if declare -F ensure_suze_idp_workloads >/dev/null 2>&1; then
-            warn "Keycloak Service still absent after $(( kc_wait / 60 ))m — attempting Suze IdP heal..."
-            ensure_suze_idp_workloads "" 600 || true
-            url=$(wait_for_keycloak_http_service "${ns}" 300) || true
-        fi
-    fi
+    url=$(wait_for_keycloak_http_service "${ns}" "${kc_wait}") || true
 
     if [[ -z "${url:-}" ]]; then
         error "No Keycloak HTTP service found in ${ns} (expected ${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http)."
@@ -219,20 +399,12 @@ ensure_keycloak_admin_secret_url() {
 
     # Force a re-sync, and do not apply anything.
     #
-    # This used to `kubectl apply` kernel/services/postgresql/manifests/dev/
-    # externalsecrets.yaml first (now kernel/services/kernel-admin/). Two things were wrong with that. The path was
-    # the literal "dev" on every cluster, and that file carries the shared-infra
-    # ExternalSecrets whose hosts are stage-qualified — so on a prod cluster it
-    # pointed redis-admin, mariadb-admin and minio-admin at
-    # *-dev.gentian-infra-dev names that do not resolve. That is the same fault
-    # kernel/bootstrap/chart/templates/kernel-admin.yaml documents having fixed
-    # in the Application's own path; this caller was missed.
-    #
-    # And it could not achieve what it was reached for. The URL in that manifest
-    # is a literal, so re-applying writes back the value already there. The only
-    # case an apply would help is the live object having drifted from git, which
-    # Argo CD already handles: kernel-admin-<stage> syncs that directory with
-    # selfHeal. So the annotate below is the whole remedy.
+    # The ExternalSecret is the Keycloak chart's own
+    # (kernel/services/keycloak-idp/manifests/templates/externalsecret-admin.yaml)
+    # and Argo CD keeps it as git has it, with selfHeal. The URL in it is
+    # rendered from the chart's values, so applying it again from here would
+    # write back the value already there: the annotate below is the whole
+    # remedy.
     kubectl annotate externalsecret keycloak-admin -n "${ns}" \
         "force-sync=$(date +%s)" --overwrite >/dev/null
     local deadline=$((SECONDS + 30))
@@ -249,17 +421,18 @@ ensure_keycloak_admin_secret_url() {
     # one: the ExternalSecret templates the URL as a literal, so the fix is a
     # commit to that manifest, not another retry here.
     error "keycloak-admin URL is ${current:-missing}; this cluster's Keycloak serves ${url}"
-    error "  The URL comes from keycloakRelease in kernel/services/kernel-admin/manifests/values.yaml."
+    error "  The URL comes from keycloakRelease in kernel/services/keycloak-idp/manifests/values.yaml."
     error "  Correct it there and let Argo CD sync, or set GENTIAN_IDP_KEYCLOAK_RELEASE to match."
     return 1
 }
 
-ensure_portal_gateway_readiness() {
-    local ns="platform-kernel"
+ensure_edge_gateway_readiness() {
+    local ns
+    ns="$(_pl_edge_ns)"
     if ! kubectl get secret wildcard-tls -n "${ns}" >/dev/null 2>&1; then
-        if kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1; then
-            info "Copying wildcard-kernel-tls → ${ns}/wildcard-tls for kernel-public-gateway..."
-            kubectl get secret wildcard-kernel-tls -n cert-manager -o json | python3 -c "
+        if kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" >/dev/null 2>&1; then
+            info "Copying wildcard-kernel-tls → ${ns}/wildcard-tls for the edge Gateways..."
+            kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json | python3 -c "
 import sys, json
 s = json.load(sys.stdin)
 s['metadata'] = {'name': 'wildcard-tls', 'namespace': '${ns}'}
@@ -306,15 +479,20 @@ _keycloak_smtp_settings() {
             KC_SMTP_PASSWORD="${SMTP_RELAY_PASSWORD}"
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
-        kernel)
-            if ! declare -F _derive >/dev/null 2>&1; then
+        # The platform's own mail. The label is the claim's word for the mode:
+        # it read "kernel" after the mode had been renamed, no mode matched,
+        # and a cluster with its own mail stack got a kernel realm with no
+        # mail server and no keycloak-smtp-credentials -- which is also what
+        # the operator waits for before it writes a tenant realm's.
+        system)
+            if ! declare -F _derived >/dev/null 2>&1; then
                 return 1
             fi
             # The PUBLIC name, with STARTTLS. Postfix offers AUTH only after
             # STARTTLS (smtpd_tls_auth_only), so a realm that does not upgrade
             # cannot present the credential below at all and relays only while
             # the cluster still trusts its address. Java then checks the
-            # certificate against the name it dialled, and the certificate is the
+            # certificate against the name it dialed, and the certificate is the
             # public wildcard for the kernel domain, which covers mail.<domain> and
             # not postfix-<env>.<ns>.svc.cluster.local — the name this used before,
             # together with STARTTLS off, when Postfix presented a self-signed
@@ -322,7 +500,10 @@ _keycloak_smtp_settings() {
             KC_SMTP_HOST="mail.${kernel_domain}"
             KC_SMTP_PORT="587"
             KC_SMTP_USER="gentian-system@${kernel_domain}"
-            KC_SMTP_PASSWORD="$(_derive smtp password)"
+            # Derived under secretMode random too: this is asked for twice
+            # in one run, by the realm bootstrap and by the Secret the mail
+            # server registers the login from, and both must hold one value.
+            KC_SMTP_PASSWORD="$(_derived smtp password)"
             KC_SMTP_SSL="false"
             KC_SMTP_STARTTLS="true"
             KC_SMTP_FROM="noreply@${kernel_domain}"
@@ -365,11 +546,12 @@ _keycloak_smtp_configure_shell() {
                   --arg pass "${SMTP_PASSWORD}" \
                   --arg ssl "${SMTP_SSL}" \
                   --arg starttls "${SMTP_STARTTLS}" \
+                  --arg fromName "${SMTP_FROM_NAME:-Gentian}" \
                   '{
                     host: $host,
                     port: $port,
                     from: $from,
-                    fromDisplayName: "Gentian",
+                    fromDisplayName: $fromName,
                     auth: "true",
                     user: $user,
                     password: $pass,
@@ -430,7 +612,8 @@ EOREFRESH
 # kernel mode keeps this path: its submission password is derived, not stored,
 # so there is no OpenBao path for ESO to extract.
 _apply_keycloak_smtp_secret() {
-    local ns="${1:-platform-kernel}"
+    local ns
+    ns="${1:-$(_pl_identity_ns)}"
     local mail_mode
     mail_mode="$(gentian_mail_service_mode)"
     if kubectl get externalsecret keycloak-smtp-credentials -n "${ns}" >/dev/null 2>&1; then
@@ -456,7 +639,7 @@ _apply_keycloak_smtp_secret() {
         --from-literal=smtp_host="${KC_SMTP_HOST}" \
         --from-literal=smtp_port="${KC_SMTP_PORT}" \
         --from-literal=smtp_user="${KC_SMTP_USER}" \
-        --from-literal=smtp_password="${KC_SMTP_PASSWORD}" \
+        --from-file=smtp_password=<(printf '%s' "${KC_SMTP_PASSWORD}") \
         --from-literal=smtp_ssl="${KC_SMTP_SSL}" \
         --from-literal=smtp_starttls="${KC_SMTP_STARTTLS}" \
         --from-literal=smtp_from="${KC_SMTP_FROM}" \
@@ -465,9 +648,10 @@ _apply_keycloak_smtp_secret() {
     return 0
 }
 
-# Configure Keycloak kernel realm SMTP (standalone Job; used by ./install.sh --step D-04-mail).
+# Configure Keycloak kernel realm SMTP (standalone Job; D-03 runs it after the realm bootstrap).
 configure_keycloak_realm_smtp() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_identity_ns)"
     local job_name="keycloak-smtp-configure"
     local kernel_realm="${KERNEL_REALM:-kernel}"
 
@@ -496,7 +680,7 @@ configure_keycloak_realm_smtp() {
 
     if ! _apply_keycloak_smtp_secret "${ns}"; then
         warn "SMTP credentials incomplete — set EXTERNAL_SMTP_* + SMTP_RELAY_*" \
-             "(external) or MAIL_SERVICE_MODE=kernel with derived smtp password."
+             "(external) or MAIL_SERVICE_MODE=system with derived smtp password."
         return 1
     fi
 
@@ -504,7 +688,8 @@ configure_keycloak_realm_smtp() {
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
-    local smtp_shell
+    local smtp_shell job_image
+    job_image=$(_keycloak_job_image)
     smtp_shell=$(_keycloak_smtp_configure_shell)
 
     kubectl apply -f - <<EOF
@@ -521,14 +706,23 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: configure
-          image: alpine:3.20
+          image: ${job_image}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - /bin/sh
             - -ec
             - |
-              apk add --no-cache --quiet curl jq >/dev/null
               set -eu
               resolve_keycloak_base() {
                 local base code
@@ -587,15 +781,12 @@ ${smtp_shell}
                   name: keycloak-admin
                   key: url
             - name: KEYCLOAK_ADMIN_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-admin
-                  key: username
+              value: admin
             - name: KEYCLOAK_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-admin
-                  key: password
+                  name: keycloak-idp-credentials
+                  key: admin-password
             - name: KERNEL_REALM
               valueFrom:
                 secretKeyRef:
@@ -716,22 +907,38 @@ gentian_job_logs() {
 run_keycloak_portal_bootstrap_job() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
-    local username="administrator"
-    local email="administrator@${kernel_domain}"
-    local password job_name="keycloak-portal-bootstrap"
-    local ns="platform-kernel"
-    local platform_superadmin_group="gentian:platform:superadmin"
+    # A username is an address, like every tenant administrator's.
+    #
+    # The kernel realm's email claim is mapped to the USERNAME so that the
+    # email field can hold the recovery address Keycloak mails a reset to.
+    # That only works where the username is itself an address; the bare name
+    # "administrator" made every token say email=administrator. Tenants are
+    # named admin@<their domain> and the platform administrator follows the
+    # same pattern on the kernel domain.
+    local username="admin@${kernel_domain}"
+    local email="admin@${kernel_domain}"
+    # The account this replaces, removed below once the new one exists.
+    local legacy_username="administrator"
+    local job_name="keycloak-portal-bootstrap"
+    # Where Keycloak's admin credential is, which is where this Job has to run:
+    # a Secret is readable only in its own namespace, and copying an admin
+    # password into another one to save a namespace is not a trade worth making.
+    local ns
+    ns="$(_pl_identity_ns)"
+    # The group model v1 names for the platform administrator role; the
+    # claim binds it to cluster#admin and every console derives from that.
+    local platform_admin_group="gentian:platform:admin"
 
-    password=$(_platform_admin_derive_password)
     export PORTAL_LOGIN_USERNAME="${username}"
-    export PORTAL_LOGIN_EMAIL="${email}"
-    export PORTAL_LOGIN_PASSWORD="${password}"
+    local require_mfa
+    require_mfa="$(platform_admin_requires_mfa)"
 
-    info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
+    info "Bootstrapping the kernel realm, its clients and the administrator via in-cluster Job..."
 
-    ensure_portal_bff_secret >/dev/null
-    local argocd_secret
+    local argocd_secret headlamp_secret grafana_secret
     argocd_secret=$(ensure_argocd_oidc_secret)
+    headlamp_secret=$(ensure_headlamp_oidc_secret)
+    grafana_secret=$(ensure_grafana_oidc_secret)
 
     local llm_support="${LLM_SUPPORT:-false}"
     local litellm_sso_secret=""
@@ -750,7 +957,7 @@ run_keycloak_portal_bootstrap_job() {
     # A derived secret is one whitespace-free token. Anything else is a bug in
     # the producer, not a credential.
     local _name _val
-    for _name in argocd_secret litellm_sso_secret; do
+    for _name in argocd_secret litellm_sso_secret grafana_secret; do
         _val="${!_name}"
         [[ -n "${_val}" ]] || continue
         if [[ "${_val}" != "${_val//[[:space:]]/}" ]]; then
@@ -767,35 +974,41 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=kernel_realm="${kernel_realm}"
         --from-literal=username="${username}"
         --from-literal=email="${email}"
-        --from-literal=password="${password}"
-        --from-literal=platform_superadmin_group="${platform_superadmin_group}"
-        --from-literal=argocd_client_secret="${argocd_secret}"
+        --from-literal=require_mfa="${require_mfa}"
+        --from-literal=platform_admin_group="${platform_admin_group}"
+        --from-literal=legacy_username="${legacy_username}"
         --from-literal=llm_support="${llm_support}"
-        --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
+    # The client secrets and the SMTP password are not in this list: they
+    # reach kubectl as files on a pipe, added to its own command line below.
+    local smtp_password=""
     if _keycloak_smtp_settings; then
+        smtp_password="${KC_SMTP_PASSWORD}"
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=true
             --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
             --from-literal=smtp_host="${KC_SMTP_HOST}"
             --from-literal=smtp_port="${KC_SMTP_PORT}"
             --from-literal=smtp_user="${KC_SMTP_USER}"
-            --from-literal=smtp_password="${KC_SMTP_PASSWORD}"
             --from-literal=smtp_ssl="${KC_SMTP_SSL}"
             --from-literal=smtp_starttls="${KC_SMTP_STARTTLS}"
             --from-literal=smtp_from="${KC_SMTP_FROM}"
         )
     else
-        warn "SMTP credentials incomplete — Keycloak invite/reset emails will not send" \
-             "until ./install.sh --step D-04-mail (set the claim's mail block:" \
-             "serviceMode kernel, or host/port for an external relay)."
+        # Not a warning: this only says the installer holds no SMTP settings
+        # of its own, which is the normal case. The relay credential lives in
+        # OpenBao and reaches Keycloak through keycloak-smtp-credentials, and
+        # configure_keycloak_realm_smtp -- the next thing D-03 does -- reads
+        # that and configures the realm. Warning here printed "will not send"
+        # on a cluster whose realm the same run then configured, and that
+        # later step is the one that warns when SMTP really is incomplete.
+        info "Realm SMTP is configured after the bootstrap, from keycloak-smtp-credentials."
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=false
             --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
             --from-literal=smtp_host=""
             --from-literal=smtp_port=""
             --from-literal=smtp_user=""
-            --from-literal=smtp_password=""
             --from-literal=smtp_ssl="false"
             --from-literal=smtp_starttls="true"
             --from-literal=smtp_from=""
@@ -804,9 +1017,15 @@ run_keycloak_portal_bootstrap_job() {
 
     kubectl create secret generic portal-bootstrap-credentials -n "${ns}" \
         "${bootstrap_secret_args[@]}" \
+        --from-file=argocd_client_secret=<(printf '%s' "${argocd_secret}") \
+        --from-file=headlamp_client_secret=<(printf '%s' "${headlamp_secret}") \
+        --from-file=grafana_client_secret=<(printf '%s' "${grafana_secret}") \
+        --from-file=litellm_sso_client_secret=<(printf '%s' "${litellm_sso_secret}") \
+        --from-file=smtp_password=<(printf '%s' "${smtp_password}") \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    local smtp_shell refresh_shell
+    local smtp_shell refresh_shell job_image
+    job_image=$(_keycloak_job_image)
     smtp_shell=$(_keycloak_smtp_configure_shell)
     refresh_shell=$(_keycloak_refresh_token_shell)
 
@@ -826,14 +1045,23 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: bootstrap
-          image: alpine:3.20
+          image: ${job_image}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - /bin/sh
             - -ec
             - |
-              apk add --no-cache --quiet curl jq >/dev/null
               set -eu
               resolve_keycloak_base() {
                 local base code
@@ -880,7 +1108,20 @@ spec:
               fi
               AUTH="Authorization: Bearer \${TOKEN}"
               REALM="\${KERNEL_REALM}"
-              PORTAL="https://portal.\${KERNEL_DOMAIN}"
+              # The service account Keycloak makes at first start. A Keycloak
+              # that started before it existed has none, and everything automated
+              # signs in with it.
+              MASTER="\${KEYCLOAK_BASE}/admin/realms/master"
+              if [ "\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=gentian-operator" | jq length)" = "0" ]; then
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" "\${MASTER}/clients" \\
+                  -d "\$(jq -n --arg s "\${OPERATOR_CLIENT_SECRET}" '{clientId:"gentian-operator",secret:\$s,serviceAccountsEnabled:true,publicClient:false,standardFlowEnabled:false,directAccessGrantsEnabled:false}')" >/dev/null
+                CLIENT_ID=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=gentian-operator" | jq -r '.[0].id')
+                SA_ID=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients/\${CLIENT_ID}/service-account-user" | jq -r .id)
+                ADMIN_ROLE=\$(curl -sf -H "\${AUTH}" "\${MASTER}/roles/admin")
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${MASTER}/users/\${SA_ID}/role-mappings/realm" -d "[\${ADMIN_ROLE}]" >/dev/null
+                echo "Created the gentian-operator service account"
+              fi
 
               realm_http=\$(curl -s -o /dev/null -w '%{http_code}' -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}")
               if [ "\${realm_http}" = "404" ]; then
@@ -896,6 +1137,82 @@ spec:
                 printf '\033[0;31m[ERROR]\033[0m %s\n' "realm \${REALM} check returned HTTP \${realm_http}" >&2
                 exit 1
               fi
+
+              # Every surface Keycloak draws wears the product's theme.
+              #
+              # The login screen already did. The account and administration
+              # consoles did not, and the administration console is embedded
+              # in the desktop as the Identity tile, so its appearance is the
+              # product's appearance. A theme restyles what Keycloak draws and
+              # does not redraw it: both consoles are compiled React on
+              # PatternFly rendered from one template, and overriding that
+              # template would mean reworking it on every upgrade.
+
+              # The realm states its memberships to the director. Admin events
+              # carry the changes an administrator makes; the user events carry
+              # the ones nobody makes by hand -- a default group, a federation
+              # mapper -- which is why both are on.
+              # Kept thirty days in the database, as tenant realms are: the
+              # record is what the realm writes to stdout as it happens.
+              REALM_EVENTS=\$(jq -n '{
+                eventsEnabled: true,
+                eventsExpiration: 2592000,
+                adminEventsEnabled: true,
+                adminEventsDetailsEnabled: false,
+                eventsListeners: ["jboss-logging", "gentian-director"]
+              }')
+              if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/events/config" -d "\${REALM_EVENTS}" >/dev/null 2>&1; then
+                echo "Realm \${REALM} states memberships to the director"
+              else
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not enable the gentian-director event listener on \${REALM}." >&2
+                echo "  Without it OpenFGA never learns who is in which group, so every" >&2
+                echo "  permission that follows from membership is refused to everyone." >&2
+                exit 1
+              fi
+
+              # Passwords, and the second factor of whoever is in an
+              # administrator group: the kernel realm's copy of what the Tenant
+              # composition gives a tenant realm (its sign-in flow), which it
+              # does not compose here.
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" \\
+                -d '{"passwordPolicy":"length(12) and passwordHistory(5)"}' >/dev/null
+              FLOWS="\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/flows"
+              kc_post() { curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" "\$1" -d "\$2" >/dev/null; }
+              # kc_set <flow> <step> <requirement> [not]: the newest step of that
+              # name takes the requirement, and with [not] the attribute check.
+              kc_set() {
+                curl -sf -H "\${AUTH}" "\${FLOWS}/\$1/executions" |
+                  jq -c --arg want "\$2" --arg r "\$3" '[.[] | select(.providerId == \$want or .displayName == \$want)] | last | .requirement = \$r' > /tmp/exec.json
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${FLOWS}/\$1/executions" -d @/tmp/exec.json >/dev/null
+                [ -z "\${4:-}" ] && return 0
+                kc_post "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/executions/\$(jq -r .id /tmp/exec.json)/config" \\
+                  "\$(jq -n --arg a "\$1-\$4" --arg n "\$4" '{alias:\$a,config:{attribute_name:"gentianRequiresMFA",attribute_expected_value:"true",include_group_attributes:"true",not:\$n}}')"
+              }
+              kc_step() { kc_post "\${FLOWS}/\$1/executions/execution" "{\"provider\":\"\$2\"}"; kc_set "\$@"; }
+              kc_sub() {
+                kc_post "\${FLOWS}/\$1/executions/flow" "{\"alias\":\"\$2\",\"type\":\"basic-flow\",\"provider\":\"registration-page-form\"}"
+                kc_set "\$@"
+              }
+              if ! curl -sf -H "\${AUTH}" "\${FLOWS}" | jq -e '.[] | select(.alias=="gentian-browser")' >/dev/null; then
+                kc_post "\${FLOWS}" '{"alias":"gentian-browser","description":"The stock browser flow, with a second factor required of administrators","providerId":"basic-flow","topLevel":true,"builtIn":false}'
+                kc_step gentian-browser auth-cookie ALTERNATIVE
+                kc_step gentian-browser identity-provider-redirector ALTERNATIVE
+                kc_sub gentian-browser gentian-browser-forms ALTERNATIVE
+                kc_step gentian-browser-forms auth-username-password-form REQUIRED
+                kc_sub gentian-browser-forms gentian-browser-admin CONDITIONAL
+                kc_step gentian-browser-admin conditional-user-attribute REQUIRED false
+                kc_step gentian-browser-admin auth-otp-form REQUIRED
+                kc_sub gentian-browser-forms gentian-browser-other CONDITIONAL
+                kc_step gentian-browser-other conditional-user-configured REQUIRED
+                kc_step gentian-browser-other conditional-user-attribute REQUIRED true
+                kc_step gentian-browser-other auth-otp-form REQUIRED
+              fi
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d '{"browserFlow":"gentian-browser"}' >/dev/null
+              echo "Realm \${REALM} requires a second factor of its administrators"
 
               PROFILE=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile")
               if ! echo "\${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
@@ -922,144 +1239,57 @@ spec:
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile" -d "\${RELAXED}" >/dev/null
               echo "user profile firstName/lastName optional for realm \${REALM}"
 
-              CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
-                | jq -r '.[0].id // empty')
-              BODY=\$(jq -n --arg portal "\${PORTAL}" '{
-                clientId: "gentian-portal",
-                name: "Gentian Portal",
-                enabled: true,
-                publicClient: true,
-                standardFlowEnabled: true,
-                directAccessGrantsEnabled: false,
-                implicitFlowEnabled: false,
-                serviceAccountsEnabled: false,
-                protocol: "openid-connect",
-                redirectUris: [(\$portal + "/login"), (\$portal + "/login/*"), (\$portal + "/*")],
-                attributes: {
-                  "pkce.code.challenge.method": "S256",
-                  "post.logout.redirect.uris": ((\$portal + "/login") + "##" + (\$portal + "/*"))
-                },
-                webOrigins: [\$portal, "+"],
-                rootUrl: \$portal,
-                baseUrl: \$portal
-              }')
-              if [ -n "\${CLIENT_ID}" ]; then
-                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}" -d "\${BODY}"
-                echo "Updated client gentian-portal"
-              else
+              # The groups scope: what Argo CD and Headlamp read a person's
+              # platform role from. The edge client does not carry it (the
+              # bouncer asks the store, never the token).
+              SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
+              GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
+
+              # Create the scope when the realm has none.
+              #
+              # Keycloak ships a groups scope in some distributions and not others,
+              # and this realm had none — so the attach below found nothing, did
+              # nothing, and said nothing. The portal's tokens then carried no groups
+              # claim, OpenBao refused every one, and it surfaced three layers away as
+              # a 401 from the custodian.
+              #
+              # full.path is what OpenBao matches: its roles bind /group-name with a
+              # leading slash, and the bare name matches nothing.
+              if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
+                echo "No groups client scope in realm \${REALM}; creating one."
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${BODY}"
-                CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
-                  | jq -r '.[0].id // empty')
-                echo "Created client gentian-portal"
-              fi
-
-              GROUPS_SCOPE_ID=""
-              if [ -n "\${CLIENT_ID}" ]; then
-                SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
-                GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
-
-                # Create the scope when the realm has none.
-                #
-                # Keycloak ships a groups scope in some distributions and not others,
-                # and this realm had none — so the attach below found nothing, did
-                # nothing, and said nothing. The portal's tokens then carried no groups
-                # claim, OpenBao refused every one, and it surfaced three layers away as
-                # a 401 from the credential manager.
-                #
-                # full.path is what OpenBao matches: its roles bind /group-name with a
-                # leading slash, and the bare name matches nothing.
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
+                  -d '{"name":"groups","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"false"}}' \\
+                  >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not create the groups client scope." >&2; exit 1; }
+                GROUPS_SCOPE_ID=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
+                  | jq -r '.[] | select(.name=="groups") | .id' | head -1)
                 if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
-                  echo "No groups client scope in realm \${REALM}; creating one."
-                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
-                    -d '{"name":"groups","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"false"}}' \\
-                    >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not create the groups client scope." >&2; exit 1; }
-                  GROUPS_SCOPE_ID=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
-                    | jq -r '.[] | select(.name=="groups") | .id' | head -1)
-                  if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
-                    printf '\033[0;31m[ERROR]\033[0m %s\n' "created the groups scope but cannot find it." >&2
-                    exit 1
-                  fi
-                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
-                    -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' \\
-                    >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the group-membership mapper." >&2; exit 1; }
-                  echo "Created groups client scope with full.path=true"
+                  printf '\033[0;31m[ERROR]\033[0m %s\n' "created the groups scope but cannot find it." >&2
+                  exit 1
                 fi
-                if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
-                  # The success line used to print whether or not the PUT worked,
-                  # and the PUT swallowed its own failure. The portal then minted
-                  # tokens with no groups claim, OpenBao refused every one, and
-                  # the log said the scope was attached.
-                  if curl -sf -X PUT -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1; then
-                    echo "gentian-portal default scope: groups"
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
+                  -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' \\
+                  >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the group-membership mapper." >&2; exit 1; }
+                echo "Created groups client scope with full.path=true"
+              fi
+              if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                # Emit the FULL path. OpenBao's roles bind /group-name with a
+                # leading slash; the bare name matches nothing and fails as a
+                # denied login rather than as a misconfigured claim.
+                GM_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
+                  | jq -r '.[] | select(.protocolMapper=="oidc-group-membership-mapper") | .id' | head -1)
+                if [ -n "\${GM_ID}" ] && [ "\${GM_ID}" != "null" ]; then
+                  GM=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}")
+                  GM_NEW=\$(printf '%s' "\${GM}" | jq '.config["full.path"]="true" | .config["access.token.claim"]="true"')
+                  if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}" \\
+                    -d "\${GM_NEW}" >/dev/null 2>&1; then
+                    echo "groups mapper: full.path=true"
                   else
-                    printf '\033[0;31m[ERROR]\033[0m %s\n' "could not attach the groups scope to gentian-portal." >&2
-                    echo "  Without it the portal's tokens carry no groups claim, and" >&2
-                    echo "  OpenBao refuses them — which reads as a permissions problem." >&2
-                    exit 1
-                  fi
-
-                  # The audience. OpenBao's roles bind bound_audiences to openbao, and a
-                  # Keycloak ACCESS token does not carry the requesting client in aud —
-                  # azp names the client, aud gets only what an audience mapper puts there.
-                  # Nothing created one, so every exchange failed on the audience even with
-                  # the right group, and the refusal was indistinguishable from a
-                  # permissions problem.
-                  AUD_BODY='{
-                    "name": "openbao-audience",
-                    "protocol": "openid-connect",
-                    "protocolMapper": "oidc-audience-mapper",
-                    "config": {
-                      "included.client.audience": "openbao",
-                      "id.token.claim": "false",
-                      "access.token.claim": "true"
-                    }
-                  }'
-                  AUD_ID=\$(curl -sf -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models" \\
-                    | jq -r '.[] | select(.name=="openbao-audience") | .id' | head -1)
-                  if [ -n "\${AUD_ID}" ] && [ "\${AUD_ID}" != "null" ]; then
-                    AUD_HTTP=\$(printf '%s' "\${AUD_BODY}" | jq --arg id "\${AUD_ID}" '. + {id: \$id}' \\
-                      | curl -s -o /tmp/aud.err -w '%{http_code}' -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                        "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models/\${AUD_ID}" -d @-)
-                  else
-                    AUD_HTTP=\$(curl -s -o /tmp/aud.err -w '%{http_code}' -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models" -d "\${AUD_BODY}")
-                  fi
-                  case "\${AUD_HTTP}" in
-                    2*) echo "gentian-portal audience mapper: aud += openbao" ;;
-                    *)
-                      printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the openbao audience mapper (HTTP \${AUD_HTTP})." >&2
-                      if [ -s /tmp/aud.err ]; then head -c 300 /tmp/aud.err >&2; echo >&2; fi
-                      echo "  Without it the portal's tokens carry no openbao audience and" >&2
-                      echo "  OpenBao refuses them — which reads as a permissions problem." >&2
-                      exit 1
-                      ;;
-                  esac
-
-                  # Emit the FULL path. OpenBao's roles bind /group-name with a
-                  # leading slash; the bare name matches nothing and fails as a
-                  # denied login rather than as a misconfigured claim.
-                  GM_ID=\$(curl -sf -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
-                    | jq -r '.[] | select(.protocolMapper=="oidc-group-membership-mapper") | .id' | head -1)
-                  if [ -n "\${GM_ID}" ] && [ "\${GM_ID}" != "null" ]; then
-                    GM=\$(curl -sf -H "\${AUTH}" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}")
-                    GM_NEW=\$(printf '%s' "\${GM}" | jq '.config["full.path"]="true" | .config["access.token.claim"]="true"')
-                    if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}" \\
-                      -d "\${GM_NEW}" >/dev/null 2>&1; then
-                      echo "groups mapper: full.path=true"
-                    else
-                      printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set full.path on the groups mapper" >&2
-                    fi
+                    printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set full.path on the groups mapper" >&2
                   fi
                 fi
               fi
@@ -1067,11 +1297,17 @@ spec:
               USER_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${PORTAL_USERNAME}&exact=true" \\
                 | jq -r '.[0].id // empty')
-              USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --arg e "\${PORTAL_EMAIL}" '{
-                username: \$u, email: \$e, firstName: "Platform", lastName: "Administrator",
-                enabled: true, emailVerified: true
-              }')
+              # No password: its holder sets one through an activation link
+              # issued at the handover. Created with what activating takes as
+              # required actions; an existing account's password, email (its
+              # recovery address) and actions are never overwritten here.
+              ACTIONS='["UPDATE_PASSWORD"]'
+              [ "\${REQUIRE_MFA:-true}" = "true" ] && ACTIONS='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
               if [ -z "\${USER_ID}" ]; then
+                USER_BODY=\$(jq -n --arg u "\${PORTAL_USERNAME}" --argjson a "\${ACTIONS}" '{
+                  username: \$u, firstName: "Platform", lastName: "Administrator",
+                  enabled: true, emailVerified: false, requiredActions: \$a
+                }')
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users" -d "\${USER_BODY}"
                 USER_ID=\$(curl -sf -H "\${AUTH}" \\
@@ -1079,64 +1315,129 @@ spec:
                   | jq -r '.[0].id')
                 echo "Created user \${PORTAL_USERNAME}"
               else
+                # The second-factor requirement as declared; nothing else.
+                CUR=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}")
+                HAS_OTP=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/credentials" \\
+                  | jq '[.[] | select(.type=="otp")] | length > 0')
+                UPD=\$(printf '%s' "\${CUR}" | jq --arg mfa "\${REQUIRE_MFA:-true}" --argjson hasotp "\${HAS_OTP}" '
+                  .enabled = true
+                  | .requiredActions = ((.requiredActions // []) - ["CONFIGURE_TOTP"])
+                  | (if \$mfa == "true" and (\$hasotp | not) then .requiredActions += ["CONFIGURE_TOTP"] else . end)')
                 curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${USER_BODY}"
-                echo "Updated user \${PORTAL_USERNAME}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" -d "\${UPD}"
+                echo "Updated user \${PORTAL_USERNAME} (second factor required: \${REQUIRE_MFA:-true})"
               fi
-              CRED=\$(jq -n --arg p "\${PORTAL_PASSWORD}" '{type:"password",value:\$p,temporary:false}')
-              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
 
-              SUPERADMIN_GROUP="\${PLATFORM_SUPERADMIN_GROUP}"
+              ADMIN_GROUP="\${PLATFORM_ADMIN_GROUP}"
               GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SUPERADMIN_GROUP}&exact=true")
-              GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${SUPERADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${ADMIN_GROUP}&exact=true")
+              GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${ADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
               if [ -z "\${GROUP_ID}" ] || [ "\${GROUP_ID}" = "null" ]; then
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups" \\
-                  -d "{\"name\":\"\${SUPERADMIN_GROUP}\"}"
+                  -d "{\"name\":\"\${ADMIN_GROUP}\"}"
                 GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SUPERADMIN_GROUP}&exact=true")
-                GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${SUPERADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
-                echo "Created group \${SUPERADMIN_GROUP}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${ADMIN_GROUP}&exact=true")
+                GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${ADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+                echo "Created group \${ADMIN_GROUP}"
               else
-                echo "Group \${SUPERADMIN_GROUP} already exists"
+                echo "Group \${ADMIN_GROUP} already exists"
               fi
               curl -sf -X PUT -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
-              echo "User \${PORTAL_USERNAME} joined \${SUPERADMIN_GROUP}"
+              echo "User \${PORTAL_USERNAME} joined \${ADMIN_GROUP}"
+              curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}" |
+                jq -c '.attributes.gentianRequiresMFA = ["true"]' > /tmp/group.json
+              curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}" -d @/tmp/group.json >/dev/null
 
-              BFF_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal-bff" \\
+              # The account this one replaces. Removed rather than left
+              # disabled: two administrators, one of whom cannot be reached by
+              # a password reset because their username is not an address, is
+              # worse than one. Only ever the exact legacy name, and never the
+              # account just created.
+              if [ -n "\${LEGACY_USERNAME:-}" ] && [ "\${LEGACY_USERNAME}" != "\${PORTAL_USERNAME}" ]; then
+                LEGACY_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${LEGACY_USERNAME}&exact=true" \\
+                  | jq -r '.[0].id // empty')
+                if [ -n "\${LEGACY_ID}" ] && [ "\${LEGACY_ID}" != "\${USER_ID}" ]; then
+                  if curl -sf -X DELETE -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${LEGACY_ID}" >/dev/null 2>&1; then
+                    echo "Removed the account \${LEGACY_USERNAME} replaced by \${PORTAL_USERNAME}"
+                  else
+                    printf '\033[1;33m[WARN]\033[0m  %s\n' "could not remove the legacy account \${LEGACY_USERNAME}" >&2
+                  fi
+                fi
+              fi
+
+              # The realm's own administration, granted to the group rather than
+              # to the person: whoever the cluster's platform administrators are,
+              # they are the ones who manage users, groups and clients here.
+              #
+              # Without it the identity console answers 403 to the very account
+              # the install says to sign in as -- a refusal that reads like a
+              # broken login rather than a missing role.
+              RM_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=realm-management" \\
                 | jq -r '.[0].id // empty')
-              BFF_BODY=\$(jq -n --arg secret "\${PORTAL_BFF_CLIENT_SECRET}" '{
-                clientId: "gentian-portal-bff",
-                name: "Gentian Portal BFF",
-                enabled: true,
-                publicClient: false,
-                standardFlowEnabled: false,
-                directAccessGrantsEnabled: true,
-                serviceAccountsEnabled: false,
-                protocol: "openid-connect",
-                secret: \$secret
-              }')
-              if [ -n "\${BFF_CLIENT_ID}" ]; then
-                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${BFF_CLIENT_ID}" -d "\${BFF_BODY}"
-                echo "Updated client gentian-portal-bff"
-              else
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${BFF_BODY}"
-                BFF_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal-bff" \\
-                  | jq -r '.[0].id')
-                echo "Created client gentian-portal-bff"
+              if [ -n "\${RM_CLIENT_ID}" ]; then
+                RM_ROLE=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${RM_CLIENT_ID}/roles/realm-admin")
+                if [ -n "\${RM_ROLE}" ]; then
+                  if curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}/role-mappings/clients/\${RM_CLIENT_ID}" \\
+                    -d "[\${RM_ROLE}]" >/dev/null 2>&1; then
+                    echo "Group \${ADMIN_GROUP} granted realm-management:realm-admin"
+                  else
+                    echo "Group \${ADMIN_GROUP} already holds realm-management:realm-admin"
+                  fi
+                fi
               fi
-              if [ -n "\${BFF_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
-                curl -sf -X PUT -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${BFF_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                echo "gentian-portal-bff default scope: groups"
+
+
+              # Keycloak's own administration console must be issued a token
+              # the Admin REST API will accept.
+              #
+              # Keycloak 26 turns on lightweight access tokens for
+              # security-admin-console. Such a token carries exp, iat, jti,
+              # iss, typ, azp, sid and scope, and NOTHING else -- no sub, no
+              # aud, no realm_access, no resource_access. The console then
+              # calls /admin/serverinfo with it and Keycloak answers 401, so
+              # the console never finishes loading and sits on its spinner.
+              #
+              # Proved on the cluster rather than guessed: the same person, in
+              # the same realm, holding realm-admin through
+              # gentian:platform:admin, is answered 200 by that same endpoint
+              # when the token comes from admin-cli, which issues a full one.
+              # The only difference is what the token carries.
+              #
+              # So this realm's console gets full tokens. It costs a slightly
+              # larger token on requests that never leave the identity host,
+              # and it is the difference between a console that works and one
+              # that does not. Merged into whatever attributes the client
+              # already has, so nothing else about it is disturbed.
+              ADMIN_CONSOLE_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=security-admin-console" \\
+                | jq -r '.[0].id // empty')
+              if [ -n "\${ADMIN_CONSOLE_ID}" ]; then
+                ADMIN_CONSOLE_BODY=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ADMIN_CONSOLE_ID}" \\
+                  | jq '.attributes["client.use.lightweight.access.token.enabled"] = "false"')
+                if [ -n "\${ADMIN_CONSOLE_BODY}" ] && curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ADMIN_CONSOLE_ID}" \\
+                    -d "\${ADMIN_CONSOLE_BODY}" >/dev/null; then
+                  echo "security-admin-console issues full access tokens"
+                else
+                  echo "WARNING: could not turn off lightweight tokens for security-admin-console; the console will 401" >&2
+                fi
               fi
+
+              # The kernel zone's edge client is not created here. It is a
+              # zone, and a zone is produced by the tenant that owns it:
+              # Tenant/platform adopts this realm (AD-10) and its composition
+              # writes the client, its redirect and post-logout URIs, its
+              # director audience mapper and the Secret the edge reads. This
+              # Job creates the realm that client lives in, and stops there.
 
               ARGOCD_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-argocd" \\
@@ -1173,6 +1474,153 @@ spec:
                 echo "gentian-argocd default scope: groups"
               fi
 
+              # Headlamp. Confidential, because the token it receives is what
+              # the impersonating proxy in front of the API server verifies --
+              # a public client would let anyone mint one.
+              HEADLAMP_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=headlamp" \\
+                | jq -r '.[0].id // empty')
+              HEADLAMP_BODY=\$(jq -n --arg secret "\${HEADLAMP_CLIENT_SECRET}" --arg base "https://headlamp.\${KERNEL_DOMAIN}" '{
+                clientId: "headlamp",
+                name: "Headlamp",
+                enabled: true,
+                publicClient: false,
+                standardFlowEnabled: true,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                redirectUris: [(\$base + "/oidc-callback"), (\$base + "/*")],
+                rootUrl: \$base,
+                baseUrl: "/",
+                webOrigins: [\$base],
+                secret: \$secret
+              }')
+              if [ -n "\${HEADLAMP_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${HEADLAMP_CLIENT_ID}" -d "\${HEADLAMP_BODY}"
+                echo "Updated client headlamp"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${HEADLAMP_BODY}"
+                HEADLAMP_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=headlamp" \\
+                  | jq -r '.[0].id')
+                echo "Created client headlamp"
+              fi
+              # Without the groups claim the proxy impersonates a person with
+              # no groups, and every API call is refused by RBAC.
+              if [ -n "\${HEADLAMP_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                curl -sf -X PUT -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${HEADLAMP_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                echo "headlamp default scope: groups"
+              fi
+
+              # Grafana, the platform's metrics dashboards. Made on every
+              # cluster, as monitoring is switched on by a setting; nothing
+              # answers at its address until then. Confidential, like Headlamp;
+              # it reads a person's role from the groups claim (the platform administrator
+              # is Grafana's Admin, everyone else who reaches it a Viewer), so
+              # it gets the groups scope too. The edge already decided who may
+              # reach it at all: can_audit on the cluster.
+              GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
+                | jq -r '.[0].id // empty')
+              GRAFANA_BODY=\$(jq -n --arg secret "\${GRAFANA_CLIENT_SECRET}" --arg base "https://monitoring.\${KERNEL_DOMAIN}" '{
+                clientId: "grafana",
+                name: "Grafana",
+                enabled: true,
+                publicClient: false,
+                standardFlowEnabled: true,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                redirectUris: [(\$base + "/login/generic_oauth")],
+                rootUrl: \$base,
+                baseUrl: "/",
+                webOrigins: [\$base],
+                attributes: {"post.logout.redirect.uris": (\$base + "/*")},
+                secret: \$secret
+              }')
+              if [ -n "\${GRAFANA_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}" -d "\${GRAFANA_BODY}"
+                echo "Updated client grafana"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${GRAFANA_BODY}"
+                GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
+                  | jq -r '.[0].id')
+                echo "Created client grafana"
+              fi
+              if [ -n "\${GRAFANA_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                curl -sf -X PUT -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                echo "grafana default scope: groups"
+              fi
+
+              # The CLI. kubectl gentian is a client of the director, as the
+              # console is: a person signs in with the device flow (a code shown
+              # in the terminal, confirmed in a browser) and every command
+              # carries their own token, which the director checks like any
+              # other. Public, because a CLI on a workstation cannot keep a
+              # secret; device grant only, so it cannot be used to collect a
+              # password; the director's audience and the groups claim, so the
+              # token is one the director accepts and decides on.
+              CLI_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-cli" \\
+                | jq -r '.[0].id // empty')
+              CLI_BODY=\$(jq -n '{
+                clientId: "gentian-cli",
+                name: "Gentian CLI",
+                enabled: true,
+                publicClient: true,
+                standardFlowEnabled: false,
+                implicitFlowEnabled: false,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                attributes: {"oauth2.device.authorization.grant.enabled": "true"}
+              }')
+              if [ -n "\${CLI_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}" -d "\${CLI_BODY}"
+                echo "Updated client gentian-cli"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${CLI_BODY}"
+                CLI_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-cli" \\
+                  | jq -r '.[0].id')
+                echo "Created client gentian-cli"
+              fi
+              if [ -n "\${CLI_CLIENT_ID}" ]; then
+                # The audience is named as a custom audience, not as a client:
+                # no client called gentian-director exists in any realm, and
+                # Keycloak (26.8 on) leaves an audience out of the token when it
+                # names a client that is absent or disabled. A mapper written
+                # the earlier way is rewritten, so a re-run repairs it.
+                AUD_BODY='{"name":"director-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"gentian-director","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}'
+                AUD_MAPPER=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models" \\
+                    | jq -c '[.[] | select(.name=="director-audience")][0] // empty' 2>/dev/null || true)
+                if [ -z "\${AUD_MAPPER}" ]; then
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models" \\
+                    -d "\${AUD_BODY}" >/dev/null
+                elif [ "\$(printf '%s' "\${AUD_MAPPER}" | jq -r '.config["included.custom.audience"] // empty')" != "gentian-director" ]; then
+                  AUD_MAPPER_ID=\$(printf '%s' "\${AUD_MAPPER}" | jq -r '.id')
+                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/protocol-mappers/models/\${AUD_MAPPER_ID}" \\
+                    -d "\$(printf '%s' "\${AUD_BODY}" | jq -c --arg id "\${AUD_MAPPER_ID}" '. + {id: \$id}')" >/dev/null
+                fi
+                if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                  curl -sf -X PUT -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                fi
+                echo "gentian-cli: device grant, director audience, groups"
+              fi
+
 ${refresh_shell}
               if [ "\${LLM_SUPPORT}" = "true" ]; then
                 # Best-effort, deliberately. Everything in here serves an optional LLM
@@ -1187,7 +1635,7 @@ ${refresh_shell}
                 # live in separate per-tenant realms), so a flat hardcoded
                 # litellm_role=proxy_admin claim is safe for now — LLM admin
                 # stays a platform-admin-only capability until per-tenant access
-                # is designed (see docs/design/llms.md).
+                # is designed (see docs/concepts/llms.md).
                 LITELLM_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=litellm-dashboard" \\
                   | jq -r '.[0].id // empty')
@@ -1285,7 +1733,41 @@ ${refresh_shell}
 ${refresh_shell}
 ${smtp_shell}
 
-              echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
+              # A workday session, a short-lived token.
+              #
+              # LAST, after the SMTP fragment above. That fragment reads the
+              # whole realm, sets smtpServer on the copy and writes the copy
+              # back, so anything written before it that the copy predates is
+              # silently undone -- which is exactly what happened to this
+              # block: the Job reported setting a five-minute token and the
+              # realm still said twelve hours.
+              #
+              # These two numbers are what makes removing someone take effect.
+              # The SSO session lasts a working day, so nobody is asked for a
+              # password again mid-morning. The ACCESS token lasts five
+              # minutes, and the edge refreshes it against Keycloak without
+              # the person noticing. A refresh re-checks the session and
+              # re-reads the account, so disabling someone, ending their
+              # session or changing their groups stops them within one token
+              # lifetime rather than at the end of the day.
+              #
+              # This is why there is no revocation list anywhere: it existed
+              # to make that immediate while the access token lived twelve
+              # hours, which is what this realm was set to.
+              REALM_THEMES=\$(jq -n '{
+                loginTheme:"gentian", adminTheme:"gentian", accountTheme:"gentian",
+                accessTokenLifespan: 300,
+                ssoSessionIdleTimeout: 43200,
+                ssoSessionMaxLifespan: 43200
+              }')
+              if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d "\${REALM_THEMES}" >/dev/null 2>&1; then
+                echo "Realm \${REALM}: gentian theme, 5-minute access tokens, 12-hour sessions"
+              else
+                printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set the realm themes on \${REALM}" >&2
+              fi
+
+              echo "Portal bootstrap complete for \${PORTAL_USERNAME}"
           env:
             - name: KEYCLOAK_URL
               valueFrom:
@@ -1293,15 +1775,17 @@ ${smtp_shell}
                   name: keycloak-admin
                   key: url
             - name: KEYCLOAK_ADMIN_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-admin
-                  key: username
+              value: admin
             - name: KEYCLOAK_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: keycloak-admin
-                  key: password
+                  name: keycloak-idp-credentials
+                  key: admin-password
+            - name: OPERATOR_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-idp-credentials
+                  key: operator-client-secret
             - name: KERNEL_DOMAIN
               valueFrom:
                 secretKeyRef:
@@ -1322,21 +1806,31 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: email
-            - name: PORTAL_PASSWORD
+            - name: REQUIRE_MFA
               valueFrom:
                 secretKeyRef:
                   name: portal-bootstrap-credentials
-                  key: password
-            - name: PLATFORM_SUPERADMIN_GROUP
+                  key: require_mfa
+            - name: PLATFORM_ADMIN_GROUP
               valueFrom:
                 secretKeyRef:
                   name: portal-bootstrap-credentials
-                  key: platform_superadmin_group
-            - name: PORTAL_BFF_CLIENT_SECRET
+                  key: platform_admin_group
+            - name: LEGACY_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: gentian-portal-bff
-                  key: client_secret
+                  name: portal-bootstrap-credentials
+                  key: legacy_username
+            - name: HEADLAMP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: headlamp_client_secret
+            - name: GRAFANA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: grafana_client_secret
             - name: ARGOCD_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -1417,291 +1911,14 @@ EOF
     fi
 
     gentian_job_logs "${ns}" "${job_name}" Succeeded 20
-    success "Keycloak gentian-portal client and platform admin ${username} are ready."
+    success "Kernel realm ${kernel_realm}: clients, group and platform admin ${username} are ready."
     info "OIDC issuer: https://id.${kernel_domain}/auth/realms/${kernel_realm}"
-    info "Portal login credentials:"
-    info "  URL:      https://portal.${kernel_domain}/login"
-    info "  Username: ${username}  (or ${email})"
-    info "  Password: ${password}"
-}
-
-build_gentian_portal_images() {
-    local ui_dir="${GENTIAN_UI_DIR:-${SCRIPT_DIR}/../gentian-ui}"
-    local tag="${PORTAL_IMAGE_TAG:-develop}"
-    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
-    local kernel_realm="${KERNEL_REALM:-kernel}"
-    local portal_origin="https://portal.${kernel_domain}"
-    local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
-
-    if [[ ! -d "${ui_dir}/frontend" || ! -d "${ui_dir}/backend" ]]; then
-        warn "gentian-ui not found at ${ui_dir} — set GENTIAN_UI_DIR or build images manually."
-        return 1
-    fi
-
-    if ! command -v docker >/dev/null 2>&1; then
-        warn "docker not available — skipping portal image build."
-        return 1
-    fi
-
-    info "Building gentian-portal images (tag=${tag})..."
-
-    docker build -f "${ui_dir}/frontend/Dockerfile" "${ui_dir}/frontend" \
-        --build-arg "VITE_OIDC_ISSUER=${issuer}" \
-        --build-arg "VITE_OIDC_CLIENT_ID=gentian-portal" \
-        --build-arg "VITE_OIDC_REDIRECT_URI=${portal_origin}/login" \
-        --build-arg "VITE_OIDC_SCOPES=openid profile email groups" \
-        --build-arg "VITE_AUTH_DISABLED=false" \
-        -t "ghcr.io/gentian-org/gentian-portal-web:${tag}"
-
-    docker build -f "${ui_dir}/backend/Dockerfile" "${ui_dir}/backend" \
-        -t "ghcr.io/gentian-org/gentian-portal-api:${tag}"
-
-    if [[ "${PORTAL_IMAGE_PUSH:-true}" == "true" ]]; then
-        if ! docker push "ghcr.io/gentian-org/gentian-portal-web:${tag}" \
-            || ! docker push "ghcr.io/gentian-org/gentian-portal-api:${tag}"; then
-            warn "Could not push portal images to ghcr.io — ensure docker login ghcr.io"
-        fi
-    fi
-
-    export PORTAL_WEB_IMAGE="ghcr.io/gentian-org/gentian-portal-web:${tag}"
-    export PORTAL_API_IMAGE="ghcr.io/gentian-org/gentian-portal-api:${tag}"
-    success "Portal images ready: ${PORTAL_WEB_IMAGE}"
-}
-
-# Returns the OpenFGA store id, or empty + non-zero when the authz bridge has
-# not created the Secret yet.
-#
-# Callers MUST invoke this as `$(_openfga_runtime_store_id || true)`. Every one
-# of them already handles an empty result — "portal API will start without
-# OPENFGA_* until authz bridge syncs" — but these scripts run under `set -e`, so
-# an unguarded command substitution aborts the install before that handling is
-# ever reached. A missing Secret is the normal state on a fresh cluster.
-_openfga_runtime_store_id() {
-    if ! kubectl get secret openfga-runtime -n platform-kernel >/dev/null 2>&1; then
-        return 1
-    fi
-    kubectl get secret openfga-runtime -n platform-kernel \
-        -o jsonpath='{.data.store_id}' 2>/dev/null | base64 -d 2>/dev/null || true
-}
-
-wait_for_openfga_runtime_store_id() {
-    local timeout_sec="${1:-180}"
-    info "Waiting for openfga-runtime store_id (authz bridge bootstrap, up to ${timeout_sec}s)..."
-
-    kubectl rollout restart deployment/gentian-os -n gentian-system 2>/dev/null || true
-    kubectl rollout status deployment/gentian-os -n gentian-system --timeout=180s 2>/dev/null || true
-
-    local deadline=$((SECONDS + timeout_sec))
-    while (( SECONDS < deadline )); do
-        local store_id
-        store_id=$(_openfga_runtime_store_id || true)
-        if [[ -n "${store_id}" ]]; then
-            success "OpenFGA store_id ready."
-            return 0
-        fi
-        if kubectl logs -n gentian-system deploy/gentian-os --tail=30 2>/dev/null | grep -q "authz bridge sync complete"; then
-            store_id=$(_openfga_runtime_store_id || true)
-            [[ -n "${store_id}" ]] && return 0
-        fi
-        sleep 10
-    done
-    warn "openfga-runtime.store_id not ready within ${timeout_sec}s."
-    return 1
-}
-
-_openfga_api_token() {
-    if ! kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
-        return 0
-    fi
-    kubectl get secret openfga-sensitive-values -n platform-kernel \
-        -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
-        | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true
-}
-
-install_gentian_portal_secrets() {
-    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
-    local kernel_realm="${KERNEL_REALM:-kernel}"
-    local ns="platform-kernel"
-    local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
-
-    local store_id
-    store_id=$(_openfga_runtime_store_id || true)
-    if [[ -z "${store_id}" ]]; then
-        info "OpenFGA store_id not ready — portal API will start without OPENFGA_* until authz bridge syncs."
-    fi
-
-    secret_args=(
-        --from-literal=OIDC_ISSUER="${issuer}"
-        --from-literal=OIDC_CLIENT_ID="gentian-portal"
-        --from-literal=OIDC_AUDIENCE="gentian-portal"
-    )
-    if kubectl get secret gentian-portal-bff -n "${ns}" >/dev/null 2>&1; then
-        local bff_secret
-        bff_secret=$(kubectl get secret gentian-portal-bff -n "${ns}" -o jsonpath='{.data.client_secret}' | base64 -d)
-        secret_args+=(
-            --from-literal=PORTAL_BFF_CLIENT_ID="gentian-portal-bff"
-            --from-literal=PORTAL_BFF_CLIENT_SECRET="${bff_secret}"
-        )
-    else
-        ensure_portal_bff_secret >/dev/null
-        local bff_secret
-        bff_secret=$(kubectl get secret gentian-portal-bff -n "${ns}" -o jsonpath='{.data.client_secret}' | base64 -d)
-        secret_args+=(
-            --from-literal=PORTAL_BFF_CLIENT_ID="gentian-portal-bff"
-            --from-literal=PORTAL_BFF_CLIENT_SECRET="${bff_secret}"
-        )
-    fi
-
-    local kc_url kc_user kc_pass
-    kc_url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
-    kc_user=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || true)
-    kc_pass=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
-    if [[ -n "${kc_url}" && -n "${kc_pass}" ]]; then
-        secret_args+=(
-            --from-literal=KEYCLOAK_ADMIN_URL="${kc_url}"
-            --from-literal=KEYCLOAK_ADMIN_USERNAME="${kc_user:-admin}"
-            --from-literal=KEYCLOAK_ADMIN_PASSWORD="${kc_pass}"
-        )
-    fi
-
-    local openfga_token
-    openfga_token=$(_openfga_api_token)
-    if [[ -n "${openfga_token}" ]]; then
-        secret_args+=(--from-literal=OPENFGA_API_TOKEN="${openfga_token}")
-    fi
-    if [[ -n "${store_id}" ]]; then
-        secret_args+=(--from-literal=OPENFGA_STORE_ID="${store_id}")
-    fi
-
-    kubectl create secret generic gentian-portal-secrets -n "${ns}" \
-        "${secret_args[@]}" \
-        --dry-run=client -o yaml | kubectl apply -f -
-}
-
-release_gentian_portal_helm_bootstrap() {
-    local ns="platform-kernel"
-    if kubectl get secret -n "$ns" -l "owner=helm,name=gentian-portal" --no-headers 2>/dev/null | grep -q .; then
-        info "Removing bootstrap Helm release metadata (ArgoCD owns gentian-portal now)..."
-        kubectl delete secret -n "$ns" -l "owner=helm,name=gentian-portal" --ignore-not-found
-    fi
-}
-
-apply_gentian_portal_argocd_application() {
-    local gentian_ui_branch portal_tag rendered tmpl
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-test}"
-    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
-    resolve_gentian_os_branch
-    gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"
-    portal_tag="${PORTAL_IMAGE_TAG:-develop}"
-    tmpl="${SCRIPT_DIR}/kernel/bootstrap/chart/templates/gentian-portal.yaml"
-    rendered="$(mktemp)"
-
-    if [[ ! -f "${tmpl}" ]]; then
-        error "gentian-portal Application template not found at ${tmpl}"
-        return 1
-    fi
-
-    # llmEnabled is in this list because THIS is the render that applies the
-    # portal Application. It is the third --set-string list for the same chart:
-    # the two in common.sh (the drift check and apply_bootstrap_application)
-    # were unified into _bootstrap_chart_values, and neither is on this path, so
-    # the value was added to both of them and still never reached the cluster.
-    #
-    # The list is legitimately different rather than duplicated — this template
-    # needs uiBranch, portalImageTag and deploymentsBranch, which the shared
-    # list does not carry — so it cannot simply defer to the shared one.
-    #
-    # The chain it feeds: claim llm.enabled -> LLM_SUPPORT -> this flag ->
-    # valuesObject.llm.enabled -> GENTIAN_CAPABILITIES -> whether the portal
-    # offers the LLM tile. Every hop is a restatement, and a dropped value at
-    # any of them presents as an absent tile rather than an error.
-    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
-        -s templates/gentian-portal.yaml \
-        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-        --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
-        --set-string "uiBranch=${gentian_ui_branch}" \
-        --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
-        --set-string "portalImageTag=${portal_tag}" \
-        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
-        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
-        --set-string "cluster=${cluster}" \
-        --set-string "stage=${stage}" >"${rendered}"
-    info "Registering gentian-portal ArgoCD Application (os=${GENTIAN_OS_BRANCH}, ui=${gentian_ui_branch}, tag=${portal_tag}, cluster=${cluster}, stage=${stage})..."
-    kubectl apply -f "${rendered}"
-    rm -f "${rendered}"
-}
-
-wait_for_gentian_portal_argocd() {
-    local timeout_sec="${1:-300}"
-    local ns="platform-kernel"
-    info "Waiting for gentian-portal ArgoCD Application (up to ${timeout_sec}s)..."
-    local elapsed=0
-    local interval=10
-    while (( elapsed < timeout_sec )); do
-        if ! kubectl get application gentian-portal -n argocd >/dev/null 2>&1; then
-            sleep 5
-            elapsed=$((elapsed + 5))
-            continue
-        fi
-        local health sync
-        health=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)
-        sync=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
-
-        # Gateway API HTTPRoute + ServerSideApply adds default backendRef fields that
-        # keep sync=OutOfSync even when the route is Accepted and serving traffic.
-        local sync_ok=0
-        [[ "${sync}" == "Synced" || "${sync}" == "OutOfSync" ]] && sync_ok=1
-
-        if [[ "${health}" == "Healthy" && "${sync_ok}" -eq 1 ]] \
-            && kubectl wait "deployment/gentian-portal-gentian-portal-api" -n "${ns}" \
-                --for=condition=Available --timeout=10s >/dev/null 2>&1 \
-            && kubectl wait "deployment/gentian-portal-gentian-portal-web" -n "${ns}" \
-                --for=condition=Available --timeout=10s >/dev/null 2>&1; then
-            if [[ "${sync}" == "OutOfSync" ]]; then
-                success "gentian-portal ArgoCD Application is Healthy (HTTPRoute SSA drift ignored)."
-            else
-                success "gentian-portal ArgoCD Application is Synced and Healthy."
-            fi
-            return 0
-        fi
-        printf "  gentian-portal: sync=%s health=%s (%ds/%ds)\n" \
-            "${sync:-unknown}" "${health:-unknown}" "${elapsed}" "${timeout_sec}"
-        sleep "${interval}"
-        elapsed=$((elapsed + interval))
-    done
-    warn "gentian-portal ArgoCD Application did not become Healthy within ${timeout_sec}s."
-    kubectl get application gentian-portal -n argocd \
-        -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null || true
-    kubectl get deploy -n "${ns}" -l app.kubernetes.io/instance=gentian-portal \
-        -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas' 2>/dev/null || true
-    return 1
-}
-
-refresh_gentian_portal_openfga() {
-    local store_id="$1"
-    [[ -n "${store_id}" ]] || return 0
-    local ns="platform-kernel"
-    info "Refreshing portal API with OpenFGA store_id..."
-    install_gentian_portal_secrets
-    kubectl patch secret gentian-portal-secrets -n "${ns}" --type merge \
-        -p "{\"stringData\":{\"OPENFGA_STORE_ID\":\"${store_id}\"}}" 2>/dev/null || true
-    kubectl rollout restart deployment/gentian-portal-gentian-portal-api -n "${ns}" 2>/dev/null || true
-}
-
-install_gentian_portal_chart() {
-    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
-    local portal_origin="https://portal.${kernel_domain}"
-
-    install_gentian_portal_secrets
-    apply_gentian_portal_argocd_application
-    release_gentian_portal_helm_bootstrap
-
-    success "gentian-portal ArgoCD Application registered at ${portal_origin}/login"
+    info "  Username: ${username}"
+    info "  No password: the handover issues the activation link that sets one."
 }
 
 install_portal_login() {
-    banner "Gentian portal login (OIDC + shell)"
+    banner "Kernel realm sign-in"
 
     # Waited for, not tested once. keycloak-admin is written by ESO once
     # Keycloak is up, so at this point in a fresh install it is usually seconds
@@ -1709,165 +1926,321 @@ install_portal_login() {
     # appeared 100 seconds later. Anything ESO produces is eventually consistent
     # with the step that needs it.
     local deadline=$(( SECONDS + 180 ))
-    until kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; do
+    until kubectl get secret keycloak-admin -n "$(_pl_identity_ns)" >/dev/null 2>&1; do
         if (( SECONDS >= deadline )); then
             error "keycloak-admin Secret did not appear within 180s."
             error "  It is written by ESO from OpenBao once Keycloak is running. Check:"
-            error "    kubectl get externalsecret -n platform-kernel"
-            error "    kubectl get pods -n platform-kernel -l app.kubernetes.io/name=keycloakx"
+            error "    kubectl get externalsecret -n $(_pl_identity_ns)"
+            error "    kubectl get pods -n $(_pl_identity_ns) -l app.kubernetes.io/name=keycloakx"
             return 1
         fi
         sleep 5
     done
 
     ensure_keycloak_admin_secret_url || return 1
-    ensure_portal_gateway_readiness
-
-    # The gentian-portal Client MR is not applied here.
-    #
-    # It used to be, from manifests/dev/gentian-portal-client.yaml — a path that
-    # stopped existing when be4947bc templated these services on stage. The
-    # apply was guarded by [[ -f ]], so it has silently done nothing since:
-    # a step that reads as delivering something and delivers nothing.
-    #
-    # The gentian-keycloak-provider ApplicationSet syncs
-    # kernel/services/keycloak-config/manifests, so Argo CD owns the MR — which
-    # is what the comment here used to call the "optional drift-safe path", and
-    # is now the only path.
+    ensure_edge_gateway_readiness
 
     run_keycloak_portal_bootstrap_job
     configure_argocd_oidc
 
-    if [[ "${PORTAL_SKIP_IMAGE_BUILD:-true}" != "true" ]]; then
-        if build_gentian_portal_images; then
-            export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-IfNotPresent}"
+    success "The kernel realm can be signed in to."
+    info "  https://platform.${KERNEL_DOMAIN}/  (once the platform desktop is Ready)"
+    info "  user: admin@${KERNEL_DOMAIN} — activated through the link the handover issues"
+}
+
+# tenant_admin_requires_mfa <tenant> — whether that tenant's administrator
+# must enrol a second factor: its manifest's spec.admin.requireMFA, true
+# unless it says false. The same setting, in the same place, for the platform
+# tenant and for every other.
+tenant_admin_requires_mfa() {
+    local file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/tenants/$1/tenant.yaml"
+    local v=""
+    [[ -f "${file}" ]] && v="$(yq eval '.spec.admin.requireMFA' "${file}" 2>/dev/null || true)"
+    [[ "${v}" == "false" ]] && echo false || echo true
+}
+
+# platform_admin_requires_mfa — the platform administrator's.
+platform_admin_requires_mfa() {
+    tenant_admin_requires_mfa platform
+}
+
+# The parts of issue_admin_activation that are used more than once.
+#
+# _activation_admin_token <keycloak-base> <user> <password> — a token of the
+# master realm. It lives for 60 seconds (see _keycloak_refresh_token_shell),
+# which is why issue_admin_activation asks for one again after it has waited
+# for a person, and again after any call that was refused.
+_activation_admin_token() {
+    curl -sS --max-time 15 -d client_id=admin-cli -d grant_type=password \
+        --data-urlencode "username=$2" --data-urlencode password@<(printf '%s' "$3") \
+        "$1/realms/master/protocol/openid-connect/token" 2>/dev/null | jq -r '.access_token // empty'
+}
+
+# _activation_request <method> <auth-header> <url> <json-body> [max-seconds]
+# — one call to Keycloak, answered as its body, a newline, and the status.
+# The status is kept: under curl -f a refusal and a failure looked alike and
+# neither said why.
+_activation_request() {
+    curl -sS --max-time "${5:-15}" -w '\n%{http_code}' -X "$1" -H @<(printf '%s\n' "$2") -H "Content-Type: application/json" \
+        "$3" -d "$4" 2>/dev/null || true
+}
+
+# _activation_refused <what was being done> — a call answered 401. That is
+# the installer's own token having run out, or been refused, and it is said
+# as that: it used to surface as whatever the refused call was for. The
+# caller draws a new token and makes the call once more.
+_activation_refused() {
+    warn "  KEYCLOAK REFUSED THE INSTALLER'S TOKEN (HTTP 401) while $1."
+    warn "  A token of the master realm lives for 60 seconds and this one has"
+    warn "  run out. Drawing a new one and trying once more."
+}
+
+# _activation_later <command> <username> <recovery-email> — what to run when
+# nothing was handed over. A tenant's link is issued by the cluster, to
+# somebody signed in to it, so the sign-in is named first; the address that
+# was given is carried along so that it is not typed again.
+_activation_later() {
+    local again="$1" username="$2" email="${3:-}"
+    [[ -n "${again}" ]] || return 0
+    warn "  NO ACTIVATION LINK WAS HANDED OVER for ${username}. The account is there and has no password."
+    warn "  To issue one:"
+    if [[ "${again}" == "kubectl gentian "* ]]; then
+        warn "    kubectl gentian login     # as the platform admin"
+        warn "    ${again}${email:+ --recovery-email ${email}}"
+    else
+        warn "    ${again}"
+    fi
+}
+
+# issue_admin_activation <realm> <username> <require-mfa> <recovery-email> <again>
+# — hand one administrator account to its holder, once.
+#
+# The account of a realm's administrator: the cluster's, in the kernel realm,
+# or a tenant's, in the tenant's own. One function for both, because the
+# practice is one: an account that already has a password is left alone -- it
+# has been activated, and its holder signs in with what they chose. Otherwise
+# a single-use, expiring link is issued -- set a password, and enrol a second
+# factor when <require-mfa> is true -- and mailed to <recovery-email> when
+# there is one (or to the address asked for here), or shown here, once, when
+# there is not, or when the realm cannot send mail yet (a relay credential is
+# supplied after the administrator's sign-in on an external-mail cluster).
+# The link comes straight from Keycloak to this terminal over a Service
+# address or port-forward; it is never written to a pod's log.
+#
+# <again> is the command that issues a new link later, named where the
+# account turns out to be activated already.
+#
+# Prints what to do; returns 0 when the account is usable or a link was handed
+# over, 1 when nothing could be issued.
+issue_admin_activation() {
+    local realm="$1" username="$2" require_mfa="$3" email="${4:-}" again="${5:-}" ns
+    ns="$(_pl_identity_ns)"
+    local kc_user kc_pass base token uid creds has_pw
+    kc_user="admin"
+    kc_pass="$(kubectl get secret keycloak-idp-credentials -n "${ns}" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    local svc="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http"
+    if [[ -z "${kc_user}" || -z "${kc_pass}" ]] || ! base="$(gentian_service_addr "${svc}" "${ns}" 8080 http)"; then
+        warn "  Keycloak cannot be reached from here to issue the activation link."
+        [[ -n "${again}" ]] && warn "  To issue one later: ${again}"
+        return 1
+    fi
+    base="${base}/auth"
+    # The address this run was given, kept for the commands printed when
+    # nothing can be handed over: email itself is emptied further down.
+    local given_email="${email}"
+    token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+    if [[ -z "${token}" ]]; then
+        warn "  Keycloak refused the installer's admin credential."
+        _activation_later "${again}" "${username}" "${given_email}"
+        return 1
+    fi
+    local auth="Authorization: Bearer ${token}"
+    uid="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") \
+        "${base}/admin/realms/${realm}/users?username=${username}&exact=true" | jq -r '.[0].id // empty')"
+    if [[ -z "${uid}" ]]; then
+        warn "  ${username} does not exist in realm ${realm}."
+        _activation_later "${again}" "${username}" "${given_email}"
+        return 1
+    fi
+    creds="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/users/${uid}/credentials")"
+    has_pw="$(printf '%s' "${creds}" | jq '[.[] | select(.type=="password")] | length > 0' 2>/dev/null || echo false)"
+    # Forced (./install.sh --activate-admin): a new link even for an account
+    # that has a password, which is how a holder who lost it gets back in.
+    if [[ "${has_pw}" == "true" && "${GENTIAN_ACTIVATE_FORCE:-0}" != "1" ]]; then
+        info "  ${username} is activated: sign in with the password its holder chose."
+        if [[ -n "${again}" ]]; then
+            info "  Lost it? A new link: ${again}"
+        fi
+        return 0
+    fi
+
+    local actions='["UPDATE_PASSWORD"]'
+    if [[ "${require_mfa}" == "true" ]]; then
+        actions='["UPDATE_PASSWORD","CONFIGURE_TOTP"]'
+    fi
+    local can_mail=false
+    # Whether this realm can send mail now. With an external relay the
+    # credential arrives through the console, after this sign-in -- so a
+    # tunnel cluster, or any cluster whose relay is not supplied yet, cannot
+    # mail the link, and asking for an address to mail it to only sets up a
+    # failure. Ask only when there is a mail server to send through.
+    if curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}" 2>/dev/null \
+        | jq -e '(.smtpServer.host // "") != "" and (.smtpServer.from // "") != ""' >/dev/null 2>&1; then
+        can_mail=true
+    fi
+    if [[ "${can_mail}" != "true" ]]; then
+        info "  Realm ${realm} has no mail server yet (the relay is supplied after the"
+        info "  administrator's sign-in), so the link is shown here rather than mailed."
+    fi
+    if [[ "${can_mail}" == "true" && -z "${email}" && -t 0 && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        printf '  Recovery email for %s (Enter to show the link here instead): ' "${username}"
+        read -r email || email=""
+        given_email="${email}"
+        # A new token after the question. The master realm's access tokens
+        # live for 60 seconds (see _keycloak_refresh_token_shell), and this
+        # one was drawn before a person was asked to type an address: anyone
+        # who took a minute over it had every call below refused with 401.
+        # The mail was then reported as unsendable and the link as not
+        # issued, on a cluster where both worked.
+        token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+        if [[ -z "${token}" ]]; then
+            warn "  Keycloak refused the installer's admin credential."
+            _activation_later "${again}" "${username}" "${given_email}"
+            return 1
+        fi
+        auth="Authorization: Bearer ${token}"
+    fi
+    # Where the person lands afterwards: the zone client's own root, read off
+    # the client the way the director's invitations read it. A redirect the
+    # client does not list is refused, and its list is the OIDC callbacks.
+    local client="gentian-edge-${realm}" redirect
+    redirect="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/clients?clientId=${client}" \
+        | jq -r '.[0].rootUrl // .[0].baseUrl // empty' 2>/dev/null)"
+    [[ -n "${redirect}" ]] && redirect="${redirect%/}/"
+    if [[ -n "${email}" && "${can_mail}" != "true" ]]; then
+        # Given ahead of time (in install.env): kept as the recovery address
+        # for later resets, not mailed to now.
+        local cur0 upd0
+        cur0="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/users/${uid}")"
+        upd0="$(printf '%s' "${cur0}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
+        curl -sf --max-time 15 -X PUT -H @<(printf '%s\n' "${auth}") -H "Content-Type: application/json" \
+            "${base}/admin/realms/${realm}/users/${uid}" -d "${upd0}" >/dev/null &&
+            info "  ${email} is kept as the recovery address for later resets."
+        email=""
+    fi
+    if [[ -n "${email}" ]]; then
+        local cur upd mailed_actions
+        # VERIFY_EMAIL in the mailed link only: following a link that arrived
+        # at the address is what proves the address, and Keycloak (26.8 on)
+        # records that only when the link names the action. It adds no step.
+        # The link shown below does not carry it: nothing reached the address.
+        mailed_actions="$(jq -c '["VERIFY_EMAIL"] + .' <<<"${actions}")"
+        cur="$(curl -sS --max-time 15 -H @<(printf '%s\n' "${auth}") "${base}/admin/realms/${realm}/users/${uid}")"
+        upd="$(printf '%s' "${cur}" | jq --arg e "${email}" '.email = $e | .attributes["gentian.inviteEmail"] = [$e]')"
+        # What Keycloak answered, kept: the two calls fail for different
+        # reasons -- a refused credential, an address the realm rejects, a
+        # mail server that does not take the message -- and "could not be
+        # sent" with a guess after it named none of them.
+        local saved sent
+        local user_url="${base}/admin/realms/${realm}/users/${uid}" mail_url
+        mail_url="${user_url}/execute-actions-email?client_id=${client}${redirect:+&redirect_uri=$(jq -rn --arg r "${redirect}" '$r|@uri')}"
+        saved="$(_activation_request PUT "${auth}" "${user_url}" "${upd}")"
+        if [[ "${saved##*$'\n'}" == "401" ]]; then
+            _activation_refused "recording ${email} as the recovery address"
+            token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+            auth="Authorization: Bearer ${token}"
+            saved="$(_activation_request PUT "${auth}" "${user_url}" "${upd}")"
+        fi
+        saved="${saved##*$'\n'}"
+        if [[ "${saved}" != 2* ]]; then
+            warn "  ${email} could not be recorded as ${username}'s address: Keycloak answered HTTP ${saved:-nothing}."
+            warn "  Showing the link here instead."
         else
-            info "Using CI portal images (tag=${PORTAL_IMAGE_TAG:-develop})."
-            export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-Always}"
+            sent="$(_activation_request PUT "${auth}" "${mail_url}" "${mailed_actions}" 30)"
+            if [[ "${sent##*$'\n'}" == "401" ]]; then
+                _activation_refused "mailing the link"
+                token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+                auth="Authorization: Bearer ${token}"
+                sent="$(_activation_request PUT "${auth}" "${mail_url}" "${mailed_actions}" 30)"
+            fi
+            if [[ "${sent##*$'\n'}" == 2* ]]; then
+                success "  Activation link mailed to ${email}: it sets ${username}'s password$( [[ "${actions}" == *TOTP* ]] && echo ' and second factor')."
+                return 0
+            fi
+            warn "  The activation mail could not be sent: Keycloak answered HTTP ${sent##*$'\n'} $(printf '%s' "${sent%$'\n'*}" | jq -r '.errorMessage // .error // empty' 2>/dev/null)"
+            warn "  ${email} is kept as the recovery address; showing the link here instead."
         fi
-    else
-        info "Using CI portal images (tag=${PORTAL_IMAGE_TAG:-develop})."
-        export PORTAL_IMAGE_PULL_POLICY="${PORTAL_IMAGE_PULL_POLICY:-Always}"
     fi
-
-    install_gentian_portal_chart
-
-    if wait_for_openfga_runtime_store_id 180; then
-        local store_id
-        store_id=$(_openfga_runtime_store_id || true)
-        if [[ -n "${store_id}" ]]; then
-            refresh_gentian_portal_openfga "${store_id}"
-        fi
-    else
-        warn "Authz bridge did not publish openfga-runtime — ensure operator uses CI image (GENTIAN_OS_IMAGE_TAG=develop)."
+    local answer link expires
+    local link_url="${base}/realms/${realm}/gentian-activation/users/${uid}/link" link_ask
+    link_ask="$(jq -n --argjson a "${actions}" --arg c "${client}" --arg r "${redirect}" '{actions:$a, clientId:$c} + (if $r != "" then {redirectUri:$r} else {} end)')"
+    answer="$(_activation_request POST "${auth}" "${link_url}" "${link_ask}")"
+    if [[ "${answer##*$'\n'}" == "401" ]]; then
+        _activation_refused "asking for the link"
+        token="$(_activation_admin_token "${base}" "${kc_user}" "${kc_pass}")"
+        auth="Authorization: Bearer ${token}"
+        answer="$(_activation_request POST "${auth}" "${link_url}" "${link_ask}")"
     fi
+    local status="${answer##*$'\n'}"
+    answer="${answer%$'\n'*}"
+    link="$(printf '%s' "${answer}" | jq -r '.link // empty' 2>/dev/null)"
+    expires="$(printf '%s' "${answer}" | jq -r '.expiresAt // empty' 2>/dev/null)"
+    if [[ -z "${link}" ]]; then
+        warn "  Keycloak issued no activation link: HTTP ${status} ${answer:-(empty answer)}"
+        _activation_later "${again}" "${username}" "${given_email}"
+        return 1
+    fi
+    echo ""
+    echo -e "${GREEN}  Activate ${username} — open this once, it works one time:${NC}"
+    echo -e "${GREEN}    ${link}${NC}"
+    [[ -n "${expires}" ]] && info "  Valid until $(date -d "@${expires}" 2>/dev/null || date -r "${expires}" 2>/dev/null || echo "${expires}")."
+    info "  It sets the password$( [[ "${actions}" == *TOTP* ]] && echo ' and a second factor'); nobody else ever knows either."
+    return 0
+}
 
-    wait_for_gentian_portal_argocd 300 || warn "gentian-portal ArgoCD Application not Healthy yet — check portal API /readyz and OPENFGA_STORE_ID."
+# issue_platform_admin_activation — the cluster administrator's account, in
+# the kernel realm (CLUSTER_ADMIN_RECOVERY_EMAIL, or asked for).
+issue_platform_admin_activation() {
+    local kernel_domain="${KERNEL_DOMAIN:?}" realm="${KERNEL_REALM:-kernel}"
+    issue_admin_activation "${realm}" "admin@${kernel_domain}" "$(platform_admin_requires_mfa)" \
+        "${CLUSTER_ADMIN_RECOVERY_EMAIL:-}" "./install.sh --activate-admin"
+}
 
-    success "Stage 1 portal login ready."
-    info "  https://portal.${KERNEL_DOMAIN}/login"
-    info "  user: administrator@${KERNEL_DOMAIN}"
-    info "  password: $(_platform_admin_derive_password)"
+# issue_tenant_admin_activation <tenant> [recovery-email] — a tenant
+# administrator's account, in the tenant's own realm.
+#
+# For the user tenant of a single-tenancy cluster, which the install creates
+# after the handover (E-04): for every other tenant, and for this one later,
+# the registrar issues these (kubectl gentian tenants activate-admin), as the
+# person who asked. The realm and the login are the operator's: a tenant's
+# realm carries its name unless its manifest says otherwise, and its
+# administrator's login is the address the operator reports on the tenant's
+# status -- on the tenant's custom domain when it has one, and
+# user-admin@<kernel-domain> for the tenant that lives on the cluster's own
+# domain, where admin@ is the platform admin's. No login is guessed: a tenant
+# whose status names none yet has no account to hand over.
+issue_tenant_admin_activation() {
+    local tenant="$1" email="${2:-}" realm username
+    realm="$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.keycloakRealm}' 2>/dev/null || true)"
+    realm="${realm:-${tenant}}"
+    username="$(kubectl get tenant "${tenant}" -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
+    case "${username}" in
+        ""|*.invalid)
+            warn "  Tenant/${tenant} does not report its administrator's login yet (status.adminEmail)."
+            return 1 ;;
+    esac
+    info "  User: ${username}"
+    issue_admin_activation "${realm}" "${username}" "$(tenant_admin_requires_mfa "${tenant}")" \
+        "${email}" "kubectl gentian tenants activate-admin ${tenant}"
 }
 
 print_portal_login_summary() {
     local kernel_domain="${KERNEL_DOMAIN:-}"
     [[ -n "${kernel_domain}" ]] || return 0
-    local password
-    password=$(_platform_admin_derive_password 2>/dev/null || echo "")
-    [[ -n "${password}" ]] || password="(set MASTER_PASSWORD in install.env)"
-
-    # Derived, not observed — so say so only when the inputs are the cluster's.
-    #
-    # This banner prints whatever this shell derives, and an HMAC always
-    # produces a plausible-looking hash, so a run whose MASTER_PASSWORD or
-    # DERIVATION_SALT differ from the cluster's printed a 64-character password
-    # that had never been valid, under the heading of the credential the
-    # operator is meant to sign in with. The one guard here tested for an empty
-    # string, which the derivation cannot return.
-    #
-    # The cluster holds both inputs in the Secret it derives from, so the claim
-    # is checkable: re-derive with what the cluster has and compare. A mismatch
-    # is reported rather than corrected, because which side is right depends on
-    # what the operator meant — and printing the cluster's password here would
-    # hand out a credential to a shell that could not derive it.
-    local cluster_salt cluster_master cluster_password=""
-    cluster_salt="$(gentian_cluster_derivation_salt 2>/dev/null || true)"
-    cluster_master="$(kubectl get secret gentian-os-master-password \
-        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
-    if [[ -n "${cluster_master}" && "${SECRET_MODE:-derived}" != "random" ]]; then
-        cluster_password="$(echo -n "portal-bootstrap:administrator_password" |
-            openssl dgst -sha256 -hmac "${cluster_master}${cluster_salt}" | awk '{print $2}')"
-    fi
-    if [[ -n "${cluster_password}" && "${cluster_password}" != "${password}" ]]; then
-        echo ""
-        warn "The derivation inputs in this shell are NOT the ones this cluster"
-        warn "  was built with, so the password below is not the one that works."
-        warn "  MASTER_PASSWORD and DERIVATION_SALT are both stored in"
-        warn "  ${CROSSPLANE_NAMESPACE:-crossplane-system}/gentian-os-master-password."
-        warn "  Recover them, then re-run — see GETTING-STARTED.md,"
-        warn "  'The portal password does not work'."
-        password="(this shell cannot derive it — see the warning above)"
-    fi
-    # Derived correctly is still not the same as "this is the password".
-    #
-    # The check above proves this shell agrees with the cluster's Secret. It says
-    # nothing about Keycloak, which holds whatever the last D-06 run wrote — so a
-    # cluster whose master password changed after that run prints a value that
-    # agrees with every stored input and is refused at the login page. That is
-    # the shape the operator hit: no warning, a plausible password, no way to
-    # tell it apart from a working one without typing it.
-    #
-    # So ask Keycloak. The password grant on gentian-portal-bff is the only
-    # endpoint that answers "is this the password", and its two failure modes are
-    # distinguishable: invalid_grant is the password, invalid_client is the BFF
-    # secret — which is derived from the same master, so it fails together and
-    # must not be reported as a password problem.
-    local verify_realm="${KERNEL_REALM:-kernel}"
-    local verify_base="https://id.${kernel_domain}/auth/realms/${verify_realm}"
-    if [[ "${password}" != "("* ]]; then
-        local bff_secret grant
-        bff_secret="$(_portal_bff_derive_secret 2>/dev/null || true)"
-        if [[ -n "${bff_secret}" ]]; then
-            grant="$(curl -sS --max-time 15 \
-                -d "client_id=gentian-portal-bff" \
-                -d "client_secret=${bff_secret}" \
-                -d "username=administrator@${kernel_domain}" \
-                -d "password=${password}" \
-                -d "grant_type=password" \
-                "${verify_base}/protocol/openid-connect/token" 2>/dev/null || true)"
-            case "${grant}" in
-                *access_token*)
-                    : ;;   # It works. Nothing to say that the banner does not.
-                *invalid_grant*)
-                    echo ""
-                    warn "Keycloak does not accept this password."
-                    warn "  Every stored input agrees, so the derivation is right and the value"
-                    warn "  Keycloak holds is older — it was set by the last D-06 run, with a"
-                    warn "  master password that has since changed."
-                    warn "  Re-assert it:  ./install.sh --only D-06 --force"
-                    ;;
-                *invalid_client*)
-                    echo ""
-                    warn "The portal BFF client secret is not the one Keycloak holds, so the"
-                    warn "  password below could not be checked. Both are derived from"
-                    warn "  MASTER_PASSWORD, so they went stale together."
-                    warn "  Re-assert both:  ./install.sh --only D-06 --force"
-                    ;;
-                *)
-                    # Unreachable, mid-rollout, or an answer this does not know.
-                    # Not a verdict on the password, so it must not read as one.
-                    echo ""
-                    info "  (could not reach Keycloak to check the password below)"
-                    ;;
-            esac
-        fi
-    fi
     echo ""
-    echo -e "${GREEN}  Gentian portal (cluster admin):${NC}"
-    echo -e "${GREEN}    URL      : https://portal.${kernel_domain}/login${NC}"
-    echo -e "${GREEN}    User     : administrator@${kernel_domain}${NC}"
-    echo -e "${GREEN}    Password : ${password}${NC}"
+    echo -e "${GREEN}  Platform desktop (the platform admin):${NC}"
+    echo -e "${GREEN}    URL      : https://platform.${kernel_domain}/${NC}"
+    echo -e "${GREEN}    User     : admin@${kernel_domain}${NC}"
+    echo -e "${GREEN}    Password : set by its holder through the activation link — never stored or printed${NC}"
     echo -e "${GREEN}    OIDC     : https://id.${kernel_domain}/auth/realms/${KERNEL_REALM:-kernel}${NC}"
 }

@@ -1,0 +1,1013 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
+	"github.com/gentian-org/gentian-os/internal/httpbody"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
+)
+
+// Importing a tenant: Create plus Restore (data-lifecycle.md §4).
+//
+// The bundle is uploaded or named; its manifest is read with the key the
+// person gives; the definition of every app the bundle's tenant lists is
+// made sure of -- on the cluster already, or fetched at the build the bundle
+// records -- or the import is refused before anything is changed, save the
+// platform's own components of an earlier release, which are left out and
+// named (withoutRetiredPlatformApps); the tenant
+// is declared from the manifest's settings as one commit, by the function a
+// created tenant is committed by; and once the operator reports it Ready,
+// with its apps up, a restore fills the shells from the bundle. Everything
+// after the commit runs in the background and the status route says where it
+// is -- an import is minutes to hours, and no request waits that long.
+//
+// The commit carries the record of the import (gitops.PendingImport), which
+// is removed when the import has finished. A director that restarts in
+// between finds it (ResumeImports) and goes on: it watches the restore when
+// one was started, and otherwise says it needs the bundle's key again, which
+// was given with the request and is kept in memory only.
+//
+// A bundle of a tenant that was bound to a custom domain (a TenantDomain)
+// keeps it unless the request says otherwise (keepCustomDomain: false): the
+// TenantDomain is declared in the commit that declares the tenant, under the
+// rules a bind is under and with the right a bind needs (can_configure on the
+// cluster, which an import needs as well), and the restore starts only once
+// the operator has put the tenant on it. The restore then sees the domain the
+// bundle was taken on, so nothing is moved or left out for a move. Pointing
+// the domain's DNS at this cluster is the person's: the status says so.
+
+// ImportStatus is where one import stands.
+type ImportStatus struct {
+	Tenant  string `json:"tenant"`
+	Phase   string `json:"phase"` // declared | provisioning | awaiting-key | restoring | ready | failed
+	Message string `json:"message,omitempty"`
+	// Warning is set when the import reused a retired tenant's name.
+	Warning string `json:"warning,omitempty"`
+	Commit  string `json:"commit,omitempty"`
+	Restore string `json:"restore,omitempty"`
+	// Bundle names what was imported, for the record.
+	Bundle gentianov1alpha1.BundleRef `json:"bundle"`
+	// PasswordResetRequired is the restore's word: members come back without
+	// credentials, which no bundle carries.
+	PasswordResetRequired bool `json:"passwordResetRequired,omitempty"`
+	// Complete, NotRestored and Notes are the restore's too: whether
+	// everything the bundle holds was put back, what was not and why, and
+	// what a restore never brings back.
+	Complete    *bool             `json:"complete,omitempty"`
+	NotRestored []json.RawMessage `json:"notRestored,omitempty"`
+	Notes       []string          `json:"notes,omitempty"`
+	// OutsideGuarantee is the restore's word too: what makes this import
+	// other than the round trip the platform guarantees, when something does.
+	OutsideGuarantee string `json:"outsideGuarantee,omitempty"`
+	// Skipped are the apps of the bundle's tenant the tenant here was not
+	// given, each with why (retiredPlatformApps). Their data is not restored.
+	Skipped []gitops.SkippedApp `json:"skipped,omitempty"`
+	// CustomDomain is the bundle's custom domain, declared again with the
+	// tenant; "" when there was none or it was not kept. Its DNS is not the
+	// platform's to point here.
+	CustomDomain string `json:"customDomain,omitempty"`
+}
+
+// dnsNote is what an import that keeps a custom domain says of its DNS.
+func dnsNote(domain string) string {
+	return "The tenant keeps its custom domain " + domain + ": point the DNS of " + domain +
+		" and of its subdomains at this cluster, which the import does not do"
+}
+
+// importWait is how long one watcher of an import waits, for the tenant and
+// then for the restore; importPoll, how often it asks. Atomic because a
+// watcher outlives the request that started it.
+const importWait = 2 * time.Hour
+
+var importPoll = func() *atomic.Int64 {
+	var d atomic.Int64
+	d.Store(int64(10 * time.Second))
+	return &d
+}()
+
+type importRequest struct {
+	Bundle gentianov1alpha1.BundleRef `json:"bundle"`
+	// Source names a bundle at one of the cluster's declared sources instead
+	// (bundle_sources.go): {"name": "<source>", "prefix": "<bundle>"}. The
+	// operator finds where it is and with which keys; the import then goes
+	// on with the bundle it resolved to.
+	Source     *importSource   `json:"source,omitempty"`
+	Decryption json.RawMessage `json:"decryption"`
+	// Name is not an override: an import takes the tenant's name from the
+	// bundle. A request that names another is refused, so that a caller
+	// that still asks for a rename is told so rather than given the
+	// bundle's name without a word.
+	Name string `json:"name,omitempty"`
+	// KeepCustomDomain is whether a tenant the bundle records as bound to a
+	// custom domain is bound to it again here. Unset is yes; false makes the
+	// tenant at <tenant>.<kernel domain>, as a move to another domain.
+	KeepCustomDomain *bool `json:"keepCustomDomain,omitempty"`
+	// ReuseName approves importing under the name of a tenant this cluster
+	// retired (gitops.ErrNameUsedBefore): recovering that tenant.
+	ReuseName bool `json:"reuseName,omitempty"`
+}
+
+type importSource struct {
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+}
+
+// inspection is what is asked of the operator to open the bundle a request
+// names, and why it cannot be asked when it cannot.
+func (req importRequest) inspection() (map[string]any, string) {
+	ask := map[string]any{"decryption": req.Decryption}
+	if req.Source == nil {
+		ask["bundle"] = req.Bundle
+		return ask, ""
+	}
+	if req.Bundle.Bucket != "" || req.Bundle.Prefix != "" {
+		return nil, "name a bundle or a source, not both"
+	}
+	ask["source"] = map[string]string{"name": req.Source.Name, "prefix": req.Source.Prefix}
+	return ask, ""
+}
+
+// uploadBundle streams the request body to the operator, which lays it out
+// in the cluster's storage and answers with where. Both of the director's
+// deadlines are lifted for it, once the caller is authorized: the transfer
+// takes as long as the bundle is big, hours for a large one, and the answer
+// is written only at its end -- under the write deadline set when the request
+// arrived, an upload past six minutes was stored and its answer then lost.
+// The request's context ends it if the sender goes.
+func (s *Server) uploadBundle(w http.ResponseWriter, r *http.Request, _ call) {
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
+	// A tenant's administrator's is recorded as the tenant's, and bounded by
+	// what a tenant may put into the import storage. into is an upload
+	// startUpload made: filled, or continued after a transfer that stopped.
+	q := ownTenant(r)
+	if into := r.URL.Query().Get("into"); into != "" {
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("into", into)
+	}
+	path := "/v1/bundles"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	// The body is handed on without its Close: the transport closes what it
+	// sends, and a closed body could not be drained below.
+	status, body, err := s.cfg.Lifecycle.Upload(r.Context(), path, r.Header.Get("Content-Type"), struct{ io.Reader }{r.Body})
+	if err != nil || status < 200 || status > 299 {
+		// The operator answered -- or the connection to it broke -- before
+		// the sender finished sending: what is left is read before the
+		// answer, or the sender sees only a reset (httpbody.Drain).
+		drained, ended := httpbody.Drain(w, r, httpbody.DrainWindow)
+		reason := lifecycle.ErrorMessage(body)
+		if err != nil {
+			reason = err.Error()
+		}
+		s.cfg.Log.WarnContext(r.Context(), "bundle upload refused", "request_id", guard.ID(r.Context()),
+			"status", status, "reason", reason, "into", r.URL.Query().Get("into"), "discarded", drained, "bodyEnded", ended)
+	}
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	s.started(w, r, status, body)
+}
+
+// startUpload makes an empty upload in the import storage and answers
+// where, for a sender that has to survive a transfer stopping part-way: it
+// fills the upload with POST .../bundles?into=<prefix>, again after a stop,
+// sending what uploadedFiles does not list.
+func (s *Server) startUpload(w http.ResponseWriter, r *http.Request, c call) {
+	path := "/v1/bundles/uploads"
+	if q := ownTenant(r); q != nil {
+		path += "?" + q.Encode()
+	}
+	status, body, err := s.cfg.Lifecycle.Do(r.Context(), path, c.meta.ActorName(), struct{}{})
+	s.relay(w, r, status, body, err)
+}
+
+// removeImportedBundle deletes an upload or a fetch from the cluster's import
+// storage, when the person who put it there is done with it -- an import
+// deleted in a console -- rather than leaving it for the sweep. On a tenant's
+// route, only one recorded as that tenant's; one a restore still reads is
+// refused (409).
+func (s *Server) removeImportedBundle(w http.ResponseWriter, r *http.Request, c call) {
+	status, body, err := s.cfg.Lifecycle.Delete(r.Context(), "/v1/bundles/"+url.PathEscape(r.PathValue("prefix")), c.meta.ActorName(), ownTenant(r))
+	if err == nil && status == http.StatusNoContent {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.relay(w, r, status, body, err)
+}
+
+// uploadedFiles lists what an upload being filled holds: each file's size,
+// by its name in the bundle.
+func (s *Server) uploadedFiles(w http.ResponseWriter, r *http.Request, _ call) {
+	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/bundles/"+url.PathEscape(r.PathValue("prefix"))+"/files", ownTenant(r))
+	s.relay(w, r, status, body, err)
+}
+
+// inspectBundle opens the manifest and says what the bundle holds, so a
+// person can see what they are about to import before anything is declared.
+func (s *Server) inspectBundle(w http.ResponseWriter, r *http.Request, c call) {
+	var req importRequest
+	if err := decode(r, &req); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"bundle": {...}, "decryption": {...}}`)
+		return
+	}
+	ask, why := req.inspection()
+	if why != "" {
+		s.fail(w, r, http.StatusBadRequest, why)
+		return
+	}
+	status, body, err := s.cfg.Lifecycle.Do(r.Context(), "/v1/bundles/inspect", c.meta.ActorName(), ask)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+// importTenant declares the tenant from the bundle's manifest and starts
+// watching for the moment a restore can begin. Asked again for an import that
+// has not finished, with the same bundle, it goes on with that import: that
+// is how an import is given its key again after the director restarted.
+func (s *Server) importTenant(w http.ResponseWriter, r *http.Request, c call) {
+	ctx := r.Context()
+	var req importRequest
+	if err := decode(r, &req); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"bundle": {...}, "decryption": {...}}`)
+		return
+	}
+	ask, why := req.inspection()
+	if why != "" {
+		s.fail(w, r, http.StatusBadRequest, why)
+		return
+	}
+	status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/bundles/inspect", c.meta.ActorName(), ask)
+	if err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	if status != http.StatusOK {
+		s.started(w, r, status, body)
+		return
+	}
+	var insp struct {
+		Bundle   gentianov1alpha1.BundleRef `json:"bundle"`
+		Manifest *backup.Manifest           `json:"manifest"`
+	}
+	if err := json.Unmarshal(body, &insp); err != nil || insp.Manifest == nil {
+		s.fail(w, r, http.StatusBadGateway, "the operator's inspection did not parse")
+		return
+	}
+	if req.Source != nil {
+		// From here on, the bundle the source resolved to: it is what the
+		// import is recorded with and restored from.
+		req.Bundle = insp.Bundle
+	}
+	// The tenant's name is the bundle's. The platform brings a tenant back
+	// under the name it had, on this cluster or another; it does not rename.
+	name := insp.Manifest.Tenant
+	if req.Name != "" && req.Name != name {
+		s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"the bundle is of tenant %s, and an import makes the tenant under the name its bundle carries and does not rename: rename the bundle with a tool that rewrites it first. Nothing was changed", name))
+		return
+	}
+	if !gentianov1alpha1.ValidTenantName(name) {
+		s.fail(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"the tenant name is not a DNS label of at most %d characters", gentianov1alpha1.MaxTenantNameLength))
+		return
+	}
+	if insp.Manifest.TenantSpec == nil {
+		s.fail(w, r, http.StatusUnprocessableEntity, "the bundle's manifest carries no tenant settings, so no tenant can be made from it; nothing was changed")
+		return
+	}
+
+	// An import of this tenant that has not finished: this request goes on
+	// with it, if it is of the same bundle.
+	pending, unfinished, err := s.cfg.Repo.PendingImport(ctx, name)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if unfinished {
+		s.resumeImport(w, r, c, pending, req)
+		return
+	}
+
+	// A tenant of the name, before anything is fetched or committed for it.
+	if _, err := s.cfg.Repo.IsPlatformTenant(ctx, name); err == nil {
+		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or retire it and import again")
+		return
+	} else if !errors.Is(err, gitops.ErrTenantNotFound) {
+		s.repoError(w, r, err)
+		return
+	}
+
+	// The custom domain, kept unless the request says not to: refused here,
+	// before a definition is committed, when it cannot be this tenant's.
+	customDomain := ""
+	if insp.Manifest.CustomDomain != "" && (req.KeepCustomDomain == nil || *req.KeepCustomDomain) {
+		customDomain, err = s.cfg.Repo.CheckImportedDomain(ctx, name, insp.Manifest.CustomDomain)
+		if !s.importDomainRefused(w, r, err) {
+			return
+		}
+	}
+
+	// The platform's own components of an earlier release are left out; the
+	// rest are the tenant's apps, every one of which it is given.
+	spec, skipped := withoutRetiredPlatformApps(insp.Manifest.TenantSpec)
+
+	// The apps' definitions, before anything is committed. A tenant whose
+	// manifest names a profile the cluster does not have is never
+	// provisioned, and an import that waits for it can only time out.
+	missing, err := s.importProfiles(ctx, name, spec, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if len(missing) > 0 {
+		s.fail(w, r, http.StatusUnprocessableEntity, "this cluster cannot obtain the definition of every app the bundle's tenant has: "+
+			strings.Join(missing, "; ")+". Nothing was changed. Add a catalog that serves them (kubectl gentian catalogues add), "+
+			"or install the apps' definitions here, and import again")
+		return
+	}
+
+	now := time.Now().UTC()
+	pending = gitops.PendingImport{
+		Tenant: name, Source: insp.Manifest.Tenant, Export: insp.Manifest.Export, Bundle: req.Bundle,
+		Restore:     "import-" + now.Format("20060102-150405"),
+		RequestedAt: now.Format(time.RFC3339), RequestedBy: c.meta.ActorName(),
+		Skipped: skipped, CustomDomain: customDomain,
+	}
+	origin := fmt.Sprintf("export %s of %s, of tenant %s", insp.Manifest.Export, insp.Manifest.CreatedAt, insp.Manifest.Tenant)
+	// This cluster's placements, in the commit that declares the tenant, as
+	// a tenant created here has them.
+	if names := s.placedForNewTenant(ctx); len(names) > 0 {
+		withPlaced := *spec
+		withPlaced.Apps = append([]gentianov1alpha1.TenantApp{}, spec.Apps...)
+		for _, name := range names {
+			withPlaced.Apps = append(withPlaced.Apps, gentianov1alpha1.TenantApp{Profile: name, Placed: true})
+		}
+		spec = &withPlaced
+	}
+	res, err := s.cfg.Repo.DeclareTenant(ctx, gitops.ImportedTenant{
+		Name: name, Spec: spec, Origin: origin, Pending: pending, ReuseName: req.ReuseName,
+	}, c.meta)
+	switch {
+	case errors.Is(err, gitops.ErrTenantExists):
+		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists; restore into it instead, or retire it and import again")
+		return
+	case errors.Is(err, gitops.ErrDomainHeld), errors.Is(err, gitops.ErrInvalidDomain):
+		// Bound elsewhere between the check above and the commit.
+		s.importDomainRefused(w, r, err)
+		return
+	case errors.Is(err, gitops.ErrNameUsedBefore):
+		s.nameUsedBefore(w, r, err)
+		return
+	case errors.Is(err, gitops.ErrSingleTenancy), errors.Is(err, backup.ErrNamesTaken), errors.Is(err, gitops.ErrNameIsAlias):
+		s.fail(w, r, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		s.repoError(w, r, err)
+		return
+	}
+	st := ImportStatus{Tenant: name, Phase: "declared", Commit: res.Commit, Bundle: req.Bundle, Restore: pending.Restore,
+		Message: "the tenant is committed; the operator provisions it next", Skipped: pending.Skipped, CustomDomain: customDomain}
+	if customDomain != "" {
+		st.Message = "the tenant is committed with its custom domain " + customDomain + "; the operator provisions it next. " +
+			dnsNote(customDomain)
+	}
+	st.Warning = res.Warning
+	s.placePlatformAppsNow()
+	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
+		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
+		return
+	}
+	s.json(w, http.StatusAccepted, st)
+}
+
+// importDomainRefused answers a custom domain an import cannot keep, and
+// true when err is nil. Nothing has been changed when it is called.
+func (s *Server) importDomainRefused(w http.ResponseWriter, r *http.Request, err error) bool {
+	const decline = ". Nothing was changed. Import without keeping it (keepCustomDomain: false; " +
+		"kubectl gentian tenants import --drop-custom-domain) to make the tenant at its default address"
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, gitops.ErrDomainHeld):
+		s.fail(w, r, http.StatusConflict, "the bundle's tenant was bound to a custom domain this cluster has bound to another tenant: "+
+			err.Error()+decline+", or free the domain first")
+	case errors.Is(err, gitops.ErrInvalidDomain), errors.Is(err, gitops.ErrSingleTenancy):
+		s.fail(w, r, http.StatusUnprocessableEntity, "the bundle's custom domain cannot be bound here: "+err.Error()+decline)
+	default:
+		s.repoError(w, r, err)
+	}
+	return false
+}
+
+// nameUsedBefore refuses a tenant under a retired tenant's name, saying how
+// to approve the reuse. nameUsedBefore carries the name and when its tenant
+// was retired, so a console can ask for the approval without reading the
+// sentence.
+func (s *Server) nameUsedBefore(w http.ResponseWriter, r *http.Request, err error) {
+	answer := map[string]any{
+		"error":      err.Error() + ` ("reuseName": true; kubectl gentian: --reuse-name)`,
+		"request_id": guard.ID(r.Context()),
+	}
+	var used *gitops.NameUsedBeforeError
+	if errors.As(err, &used) {
+		answer["nameUsedBefore"] = map[string]any{"name": used.Name, "retired": used.Retired.UTC().Format(time.RFC3339)}
+	}
+	s.json(w, http.StatusConflict, answer)
+}
+
+// resumeImport goes on with an import that was begun and has not finished.
+func (s *Server) resumeImport(w http.ResponseWriter, r *http.Request, c call, pending gitops.PendingImport, req importRequest) {
+	if pending.Bundle.Bucket != req.Bundle.Bucket || pending.Bundle.Prefix != req.Bundle.Prefix {
+		s.fail(w, r, http.StatusConflict, fmt.Sprintf(
+			"tenant %s is being imported from another bundle (%s/%s) and that import has not finished; "+
+				"give that bundle and its key to go on with it, or retire the tenant and import again",
+			pending.Tenant, pending.Bundle.Bucket, pending.Bundle.Prefix))
+		return
+	}
+	st := ImportStatus{Tenant: pending.Tenant, Phase: "provisioning", Bundle: pending.Bundle, Restore: pending.Restore,
+		Message: "going on with the import of this tenant", Skipped: pending.Skipped, CustomDomain: pending.CustomDomain}
+	if !s.watchImport(pending, req.Decryption, c.meta.ActorName(), &st) {
+		s.fail(w, r, http.StatusConflict, "an import of this tenant is already under way")
+		return
+	}
+	s.json(w, http.StatusAccepted, st)
+}
+
+// watchImport starts the one watcher an import has, and answers false when
+// it has one already. st is what the status route says until the watcher
+// says more.
+func (s *Server) watchImport(pending gitops.PendingImport, key json.RawMessage, actor string, st *ImportStatus) bool {
+	if _, busy := s.importing.LoadOrStore(pending.Tenant, struct{}{}); busy {
+		return false
+	}
+	s.imports.Store(pending.Tenant, *st)
+	s.watch(func(background context.Context) {
+		defer s.importing.Delete(pending.Tenant)
+		s.finishImport(background, pending, key, actor)
+	})
+	return true
+}
+
+// ResumeImports picks up every import a previous run began and did not
+// finish. The record committed with the tenant is what says there is one, so
+// a restart during an import no longer leaves a tenant that is made and
+// never filled.
+//
+// It has no key: the key a bundle is opened with came with the request and
+// was never written down. An import whose restore was already started needs
+// none and is watched to its end. One that was still waiting for the tenant
+// says so (awaiting-key) until it is asked for again, with the key.
+func (s *Server) ResumeImports(ctx context.Context) {
+	if s.cfg.Lifecycle == nil {
+		return
+	}
+	pending, err := s.cfg.Repo.PendingImports(ctx)
+	if err != nil {
+		s.cfg.Log.Warn("pending imports could not be read", "error", err.Error())
+		return
+	}
+	for _, p := range pending {
+		s.cfg.Log.Info("resuming the import of a tenant", "tenant", p.Tenant, "restore", p.Restore)
+		st := ImportStatus{Tenant: p.Tenant, Phase: "provisioning", Bundle: p.Bundle, Restore: p.Restore,
+			Message: "the director restarted during this import and is going on with it", Skipped: p.Skipped, CustomDomain: p.CustomDomain}
+		s.watchImport(p, nil, "gentian-director", &st)
+	}
+}
+
+func (s *Server) importStatus(w http.ResponseWriter, r *http.Request, _ call) {
+	tenant := r.PathValue("t")
+	if st, ok := s.imports.Load(tenant); ok {
+		s.json(w, http.StatusOK, st)
+		return
+	}
+	// Not watched here, and on record: another start of this director began
+	// it. Say so, and go on with it.
+	pending, unfinished, err := s.cfg.Repo.PendingImport(r.Context(), tenant)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if !unfinished {
+		s.fail(w, r, http.StatusNotFound, "no import of this tenant is under way")
+		return
+	}
+	st := ImportStatus{Tenant: tenant, Phase: "provisioning", Bundle: pending.Bundle, Restore: pending.Restore,
+		Message: "this import was begun before this director started; it is going on with it", Skipped: pending.Skipped,
+		CustomDomain: pending.CustomDomain}
+	s.watchImport(pending, nil, "gentian-director", &st)
+	s.json(w, http.StatusOK, st)
+}
+
+func (s *Server) setImport(name string, mutate func(*ImportStatus)) {
+	st, _ := s.imports.Load(name)
+	cur, _ := st.(ImportStatus)
+	mutate(&cur)
+	s.imports.Store(name, cur)
+}
+
+// awaitingKey is what an import says that cannot go on without the bundle's
+// key, which this director does not have.
+const awaitingKey = "the tenant is made and empty. The director restarted while this import waited for it, and the bundle's key, " +
+	"which is given with the request and never written down, went with it. Ask for the import again, with the same bundle " +
+	"and the key, and it goes on from here"
+
+// finishImport waits for the operator, then starts the restore and watches
+// it to its end. key is nil for an import picked up after a restart.
+//
+// background ends when the server is closed. The import has not failed then:
+// its record is in git and the next start goes on with it, so nothing is
+// said about it here.
+func (s *Server) finishImport(background context.Context, pending gitops.PendingImport, key json.RawMessage, actor string) {
+	name := pending.Tenant
+	ctx, cancel := context.WithTimeout(background, importWait)
+	defer cancel()
+	fail := func(msg string) {
+		s.setImport(name, func(st *ImportStatus) { st.Phase = "failed"; st.Message = msg })
+		s.cfg.Log.Error("import failed", "tenant", name, "error", msg)
+	}
+	restorePath := "/v1/tenants/" + url.PathEscape(name) + "/restores/" + url.PathEscape(pending.Restore)
+
+	// Was the restore started already? Its name was decided with the import,
+	// so this can be asked, and a second one is never started.
+	started := false
+	if code, _, err := s.cfg.Lifecycle.Get(ctx, restorePath, nil); err == nil && code == http.StatusOK {
+		started = true
+	}
+	if !started && len(key) == 0 {
+		s.setImport(name, func(st *ImportStatus) { st.Phase = "awaiting-key"; st.Message = awaitingKey })
+		s.cfg.Log.Warn("an import waits for its bundle's key to be given again", "tenant", name)
+		return
+	}
+
+	if !started {
+		s.setImport(name, func(st *ImportStatus) {
+			st.Phase = "provisioning"
+			st.Message = "waiting for the operator to provision the tenant and its apps"
+		})
+		for {
+			ready, msg, err := s.tenantProvisioned(ctx, name, pending.CustomDomain)
+			var refused errDomainNotBound
+			if errors.As(err, &refused) {
+				fail(string(refused))
+				return
+			}
+			if err != nil {
+				s.cfg.Log.Warn("asking the cluster about an import", "tenant", name, "error", err.Error())
+			} else if msg != "" {
+				s.setImport(name, func(st *ImportStatus) { st.Message = msg })
+			}
+			if ready {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				if background.Err() != nil {
+					return
+				}
+				fail("the tenant was not provisioned within " + importWait.String() + ", last: " + s.importMessage(name) +
+					". The tenant is committed and empty; ask for the import again to go on waiting, or start a restore by hand once it is provisioned")
+				return
+			case <-time.After(time.Duration(importPoll.Load())):
+			}
+		}
+		status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/tenants/"+url.PathEscape(name)+"/actions/restore", actor,
+			// intoNewTenant: the tenant was made for this bundle. The data of
+			// apps the bundle holds as uninstalled comes with stores made for
+			// it, and no right granted in the bundle's tenant is granted here.
+			map[string]any{"bundle": pending.Bundle, "decryption": key, "name": pending.Restore, "intoNewTenant": true})
+		if background.Err() != nil {
+			return
+		}
+		if err != nil || status/100 != 2 {
+			// Unless it is there after all: another replica of this director
+			// was asked to go on with the same import and started it first.
+			if code, _, getErr := s.cfg.Lifecycle.Get(ctx, restorePath, nil); getErr != nil || code != http.StatusOK {
+				fail("the restore could not be started: " + strings.TrimSpace(string(body)))
+				return
+			}
+		}
+	}
+	s.setImport(name, func(st *ImportStatus) {
+		st.Phase = "restoring"
+		st.Restore = pending.Restore
+		st.Message = "restoring the bundle into the tenant"
+	})
+	for {
+		code, body, err := s.cfg.Lifecycle.Get(ctx, restorePath, nil)
+		if err == nil && code == http.StatusOK {
+			var rs struct {
+				Phase                 string            `json:"phase"`
+				Message               string            `json:"message"`
+				PasswordResetRequired bool              `json:"passwordResetRequired"`
+				Complete              *bool             `json:"complete"`
+				NotRestored           []json.RawMessage `json:"notRestored"`
+				Notes                 []string          `json:"notes"`
+				OutsideGuarantee      string            `json:"outsideGuarantee"`
+			}
+			if json.Unmarshal(body, &rs) == nil {
+				switch rs.Phase {
+				case "Ready":
+					// The import is done: its record goes, and then the status
+					// says so. A record that cannot be removed is found again at
+					// the next start, which finds the restore finished and
+					// removes it then.
+					if _, err := s.cfg.Repo.FinishImport(context.Background(), name, gitops.Meta{
+						Principal: "gentian-director",
+						Decision:  "the import of this tenant has finished",
+					}); err != nil {
+						s.cfg.Log.Warn("the record of a finished import could not be removed", "tenant", name, "error", err.Error())
+					}
+					s.setImport(name, func(st *ImportStatus) {
+						st.Phase = "ready"
+						st.Message = rs.Message
+						st.PasswordResetRequired = rs.PasswordResetRequired
+						st.Complete, st.NotRestored, st.Notes = rs.Complete, rs.NotRestored, rs.Notes
+						st.OutsideGuarantee = rs.OutsideGuarantee
+						if pending.CustomDomain != "" {
+							st.CustomDomain = pending.CustomDomain
+							st.Notes = append(st.Notes, dnsNote(pending.CustomDomain))
+						}
+					})
+					s.cfg.Log.Info("tenant imported", "tenant", name, "restore", pending.Restore)
+					return
+				case "Failed":
+					// The record stays: the tenant is not what the bundle holds.
+					fail("the restore failed: " + rs.Message)
+					return
+				default:
+					s.setImport(name, func(st *ImportStatus) {
+						if rs.Message != "" {
+							st.Message = rs.Message
+						}
+						st.OutsideGuarantee = rs.OutsideGuarantee
+					})
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if background.Err() != nil {
+				return
+			}
+			fail("the restore did not finish within " + importWait.String())
+			return
+		case <-time.After(time.Duration(importPoll.Load())):
+		}
+	}
+}
+
+func (s *Server) importMessage(name string) string {
+	st, _ := s.imports.Load(name)
+	cur, _ := st.(ImportStatus)
+	return cur.Message
+}
+
+// withoutRetiredPlatformApps answers the bundle's tenant settings without the
+// apps the platform placed (Tenant.spec.apps[].placed), and without those
+// that were platform components of an earlier release this one no longer
+// has (gitops.RetiredPlatformProfile), and the latter, each with why.
+//
+// Only those: the list is of names the platform itself placed on every
+// tenant, so leaving one out loses nothing of the tenant's own. Any other
+// app whose definition cannot be had still refuses the import -- a tenant's
+// app left out would be its data left behind. The restore then finds a
+// skipped app not installed here and does not restore what the bundle holds
+// of it, and says so.
+func withoutRetiredPlatformApps(spec *gentianov1alpha1.TenantSpec) (*gentianov1alpha1.TenantSpec, []gitops.SkippedApp) {
+	var kept []gentianov1alpha1.TenantApp
+	var skipped []gitops.SkippedApp
+	placed := false
+	for _, app := range spec.Apps {
+		name := app.Profile
+		if name == "" && app.ProfileRef != nil {
+			name = app.ProfileRef.Name
+		}
+		// What the platform placed on the cluster the bundle came from is
+		// that cluster's: this one places its own once the tenant exists.
+		if app.Placed {
+			placed = true
+			continue
+		}
+		if why := gitops.RetiredPlatformProfile(name); why != "" {
+			skipped = append(skipped, gitops.SkippedApp{App: name, Reason: why})
+			continue
+		}
+		kept = append(kept, app)
+	}
+	if len(skipped) == 0 && !placed {
+		return spec, nil
+	}
+	out := *spec
+	out.Apps = kept
+	return &out, skipped
+}
+
+// wantedProfile is one definition a tenant's manifest names.
+type wantedProfile struct {
+	name, digest, catalogue, what string
+}
+
+// importProfiles makes sure of the definition of every app and pinned add-on
+// a bundle's tenant lists, and answers the ones this cluster cannot obtain,
+// each with why. Nothing is committed unless every one can be had.
+//
+// An install commits an app's definition before the tenant's manifest names
+// it (commitEntry). An import wrote the manifest alone: on a cluster that had
+// never installed those apps the tenant stayed Degraded on a profile that was
+// not there, and the import failed two hours later. So, for each:
+//
+//   - A build the bundle records (a digest) is fetched from a catalog this
+//     cluster declares -- the one of the name the bundle records first, then
+//     every other -- and committed. The bytes have to hash to the digest,
+//     whichever catalogue serves them, so it does not matter which does. A
+//     profile already here at that build needs no fetch.
+//   - An entry with no build recorded has to be on the cluster already.
+func (s *Server) importProfiles(ctx context.Context, tenant string, spec *gentianov1alpha1.TenantSpec, meta gitops.Meta) ([]string, error) {
+	var wanted []wantedProfile
+	for _, app := range spec.Apps {
+		name := app.Profile
+		if name == "" && app.ProfileRef != nil {
+			name = app.ProfileRef.Name
+		}
+		if name == "" {
+			continue
+		}
+		wanted = append(wanted, wantedProfile{name: name, digest: app.Digest, catalogue: app.Catalogue, what: "app " + name})
+		pinned := map[string]bool{}
+		for _, pin := range app.AddonPins {
+			pinned[pin.Name] = true
+			wanted = append(wanted, wantedProfile{name: pin.Name, digest: pin.Digest, catalogue: pin.Catalogue,
+				what: "add-on " + pin.Name + " of " + name})
+		}
+		for _, addon := range app.Addons {
+			if !pinned[addon] {
+				wanted = append(wanted, wantedProfile{name: addon, what: "add-on " + addon + " of " + name})
+			}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+
+	settings, err := s.cfg.Repo.Catalogue(ctx)
+	if err != nil && !errors.Is(err, gitops.ErrNoClusterClaim) {
+		return nil, err
+	}
+	var sources []visibleSource
+	var sourceNames []string
+	for _, src := range settings.Sources {
+		sources = append(sources, clusterSource(src))
+		sourceNames = append(sourceNames, src.Name)
+	}
+
+	// No app and no add-on on an address name the platform depends on: the
+	// rule an install is under (reserved_addresses.go), asked of every
+	// definition the tenant would be given, fetched or already here.
+	zone, err := s.reservedAddressZone(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	type fetched struct {
+		source  visibleSource
+		profile *catalogue.Profile
+		what    string
+	}
+	var toCommit []fetched
+	var missing []string
+	for _, w := range wanted {
+		if !gitops.ValidName(w.name) {
+			missing = append(missing, w.what+" (its name is not one a profile can have)")
+			continue
+		}
+		have, err := s.cfg.Repo.ProfileOnCluster(ctx, w.name)
+		if err != nil {
+			return nil, err
+		}
+		here := gitops.PlatformProfile(w.name) || (have.Present && profilebundle.UsableBy(have.Origin, tenant))
+		if w.digest == "" {
+			if !here {
+				missing = append(missing, w.what+" (the bundle records no build of it, and no profile of that name is on this cluster for this tenant)")
+				continue
+			}
+			why, err := s.onClusterTakesReservedAddress(ctx, w.name, zone)
+			if err != nil {
+				return nil, err
+			}
+			if why != "" {
+				missing = append(missing, w.what+" ("+why+")")
+			}
+			continue
+		}
+		digest, err := catalogue.CanonicalDigest(w.digest)
+		if err != nil {
+			missing = append(missing, w.what+" (the bundle records a digest that is not one: "+w.digest+")")
+			continue
+		}
+		if here && have.Digest == digest {
+			why, err := s.onClusterTakesReservedAddress(ctx, w.name, zone)
+			if err != nil {
+				return nil, err
+			}
+			if why != "" {
+				missing = append(missing, w.what+" ("+why+")")
+			}
+			continue
+		}
+		if s.cfg.Catalogue == nil || len(sources) == 0 {
+			missing = append(missing, fmt.Sprintf("%s at %s (this cluster has no catalog to fetch it from)", w.what, profilebundle.Short(digest)))
+			continue
+		}
+		// The catalog the bundle names first, when this cluster has one of
+		// that name.
+		ordered := make([]visibleSource, 0, len(sources))
+		for _, src := range sources {
+			if src.Name == w.catalogue {
+				ordered = append(ordered, src)
+			}
+		}
+		for _, src := range sources {
+			if src.Name != w.catalogue {
+				ordered = append(ordered, src)
+			}
+		}
+		var got *fetched
+		for _, src := range ordered {
+			profile, err := s.cfg.Catalogue.Fetch(ctx, src.Source, w.name, digest)
+			if err != nil {
+				s.cfg.Log.InfoContext(ctx, "a catalog does not serve a build an import needs",
+					"request_id", guard.ID(ctx), "catalogue", src.Name, "profile", w.name, "digest", digest, "error", err.Error())
+				continue
+			}
+			got = &fetched{source: src, profile: profile, what: w.what}
+			break
+		}
+		if got == nil {
+			missing = append(missing, fmt.Sprintf("%s at %s (none of this cluster's catalogs serves that build: %s)",
+				w.what, profilebundle.Short(digest), strings.Join(sourceNames, ", ")))
+			continue
+		}
+		if why := fetchedTakesReservedAddress(got.profile.Definition, got.source.origin(tenant), zone); why != "" {
+			missing = append(missing, w.what+" ("+why+")")
+			continue
+		}
+		toCommit = append(toCommit, *got)
+	}
+	if len(missing) > 0 {
+		return missing, nil
+	}
+	for _, f := range toCommit {
+		res, err := s.cfg.Repo.MaterialiseProfile(ctx, f.profile.Name, f.profile.Digest, f.profile.Body, f.source.origin(tenant), meta)
+		var taken *gitops.ErrProfileNameTaken
+		switch {
+		case errors.As(err, &taken):
+			return []string{f.what + " (the name is taken on this cluster by a profile of another origin, so this build cannot be put under it)"}, nil
+		case errors.Is(err, gitops.ErrBundleTooLarge), errors.Is(err, gitops.ErrProfileStatesOrigin), errors.Is(err, profilebundle.ErrRefused):
+			return []string{f.what + " (its bundle is not one this cluster installs: " + err.Error() + ")"}, nil
+		case err != nil:
+			return nil, err
+		}
+		if res.Changed {
+			s.cfg.Log.InfoContext(ctx, "materialized a catalog entry for an import",
+				"request_id", guard.ID(ctx), "profile", f.profile.Name, "origin", f.source.origin(tenant), "commit", res.Commit)
+		}
+	}
+	return nil, nil
+}
+
+// errDomainNotBound is a custom domain an import keeps that the operator
+// refused to put the tenant on: the restore would see a move, so it is not
+// started.
+type errDomainNotBound string
+
+func (e errDomainNotBound) Error() string { return string(e) }
+
+// tenantProvisioned is whether the live Tenant is Ready and every app it
+// lists is up -- the restore pauses each app, so each has to exist first --
+// and, for an import that keeps a custom domain, whether the tenant is on it:
+// the restore compares the domain the bundle was taken on with the tenant's
+// when it runs (status.domain, which the operator sets from the TenantDomain),
+// and Ready alone does not say the operator has read the TenantDomain yet.
+func (s *Server) tenantProvisioned(ctx context.Context, name, customDomain string) (bool, string, error) {
+	code, body, err := s.cfg.Lifecycle.Get(ctx, "/v1/tenants/"+url.PathEscape(name), nil)
+	if err != nil {
+		return false, "", err
+	}
+	if code != http.StatusOK {
+		return false, "", fmt.Errorf("the operator answered %d", code)
+	}
+	var state struct {
+		Exists        bool   `json:"exists"`
+		Phase         string `json:"phase"`
+		Domain        string `json:"domain"`
+		DomainRefused string `json:"domainRefused"`
+	}
+	if err := json.Unmarshal(body, &state); err != nil {
+		return false, "", err
+	}
+	if !state.Exists {
+		return false, "waiting for Argo CD to apply the tenant", nil
+	}
+	if customDomain != "" && !strings.EqualFold(state.Domain, customDomain) {
+		if state.DomainRefused != "" {
+			return false, "", errDomainNotBound("the operator did not put the tenant on its custom domain " + customDomain + ": " +
+				state.DomainRefused + ". The tenant is committed and empty, and no restore was started; retire it and import again, " +
+				"once the domain is free or without keeping it")
+		}
+		return false, "waiting for the operator to put the tenant on its custom domain " + customDomain, nil
+	}
+	if state.Phase != "Ready" {
+		return false, "the tenant is " + state.Phase, nil
+	}
+	code, body, err = s.cfg.Lifecycle.Get(ctx, "/v1/tenants/"+url.PathEscape(name)+"/apps/status", nil)
+	if err != nil || code != http.StatusOK {
+		return false, "", fmt.Errorf("apps status: %d %v", code, err)
+	}
+	var apps struct {
+		Apps []struct {
+			Profile           string   `json:"profile"`
+			Origin            string   `json:"origin"`
+			Ready             bool     `json:"ready"`
+			Phase             string   `json:"phase"`
+			Failure           string   `json:"failure"`
+			PendingPrivileges []string `json:"pendingPrivileges"`
+			// The credentials a person supplies that the app waits for. A
+			// bundle carries none: an imported app waits for each until it
+			// is set, and the import says which.
+			AwaitingCredentials []struct {
+				Name        string `json:"name"`
+				DisplayName string `json:"displayName"`
+			} `json:"awaitingCredentials"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(body, &apps); err != nil {
+		return false, "", err
+	}
+	var waiting []string
+	for _, a := range apps.Apps {
+		// What the platform places itself is not what the bundle brought.
+		if a.Ready || a.Origin == "default" {
+			continue
+		}
+		why := a.Phase
+		if a.Failure != "" {
+			why = a.Failure
+		}
+		if len(a.PendingPrivileges) > 0 {
+			why = "privileges pending: " + strings.Join(a.PendingPrivileges, ", ")
+		}
+		if len(a.AwaitingCredentials) > 0 {
+			names := make([]string, 0, len(a.AwaitingCredentials))
+			for _, c := range a.AwaitingCredentials {
+				label := c.DisplayName
+				if label == "" {
+					label = c.Name
+				}
+				names = append(names, label+" ("+c.Name+")")
+			}
+			why = "waits for the credentials a person supplies, which a bundle does not carry: " + strings.Join(names, ", ") +
+				"; set them under Credentials in the tenant's Admin Console"
+		}
+		waiting = append(waiting, a.Profile+" ("+why+")")
+	}
+	if len(waiting) > 0 {
+		return false, "waiting for apps: " + strings.Join(waiting, "; "), nil
+	}
+	return true, "", nil
+}

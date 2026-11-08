@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -28,8 +22,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 )
 
 const (
@@ -45,7 +41,11 @@ const (
 func kernelHTTPSHairpinHosts(kernelDomain string) map[string]struct{} {
 	hosts := []string{
 		kernelDomain,
-		"portal." + kernelDomain,
+		// Both desktops a kernel host can be: the platform's, and
+		// desktop.<kernel>, which is the user tenant's on a single-tenancy
+		// cluster and an alias of the bare domain otherwise.
+		desktopHost(kernelDomain),
+		platformDesktopHost(kernelDomain),
 		"id." + kernelDomain,
 		"argocd." + kernelDomain,
 	}
@@ -127,7 +127,13 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 			continue
 		}
 
-		outLines = append(outLines, line)
+		// A host inside our own markers that nothing wants any more: a tenant
+		// that was deleted, an app that was uninstalled, or a kernel domain
+		// this cluster was installed under before. It goes. Keeping it was
+		// not harmless -- the line pins a name to an address that may now
+		// belong to something else, and it does so for every pod in the
+		// cluster, which is the one place a stale override is hardest to see.
+		changed = true
 	}
 
 	for host := range httpsHosts {
@@ -203,15 +209,6 @@ func insertHostsBlock(corefile, block string) (string, bool) {
 	return corefile[:kubeIdx] + hostsBlock + corefile[kubeIdx:], true
 }
 
-func sortedHairpinHosts(kernelDomain string) []string {
-	return []string{
-		kernelDomain,
-		"argocd." + kernelDomain,
-		"id." + kernelDomain,
-		"portal." + kernelDomain,
-	}
-}
-
 func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	for i, line := range lines {
 		if strings.TrimSpace(line) == marker {
@@ -224,36 +221,34 @@ func insertBeforeMarker(lines []string, marker, newLine string) []string {
 	return append(lines, newLine)
 }
 
-func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string, error) {
-	list := &corev1.ServiceList{}
-	if err := c.List(ctx, list,
-		client.InNamespace(envoyGatewayInstallNamespace),
-		client.MatchingLabels{
-			"gateway.envoyproxy.io/owning-gateway-name":      KernelPublicGatewayName,
-			"gateway.envoyproxy.io/owning-gateway-namespace": servicesNamespace,
-		},
-	); err != nil {
-		return "", fmt.Errorf("list kernel Envoy Gateway service: %w", err)
+func kernelEdgeClusterIP(ctx context.Context, c client.Client) (string, error) {
+	svc, err := findKernelEdgeService(ctx, c)
+	if err != nil {
+		return "", err
 	}
-	if len(list.Items) == 0 {
-		return "", fmt.Errorf("kernel Envoy Gateway service not found")
-	}
-	ip := list.Items[0].Spec.ClusterIP
+	ip := svc.Spec.ClusterIP
 	if ip == "" {
 		return "", fmt.Errorf("kernel Envoy Gateway service has no ClusterIP")
 	}
 	return ip, nil
 }
 
-func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, routingMode string) error {
-	edgeIP, err := kernelEdgeClusterIP(ctx, c, routingMode)
+func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) error {
+	edgeIP, err := kernelEdgeClusterIP(ctx, c)
 	if err != nil {
 		return err
 	}
 
-	tenantHosts, err := collectTenantAppHairpinHosts(ctx, c, kernelDomain, tenancyMode)
+	tenantHosts, err := collectTenantAppHairpinHosts(ctx, c, kernelDomain, tenancyMode, kernelRealm)
 	if err != nil {
 		return err
+	}
+	routeHosts, err := collectEdgeRouteHairpinHosts(ctx, c)
+	if err != nil {
+		return err
+	}
+	for host := range routeHosts {
+		tenantHosts[host] = struct{}{}
 	}
 
 	cmName, err := resolveCoreDNSConfigMapName(ctx, c)
@@ -326,7 +321,10 @@ func resolveCoreDNSConfigMapName(ctx context.Context, c client.Client) (string, 
 	return coreDNSConfigMapName, nil
 }
 
-func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDomain, tenancyMode string) (map[string]struct{}, error) {
+// collectTenantAppHairpinHosts are the hosts of every tenant's installed
+// apps, each where its route answers (addresses.Host). An entry with no host
+// there -- an apex entry of a tenant without the bare domain -- adds none.
+func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	if kernelDomain == "" {
 		return out, nil
@@ -337,8 +335,8 @@ func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDo
 	}
 	for i := range tenants.Items {
 		tenant := &tenants.Items[i]
-		effectiveDomain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
-		if effectiveDomain == "" {
+		zone := addresses.ZoneOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+		if zone.Domain == "" {
 			continue
 		}
 		intents, err := collectTenantIngressIntents(ctx, c, tenant)
@@ -349,10 +347,59 @@ func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDo
 			if intent.ingress == nil {
 				continue
 			}
-			out[ingressHost(intent.appProfile, intent.ingress, effectiveDomain)] = struct{}{}
+			if host := addresses.Host(zone, intent.component, intent.ingress); host != "" {
+				out[host] = struct{}{}
+			}
 		}
 	}
 	return out, nil
+}
+
+// collectEdgeRouteHairpinHosts returns every hostname a route on the edge
+// Gateways serves. The hosts the operator derives itself cover the kernel and
+// the catalog's apps, but not the consoles a tenant's install routes: their
+// names left the cluster for the public address, and a server-side fetch to
+// one -- the desktop asking whether the Admin Console may be framed -- timed
+// out there. What the edge serves is the list.
+func collectEdgeRouteHairpinHosts(ctx context.Context, c client.Client) (map[string]struct{}, error) {
+	routes := &gatewayv1.HTTPRouteList{}
+	if err := c.List(ctx, routes); err != nil {
+		return nil, fmt.Errorf("list HTTPRoutes for CoreDNS hairpin: %w", err)
+	}
+	out := map[string]struct{}{}
+	for i := range routes.Items {
+		route := &routes.Items[i]
+		if !routeOnEdge(route) {
+			continue
+		}
+		for _, h := range route.Spec.Hostnames {
+			// A hosts entry names one host; a wildcard is not one.
+			if host := string(h); host != "" && !strings.HasPrefix(host, "*") {
+				out[host] = struct{}{}
+			}
+		}
+	}
+	return out, nil
+}
+
+// routeOnEdge reports whether route attaches to one of the edge Gateways.
+func routeOnEdge(route *gatewayv1.HTTPRoute) bool {
+	for _, ref := range route.Spec.ParentRefs {
+		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayv1.GroupName {
+			continue
+		}
+		if ref.Kind != nil && *ref.Kind != "Gateway" {
+			continue
+		}
+		ns := route.Namespace
+		if ref.Namespace != nil {
+			ns = string(*ref.Namespace)
+		}
+		if ns == servicesNamespace && (ref.Name == AuthenticatedGatewayName || ref.Name == PerimeterGatewayName) {
+			return true
+		}
+	}
+	return false
 }
 
 func restartCoreDNSDeployment(ctx context.Context, c client.Client) error {

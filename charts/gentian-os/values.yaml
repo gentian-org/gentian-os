@@ -8,13 +8,17 @@ stage: dev
 
 # kernelDomain is the cluster-wide platform DNS suffix (e.g. example.domain).
 # Kernel UIs are served on this domain; tenant app zones depend on tenancyMode.
-# Plumbed as KERNEL_DOMAIN. See docs/design/multi-tenancy.md §3.
+# Plumbed as KERNEL_DOMAIN. See docs/concepts/multi-tenancy.md §3.
 kernelDomain: ""
 
-# tenancyMode controls default tenant app URL shape when Tenant.spec.domain is unset:
-#   multi  — {sub}.{tenant}.{kernelDomain} (default, shared cluster)
-#   single — {sub}.{kernelDomain} (dedicated single-tenant cluster; one Tenant named "default")
-# Plumbed as TENANCY_MODE.
+# tenancyMode is who the cluster is for, and with it where a user tenant's hosts are
+# (unless a TenantDomain binds a custom domain):
+#   multi  — the platform tenant plus any number of user tenants, each at
+#            {label}.{tenant}.{kernelDomain} (default, shared cluster)
+#   single — the platform tenant plus exactly one user tenant, named user, at
+#            {label}.{kernelDomain}; any other user tenant is refused
+# The platform tenant's desktop is platform.{kernelDomain} under either.
+# Plumbed as TENANCY_MODE; the Cluster claim's spec.tenancyMode wins once it is published.
 tenancyMode: multi
 
 # mailServiceMode is the cluster's mail stack — kernel or external — from the
@@ -23,14 +27,10 @@ tenancyMode: multi
 # domain registration. Plumbed as MAIL_SERVICE_MODE.
 mailServiceMode: external
 
-# routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
-# Plumbed as ROUTING_MODE.
-routingMode: gateway
-
 # handover controls the gate that keeps a cluster's recovery cheap until its
 # administrator has been seen to write a credential through the login path.
 #
-# The proof is recorded by the credential manager on the first successful
+# The proof is recorded by the custodian on the first successful
 # cluster-admin token exchange — a normal portal sign-in produces it. Until
 # then, creating a Tenant is refused with an explanation, because the recovery
 # from a broken write path is re-initialising OpenBao: an inconvenience on an
@@ -49,8 +49,8 @@ dnsProvider: cloudflare
 
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
-# write records in the zone containing effectiveDomain (platform zone for default
-# tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
+# write records in the zone containing effectiveDomain (the platform zone, or the
+# customer's zone for a tenant a TenantDomain binds). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
 #
 # Empty means the cluster's own issuer, derived from dnsProvider above. Set it
 # only when tenant zones are hosted somewhere the kernel zone is not.
@@ -70,11 +70,52 @@ tenantDNS01ClusterIssuer: ""
 # for. List more than one to allow independent recovery keys.
 backupRecipients: []
 
-# tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
+# The vault's daily snapshot (templates/openbao-snapshots.yaml,
+# docs/guides/recovery.md §4): a Raft snapshot, encrypted to the backup
+# recipient above (or the one the recovery kit wrote to the vault) before it
+# leaves the pod, written to the bucket below in the platform's object store.
+# A vault still on file storage is reported, not snapshotted.
+openbaoSnapshots:
+  enabled: true
+  # Every day at 02:17 UTC.
+  schedule: "17 2 * * *"
+  # The newest this many are kept; older ones are deleted after a new one is
+  # written.
+  keep: 14
+  # How old the newest snapshot may be before the operator calls it stale on
+  # the Cluster claim (status.openbaoSnapshots): a day and a margin for a run
+  # that waited or retried. A Go duration.
+  staleAfter: 30h
+  # The bucket the operator makes, with a key for each instance that may
+  # write under that instance's prefix of it alone.
+  bucket: gentian-openbao-snapshots
+  # The vault role the job logs in to and the audience of its token: the
+  # Cluster composition's openbao-snapshot role, which reads
+  # sys/storage/raft/snapshot and nothing else.
+  vaultRole: openbao-snapshot
+  vaultAudience: vault://openbao-snapshot
+  # The transit seal that unseals the vault, on the same schedule, into the
+  # same bucket under openbao-transit/: without the seal's key no snapshot of
+  # the vault unseals. Its role, openbao-transit-snapshot, is written in the
+  # seal (kernel/openbao/transit-snapshot-policy.hcl).
+  transit:
+    enabled: true
+    vaultRole: openbao-transit-snapshot
+    vaultAudience: vault://openbao-transit-snapshot
+  # Where the ciphertext is staged before the upload.
+  workSizeLimit: 2Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+# tenantProvisioning controls operator orchestration behavior. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, portal redirect)
 # so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).
 # Set TENANT_CROSSPLANE_ONLY=true to roll back to Crossplane-only provisioning
-# if a cutover regresses; leave false for normal production behaviour.
+# if a cutover regresses; leave false for normal production behavior.
 tenantProvisioning:
   crossplaneOnly: false
 
@@ -83,12 +124,12 @@ tenantProvisioning:
 # Plumbed into the operator as the KERNEL_REALM env var.
 kernelRealm: ""
 
-# Stage 1 authz bridge (Keycloak → OpenFGA tuple sync). OpenFGA is a
-# standard, always-deployed kernel component (see openfgaURL below), so
-# this defaults on; a deployer without Suze/OpenFGA can still disable it.
+# Where OpenFGA answers and the credential for it. The operator projects the
+# authorization graph's structure with them, and the director's services read
+# the same address. (The key keeps the name of the Keycloak-to-OpenFGA bridge
+# these settings were first written for.)
 authzBridge:
-  enabled: true
-  openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
+  openfgaURL: "http://gentian-openfga.kernel-authorization.svc.cluster.local:8080"
   # The token is read from a Secret, never given here. A literal value used to
   # be accepted and was rendered straight into the Deployment as an env value,
   # while the installer pinned the same string into the Argo CD Application's
@@ -99,6 +140,9 @@ authzBridge:
   # cloudflare.apiTokenSecretRef. When openbaoPath is set the chart also renders
   # an ExternalSecret that syncs it out of OpenBao, so the token never transits
   # a Helm value, an Application spec, or the installer's process arguments.
+  # The store and the model are not set here: the operator establishes them
+  # and records their ids in the ConfigMap authorization-store, which every
+  # other reader of the graph takes them from.
   openfgaTokenSecretRef:
     name: "gentian-os-openfga-token"
     # The key inside the Kubernetes Secret the Deployment reads.
@@ -112,7 +156,7 @@ authzBridge:
     openbaoProperty: "preshared_key"
 
 # platformSecurityPolicy is the cluster singleton edited by platform administrators
-# (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests
+# (Admin Console → Platform security). ComponentProfile.spec.requires.privileges.podSecurity requests
 # are intersected with this allowlist before MAC labels are applied to workloads.
 platformSecurityPolicy:
   create: true
@@ -122,30 +166,225 @@ platformSecurityPolicy:
   # - profile: <app-profile-name>
   #   policy: gentian-require-non-root
   #   scope: <workload-scope>
+  # Which of the platform's cluster roles this cluster permits, per profile.
+  # It permits and does not grant: a role is bound only where it was also
+  # granted on the install.
+  allowedClusterRoles: []
+  # - profile: <app-profile-name>
+  #   role: <one of the roles in templates/profile-cluster-roles.yaml>
 
-# infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
-# Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
-infraNamespace: ""
+# These three are set by the bootstrap chart from kernel/namespaces.yaml on
+# every install (kernel/bootstrap/chart/templates/gentian-os.yaml). The
+# defaults below matter only where somebody installs this chart by hand, and
+# they name namespaces this layout has -- they used to name the previous
+# layout's, which is a stale namespace sitting in a ConfigMap waiting for its
+# first reader.
 
-# openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
-openbaoNamespace: "openbao"
+# infraNamespace: where the kernel's own identity data plane answers.
+infraNamespace: "kernel-authentication"
 
-# servicesNamespace hosts kernel platform services (Postfix, Dovecot, …).
-# Tenant apps never live here — they get their own tenant-* namespaces.
-# "platform-kernel" is this platform's fixed naming convention, not a
-# per-stage or per-cluster choice — override in a cluster's own
-# gentian-deployments values.yaml only if a specific cluster truly needs
-# something different.
-servicesNamespace: "platform-kernel"
+# openbaoNamespace hosts the vault; tenant app init Jobs authenticate here.
+openbaoNamespace: "kernel-secrets"
 
-# kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
-# compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
-# and fetched by app-default.yaml via function-extra-resources.
-# No endpoint is substituted into AppProfile extraValues any more. ${S3_ENDPOINT},
+# servicesNamespace: the edge. The Gateway, its routes and its reference
+# grants live there. Tenant apps never do — they get their own tenant-*
+# namespaces.
+servicesNamespace: "kernel-edge"
+
+# Where each kernel function runs, from kernel/namespaces.yaml. An install
+# passes every entry; empty means the operator answers from internal/layout's
+# own table, which is the same layout -- so a chart that forgot to set these
+# is a chart that is merely redundant, not one that sends a reconciler to a
+# namespace this cluster does not have. The operator addresses namespaces by
+# function rather than by the one servicesNamespace above.
+layout: {}
+
+# The director: the only writer to gentian-deployments, and the read API the
+# desktop and the store render from. It runs beside the operator with its own
+# ServiceAccount, which is granted nothing — every request it serves is
+# authorized against OpenFGA with the caller's own token.
+director:
+  enabled: false
+  replicas: 1
+  # The audience its tokens must name. A token minted for another service is
+  # refused, which is what keeps a tenant app's token from writing to git.
+  audience: gentian-director
+  # Where keys are fetched from inside the cluster. Empty derives it from the
+  # layout's authentication namespace.
+  jwksBaseURL: ""
+  # Empty uses custodian.openfgaURL, which is the same service.
+  openfgaURL: ""
+  # The operator's app-lifecycle API, which the director reads a tenant's
+  # resources from and validates a plan choice against. Empty derives it from
+  # this release's own lifecycle Service.
+  appLifecycleURL: ""
+  # The Secret holding this director's OpenPGP private key, projected from
+  # the vault by External Secrets (AD-2). Empty mounts nothing and the
+  # director commits unsigned -- which is a cluster whose AppProject carries
+  # no signing policy either.
+  signingKeySecret: "gentian-director-signing"
+  # The vault role the director logs in to, and the audience of the token it
+  # logs in with. The role reads repository credentials and nothing else,
+  # for catalogs kept as OCI artifacts (cluster-default,
+  # director-repository-read). The director reaches the vault at
+  # openbao.address; empty there, it reads no credential.
+  vaultRole: gentian-os-director
+  vaultAudience: vault://gentian-os-director
+
+  committer:
+    name: gentian-director
+    email: director@gentian.invalid
+  openfgaTokenSecretRef:
+    name: gentian-os-director-openfga-token
+    key: token
+    openbaoPath: "gentian-os/kernel/authz/openfga"
+    property: preshared_key
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
+# The registrar: what keeps the list of people -- invites them, puts them in
+# groups, removes them -- at Keycloak, for the person the authorization store
+# allows. A Deployment of its own with a ServiceAccount of its own, which may
+# read the tenants and the Cluster claim and nothing else in the cluster. It
+# holds the per-realm Keycloak credential the operator hands it
+# (Secret gentian-registrar-realms), and the director holds none.
+#
+# It verifies a caller's token the way the director does and shares the
+# director's settings for that: director.audience, director.jwksBaseURL,
+# director.openfgaURL and director.openfgaTokenSecretRef.
+#
+# Off by default, like the director whose people routes it serves; the v5
+# bootstrap turns both on.
+registrar:
+  enabled: false
+  port: 9445
+  replicas: 1
+  # Where a tenant's desktop API answers, %s for the tenant: the settings
+  # templates an invitation may apply live there. Empty derives it from the
+  # desktop component's Service in the tenant's namespace.
+  desktopAPI: ""
+  # Where the registrar records WHO WAS ALLOWED to ask for a change to a person
+  # (S7A.17). Keycloak's own admin event says what changed; it sees only the
+  # registrar's service account, so it cannot say who asked or what permitted
+  # the call. The two join on a request id.
+  #
+  # A database rather than a commit, deliberately: git's append-only history is
+  # what makes it right for configuration and wrong for a record about people.
+  # retention is how long a row is kept, as a Go duration; empty means the
+  # registrar's own default of 400 days — long enough to answer an audit of the
+  # previous financial year.
+  #
+  # Empty secretName means no record: the registrar starts, warns, and keeps
+  # the log line only. Taking the people screens down over an audit trail is
+  # worse.
+  recordDatabase:
+    secretName: gentian-os-registrar-database
+    secretKey: uri
+    retention: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 48Mi
+    limits:
+      memory: 192Mi
+
+# The desktop: the one component the OS ships itself, installed per tenant
+# from this chart by the component reconciler. Off by default; the v5
+# bootstrap turns it on.
+desktop:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: gentian-portal
+    # A moving prerelease per branch on a dev cluster; a release pins one.
+    version: 0.1.0-develop
+  # Values the profile carries as its own. The chart's objects are named
+  # after the component, not the Release (which carries the namespace too),
+  # so that the profile's exposures can name the Services.
+  extraValues:
+    fullnameOverride: desktop-gentian-portal
+
+# The administration console: the second component every tenant gets, built
+# from the app template and a client of the director. Off by default; the v5
+# bootstrap turns it on beside the desktop.
+adminConsole:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: admin-console
+    # An immutable version. gentian-apps publishes the console's chart twice:
+    # a moving prerelease per branch and an immutable one per commit, whose
+    # version the moving chart names in appVersion. The installer resolves the
+    # first into the second and pins it here, because provider-helm never
+    # upgrades a release whose version string has not changed -- so a moving
+    # version installs the first build and then stays on it for ever.
+    version: "0.1.1-main"
+  # Values the profile carries as its own, merged over what it sets already.
+  extraValues: {}
+
+# The concierge: the page on the cluster's bare domain, a component of the
+# platform tenant published from its DMZ. Off by default; the v5 bootstrap
+# turns it on. Like the consoles it comes from gentian-ui as a moving chart
+# per branch and an immutable one per commit, and the installer pins the
+# immutable one.
+concierge:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: concierge
+    version: "0.1.0-develop"
+  extraValues: {}
+
+# The ext-auth bouncer: L2 of the edge, run in the edge namespace from this
+# image. Off by default; the v5 bootstrap turns it on with the director,
+# because it decides against the store the director established.
+bouncer:
+  enabled: false
+  replicas: 2
+  # A cached allow lives this long at most; eviction on the store's changelog
+  # is what normally retires one.
+  cacheTTL: 5m
+  # How often the changelog is polled: the stated bound on how long a revoked
+  # right or an ended session survives at the edge (networking.md §4).
+  pollInterval: 2s
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+# The usher: the reads a signed-in person's desktop asks for -- what is here
+# and what they may open -- run in the control namespace from this image,
+# beside the director. It holds no git credential and no Kubernetes access.
+# Off by default; the v5 bootstrap turns it on.
+usher:
+  enabled: false
+  replicas: 2
+  # Where the operator's listener answers, for the usher's reads of live
+  # state. Empty is the listener of this release.
+  appLifecycleURL: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+# kernelServices exposes cluster-wide infrastructure endpoints. Published as a
+# `gentian-kernel-services` ConfigMap in the authentication namespace, where
+# keycloak-idp reads it. The component reconciler reads the ConfigMap of the
+# same name in kernel-control, which the bootstrap chart writes, when it
+# renders an app (internal/apprender).
+# No endpoint is substituted into a profile's extraValues any more. ${S3_ENDPOINT},
 # ${MYSQL_HOST}, ${REDIS_HOST}, ${SMTP_HOST} and ${TURN_*} were, and each handed
 # an app a hostname with nothing to authenticate with — an app declares
-# kernelRequirements and maps its own chart keys instead (P9 in
-# docs/app-customization.md). The values below are still read by the operator
+# requires.services and maps its own chart keys instead (P9 in
+# docs/guides/app-customization.md). The values below are still read by the operator
 # and by compositions; they are simply no longer expanded into app values.
 #   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path), for apps whose
 #                           server-side OIDC calls (token/userinfo/JWKS) must not
@@ -154,7 +393,7 @@ kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
   redisHost: ""
-  # Empty → http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080
+  # Empty → http://gentian-idp-keycloak-keycloakx-http.<authentication namespace>.svc.cluster.local:8080
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
   smtpHost: ""
@@ -165,7 +404,7 @@ kernelServices:
   # in the cluster's own gentian-deployments values (or via a
   # GENTIAN_KERNEL_SERVICE_FOO env var at install time).
   # This is a plain ConfigMap, readable by anything with get access to
-  # gentian-system/platform-kernel — put only values you are willing to expose
+  # the namespaces it is mirrored into — put only values you are willing to expose
   # at that blast radius here. Credentials belong in OpenBao + ExternalSecret.
   extra: {}
 
@@ -224,9 +463,6 @@ leaderElectionNamespace: ""
 # Log level: debug, info, warn, error
 logLevel: info
 
-# Watched namespaces (empty = cluster-wide)
-watchNamespaces: []
-
 # Which edge ingress this cluster runs — a key in kernel/platforms.yaml's
 # edgeIngress table ("cf-tunnel", "none"). Empty follows networkMode below,
 # which is what every existing cluster relies on.
@@ -238,6 +474,13 @@ edgeIngress: ""
 
 # How traffic reaches this cluster, from the Cluster claim's networkMode.
 networkMode: ""
+
+# The cluster's switch for the kernel's network rules (the installer's
+# KERNEL_NETWORK_POLICIES, through the bootstrap chart). The kernel
+# namespaces' own NetworkPolicies are the installer's to apply and remove;
+# this tells the operator, whose two rules that name the Gateway's Envoy pods
+# follow the same switch (internal/controller/tenant_network_policy.go).
+kernelNetworkPolicies: "true"
 
 # Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
 # programs the tunnel's routing rules for kernel and tenant hostnames, and
@@ -292,32 +535,41 @@ cloudflare:
 
 # OpenBao / Vault integration
 openbao:
-  address: "https://openbao.openbao.svc.cluster.local:8200"
+  address: "https://openbao.kernel-secrets.svc.cluster.local:8200"
+  # The Secret, in the operator's namespace, holding the vault's CA
+  # certificate (ca.crt of openbao-ca) the operator verifies the vault
+  # against. The installer keeps this copy (B-01). Empty turns verification
+  # off unless trustAnchorSecret is set: development only.
+  caSecret: openbao-ca-bundle
   authPath: "kubernetes"
   # Kubernetes auth role used by the operator to log in to OpenBao for the
   # Inc 21a seeding subsystem. Must exist in OpenBao with the operator-write
   # policy (gentian-os-operator role, managed via Crossplane provider-vault).
   # When BAO_ADDR is unset at runtime the operator skips seeding entirely
-  # (useful for envtest / local dev).
+  # (useful for envtest / local dev). An operator run that way must also be
+  # told so with GENTIAN_WITHOUT_VAULT=true: without that statement a missing
+  # vault is treated as a fault, and deleting a tenant stops at the step that
+  # destroys its stored credentials instead of skipping it.
   role: "gentian-os-operator"
 
-# Shared CloudNativePG cluster in platform-kernel (Database CR spec.cluster.name).
+# Shared CloudNativePG cluster in system-postgresql (Database CR spec.cluster.name).
 database:
   clusterName: postgres
-
-# ArgoCD integration
-argocd:
-  namespace: "argocd"
-  project: "gentianos-tenants"
 
 # Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
 # The postgres client major must be >= the CNPG server major (pg_dump refuses
 # a newer server); CNPG's operator default is 17.x today.
+# The mariadb client is the server's own image (charts/infra/mariadb): a newer
+# client writes dumps that server cannot load. Bump the two together.
 provisioners:
   postgres: "postgres:17-alpine"
-  mariadb: "mariadb:11"
-  redis: "redis:7-alpine"
-  keycloak: "alpine:3.20"
+  mariadb: "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
+  redis: "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
+  # The image of the Jobs that move a tenant's objects and of the identity
+  # Jobs (realm provisioning, export, import). Empty:
+  # ghcr.io/gentian-org/storage-tools at the operator's own image tag
+  # (image.tag, else the chart's appVersion), which CI publishes beside it.
+  storageTools: ""
 
 # Memcached image for tenant cache provisioning (operator-managed Deployment).
 # Changing this takes effect on the next operator redeploy without rebuilding.
@@ -343,14 +595,14 @@ metrics:
     additionalLabels: {}
 
 # App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
-# The credential manager: a view over the CredentialRequirement catalogue and
+# The custodian: a view over the CredentialRequirement catalog and
 # ESO's satisfaction status, plus a write path that writes AS THE CALLER —
 # it holds no OpenBao token of its own and exchanges the user's OIDC token.
 #
 # Off by default. It is the only component that can write credentials.
 # The cluster's trust anchor, when a public CA did not sign its certificates.
 #
-# Set to the Secret holding the anchor (cert-manager's gentian-root-ca-tls under
+# Set to the Secret holding the anchor (gentian-root-ca-tls, the internal CA's certificate, under
 # self-signed and private-ca), empty when certificates are publicly trusted. The
 # operator talks to Keycloak and OpenBao over kernel hostnames, so without this
 # it fails exactly as a tenant app does — and it fails at login, which makes it
@@ -360,64 +612,48 @@ metrics:
 # passes it, so it is not a second place to keep in sync by hand.
 trustAnchorSecret: ""
 
-credentialManager:
+custodian:
   # On by default, because the install cannot finish without it.
   #
-  # E-04 revokes the installer's bootstrap token, and refuses to until something
-  # else has demonstrably written a credential. That proof is this service
-  # recording its first cluster-admin exchange — it holds no token of its own,
-  # it exchanges the caller's Keycloak one. Off, nothing records anything, and
-  # the last step of every install waits for a fact that cannot be produced.
+  # E-03 revokes the installer's bootstrap token, and refuses to until something
+  # else has been seen to be able to write a credential. That proof is this
+  # service recording the first time a cluster administrator, allowed by the
+  # authorization store, reached it and it logged in to the vault as itself.
+  # Off, nothing records anything, and the last step of every install waits
+  # for a fact that cannot be produced.
   #
   # It was off by default and nothing turned it on, so that is what happened: an
   # operator was asked to sign in, did, and watched a timer run out.
   #
   # Turning it on costs nothing on a cluster that does not use it. The Service is
-  # ClusterIP-only by deliberate design (see credentialmanager-service.yaml), and
-  # the write path authorises the CALLER's OIDC token rather than holding one, so
-  # a running-but-unused credential manager grants nobody anything.
+  # ClusterIP-only by deliberate design (see custodian-service.yaml), and
+  # every request is verified and asked of the authorization store before the
+  # vault is touched, so a running-but-unused custodian grants nobody anything.
   enabled: true
   port: 9444
-  # Where the JWT/OIDC auth backend is enabled. Not "jwt": the installer enables
-  # it with -path=oidc, so the login endpoint is auth/oidc/login.
-  authMount: oidc
-  # Roles the caller's token is offered to, in order, until one accepts it.
-  #
-  # They must be role_type jwt. The identically-purposed oidc roles serve the
-  # browser flow into OpenBao's UI, and the plugin refuses a direct token
-  # exchange against those — a refusal this service cannot tell apart from "you
-  # are not authorised".
-  #
-  # Both are listed because the roles bind different group claims and OpenBao,
-  # not this service, decides which one a caller matches. Listing only the
-  # cluster role would leave every tenant admin unable to authenticate.
-  # Tried in order against whichever mount the token's issuer selects — which is
-  # why both names appear even though neither mount has both roles.
-  # cluster-admin-jwt exists only on the kernel mount, tenant-admin only on a
-  # tenant realm's mount, so the inapplicable one is refused as an unknown role.
-  # That costs one round trip and saves this service from having to know the
-  # cluster's realm layout.
-  oidcRoles:
-    - cluster-admin-jwt
-    - tenant-admin
-  # Namespace holding the ESO satisfaction probes it reads.
-  probeNamespace: gentian-system
+  # The role the custodian logs in to OpenBao with, by this pod's
+  # ServiceAccount. Its policy lets it write a credential and read and annotate
+  # its metadata, and nothing else: it cannot read a stored value. The cluster's
+  # Composition creates the role and the policy (custodian-write).
+  vaultRole: gentian-os-custodian
+  # Namespace holding the ESO satisfaction probes it reads. Empty means the
+  # namespace this chart is released into, which is where the operator runs
+  # and where the catalog step writes them.
+  probeNamespace: ""
   # Where the CA that signs OpenBao's serving certificate lives. Read through
   # the API, because a Pod cannot mount a Secret from another namespace — the
   # same reason ESO's ClusterSecretStore names it as a caProvider.
   caSecret: openbao-tls
-  caSecretNamespace: openbao
+  # Empty follows openbaoNamespace, which is where the vault is. Set it only
+  # for a vault whose certificate lives somewhere else.
+  caSecretNamespace: ""
   # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
   # Secret reference: this turns off verification for every exchange.
   tlsSkipVerify: false
-  # The OpenBao policy whose presence on an exchanged token means the caller may
-  # see cluster-scoped requirements. Read from the policies OpenBao attached
-  # rather than from a Keycloak group name, so the two cannot drift apart.
-  clusterAdminPolicy: cluster-admin
-  # The auth.metadata key the OIDC role maps the tenant into. A role that maps
-  # nothing here yields a caller who sees no tenant-scoped requirement, which is
-  # the safe direction.
-  tenantClaim: tenant
+  # Who may read or set a credential is not configured here. The custodian
+  # verifies the caller's token and asks the authorization store
+  # (can_read_credential, can_write_credential, on the cluster or the tenant
+  # a credential belongs to); nothing OpenBao reports about the token decides.
 
 # Resource plans and usage history — the Admin Console's Resources tab, the
 # `kubectl gentian resources` CLI, and the invoiceable record behind both.
@@ -447,7 +683,7 @@ usage:
   metricsServer:
     enabled: false
 
-  # The priced catalogue of tenant ceilings. Selecting a plan is the only way
+  # The priced catalog of tenant ceilings. Selecting a plan is the only way
   # the resources API will change a tenant's quotas — it accepts a plan name and
   # never a quantity — so every ceiling reachable through the API or the console
   # is one the platform has priced, and a month of usage resolves to SKUs.
@@ -490,6 +726,7 @@ usage:
         displayName: Base · 1 node
         description: One node — a workspace running Nextcloud, Odoo and the App Store together.
         tier: 0
+        units: 1
         default: true
         productSku: gentian-resources-nodes-1
         quotas:
@@ -502,6 +739,7 @@ usage:
         displayName: 2 nodes
         description: Twice the reserved capacity, for a workspace running several apps.
         tier: 10
+        units: 2
         productSku: gentian-resources-nodes-2
         quotas:
           requestsCpu: "8"
@@ -512,6 +750,7 @@ usage:
       nodes-4:
         displayName: 4 nodes
         tier: 20
+        units: 4
         productSku: gentian-resources-nodes-4
         quotas:
           requestsCpu: "16"
@@ -522,6 +761,7 @@ usage:
       nodes-8:
         displayName: 8 nodes
         tier: 30
+        units: 8
         productSku: gentian-resources-nodes-8
         quotas:
           requestsCpu: "32"
@@ -533,6 +773,7 @@ usage:
         displayName: 16 nodes
         description: The largest catalogue plan. Beyond this, arrange a ceiling with the platform operator.
         tier: 40
+        units: 16
         productSku: gentian-resources-nodes-16
         quotas:
           requestsCpu: "64"
@@ -541,20 +782,62 @@ usage:
           memory: 512Gi
           storage: 800Gi
 
+# Who is in which group, as Keycloak states it.
+#
+# A listener inside Keycloak posts a user's complete group set, signed, every
+# time it changes, and the operator projects that into the authorization graph
+# beside the structure it already projects. This used to be the director's
+# endpoint, which is why the director's OpenFGA token had to be able to write;
+# it is here so that token can be read-only.
+#
+# Off until keysSecretRef names something. A cluster with no key accepts no
+# membership, so every permission that follows from a group is refused to
+# everyone -- which the operator says at start rather than leaving to be
+# discovered as a login that grants nothing.
+membershipListener:
+  port: 8090
+  platformRealm: kernel
+  platformTenant: platform
+  keysSecretRef:
+    name: ""
+    key: keys
+
+# A NetworkPolicy on the operator's own pods, and on nothing else. It leaves
+# the app-lifecycle port (appLifecycle.port) reachable only from the
+# director's and the usher's pods in this namespace, and lists the operator's
+# other ports -- metrics, health, the membership listener, the admission
+# webhook -- as open as they are without a policy. Needs a CNI that enforces
+# NetworkPolicy; on one that does not it has no effect. Off removes the
+# policy and leaves the callers' ServiceAccount identity as the only check.
+networkPolicy:
+  enabled: true
+
 appLifecycle:
   port: 8082
+  # Who may call this API is decided by workload identity. The director and
+  # the usher each mount a ServiceAccount token issued for this audience and
+  # valid ten minutes; the operator asks the API server whose it is and
+  # admits the director's ServiceAccount to every route and the usher's to
+  # reads. This is the one place the audience is named: the operator requires
+  # it and both callers' tokens are issued for it. It is not the API server's
+  # audience, so these tokens open nothing there. It must be set: a
+  # projected token with no audience named is one for the API server, so the
+  # chart refuses to render without it.
+  audience: gentian-os-operator
+  # Where the cluster is declared. The director clones and pushes it; the
+  # operator, the custodian and the registrar read only `cluster`, the id the
+  # cluster's own relations are asked about. The operator holds no checkout
+  # and no credential for the repository.
   deployments:
-    enabled: false
-    path: /data/gentian-deployments
     repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
-    stage: dev
-    # basic: Secret with key .git-credentials (https://user:token@host) for git
-    # push. bearer: Secret with key "token" instead, injected as an
-    # Authorization: Bearer header — see repository-default.yaml's $isBearer
-    # branch, which decides which shape gitCredentialsSecret is written in.
+    # The Secret the director authenticates to the repository with, and what
+    # it holds. Under basic it has one key, .git-credentials: the repository's
+    # URL with the login in it. Under bearer it has one key, token, which git
+    # sends as an Authorization header. The Repository claim writes the Secret
+    # in whichever form its own authType names, so the two must agree.
     gitCredentialsSecret: ""
-    authType: basic
+    authType: basic  # basic | bearer
 
 # Admission webhook for Tenant create/update validation.
 webhook:
@@ -570,18 +853,33 @@ grafana:
     # Namespace where the Grafana sidecar looks for dashboard ConfigMaps
     namespace: ""
 
-# Commerce integration configuration
-# Optional commerce backend: the service that redeems install grants for
-# proprietary-licensed profiles and receives metering reports. Any service
-# implementing POST /api/v1/install-grants/{jti}/exchange and
-# POST /api/v1/metering/report will do; gentian-os ships no such service and
-# does not assume one exists. Left disabled, proprietary profiles simply refuse
-# to install and no metering is reported.
-commerce:
+# The usage statistics report. The software is free under a usage limit that is
+# enforced legally and not technically, so a cluster says, in the open, what
+# it runs: once shortly after the operator starts and once a day after that,
+# the operator POSTs a signed JSON body to `url`. The body holds the cluster's
+# id and address, each tenant's address and number of accounts, and each app
+# installed through the App Store with its digest and the number of people
+# entitled to it -- no names, addresses of people, user ids or group names.
+# Nothing in the cluster is blocked by the answer, and the last report is
+# kept, exactly as sent, in the ConfigMap `gentian-usage-statistics` beside the
+# operator.
+#
+# Off and with no address by default: this chart and the operator build and
+# run without one, and then nothing is sent, ever. The installer is what turns
+# it on and names an address (docs/concepts/operations.md). Off also withholds
+# the App Store, whose installs are what the report lists.
+usageStatistics:
   enabled: false
-  apiURL: ""
-  apiToken: ""
-  meteringInterval: ""
+  # Where reports go. https only; anything else counts as no address.
+  url: ""
+  signingKey:
+    # The Secret the operator reads its signing key from, materialized from
+    # the vault by the ExternalSecret this chart renders while reporting is
+    # on. Only the 32-byte private seed is stored; the key pair is derived
+    # from it, and the public half is in every report.
+    secretName: gentian-os-usage-statistics-key
+    openbaoPath: gentian-os/kernel/usage-statistics
+    property: signing_seed
 
 # LLM serving support. Fallback only: the operator decides from the claim's
 # llm.enabled (read via the gentian-cluster-config ConfigMap) and consults
@@ -611,10 +909,22 @@ mailEgressHost: ""
 #
 # Empty is honest, not broken: the mail keeps landing where it lands today and
 # the reconciler logs that it is unreadable. Set it before registering with a
-# reputation programme — RFC 5321 §4.5.1 requires postmaster, RFC 2142 §4
+# reputation program — RFC 5321 §4.5.1 requires postmaster, RFC 2142 §4
 # requires abuse, and Microsoft's JMRP and SNDS enrolments mail both and enrol
 # nobody who does not answer.
 mailAdminContact: ""
+
+# Other addresses of a hosted domain delivered to an address off this cluster:
+# a role address such as hello@ while nobody on the cluster holds it. Each
+# entry names the address, in a domain this cluster accepts mail for, and
+# where it goes. The target is held to the same rule as mailAdminContact (off
+# this cluster, or the mail would land in a mailbox nobody can open); an
+# address whose domain the cluster does not host is logged and skipped. The
+# forwarded message is not rewritten (no SRS), so a strict sender's SPF check
+# fails at the target.
+mailAliases: []
+#  - address: hello@example.org
+#    to: someone@example.net
 
 # Whether an address nobody owns is accepted.
 #
@@ -630,7 +940,7 @@ mailAdminContact: ""
 # PERMANENT — the sender does not retry and the mail is gone. So the switch has
 # three positions rather than two:
 #
-#   catchall  today's behaviour, and the default. No Keycloak call is made.
+#   catchall  today's behavior, and the default. No Keycloak call is made.
 #   observe   build the recipient list and log it; keep accepting everything.
 #             Nothing is rejected. This is how you check the list against real
 #             traffic before it can cost you anything.
@@ -640,6 +950,10 @@ mailAdminContact: ""
 # realm that enumerates to no addresses in that domain all keep the catch-all
 # for that domain and say so in the log. Accepting junk for another cycle is
 # recoverable; bouncing a tenant's mail is not.
+#
+# One kind of address is refused under every policy: that of a person who was
+# removed, for as long as the record of what became of their mailbox stands and
+# nobody else holds the address. The operator writes those beside the domains.
 #
 # abuse@, postmaster@ and dmarc@ are accepted in every domain under every
 # policy. RFC 5321 requires postmaster, RFC 2142 requires abuse, and dmarc is

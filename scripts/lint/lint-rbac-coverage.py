@@ -27,9 +27,11 @@
 # WHAT IT CHECKS
 #
 # Every `schema.GroupVersionKind{...}` the operator constructs must have a
-# matching apiGroup/resource rule in the generated ClusterRole. Typed clients
-# (`&batchv1.Job{}`) are not checked: their kinds come from the scheme, resolving
-# them means resolving Go types, and they are not where this goes wrong.
+# matching apiGroup/resource rule in the generated ClusterRole, and so must
+# every one of the operator's own kinds its controllers use through a Go type
+# (`&gentianov1alpha1.Branding{}`). Other typed clients (`&batchv1.Job{}`) are
+# not checked: their kinds come from the scheme and resolving them means
+# resolving Go types.
 # Unstructured GVKs are, precisely because they name a CRD the operator does not
 # own and are written out by hand.
 #
@@ -105,6 +107,9 @@ FIELD_STR = r'{}\s*:\s*"([^"]*)"'
 # `Group: someGVK.Group` — a GVK defined from another one, which is common
 # enough to resolve rather than report.
 FIELD_REF = r"{}\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\.Group"
+# `&gentianov1alpha1.Branding{}`, `gentianov1alpha1.TenantList{}`: one of the
+# operator's own kinds, got or listed or watched through its Go type.
+TYPED_KIND = re.compile(r"gentianov1alpha1\.([A-Z][A-Za-z0-9]*)\{")
 VAR_GVK = re.compile(
     r"(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*schema\.GroupVersionKind\{(.*?)\}", re.S
 )
@@ -146,6 +151,28 @@ def scan_sources():
                 yield known[rm.group(1)], kind, loc, None
                 continue
             yield None, kind, loc, (rm.group(1) + ".Group" if rm else "a constant")
+
+    # The operator's own kinds, used through their Go types. They were left
+    # out as "not where this goes wrong" until one went wrong exactly there: a
+    # reconciler that watched a new kind whose rbac markers sat in a doc
+    # comment, which controller-gen ignores, so the ClusterRole never got the
+    # rule and the operator timed out waiting for a cache it could not fill.
+    # Only kinds with a CRD of their own are checked -- the rest of the
+    # package is spec types -- and only in the controllers, which is the
+    # process that runs under this ClusterRole.
+    crds = {p.name[len("gentianos.io_"):-len(".yaml")] for p in (ROOT / "config/crd").glob("gentianos.io_*.yaml")}
+    for p in sorted((SCAN_ROOT / "controller").rglob("*.go")):
+        if p.name.endswith("_test.go"):
+            continue
+        text = p.read_text()
+        rel = p.relative_to(ROOT)
+        for m in TYPED_KIND.finditer(text):
+            kind = m.group(1)
+            base = kind[:-4] if kind.endswith("List") and len(kind) > 4 else kind
+            if plural(base) not in crds:
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            yield "gentianos.io", kind, f"{rel}:{line}", None
 
 
 def main() -> int:

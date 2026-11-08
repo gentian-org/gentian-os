@@ -1,22 +1,17 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package backup
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,12 +19,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 func params() JobParams {
 	return JobParams{
-		Namespace:    "platform-kernel",
+		Namespace:    "system-postgresql",
 		Name:         "tx-demo-app-pg",
 		Tenant:       "demo",
 		App:          "nextcloud-base-ce",
@@ -59,7 +55,7 @@ func mainScript(job *batchv1.Job) string {
 	return strings.Join(job.Spec.Template.Spec.Containers[0].Args, "\n")
 }
 
-// The producer writes a fixed filename and the artefact is named after the
+// The producer writes a fixed filename and the artifact is named after the
 // database. Deriving one from the other uploads nothing at all, silently, so
 // the two are pinned together here.
 func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
@@ -73,7 +69,7 @@ func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
 	// The upload reads the encrypted form of exactly that file: the encrypt
 	// step renames it, and losing that correspondence uploads nothing.
 	upload := mainScript(job)
-	if !strings.Contains(upload, `mc cp "/work/dump.pgc`+EncryptedSuffix+`"`) {
+	if !strings.Contains(upload, `rclone copyto "/work/dump.pgc`+EncryptedSuffix+`"`) {
 		t.Errorf("upload does not read the encrypted file the dump wrote:\n%s", upload)
 	}
 	if !strings.Contains(upload, "demo-gentian-backup/nightly/postgres/demo_nextcloud_base_ce.pgc") {
@@ -85,7 +81,7 @@ func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
 }
 
 // A dump that fails must never be followed by an upload, or the bundle gains a
-// truncated artefact and the export reports success. Init containers give that
+// truncated artifact and the export reports success. Init containers give that
 // for free: they run in order and a failure stops the pod.
 func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 	for name, job := range map[string]*batchv1.Job{
@@ -114,10 +110,13 @@ func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 
 func TestMariaDBDumpUploadsTheFileItWrote(t *testing.T) {
 	job := MariaDBDumpJob(params(), "demo_app")
-	if !strings.Contains(initContainerScript(job), "> /work/dump.sql.gz") {
-		t.Errorf("dump path unexpected:\n%s", initContainerScript(job))
+	// Written to a file and compressed there: through a pipe the exit status
+	// would be gzip's, and a dump that failed would be uploaded as taken.
+	dump := initContainerScript(job)
+	if !strings.Contains(dump, "--result-file=/work/dump.sql 'demo_app'\ngzip /work/dump.sql\n") || strings.Contains(dump, "|") {
+		t.Errorf("dump path unexpected:\n%s", dump)
 	}
-	if !strings.Contains(mainScript(job), `mc cp "/work/dump.sql.gz`+EncryptedSuffix+`"`) {
+	if !strings.Contains(mainScript(job), `rclone copyto "/work/dump.sql.gz`+EncryptedSuffix+`"`) {
 		t.Errorf("upload path unexpected:\n%s", mainScript(job))
 	}
 }
@@ -153,7 +152,7 @@ func TestVolumeArchiveMountsClaimReadOnlyAndAppliesExcludes(t *testing.T) {
 
 // Bucket capture stages on disk rather than mirroring object to object, and
 // that is a deliberate reversal: mirroring needed no scratch space but put the
-// objects into the bundle as plaintext, since artefacts are encrypted
+// objects into the bundle as plaintext, since artifacts are encrypted
 // individually. Paying for staging is what makes bucket contents as protected
 // as everything else.
 func TestS3CaptureStagesSoItCanBeEncrypted(t *testing.T) {
@@ -178,8 +177,8 @@ func TestS3CaptureStagesSoItCanBeEncrypted(t *testing.T) {
 		all.WriteString("\n")
 	}
 	producers := all.String()
-	if !strings.Contains(producers, "mc mirror --preserve") {
-		t.Errorf("bucket is not fetched with metadata preserved:\n%s", producers)
+	if !strings.Contains(producers, `rclone copy "platform:demo-nextcloud-base-ce" /work/bucket`) {
+		t.Errorf("bucket is not fetched to disk:\n%s", producers)
 	}
 	if !strings.Contains(producers, "tar czf") {
 		t.Errorf("bucket is not archived before encryption:\n%s", producers)
@@ -218,6 +217,14 @@ func TestCaptureJobsAreBoundedAndLabelled(t *testing.T) {
 	if job.Labels["gentianos.io/tenant"] != "demo" {
 		t.Errorf("tenant label = %q", job.Labels["gentianos.io/tenant"])
 	}
+	if _, ok := job.Labels[RunKindLabel]; ok {
+		t.Errorf("run-kind label %q set with no RunKind", job.Labels[RunKindLabel])
+	}
+	p := params()
+	p.RunKind = RunKindRestore
+	if got := PostgresDumpJob(p, "demo_app").Labels[RunKindLabel]; got != RunKindRestore {
+		t.Errorf("run-kind label = %q, want %q", got, RunKindRestore)
+	}
 
 	// The scratch mount must be bounded, or one oversized tenant fills a node's
 	// ephemeral storage and evicts unrelated workloads.
@@ -244,7 +251,7 @@ func TestCapturesNeverMountTheMasterPassword(t *testing.T) {
 		RealmExportJob(params(), "demo"),
 	}
 	allowed := map[string]struct{}{
-		MinIOAdminSecret:    {},
+		StorageAdminSecret:  {},
 		PostgresAdminSecret: {},
 		MariaDBAdminSecret:  {},
 		KeycloakAdminSecret: {},
@@ -279,12 +286,12 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 		// A display name with a quote and a newline is the shape that breaks
 		// naive here-doc embedding.
 		Apps: []ManifestApp{{Name: "app\"one", ChartVersion: "1.0.0"}},
-	}, NewBundleInfo("demo", "nightly", "now", params().Encryption))
+	}, NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
 	// The manifest is staged, then encrypted, then uploaded like any other
-	// artefact — it carries the tenant's spec and app inventory, which has no
+	// artifact — it carries the tenant's spec and app inventory, which has no
 	// business sitting readable beside an encrypted bundle.
 	staged := initContainerScript(job)
 	if strings.Count(staged, "GENTIAN_MANIFEST_EOF") != 2 {
@@ -310,7 +317,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 		t.Fatal("no bundle-info container")
 	}
 	infoScript := strings.Join(info.Args, "\n")
-	if !strings.Contains(infoScript, `mc pipe "gentian/demo-gentian-backup/nightly/bundle-info.json"`) {
+	if !strings.Contains(infoScript, `rclone rcat "bundle:demo-gentian-backup/nightly/bundle-info.json"`) {
 		t.Errorf("bundle info target unexpected:\n%s", infoScript)
 	}
 	if strings.Contains(infoScript, "bundle-info.json"+EncryptedSuffix) {
@@ -326,7 +333,7 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 // creates it. Every one of them, because any can be the first to run.
 func TestBundleWritersCreateTheirOwnBucket(t *testing.T) {
 	manifest, err := ManifestJob(params(), &Manifest{Tenant: "demo"},
-		NewBundleInfo("demo", "nightly", "now", params().Encryption))
+		NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -341,11 +348,8 @@ func TestBundleWritersCreateTheirOwnBucket(t *testing.T) {
 
 	for name, job := range writers {
 		script := mainScript(job)
-		if !strings.Contains(script, `mc mb --ignore-existing "gentian/${BUNDLE_BUCKET}"`) {
+		if !strings.Contains(script, `RCLONE_S3_NO_CHECK_BUCKET=false rclone mkdir "bundle:${BUNDLE_BUCKET}"`) {
 			t.Errorf("%s does not ensure the bundle bucket:\n%s", name, script)
-		}
-		if !strings.Contains(script, `mc anonymous set none "gentian/${BUNDLE_BUCKET}"`) {
-			t.Errorf("%s leaves the bundle bucket's anonymous policy untouched", name)
 		}
 
 		var bucket string
@@ -393,10 +397,10 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 		"volume":        VolumeArchiveJob(p, "data", []string{"**/cache"}),
 		"s3":            S3ArchiveJob(p, "demo-bucket"),
 		"realm-export":  RealmExportJob(p, "demo"),
-		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
-		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "key-secret")),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -415,7 +419,7 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 }
 
 // Deleting a bundle must only ever be able to delete THAT bundle. The two
-// properties that make rm --recursive safe to automate: the prefix is part of
+// properties that make a recursive delete safe to automate: the prefix is part of
 // the target (never the bare bucket), and an empty prefix refuses instead of
 // widening the glob to everything the tenant has.
 func TestBundleDeleteScopesToThePrefixAndRefusesAnEmptyOne(t *testing.T) {
@@ -425,10 +429,10 @@ func TestBundleDeleteScopesToThePrefixAndRefusesAnEmptyOne(t *testing.T) {
 	if !strings.Contains(script, `[ -n "${BUNDLE_PREFIX}" ]`) {
 		t.Error("no empty-prefix guard: an export with no prefix would rm the whole bucket")
 	}
-	if !strings.Contains(script, `"gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/"`) {
-		t.Error("rm target is not scoped to the bundle prefix")
+	if !strings.Contains(script, `rclone purge "bundle:${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`+"\n") {
+		t.Error("the purge is not scoped to the bundle prefix")
 	}
-	if strings.Contains(script, `rm --recursive --force "gentian/${BUNDLE_BUCKET}"`) {
+	if strings.Contains(script, `purge "bundle:${BUNDLE_BUCKET}"`) {
 		t.Error("script can address the bare bucket")
 	}
 	// A bundle that was never written (capture failed before first upload)
@@ -448,8 +452,8 @@ func TestBundleDeleteScopesToThePrefixAndRefusesAnEmptyOne(t *testing.T) {
 }
 
 // Volume Jobs run in the tenant namespace, so their credentials cannot come
-// from minio-admin — the controller stages a copy and names it in JobParams.
-// Every MinIO env var must follow that name, or the Job mounts a Secret that
+// from s3-admin — the controller stages a copy and names it in JobParams.
+// Every S3_ env var must follow that name, or the Job mounts a Secret that
 // does not exist where it runs and sits in CreateContainerConfigError.
 func TestVolumeArchiveUsesStagedCredentialsWhenNamed(t *testing.T) {
 	p := params()
@@ -469,7 +473,7 @@ func TestVolumeArchiveUsesStagedCredentialsWhenNamed(t *testing.T) {
 			if ref == nil || ref.SecretKeyRef == nil {
 				continue
 			}
-			if strings.HasPrefix(env.Name, "MINIO_") && ref.SecretKeyRef.Name != "tx-nightly-vol-creds" {
+			if strings.HasPrefix(env.Name, "S3_") && ref.SecretKeyRef.Name != "tx-nightly-vol-creds" {
 				t.Errorf("%s/%s reads %s from %q, not the staged copy",
 					c.Name, env.Name, env.Name, ref.SecretKeyRef.Name)
 			}
@@ -491,10 +495,10 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 		"volume":        VolumeArchiveJob(p, "data", nil),
 		"s3":            S3ArchiveJob(p, "demo-bucket"),
 		"realm-export":  RealmExportJob(p, "demo"),
-		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
-		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
-		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), PostgresArtefact("demo_app"), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), MariaDBArtefact("demo_app"), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), S3Artefact("demo-bucket"), "demo-bucket", ObjectStorageProvisionContainer("provision-bucket", "demo-bucket", "key-secret")),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), IdentityArtefact, "demo", RealmSource{}),
 		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
@@ -519,30 +523,94 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 	}
 }
 
-// The mc image is a minimal UBI with no tar. Any container that archives or
-// unpacks must run an image that has it — the first live volume capture
-// exited 127 on its first command because this was assumed rather than held.
-func TestNoMcImageContainerInvokesTar(t *testing.T) {
+// installsAtRuntime matches a script line that installs a package.
+var installsAtRuntime = regexp.MustCompile(`\b(apk|apt-get|apt|yum|dnf|pip3?|npm)\s+(add|install)\b`)
+
+// No Job installs a tool when it runs, and none runs a bare Alpine image to
+// install one into: the realm and archive steps did, on an alpine:3.20 that
+// was named by a tag anyone can move, and fetched curl and jq from the
+// network into every pod. The storage tools image carries them, built,
+// signed and tagged with the operator.
+//
+// Every container of that image says who it runs as. The image's user, under
+// the restricted context, unless it is the step that reads or writes an
+// app's volume, which only root can (volumeToolsContainer), or the one that
+// packs the copies the mail server's user made, which only that user can
+// read.
+func TestTheToolsJobsInstallNothingAndRunAsTheirUser(t *testing.T) {
+	jobs := unitJobs(t)
 	p := params()
-	jobs := map[string]*batchv1.Job{
-		"volume":         VolumeArchiveJob(p, "data", nil),
-		"s3":             S3ArchiveJob(p, "demo-bucket"),
-		"s3-restore":     S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
-		"volume-restore": VolumeRestoreJob(p, recipientDecryption(), "data"),
-		"bundle-delete":  BundleDeleteJob(p),
-	}
+	d := Decryption{Mode: gentianov1alpha1.ExportEncryptionRecipient, SecretName: "key", SecretKey: "identity"}
+	jobs["mailbox backup"] = MailboxBackupJob(p, "mail", "example.org")
+	jobs["mailbox restore"] = MailboxRestoreJob(p, d, MailboxesArtefact, "mail", "example.org")
+	asRoot := map[string]bool{"archive": true, "volume-restore": true}
+	asUser := map[string]int64{"pack-mailboxes": MailUser}
+	tools := 0
 	for name, job := range jobs {
 		containers := append(append([]corev1.Container{},
 			job.Spec.Template.Spec.InitContainers...),
 			job.Spec.Template.Spec.Containers...)
 		for _, c := range containers {
-			if c.Image != mcImage {
+			where := name + "/" + c.Name
+			for _, word := range append(append([]string{}, c.Command...), c.Args...) {
+				if m := installsAtRuntime.FindString(word); m != "" {
+					t.Errorf("%s installs a package when it runs (%s)", where, m)
+				}
+			}
+			if strings.HasPrefix(c.Image, "alpine:") || strings.HasPrefix(c.Image, "docker.io/library/alpine:") {
+				t.Errorf("%s runs a bare Alpine image: %s", where, c.Image)
+			}
+			if c.Image != kernel.StorageToolsImage() {
 				continue
 			}
+			tools++
+			sc := c.SecurityContext
+			if sc == nil || sc.RunAsUser == nil {
+				t.Errorf("%s: runs the storage tools without saying as whom", where)
+				continue
+			}
+			if asRoot[c.Name] {
+				if *sc.RunAsUser != 0 {
+					t.Errorf("%s: runs as %d, and only root reads and restores every file of a volume", where, *sc.RunAsUser)
+				}
+				continue
+			}
+			want := kernel.StorageToolsUser
+			if u, ok := asUser[c.Name]; ok {
+				want = u
+			}
+			if *sc.RunAsUser != want {
+				t.Errorf("%s: runs as %d, want %d", where, *sc.RunAsUser, want)
+			}
+			if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+				t.Errorf("%s: runAsNonRoot is not true", where)
+			}
+			if sc.Capabilities == nil || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+				t.Errorf("%s: does not drop every capability", where)
+			}
+		}
+	}
+	if tools == 0 {
+		t.Fatal("no container runs the storage tools: the test checks nothing")
+	}
+}
+
+// Every container that archives or unpacks runs an image that has tar: the
+// first live volume capture ran a client image without one and exited 127 on
+// its first command, because this was assumed rather than held. The image
+// the platform runs that has it: the storage tools.
+func TestEveryContainerThatRunsTarHasIt(t *testing.T) {
+	withTar := map[string]bool{kernel.StorageToolsImage(): true}
+	for name, job := range unitJobs(t) {
+		containers := append(append([]corev1.Container{},
+			job.Spec.Template.Spec.InitContainers...),
+			job.Spec.Template.Spec.Containers...)
+		for _, c := range containers {
 			for _, arg := range c.Args {
-				if strings.Contains(arg, "tar ") {
-					t.Errorf("%s/%s runs tar in the mc image, which does not have it:\n%s",
-						name, c.Name, arg)
+				if strings.Contains(arg, "tar c") || strings.Contains(arg, "tar x") {
+					if !withTar[c.Image] {
+						t.Errorf("%s/%s runs tar in %s:\n%s", name, c.Name, c.Image, arg)
+					}
 				}
 			}
 		}
@@ -552,9 +620,9 @@ func TestNoMcImageContainerInvokesTar(t *testing.T) {
 // The mirror image of TestBundleWritersCreateTheirOwnBucket, and the reason it
 // could not simply be extended: an external bucket belongs to whoever owns the
 // account, and the credential a policy carries is scoped to objects. Creating
-// the bucket or rewriting its anonymous policy is denied there, and mc's
-// --ignore-existing does not cover a denial — so issuing them killed the upload
-// container on its first command, before any artefact was sent, and every
+// the bucket or rewriting its anonymous policy is denied there, and "make it
+// if it is not there" does not cover a denial — so issuing them killed the upload
+// container on its first command, before any artifact was sent, and every
 // backup to an external destination failed with nothing written.
 func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 	p := params()
@@ -563,7 +631,7 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 	p.UploadCredentialsSecret = "backup-destination-corp"
 
 	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"},
-		NewBundleInfo("demo", "nightly", "now", p.Encryption))
+		NewBundleInfo("demo", "nightly", "now", p.Encryption), nil)
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -578,14 +646,14 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 
 	for name, job := range writers {
 		script := mainScript(job)
-		for _, forbidden := range []string{"mc mb", "mc anonymous"} {
+		for _, forbidden := range []string{"rclone mkdir", "NO_CHECK_BUCKET=false"} {
 			if strings.Contains(script, forbidden) {
 				t.Errorf("%s runs %q on a bucket it does not own:\n%s", name, forbidden, script)
 			}
 		}
 		// Still reaches the destination; only the administering is dropped.
-		if !strings.Contains(script, "mc alias set gentian") {
-			t.Errorf("%s no longer connects to the destination:\n%s", name, script)
+		if !strings.Contains(script, "rclone copyto") {
+			t.Errorf("%s no longer writes to the destination:\n%s", name, script)
 		}
 	}
 }
@@ -594,7 +662,7 @@ func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
 // credential. Reading the endpoint from the credential Secret would mean
 // whoever can edit that Secret can redirect every tenant's backups — so a
 // configured destination carries its address as a literal, and only the keys
-// come from the credential manager.
+// come from the custodian.
 func TestConfiguredEndpointIsNotReadFromTheCredential(t *testing.T) {
 	p := params()
 	p.Endpoint = "https://sos-ch-gva-2.exo.io"
@@ -608,9 +676,9 @@ func TestConfiguredEndpointIsNotReadFromTheCredential(t *testing.T) {
 		for i := range c.Env {
 			env := &c.Env[i]
 			switch {
-			case env.Name == "MINIO_ENDPOINT":
+			case env.Name == "S3_ENDPOINT":
 				endpoint = env
-			case env.Name == "AWS_REGION":
+			case env.Name == "S3_REGION":
 				region = env
 			case env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil:
 				fromSecret[env.Name] = env.ValueFrom.SecretKeyRef.Name
@@ -625,47 +693,47 @@ func TestConfiguredEndpointIsNotReadFromTheCredential(t *testing.T) {
 		t.Error("endpoint is read from a Secret; editing it would redirect backups")
 	}
 	if region == nil || region.Value != "ch-gva-2" {
-		t.Errorf("AWS_REGION = %v, want the destination's region", region)
+		t.Errorf("S3_REGION = %v, want the destination's region", region)
 	}
-	for _, key := range []string{"MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"} {
+	for _, key := range []string{"S3_ACCESS_KEY", "S3_SECRET_KEY"} {
 		if fromSecret[key] != "backup-destination-cluster" {
 			t.Errorf("%s comes from %q, want the destination credential", key, fromSecret[key])
 		}
 	}
 }
 
-// The platform's own MinIO records its address beside its keys, so all three
+// The platform's own object store records its address beside its keys, so all three
 // still come from one Secret and nothing about the default path changes.
 func TestPlatformStorageStillReadsItsEndpointFromTheSecret(t *testing.T) {
 	job := PostgresDumpJob(params(), "demo_app")
 	for _, c := range job.Spec.Template.Spec.Containers {
 		for _, env := range c.Env {
-			if env.Name != "MINIO_ENDPOINT" {
+			if env.Name != "S3_ENDPOINT" {
 				continue
 			}
 			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
-				t.Fatal("platform endpoint is no longer read from minio-admin")
+				t.Fatalf("platform endpoint is no longer read from %s", StorageAdminSecret)
 			}
-			if env.ValueFrom.SecretKeyRef.Name != MinIOAdminSecret {
+			if env.ValueFrom.SecretKeyRef.Name != StorageAdminSecret {
 				t.Errorf("platform endpoint reads from %q", env.ValueFrom.SecretKeyRef.Name)
 			}
 			return
 		}
 	}
-	t.Fatal("no MINIO_ENDPOINT in the upload container")
+	t.Fatal("no S3_ENDPOINT in the upload container")
 }
 
-// An app's bucket lives in the platform's own MinIO. The bundle may not, and
+// An app's bucket lives in the platform's own object store. The bundle may not, and
 // the two are the same system only when bundles go to platform storage.
 //
 // Sharing the destination's credentials for the source read sent fetch-bucket
 // looking for the tenant's bucket in someone else's account. It failed before a
 // byte was captured, and reported "capture did not succeed after 3 attempts"
 // against an app that was fine. It stayed hidden for as long as every bundle
-// went to the same MinIO the apps use.
+// went to the same store the apps use.
 func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
 	p := JobParams{
-		Namespace: "platform-kernel",
+		Namespace: "system-postgresql",
 		Name:      "tx-demo-docmost-s3",
 		Tenant:    "demo",
 		App:       "docmost-ce",
@@ -690,19 +758,19 @@ func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
 	}
 
 	for _, env := range fetch.Env {
-		if env.Name == "MINIO_ENDPOINT" {
+		if env.Name == "S3_ENDPOINT" {
 			if env.Value == p.Endpoint {
 				t.Fatalf("the source read is aimed at the bundle destination (%s); the "+
 					"app's bucket is not there", env.Value)
 			}
 			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil ||
-				env.ValueFrom.SecretKeyRef.Name != MinIOAdminSecret {
-				t.Errorf("MINIO_ENDPOINT does not come from %s: %+v", MinIOAdminSecret, env)
+				env.ValueFrom.SecretKeyRef.Name != StorageAdminSecret {
+				t.Errorf("S3_ENDPOINT does not come from %s: %+v", StorageAdminSecret, env)
 			}
 		}
-		if env.Name == "MINIO_ACCESS_KEY" {
+		if env.Name == "S3_ACCESS_KEY" {
 			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil ||
-				env.ValueFrom.SecretKeyRef.Name != MinIOAdminSecret {
+				env.ValueFrom.SecretKeyRef.Name != StorageAdminSecret {
 				t.Errorf("the source read uses the destination's keys, not the "+
 					"platform's: %+v", env)
 			}
@@ -722,7 +790,7 @@ func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
 	}
 	var sawDestination bool
 	for _, env := range upload.Env {
-		if env.Name == "MINIO_ENDPOINT" && env.Value == p.Endpoint {
+		if env.Name == "S3_ENDPOINT" && env.Value == p.Endpoint {
 			sawDestination = true
 		}
 	}
@@ -782,10 +850,63 @@ func TestAnUnheldVolumeLeavesSchedulingAlone(t *testing.T) {
 // confined to whichever node happened to be named.
 func TestJobsWithoutAVolumeAreNotPinned(t *testing.T) {
 	p := JobParams{
-		Namespace: "platform-kernel", Name: "tx-demo-pg", Tenant: "demo",
+		Namespace: "system-postgresql", Name: "tx-demo-pg", Tenant: "demo",
 		App: "docmost-ce", Bucket: "demo-backup", Prefix: "demo-export",
 	}
 	if sel := PostgresDumpJob(p, "demo_docmost").Spec.Template.Spec.NodeSelector; sel != nil {
 		t.Errorf("a database dump was pinned to %v", sel)
+	}
+}
+
+// The bundle's addressing style reaches rclone: path unless the destination
+// says virtualHost, and the platform's own store always path.
+func TestTheAddressingStyleReachesRclone(t *testing.T) {
+	styleOf := func(p JobParams) (string, string) {
+		job := BundleDeleteJob(p)
+		c := job.Spec.Template.Spec.Containers[0]
+		style := ""
+		for _, e := range c.Env {
+			if e.Name == "S3_ADDRESSING_STYLE" {
+				style = e.Value
+			}
+		}
+		return style, strings.Join(append(append([]string{}, c.Command...), c.Args...), "\n")
+	}
+	p := params()
+	p.Endpoint, p.UploadCredentialsSecret = "https://s3.example.org", "backup-destination-cluster"
+	p.AddressingStyle = gentianov1alpha1.S3AddressingVirtualHost
+	style, script := styleOf(p)
+	if style != "virtualHost" {
+		t.Errorf("S3_ADDRESSING_STYLE = %q, want virtualHost", style)
+	}
+	if !strings.Contains(script, `if [ "${S3_ADDRESSING_STYLE:-path}" = virtualHost ]; then export RCLONE_CONFIG_BUNDLE_FORCE_PATH_STYLE=false; else export RCLONE_CONFIG_BUNDLE_FORCE_PATH_STYLE=true; fi`) {
+		t.Errorf("the remote does not follow S3_ADDRESSING_STYLE:\n%s", script)
+	}
+	for name, p := range map[string]JobParams{
+		"path":     func() JobParams { q := p; q.AddressingStyle = gentianov1alpha1.S3AddressingPath; return q }(),
+		"empty":    func() JobParams { q := p; q.AddressingStyle = ""; return q }(),
+		"platform": params(),
+	} {
+		if style, _ := styleOf(p); style != "" {
+			t.Errorf("%s: S3_ADDRESSING_STYLE = %q, want none (path)", name, style)
+		}
+	}
+}
+
+// Every container of the manifest Job is hardened, the one appended after
+// the upload included: the tenant baseline policy refuses the whole pod for
+// one container without allowPrivilegeEscalation false, and an export that
+// never writes its manifest never finishes.
+func TestEveryContainerOfTheManifestJobIsHardened(t *testing.T) {
+	job, err := ManifestJob(params(), &Manifest{SchemaVersion: ManifestSchemaVersion, Tenant: "demo", Export: "nightly"},
+		NewBundleInfo("demo", "nightly", "now", params().Encryption), nil)
+	if err != nil {
+		t.Fatalf("ManifestJob: %v", err)
+	}
+	for _, c := range job.Spec.Template.Spec.Containers {
+		sc := c.SecurityContext
+		if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || sc.SeccompProfile == nil {
+			t.Errorf("container %s is not hardened: %+v", c.Name, sc)
+		}
 	}
 }

@@ -60,13 +60,13 @@ TXT_PREFIX="${TXT_PREFIX:-_extdns-%{record_type\}.}"
 OLD_TXT_PREFIX="${OLD_TXT_PREFIX:-_extdns.}"
 # Where the token lives when it is not already in the environment: the Secret
 # external-dns itself reads, so this needs no second credential.
-TOKEN_NS="${TOKEN_NS:-external-dns}"
+TOKEN_NS="${TOKEN_NS:-kernel-edge}"
 TOKEN_SECRET="${TOKEN_SECRET:-cloudflare-api-token}"
 TOKEN_KEY="${TOKEN_KEY:-cloudflare_api_token}"
 
 API=https://api.cloudflare.com/client/v4
 RECORD_TEMPLATE='%{record_type}'
-# The types extractRecordTypeDefaultPosition() recognises, so an old-format name
+# The types extractRecordTypeDefaultPosition() recognizes, so an old-format name
 # is split where external-dns would split it.
 KNOWN_TYPES=" a aaaa cname txt mx ns srv caa ptr naptr "
 
@@ -111,11 +111,11 @@ require_token() {
 
 cf() {
 	local method="$1" path="$2" data="${3:-}"
-	local args=(-sS -X "$method" -H "Authorization: Bearer $CF_API_TOKEN")
+	local args=(-sS -X "$method")
 	if [ -n "$data" ]; then
 		args+=(-H 'Content-Type: application/json' --data "$data")
 	fi
-	curl "${args[@]}" "$API$path"
+	curl "${args[@]}" -H @<(printf 'Authorization: Bearer %s\n' "$CF_API_TOKEN") "$API$path"
 }
 
 ok() {

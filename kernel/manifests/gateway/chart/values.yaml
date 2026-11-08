@@ -1,9 +1,9 @@
-namespace: envoy-gateway-system
+namespace: kernel-edge
 
 # The address DNS points at. Empty leaves the cloud controller to allocate one,
 # which is what NETWORK_MODE=tunnel wants.
 #
-# Whether it is honoured, and how, is the platform's business — see
+# Whether it is honored, and how, is the platform's business — see
 # kernel/platforms.yaml. On GCP it must already be reserved as a regional
 # external static address; on AWS and Azure it is not used at all, because
 # neither resolves an edge address by IP (see addressRef).
@@ -33,7 +33,22 @@ extraAnnotations: {}
 platforms: {}
 
 envoy:
+  # The proxy image, pinned here rather than left to the Envoy Gateway release:
+  # its default for v1.9.3 is distroless-v1.39.5, which still trusts the roots
+  # of the compromised eMudhra intermediate CAs, and a v1.39 before .4 can
+  # crash on a race in SDS, the stream the proxies' TLS secrets arrive on. A
+  # tag and its digest, so the image cannot change under the same name.
+  image: "docker.io/envoyproxy/envoy:distroless-v1.39.6@sha256:1cac8b3a2f72d5a0918f54d7b49e68aae0b0ba325c2d50c8a9a3fff7a4d1f994"
   # Two, spread across hosts. externalTrafficPolicy is Local, so a node serves
   # only if a pod runs on it; one replica means one node can serve, and draining
   # it takes every hostname offline.
   replicas: 2
+
+  # How the data plane is reached. LoadBalancer is right where an address is
+  # claimed from the platform (NETWORK_MODE=static-ip). A tunneled cluster is
+  # reached from inside — the tunnel daemon dials out — so it asks for
+  # ClusterIP: a LoadBalancer there waits on a cloud that is not there, and a
+  # Gateway with no address is never Programmed. The address fields and the
+  # platform's annotations apply to a LoadBalancer only, and are dropped
+  # otherwise rather than left as claims nothing honors.
+  serviceType: LoadBalancer

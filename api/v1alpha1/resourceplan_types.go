@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -25,11 +27,11 @@ import (
 //
 // It is deliberately **not deployable**. Nothing reconciles a ResourcePlan and
 // it owns no namespace, workload or quota of its own: it exists so that a
-// tenant's ceiling is chosen from a catalogue rather than typed. Selecting one
+// tenant's ceiling is chosen from a catalog rather than typed. Selecting one
 // writes its quantities into that tenant's `spec.quotas` — see
-// docs/design/resource-plans.md.
+// docs/concepts/resource-plans.md.
 //
-// Why a catalogue at all, when Tenant.spec.quotas already accepts any quantity:
+// Why a catalog at all, when Tenant.spec.quotas already accepts any quantity:
 // a quota that can be any number can be any number that was never sold. The
 // plan is the unit the platform prices, meters and invoices, so the write path
 // accepts a plan name and nothing else, and every tenant's ceiling is at all
@@ -73,8 +75,7 @@ type ResourcePlanSpec struct {
 
 	// Tier orders plans from smallest to largest. It is the only ordering the
 	// platform uses: quantities can move in different directions between two
-	// plans (more CPU, less storage), so "bigger" cannot be derived from them,
-	// and an entitlement ceiling has to compare something total.
+	// plans (more CPU, less storage), so "bigger" cannot be derived from them.
 	//
 	// Tiers need not be contiguous; leaving gaps allows a plan to be inserted
 	// later without renumbering the ones already sold.
@@ -99,32 +100,30 @@ type ResourcePlanSpec struct {
 	ProductSku string `json:"productSku,omitempty"`
 
 	// Default marks the plan a tenant is assumed to be on when its quotas match
-	// no plan in the catalogue and none has been selected. At most one plan
+	// no plan in the catalog and none has been selected. At most one plan
 	// should set it; when several do, the lowest tier wins, because assuming a
 	// tenant is on a bigger plan than they chose is the expensive mistake.
 	// +optional
 	Default bool `json:"default,omitempty"`
 
-	// SelfServiceDisabled withholds the plan from tenant administrators. The
-	// plan stays selectable by cluster administrators and by the CLI, so it
-	// serves the case of a negotiated or bespoke ceiling that should not appear
-	// in a tenant's own list of upgrades.
+	// Units is how many node units the plan is, for a commerce backend that
+	// sells a number of nodes rather than a named plan: it moves a tenant to
+	// the plan whose units are the number bought. Zero means the plan is not
+	// a whole number of node units.
 	// +optional
-	SelfServiceDisabled bool `json:"selfServiceDisabled,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	Units int32 `json:"units,omitempty"`
+
+	// Retired withholds the plan from every new choice and keeps it for the
+	// tenants already on it. A plan's quantities cannot change under the
+	// tenants on it, so a different ceiling is a new plan, and the one it
+	// replaces is retired until nobody is on it.
+	// +optional
+	Retired bool `json:"retired,omitempty"`
 }
 
 // ResourcePlanStatus reports observed plan state.
-type ResourcePlanStatus struct {
-	// TenantCount is the number of tenants whose quotas currently match this
-	// plan. Maintained for the console's catalogue view; it is derived, and
-	// nothing reads it to make a decision.
-	// +optional
-	TenantCount int32 `json:"tenantCount,omitempty"`
-
-	// ObservedAt is when TenantCount was last recomputed.
-	// +optional
-	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
-}
+type ResourcePlanStatus struct{}
 
 // ResourcePlanList contains a list of ResourcePlan.
 // +kubebuilder:object:root=true
@@ -135,19 +134,6 @@ type ResourcePlanList struct {
 }
 
 const (
-	// MaxResourceTierAnnotation caps the plans a tenant may be moved onto.
-	//
-	// On the Tenant rather than passed by the caller, because a ceiling a
-	// request supplies is a ceiling a request can omit. The API resolves it
-	// from cluster state on every call, so a client that knows nothing about
-	// entitlements cannot buy an upgrade by leaving a field out.
-	//
-	// Set by the cluster operator, or by whatever commerce integration a
-	// deployment runs — the platform reads it and does not care which. Absent
-	// means uncapped, matching how an unreachable commerce backend leaves the
-	// App Store's catalogue usable rather than blocking it.
-	MaxResourceTierAnnotation = "gentianos.io/max-resource-tier"
-
 	// ResourcePlanAnnotation records the plan a tenant was last set to.
 	//
 	// The quotas are the truth — they are what the cluster enforces — but they
@@ -155,7 +141,21 @@ const (
 	// and a hand-edited tenant.yaml may match none. The annotation says what
 	// was chosen, matching says what is in force, and the two disagreeing is
 	// itself worth showing rather than resolving silently.
+	//
+	// Written by the director, into the tenant's resource-plan.yaml patch in
+	// the deployments repository, when the cluster's administrator moves the
+	// tenant. The operator reads it once Argo CD has synced it, and records the
+	// change in the tenant's usage history from there — so the billing record
+	// says what landed, not what was asked for.
 	ResourcePlanAnnotation = "gentianos.io/resource-plan"
+
+	// ResourcePlanSetByAnnotation names who chose the plan the tenant is on.
+	//
+	// Beside the plan rather than only in the commit, because the operator
+	// reads the Tenant and not git: it is what lets the plan event in the
+	// usage history carry an actor at all. The commit has the same name as
+	// its author, which is how the two records are joined.
+	ResourcePlanSetByAnnotation = "gentianos.io/resource-plan-set-by"
 )
 
 // QuotasEqual reports whether two quota sets impose the same limits.

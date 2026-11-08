@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -26,10 +20,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // collectOIDCIngressSubdomainsByTenant returns ingress hostname prefixes for every
-// installed AppProfile that declares OIDC, keyed by tenant name. Used to build
+// installed ComponentProfile that declares OIDC, keyed by tenant name. Used to build
 // the shared id.<kernel> frame-ancestors policy so portal-embedded apps can
 // complete OIDC without per-app manual allowlists.
 func collectOIDCIngressSubdomainsByTenant(
@@ -38,7 +33,7 @@ func collectOIDCIngressSubdomainsByTenant(
 	tenants []gentianov1alpha1.Tenant,
 ) (map[string][]string, error) {
 	result := make(map[string][]string)
-	profileCache := make(map[string]*gentianov1alpha1.AppProfile)
+	profileCache := make(map[string]*gentianov1alpha1.ComponentProfile)
 
 	for i := range tenants {
 		tenant := &tenants[i]
@@ -49,12 +44,19 @@ func collectOIDCIngressSubdomainsByTenant(
 		// Addons alongside apps, for the same reason the ingress collector walks
 		// both: an addon may declare a hostname, and a host absent from this
 		// list is an origin the app's own OIDC client will refuse. No addon in
-		// the catalogue declares one today, so this changes nothing yet -- it
+		// the catalog declares one today, so this changes nothing yet -- it
 		// keeps the two walks agreeing, rather than leaving one of them to be
 		// discovered later by a login that fails on a host nobody allowed.
-		for _, app := range tenant.Spec.Apps {
+		//
+		// The installed apps, as the ingress collector walks them: a component
+		// the platform places is not among them.
+		installed, err := placement.Installed(ctx, c, tenant.Spec.Apps)
+		if err != nil {
+			return nil, err
+		}
+		for _, app := range installed {
 			for _, profileName := range append([]string{app.Profile}, app.Addons...) {
-				profile, err := cachedAppProfile(ctx, c, profileCache, profileName)
+				profile, err := cachedComponentProfile(ctx, c, profileCache, profileName)
 				if err != nil {
 					return nil, err
 				}
@@ -81,47 +83,48 @@ func collectOIDCIngressSubdomainsByTenant(
 	return result, nil
 }
 
-func cachedAppProfile(
+func cachedComponentProfile(
 	ctx context.Context,
 	c client.Client,
-	cache map[string]*gentianov1alpha1.AppProfile,
+	cache map[string]*gentianov1alpha1.ComponentProfile,
 	name string,
-) (*gentianov1alpha1.AppProfile, error) {
+) (*gentianov1alpha1.ComponentProfile, error) {
 	if name == "" {
 		return nil, nil
 	}
 	if p, ok := cache[name]; ok {
 		return p, nil
 	}
-	profile := &gentianov1alpha1.AppProfile{}
+	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := c.Get(ctx, client.ObjectKey{Name: name}, profile); err != nil {
 		if errors.IsNotFound(err) {
 			cache[name] = nil
 			return nil, nil
 		}
-		return nil, fmt.Errorf("get AppProfile %s: %w", name, err)
+		return nil, fmt.Errorf("get ComponentProfile %s: %w", name, err)
 	}
 	cache[name] = profile
 	return profile, nil
 }
 
-func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.AppProfile) []string {
-	if profile == nil || !appProfileDeclaresOIDC(profile) {
+func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.ComponentProfile) []string {
+	if profile == nil || !profileDeclaresOIDC(profile) {
 		return nil
 	}
+	// Every gateway host this component answers on. All of them, not just the
+	// first: a redirect URI that is not registered is a login that fails at
+	// the last step, and an additional host is as real a landing place as the
+	// component's own.
 	var subs []string
-	if profile.Spec.Ingress != nil && profile.Spec.Ingress.SubDomain != "" {
-		subs = append(subs, profile.Spec.Ingress.SubDomain)
-	}
-	for _, ing := range profile.Spec.AdditionalIngresses {
-		if ing.SubDomain != "" {
-			subs = append(subs, ing.SubDomain)
+	for _, exposure := range profile.GatewayExposures() {
+		if exposure.SubDomain != "" {
+			subs = append(subs, exposure.SubDomain)
 		}
 	}
-	if profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Identity != nil &&
-		profile.Spec.KernelRequirements.Identity.OIDC != nil {
-		for _, uri := range profile.Spec.KernelRequirements.Identity.OIDC.RedirectURIs {
+	if profile.Services() != nil &&
+		profile.Services().Identity != nil &&
+		profile.Services().Identity.OIDC != nil {
+		for _, uri := range profile.Services().Identity.OIDC.RedirectURIs {
 			if sub := oidcRedirectURISubdomain(uri); sub != "" {
 				subs = append(subs, sub)
 			}
@@ -148,16 +151,16 @@ func oidcRedirectURISubdomain(uri string) string {
 	return label
 }
 
-func appProfileDeclaresOIDC(profile *gentianov1alpha1.AppProfile) bool {
-	if profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Identity != nil &&
-		profile.Spec.KernelRequirements.Identity.OIDC != nil {
+func profileDeclaresOIDC(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile.Services() != nil &&
+		profile.Services().Identity != nil &&
+		profile.Services().Identity.OIDC != nil {
 		return true
 	}
-	for _, sidecar := range profile.Spec.Sidecars {
-		if sidecar.KernelRequirements != nil &&
-			sidecar.KernelRequirements.Identity != nil &&
-			sidecar.KernelRequirements.Identity.OIDC != nil {
+	for _, sidecar := range profile.Spec.Extensions {
+		if sidecar.ServiceRequirements != nil &&
+			sidecar.ServiceRequirements.Identity != nil &&
+			sidecar.ServiceRequirements.Identity.OIDC != nil {
 			return true
 		}
 	}

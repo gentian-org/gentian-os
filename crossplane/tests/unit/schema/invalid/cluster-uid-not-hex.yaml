@@ -1,0 +1,11 @@
+# Invalid Cluster claim — clusterUID is 32 lowercase hex characters, as the
+# installer writes it, and nothing else.
+# Used by test-unit-schema to verify the XRD rejects this input.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-bad-uid
+  namespace: default
+spec:
+  kernelDomain: example.org
+  clusterUID: default-cluster

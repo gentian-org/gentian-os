@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -20,7 +14,7 @@ import (
 	"context"
 	"fmt"
 
-	batchv1 "k8s.io/api/batch/v1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -60,19 +54,19 @@ func crossplaneObjectReady(obj *unstructured.Unstructured) bool {
 }
 
 // waitForProvisioningJob returns true when a Crossplane-owned provisioning Job
-// in platform-kernel has completed successfully. When the Batch Job was removed
-// by TTL after success, the corresponding kubernetes.crossplane.io/Object MR is
-// consulted so tenants do not stay stuck in Provisioning.
+// has completed successfully, in whichever platform namespace its function put it. When the Batch Job is not
+// there — retired for a changed script and not made again yet — the
+// corresponding kubernetes.crossplane.io/Object MR is consulted so tenants do
+// not stay stuck in Provisioning.
 func (r *TenantReconciler) waitForProvisioningJob(ctx context.Context, tenantName, jobName string) (bool, error) {
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	job, err := r.getProvisioningJob(ctx, jobName)
 	if err == nil {
-		if jobIsFailed(job) {
+		if meta.JobFailed(job) {
 			prop := metav1.DeletePropagationBackground
 			_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
 			return false, nil
 		}
-		return jobIsComplete(job), nil
+		return meta.JobComplete(job), nil
 	}
 	if !errors.IsNotFound(err) {
 		return false, err

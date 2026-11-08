@@ -1,0 +1,370 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package registrar_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/yaml"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/registrar"
+)
+
+func scheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func tenant(name string, edit func(*gentianov1alpha1.Tenant)) *gentianov1alpha1.Tenant {
+	t := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if edit != nil {
+		edit(t)
+	}
+	return t
+}
+
+// What the routes need about a tenant is read off the Tenant object, by the
+// rules the director applied to the manifest in git.
+func TestATenantsRealmAndLoginDomainComeFromTheCluster(t *testing.T) {
+	no := false
+	c := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		// A realm to itself, as the operator reports it.
+		tenant("acme", func(t *gentianov1alpha1.Tenant) {
+			t.Status.AdminEmail = "admin@acme.k.example"
+		}),
+		// The platform tenant adopts the kernel realm: its people sign in
+		// under the kernel domain, whatever address the operator derives.
+		tenant("platform", func(t *gentianov1alpha1.Tenant) {
+			t.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
+			t.Status.AdminEmail = "admin@platform.k.example"
+		}),
+		// A custom domain the operator accepted.
+		tenant("vanity", func(t *gentianov1alpha1.Tenant) {
+			t.Status.Domain = "vanity.example"
+			t.Status.AdminEmail = "admin@vanity.example"
+			t.Spec.Admin = &gentianov1alpha1.TenantAdmin{RequireMFA: &no}
+		}),
+		// Single tenancy: the operator resolved the kernel domain itself, and
+		// its administrator is not admin@, which there is the platform's.
+		tenant("solo", func(t *gentianov1alpha1.Tenant) {
+			t.Status.AdminEmail = "user-admin@k.example"
+		}),
+		// Not reconciled yet, and one the operator knows no domain for.
+		tenant("fresh", nil),
+		tenant("lost", func(t *gentianov1alpha1.Tenant) {
+			t.Status.AdminEmail = "admin@lost.invalid"
+		}),
+	).Build()
+	tenants := &registrar.ClusterTenants{Client: c, KernelDomain: "k.example"}
+
+	for name, want := range map[string]registrar.Tenant{
+		"acme":     {Name: "acme", Realm: "acme", LoginDomain: "acme.k.example", AdminLogin: "admin@acme.k.example", AdminRequiresMFA: true},
+		"platform": {Name: "platform", Realm: "kernel", LoginDomain: "k.example", AdminLogin: "admin@k.example", AdminRequiresMFA: true},
+		"vanity":   {Name: "vanity", Realm: "vanity", LoginDomain: "vanity.example", AdminLogin: "admin@vanity.example", AdminRequiresMFA: false},
+		"solo":     {Name: "solo", Realm: "solo", LoginDomain: "k.example", AdminLogin: "user-admin@k.example", AdminRequiresMFA: true},
+		"fresh":    {Name: "fresh", Realm: "fresh", LoginDomain: "", AdminRequiresMFA: true},
+		"lost":     {Name: "lost", Realm: "lost", LoginDomain: "", AdminRequiresMFA: true},
+	} {
+		got, err := tenants.Tenant(context.Background(), name)
+		if err != nil || got != want {
+			t.Errorf("%s = %+v, %v; want %+v", name, got, err, want)
+		}
+	}
+
+	if _, err := tenants.Tenant(context.Background(), "nowhere"); !errors.Is(err, registrar.ErrTenantNotFound) {
+		t.Errorf("a tenant the cluster does not have: %v, want ErrTenantNotFound", err)
+	}
+	if _, err := tenants.Tenant(context.Background(), "../kernel"); err == nil {
+		t.Error("a name that is not a tenant name was looked up")
+	}
+
+	all, err := tenants.All(context.Background())
+	if err != nil || len(all) != 6 || all[0].Name != "acme" {
+		t.Errorf("All = %+v, %v", all, err)
+	}
+}
+
+func claim(name, namespace string, spec map[string]any) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{"spec": spec}}
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "Cluster"})
+	u.SetName(name)
+	u.SetNamespace(namespace)
+	return u
+}
+
+// platformRoleFields is every field of spec.platformRoles the Cluster claim's
+// schema declares, read from the XRD itself: a role added there is a role
+// these tests then ask about, without anybody remembering to list it here.
+func platformRoleFields(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "xrds", "cluster.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xrd map[string]any
+	if err := yaml.Unmarshal(raw, &xrd); err != nil {
+		t.Fatal(err)
+	}
+	versions, _, _ := unstructured.NestedSlice(xrd, "spec", "versions")
+	var out []string
+	for _, v := range versions {
+		version, _ := v.(map[string]any)
+		fields, _, _ := unstructured.NestedMap(version,
+			"schema", "openAPIV3Schema", "properties", "spec", "properties", "platformRoles", "properties")
+		for name := range fields {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	if len(out) < 2 {
+		t.Fatalf("the Cluster XRD declares platform roles %v; at least admin and breakGlass were expected", out)
+	}
+	return out
+}
+
+// The groups the registrar protects are the ones the Cluster claim names for
+// its platform roles: the map the operator projects into the store, whole.
+func TestThePlatformRoleGroupsAreReadFromTheClusterClaim(t *testing.T) {
+	schemaDefaults := []string{"gentian:platform:admin"}
+	ns := layout.Namespace(layout.Provisioning)
+	named := map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "breakGlass": "acme:audit"}}
+
+	for name, c := range map[string]struct {
+		objects []client.Object
+		want    []string
+	}{
+		"the claim names them": {[]client.Object{claim("main", ns, named)},
+			[]string{"acme:audit", "acme:operators"}},
+		"the claim names none":   {[]client.Object{claim("main", ns, map[string]any{})}, schemaDefaults},
+		"no claim yet":           {nil, schemaDefaults},
+		"a claim somewhere else": {[]client.Object{claim("stray", "default", named)}, schemaDefaults},
+		"written as a path": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"admin": "/acme:operators"}})},
+			[]string{"acme:operators"}},
+		// The administrators' default is the schema's, and it holds beside
+		// whatever other role the claim names.
+		"a role and no administrators": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"breakGlass": "acme:recovery"}})},
+			[]string{"acme:recovery", "gentian:platform:admin"}},
+		"break glass of its own": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"breakGlass": "acme:approvers"}})},
+			[]string{"acme:approvers", "gentian:platform:admin"}},
+		"two roles held by one group": {[]client.Object{claim("main", ns,
+			map[string]any{"platformRoles": map[string]any{"admin": "acme:all", "breakGlass": "acme:all"}})},
+			[]string{"acme:all"}},
+	} {
+		reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(c.objects...).Build()
+		got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, %v; want %v", name, got, err, c.want)
+		}
+	}
+}
+
+// Every role the schema can name is read, each to its own group: none is
+// left out because this package never heard of it.
+func TestEveryPlatformRoleOfTheSchemaIsRead(t *testing.T) {
+	roles := map[string]any{}
+	var want []string
+	for _, field := range platformRoleFields(t) {
+		roles[field] = "acme:" + strings.ToLower(field)
+		want = append(want, "acme:"+strings.ToLower(field))
+	}
+	sort.Strings(want)
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		claim("main", layout.Namespace(layout.Provisioning), map[string]any{"platformRoles": roles})).Build()
+	got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, %v; want %v", got, err, want)
+	}
+}
+
+// The defaults protected are the schema's: every role the XRD gives a
+// default, with that default, and no other. A claim that names no group for a
+// role the schema defaults is held by the schema's group, and that group has
+// to be protected like one the claim named.
+func TestTheProtectedDefaultsAreTheSchemas(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "xrds", "cluster.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xrd map[string]any
+	if err := yaml.Unmarshal(raw, &xrd); err != nil {
+		t.Fatal(err)
+	}
+	versions, _, _ := unstructured.NestedSlice(xrd, "spec", "versions")
+	var want []string
+	for _, v := range versions {
+		version, _ := v.(map[string]any)
+		fields, _, _ := unstructured.NestedMap(version,
+			"schema", "openAPIV3Schema", "properties", "spec", "properties", "platformRoles", "properties")
+		for _, f := range fields {
+			if d, ok := f.(map[string]any)["default"].(string); ok && d != "" {
+				want = append(want, d)
+			}
+		}
+	}
+	sort.Strings(want)
+	if len(want) < 1 {
+		t.Fatalf("the Cluster XRD defaults %v; the administrators' was expected", want)
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).Build()
+	got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background())
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, %v; want the schema's defaults %v", got, err, want)
+	}
+}
+
+// A platformRoles that cannot be read whole names nothing, and that is an
+// error: half the roles protected is a rule that looks applied.
+func TestPlatformRolesThatAreNotStringsAreAnError(t *testing.T) {
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		claim("main", layout.Namespace(layout.Provisioning),
+			map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "auditor": int64(7)}})).Build()
+	if got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background()); err == nil {
+		t.Fatalf("got %v and no error", got)
+	}
+}
+
+// A claim that cannot be read names nothing, and that is an error rather than
+// the default: the caller refuses the write instead of guessing the group.
+func TestAnUnreadableClaimIsAnErrorNotADefault(t *testing.T) {
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return errors.New("the API server did not answer")
+		},
+	}).Build()
+	if got, err := registrar.ClaimPlatformRoleGroups(reader)(context.Background()); err == nil {
+		t.Fatalf("got %v and no error", got)
+	}
+}
+
+func application(name, phase, sync, message string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{
+		"sync":           map[string]any{"status": sync},
+		"operationState": map[string]any{"phase": phase, "message": message},
+	}}}
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+	u.SetName(name)
+	u.SetNamespace(layout.Namespace(layout.GitOps))
+	return u
+}
+
+// A tenant the cluster does not have is on its way -- unless Argo CD's last
+// sync of its Application failed, and then it is said to have failed, with
+// Argo CD's message. A fresh install's tenant Application failed on the
+// Tenant CRD that did not exist yet, gave up, and the console went on saying
+// the cluster was creating the tenant.
+func TestATenantWhoseSyncFailedIsSaidToHaveFailed(t *testing.T) {
+	const crdGone = `one or more synchronization tasks are not valid: Tenant.gentianos.io "" not found (retried 10 times).`
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		application("tenant-broken", "Failed", "OutOfSync", crdGone),
+		application("tenant-erred", "Error", "Unknown", "comparison error"),
+		application("tenant-retrying", "Running", "OutOfSync", "Retrying attempt #3"),
+		application("tenant-settled", "Failed", "Synced", "an older failure"),
+	).Build()
+	tenants := &registrar.ClusterTenants{Client: reader, Applications: reader, ApplicationNamespace: layout.Namespace(layout.GitOps)}
+
+	for name, want := range map[string]string{"broken": crdGone, "erred": "comparison error"} {
+		_, err := tenants.Tenant(context.Background(), name)
+		var failed *registrar.TenantSyncFailed
+		if !errors.As(err, &failed) || failed.Message != want || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want a failed sync saying %q", name, err, want)
+		}
+		if !errors.Is(err, registrar.ErrTenantNotFound) {
+			t.Errorf("%s: %v is not ErrTenantNotFound, so nothing waiting for the tenant goes on waiting", name, err)
+		}
+	}
+	for _, name := range []string{"retrying", "settled", "nowhere"} {
+		_, err := tenants.Tenant(context.Background(), name)
+		var failed *registrar.TenantSyncFailed
+		if errors.As(err, &failed) || !errors.Is(err, registrar.ErrTenantNotFound) {
+			t.Errorf("%s: %v, want a tenant on its way (ErrTenantNotFound)", name, err)
+		}
+	}
+
+	// With no Application reader, every missing tenant is on its way.
+	plain := &registrar.ClusterTenants{Client: reader}
+	if _, err := plain.Tenant(context.Background(), "broken"); !errors.Is(err, registrar.ErrTenantNotFound) || strings.Contains(err.Error(), "failed") {
+		t.Errorf("no Application reader: %v", err)
+	}
+}
+
+// The activation of such a tenant's administrator answers that the creation
+// failed, with Argo CD's message -- not 404, which a console waits out as a
+// tenant the cluster is creating. One still on its way stays 404.
+func TestActivatingTheAdministratorOfATenantThatFailedSaysSo(t *testing.T) {
+	const denied = `admission webhook "vtenant.gentianos.io" denied the request`
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
+		application("tenant-demo", "Failed", "OutOfSync", denied),
+	).Build()
+	tenants := &registrar.ClusterTenants{Client: reader, Applications: reader, ApplicationNamespace: layout.Namespace(layout.GitOps)}
+	h := startWithTenants(t, newFakeIdentity("demo"), nil, tenants, nil)
+	alice := h.token(t, "gentian", "alice")
+
+	status, body := h.do(t, http.MethodPost, "/v1/clusters/"+dt.Cluster+"/tenants/demo/actions/activate-admin", alice, "")
+	if msg, _ := body["error"].(string); status != http.StatusFailedDependency || !strings.Contains(msg, denied) || !strings.Contains(msg, "tenant-demo") {
+		t.Fatalf("a tenant whose sync failed: %d %v, want 424 with Argo CD's message", status, body)
+	}
+
+	status, body = h.do(t, http.MethodPost, "/v1/clusters/"+dt.Cluster+"/tenants/other/actions/activate-admin", alice, "")
+	if status != http.StatusNotFound {
+		t.Fatalf("a tenant on its way: %d %v, want 404", status, body)
+	}
+}
+
+// The same claim, read with the role beside each group.
+func TestThePlatformRolesAreReadWithTheirGroups(t *testing.T) {
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(claim("main", layout.Namespace(layout.Provisioning),
+		map[string]any{"platformRoles": map[string]any{"admin": "acme:operators", "breakGlass": "/acme:audit"}})).Build()
+	got, err := registrar.ClaimPlatformRoles(reader)(context.Background())
+	want := []registrar.RoleGroup{{Role: "admin", Group: "acme:operators"}, {Role: "breakGlass", Group: "acme:audit"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, %v; want %v", got, err, want)
+	}
+}
+
+// The platform tenant's people the claim names role holders are the
+// accounts the guard does not write to; nobody else's are.
+func TestThePlatformTenantsRoleHoldersAreReadFromTheClusterClaim(t *testing.T) {
+	holders := []any{
+		map[string]any{"role": "securityOfficer", "tenant": "platform", "subject": "k-1", "username": "sam@k.example"},
+		map[string]any{"role": "perimeterApprover", "tenant": "acme", "subject": "a-1", "username": "ann@acme.example"},
+	}
+	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(claim("main", layout.Namespace(layout.Provisioning),
+		map[string]any{"platformAccess": map[string]any{"roleHolders": holders}})).Build()
+	got, err := registrar.ClaimPlatformRoleHolders(reader)(context.Background())
+	if err != nil || !reflect.DeepEqual(got, []string{"k-1"}) {
+		t.Fatalf("got %v, %v; want the platform tenant's holder alone", got, err)
+	}
+}

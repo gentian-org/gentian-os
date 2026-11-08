@@ -1,63 +1,78 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package oidc resolves OIDC client packs from cluster-scoped OIDCPackCatalog CRs.
-// App-specific mapper templates live in the catalogue repositories, not as
+// App-specific mapper templates live in the catalog repositories, not as
 // hardcoded constants in the operator.
 package oidc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// ResolvePack returns the OIDC pack for clientID from cluster OIDCPackCatalog CRs.
-func ResolvePack(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
-	if clientID == "" {
+// ErrCatalogAmbiguous is returned by ResolvePack when more than one
+// OIDCPackCatalog carries a profile's label: a reader takes one of them, and
+// which is not defined.
+var ErrCatalogAmbiguous = errors.New("more than one OIDCPackCatalog carries the profile's label")
+
+// ResolvePack returns the OIDC pack for clientID from the OIDCPackCatalog
+// labeled with profileName (gentianos.io/profile-name), the catalog the
+// profile's bundle brings.
+//
+// The rule is the component reconciler's: it reads that one catalog for the
+// client it renders (apprender), and renders the client itself where the
+// catalog holds no pack for it. Looked up anywhere else, a pack in some other
+// catalog would make the client a pack Job's as well as the renderer's. An
+// extension's client is looked up in its parent profile's catalog, where the
+// renderer looks for it.
+func ResolvePack(ctx context.Context, c client.Reader, profileName, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
+	if clientID == "" || profileName == "" {
 		return Pack{}, nil, false, nil
 	}
 	if c == nil {
 		return Pack{}, nil, false, fmt.Errorf("kubernetes client is required")
 	}
-	return packFromCluster(ctx, c, clientID)
-}
-
-func packFromCluster(ctx context.Context, c client.Reader, clientID string) (Pack, map[string]MapperTemplate, bool, error) {
 	list := &gentianov1alpha1.OIDCPackCatalogList{}
-	if err := c.List(ctx, list); err != nil {
+	if err := c.List(ctx, list, client.MatchingLabels{gentianov1alpha1.LabelProfileName: profileName}); err != nil {
 		return Pack{}, nil, false, fmt.Errorf("list OIDCPackCatalog: %w", err)
 	}
-	for i := range list.Items {
-		catalog := &list.Items[i]
-		packSpec, ok := catalog.Spec.Packs[clientID]
-		if !ok {
-			continue
+	switch len(list.Items) {
+	case 0:
+		return Pack{}, nil, false, nil
+	case 1:
+	default:
+		names := make([]string, 0, len(list.Items))
+		for i := range list.Items {
+			names = append(names, list.Items[i].Name)
 		}
-		templates := mapperTemplatesFromCR(catalog.Spec.MapperTemplates)
-		pack := packFromCR(packSpec)
-		if err := validatePack(clientID, pack, templates); err != nil {
-			return Pack{}, nil, false, err
-		}
-		return pack, templates, true, nil
+		sort.Strings(names)
+		return Pack{}, nil, false, fmt.Errorf("%w: profile %s, catalogs %v", ErrCatalogAmbiguous, profileName, names)
 	}
-	return Pack{}, nil, false, nil
+	catalog := &list.Items[0]
+	packSpec, ok := catalog.Spec.Packs[clientID]
+	if !ok {
+		return Pack{}, nil, false, nil
+	}
+	templates := mapperTemplatesFromCR(catalog.Spec.MapperTemplates)
+	pack := packFromCR(packSpec)
+	if err := validatePack(clientID, pack, templates); err != nil {
+		return Pack{}, nil, false, err
+	}
+	return pack, templates, true, nil
 }
 
 func packFromCR(spec gentianov1alpha1.OIDCPackSpec) Pack {

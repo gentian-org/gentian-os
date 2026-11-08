@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 // Package resourceplan resolves which ResourcePlan a tenant is on, which plans
@@ -25,8 +19,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -148,55 +140,4 @@ func (c *Catalogue) Resolve(tenant *gentianov1alpha1.Tenant) Resolution {
 		res.Drifted = true
 	}
 	return res
-}
-
-// MaxTier reads a tenant's entitlement ceiling, or nil when it has none.
-//
-// Resolved from the Tenant rather than accepted from the caller: a ceiling
-// supplied in a request is a ceiling a request can omit, and the console is not
-// the only thing that can reach the resources API.
-//
-// An unparseable annotation is treated as absent rather than as zero. Zero is
-// the base tier and would silently pin a tenant to the smallest plan on the
-// cluster, which is a worse answer to a typo than no ceiling at all — and the
-// cluster operator who typed it will see the tenant able to upgrade, which is
-// the visible failure of the two.
-func MaxTier(tenant *gentianov1alpha1.Tenant) *int32 {
-	if tenant == nil {
-		return nil
-	}
-	raw, ok := tenant.Annotations[gentianov1alpha1.MaxResourceTierAnnotation]
-	if !ok || strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 32)
-	if err != nil {
-		return nil
-	}
-	out := int32(parsed)
-	return &out
-}
-
-// Selectable filters the catalogue to the plans a caller may move a tenant to.
-//
-// maxTier, when non-nil, is the tenant's entitlement ceiling: plans above it
-// are withheld. A nil ceiling means none is set, and every plan is on offer —
-// the same shape the App Store uses, where an unreachable commerce backend
-// leaves proprietary apps on Buy rather than blocking the catalogue.
-func (c *Catalogue) Selectable(selfService bool, maxTier *int32) []gentianov1alpha1.ResourcePlan {
-	if c == nil {
-		return nil
-	}
-	out := make([]gentianov1alpha1.ResourcePlan, 0, len(c.Plans))
-	for i := range c.Plans {
-		plan := c.Plans[i]
-		if selfService && plan.Spec.SelfServiceDisabled {
-			continue
-		}
-		if maxTier != nil && plan.Spec.Tier > *maxTier {
-			continue
-		}
-		out = append(out, plan)
-	}
-	return out
 }

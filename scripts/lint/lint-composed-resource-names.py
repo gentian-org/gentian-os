@@ -4,7 +4,7 @@
 # =============================================================================
 # Composed resources are named from the thing they represent, and Keycloak names
 # things in ways Kubernetes will not accept. `gentian_useruuid` has an
-# underscore. `VERIFY_PROFILE` lowercases to `verify_profile`. Some catalogues
+# underscore. `VERIFY_PROFILE` lowercases to `verify_profile`. Some catalogs
 # name a mapper "full name", with a space.
 #
 # An object name must be an RFC 1123 subdomain, so each of those produces:

@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -22,12 +24,12 @@ import (
 
 // CredentialRequirement declares a secret that must be supplied from outside the
 // cluster: a registry token, a DNS provider key, an SMTP relay password. It is
-// catalogue data, not a provisioning API — a schema, a target path in OpenBao,
+// catalog data, not a provisioning API — a schema, a target path in OpenBao,
 // and a validation hint.
 //
 // It is deliberately a plain CRD rather than a Crossplane XRD. It composes
 // nothing: an XRD requires a Composition producing managed resources, and there
-// are none to produce. It sits beside AppProfile as catalogue.
+// are none to produce. It sits beside ComponentProfile as catalog.
 //
 // There is no controller. Each requirement emits an ExternalSecret, and ESO's
 // sync status IS the satisfaction probe — path absent in OpenBao gives
@@ -56,7 +58,9 @@ type CredentialRequirement struct {
 
 // CredentialRequirementSpec describes one credential an operator must supply.
 //
-// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && self.tenant != '') : (!has(self.tenant) || self.tenant == '')",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
+// The emptiness test is size(): see component_types.go for why a pair of
+// straight single quotes in a marker does not survive gofmt.
+// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && size(self.tenant) > 0) : (!has(self.tenant) || size(self.tenant) == 0)",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
 type CredentialRequirementSpec struct {
 	// DisplayName is the label a form renders for this requirement.
 	// +kubebuilder:validation:MinLength=1
@@ -70,7 +74,7 @@ type CredentialRequirementSpec struct {
 	// Phase decides whether an unsatisfied requirement blocks installation.
 	//
 	// bootstrap: the installer prompts for it and will not proceed without it.
-	// runtime:   deferrable to the on-cluster credential manager.
+	// runtime:   deferrable to the on-cluster custodian.
 	//
 	// The bootstrap set is expected to number under five, and every member must
 	// be validatable with curl or openssl alone — anything needing an SDK or a
@@ -158,7 +162,7 @@ type CredentialValidation struct {
 	// Only these are implementable in curl or openssl, which is the ceiling on
 	// what the installer validates. s3 and dns-provider need request signing or
 	// a provider SDK, so credentials using them are runtime by construction and
-	// are validated by the on-cluster credential manager instead.
+	// are validated by the on-cluster custodian instead.
 	//
 	// noop is rejected for phase: bootstrap — a bootstrap credential with no
 	// probe is a design error, resolved by reclassifying it as runtime.

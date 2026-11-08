@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package secrets_test
@@ -272,5 +266,168 @@ func TestSeederSeedCacheOmitsUserWhenEngineHasNone(t *testing.T) {
 	}
 	if got.User != "" {
 		t.Fatalf("unexpected user: %q", got.User)
+	}
+}
+
+// The key an app presents to the model gateway is generated like a database
+// password: derived for this tenant and app, so an app installed again holds
+// the key it held; write-once; and nothing a person could write down from
+// the tenant's and the app's names without the master.
+func TestSeederSeedModelAccessIsStablePerTenantAndApp(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
+	ctx := context.Background()
+
+	first, err := s.SeedModelAccess(ctx, "demo", "chat", "sk-", "http://gateway:4000/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first.APIKey, "sk-") || len(first.APIKey) != len("sk-")+48 {
+		t.Fatalf("key = %q", first.APIKey)
+	}
+	if strings.Contains(first.APIKey, "demo") || strings.Contains(first.APIKey, "chat") {
+		t.Fatalf("key %q carries a name", first.APIKey)
+	}
+	// Again, and with the gateway moved: the same key, the new address.
+	second, err := s.SeedModelAccess(ctx, "demo", "chat", "sk-", "http://moved:4000/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.APIKey != first.APIKey || second.BaseURL != "http://moved:4000/v1" {
+		t.Fatalf("second = %+v, first = %+v", second, first)
+	}
+	// Another app, and the same app of another tenant, hold other keys.
+	for _, other := range [][2]string{{"demo", "wiki"}, {"other", "chat"}} {
+		got, err := s.SeedModelAccess(ctx, other[0], other[1], "sk-", "http://gateway:4000/v1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.APIKey == first.APIKey {
+			t.Errorf("%s/%s holds the key of demo/chat", other[0], other[1])
+		}
+	}
+	// A vault emptied by a purge and seeded again by the same master gives
+	// the key back, as it does a database password.
+	fresh := newFakeBao()
+	defer fresh.Close()
+	again, err := secrets.NewSeeder(newClient(t, fresh.URL), secrets.NewDeriver("unit-test-master")).
+		SeedModelAccess(ctx, "demo", "chat", "sk-", "http://gateway:4000/v1")
+	if err != nil || again.APIKey != first.APIKey {
+		t.Errorf("after a purge: %q, %v; want the derived key again", again.APIKey, err)
+	}
+	// Without a master it is random, and still write-once.
+	random := secrets.NewSeeder(newClient(t, fresh.URL), nil)
+	a, err := random.SeedModelAccess(ctx, "demo", "notes", "sk-", "http://gateway:4000/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := random.SeedModelAccess(ctx, "demo", "notes", "sk-", "http://gateway:4000/v1")
+	if err != nil || a.APIKey != b.APIKey || a.APIKey == first.APIKey {
+		t.Errorf("random key: %q then %q, %v", a.APIKey, b.APIKey, err)
+	}
+}
+
+// The empty SMTP record a tenant without mail gets is replaced by real values,
+// and real values are never replaced by empty ones.
+func TestSeedSMTPReplacesOnlyTheEmptyRecord(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "smtp")
+
+	if err := s.SeedEmptySMTP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"host", "port", "user", "password"} {
+		if v, ok := got[k]; !ok || v != "" {
+			t.Fatalf("empty record %s = %q (present %v), want present and empty", k, v, ok)
+		}
+	}
+
+	real := secrets.SMTPCreds{Host: "smtp.example.com", Port: "587", User: "u", Password: "p"}
+	creds, err := s.SeedSMTP(ctx, "t", "app", real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds != real {
+		t.Fatalf("SeedSMTP over the empty record = %+v, want %+v", creds, real)
+	}
+
+	if err := s.SeedEmptySMTP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	creds, err = s.SeedSMTP(ctx, "t", "app", secrets.SMTPCreds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds != real {
+		t.Fatalf("real record became %+v after empty seeds, want %+v", creds, real)
+	}
+}
+
+// Same for IMAP.
+func TestSeedIMAPReplacesOnlyTheEmptyRecord(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "imap")
+
+	if err := s.SeedEmptyIMAP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedIMAP(ctx, "t", "app", secrets.IMAPCreds{Host: "imap.example.org", Port: "993"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedEmptyIMAP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["host"] != "imap.example.org" || got["port"] != "993" {
+		t.Fatalf("imap record = %v, want the real one", got)
+	}
+}
+
+// SyncSMTP replaces an empty record, follows changed values and never
+// writes an empty one.
+func TestSyncSMTPFollowsValues(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "smtp")
+
+	if err := s.SeedEmptySMTP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []secrets.SMTPCreds{
+		{Host: "smtp.example.com", Port: "587", User: "a", Password: "1"},
+		{Host: "smtp.example.com", Port: "587", User: "b", Password: "2"},
+	} {
+		if err := s.SyncSMTP(ctx, "t", "app", want); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Read(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["host"] != want.Host || got["port"] != want.Port || got["user"] != want.User || got["password"] != want.Password {
+			t.Fatalf("record = %v, want %+v", got, want)
+		}
+	}
+	if err := s.SyncSMTP(ctx, "t", "app", secrets.SMTPCreds{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Read(ctx, path); got["user"] != "b" {
+		t.Fatalf("empty sync changed the record to %v", got)
 	}
 }

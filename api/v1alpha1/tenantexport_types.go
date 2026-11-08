@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,12 +12,36 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// RequestedByAnnotation names who asked for an action.
+//
+// An action leaves no commit to read an actor off, the way a change to
+// declared state does, so the object carries the name instead. Nothing
+// reconciles on it: it is there for the person who finds a bundle months
+// later and wants to know who took it.
+const RequestedByAnnotation = "gentianos.io/requested-by"
+
+// TenantExportScheduleLabel names, on an export, the schedule that took it.
+// An export without it was started by a person. Schedules are not the
+// platform's: an add-on that takes exports on one sets this, and the
+// platform reads it only to tell scheduled exports from the others.
+const TenantExportScheduleLabel = "gentianos.io/tenant-export-schedule"
+
+// TenantExportReasonLabel says why the platform took an export nobody asked
+// for; TenantExportReasonMove is one taken before an app moved to another
+// build, kept for going back.
+const (
+	TenantExportReasonLabel = "gentianos.io/export-reason"
+	TenantExportReasonMove  = "move"
 )
 
 // TenantExportSpec requests a point-in-time capture of one tenant's data.
@@ -55,7 +79,7 @@ type TenantExportSpec struct {
 }
 
 // ExportDestinationMode selects where one export's bundle is written.
-// +kubebuilder:validation:Enum=policy;platform;custom
+// +kubebuilder:validation:Enum=policy;platform;custom;source
 type ExportDestinationMode string
 
 const (
@@ -82,6 +106,12 @@ const (
 	// is a destination used once. They are staged beside the capture Jobs the
 	// way a passphrase is, and discarded with the export.
 	ExportDestinationCustom ExportDestinationMode = "custom"
+
+	// ExportDestinationSource writes to one of the tenant's own stores
+	// (BundleSource with spec.tenant), named by source: an address its
+	// administrator declared, authenticated with the keys the custodian
+	// holds for it. Below the store's prefix, the bundle is the export's name.
+	ExportDestinationSource ExportDestinationMode = "source"
 )
 
 // ExportCredentialSource selects which keys authenticate a custom destination.
@@ -90,7 +120,7 @@ type ExportCredentialSource string
 
 const (
 	// ExportCredentialManaged authenticates with the workspace's own backup
-	// destination credential, the one the Credential Manager holds and the
+	// destination credential, the one the custodian holds and the
 	// schedule uses. The Secret is already where the capture Jobs read it.
 	ExportCredentialManaged ExportCredentialSource = "managed"
 
@@ -123,10 +153,12 @@ func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint) > 0)",message="mode: custom requires an endpoint"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && size(self.credentialSecretRef) > 0)",message="credentialSource: transient requires credentialSecretRef"
 // +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'source' || (has(self.source) && size(self.source) > 0 && (!has(self.bucket) || size(self.bucket) == 0))",message="mode: source names the store, and takes its bucket from it"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'source' || !has(self.source) || size(self.source) == 0",message="source belongs to mode: source only"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0) && !has(self.addressingStyle))",message="endpoint, region, addressingStyle and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
-	// and an endpoint named here.
+	// an endpoint named here, and one of the tenant's own stores.
 	// +kubebuilder:default=policy
 	Mode ExportDestinationMode `json:"mode,omitempty"`
 
@@ -148,18 +180,30 @@ type ExportDestination struct {
 	Bucket string `json:"bucket,omitempty"`
 
 	// Region, for providers that require one — Exoscale SOS and AWS do,
-	// MinIO does not.
+	// the platform's own object store does not.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
 
+	// AddressingStyle is how a bucket is named in a request to Endpoint:
+	// path (the default when empty) or virtualHost (BackupDestination).
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
+
+	// Source names the tenant's store for mode: source, by the
+	// BundleSource's name (<tenant>.<label>). A store of another tenant, or
+	// one of the cluster's, is refused.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	Source string `json:"source,omitempty"`
+
 	// CredentialSource decides where mode: custom gets its keys.
 	//
-	// managed reuses what the Credential Manager already holds for this
+	// managed reuses what the custodian already holds for this
 	// workspace's backups — the same keys the nightly schedule authenticates
 	// with — so a one-off backup to a different bucket on the same provider
 	// needs nobody to retype a secret. Nothing is copied: those keys are
-	// already materialised beside the capture Jobs.
+	// already materialized beside the capture Jobs.
 	//
 	// transient is for keys that exist for this export only. They are supplied
 	// in a Secret, staged beside the Jobs, and removed when the export ends.
@@ -190,7 +234,7 @@ func (d *ExportDestination) Resolved() ExportDestinationMode {
 }
 
 // ExportEncryptionMode selects who is able to decrypt a bundle.
-// +kubebuilder:validation:Enum=recipient;passphrase
+// +kubebuilder:validation:Enum=recipient;passphrase;policy
 type ExportEncryptionMode string
 
 const (
@@ -206,6 +250,13 @@ const (
 	// including anyone who later compromises the cluster. That is the point,
 	// and it is also the risk: a lost passphrase is a lost bundle.
 	ExportEncryptionPassphrase ExportEncryptionMode = "passphrase"
+	// ExportEncryptionPolicy encrypts to the keys the tenant's backup policy
+	// resolves to, or the cluster's when it names none: what a scheduled
+	// backup has always been encrypted to. It names no key, so an export
+	// started by an add-on (tenant-export-guard.yaml) asks for it rather than
+	// copying the policy's keys, which it may not name. The bundle is a
+	// recipient bundle like any other.
+	ExportEncryptionPolicy ExportEncryptionMode = "policy"
 )
 
 // ExportEncryption configures bundle protection.
@@ -325,6 +376,14 @@ type TenantExportStatus struct {
 	// +optional
 	Quiesced []string `json:"quiesced,omitempty"`
 
+	// NotIncluded names what the tenant has that this export's bundle does
+	// not hold, beyond what no bundle holds: the data uninstalled apps left
+	// behind, which an export does not capture although deleting the tenant
+	// destroys it. One sentence each. The bundle's manifest carries the same
+	// list.
+	// +optional
+	NotIncluded []string `json:"notIncluded,omitempty"`
+
 	// StartedAt is when the first app began capturing.
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
@@ -389,6 +448,13 @@ type BundleRef struct {
 	// +optional
 	Region string `json:"region,omitempty"`
 
+	// AddressingStyle is how the bucket was named in requests to Endpoint
+	// when the bundle was written: path (empty) or virtualHost. Recorded for
+	// the reason Endpoint is: a restore or a deletion of this bundle
+	// addresses it as it was written, whatever the policy says today.
+	// +optional
+	AddressingStyle S3AddressingStyle `json:"addressingStyle,omitempty"`
+
 	// CredentialSecret names the Secret whose keys open this endpoint. Also
 	// recorded, and for the same reason: a bundle written to a destination the
 	// tenant has since changed still needs the credential it was written with.
@@ -396,8 +462,138 @@ type BundleRef struct {
 	CredentialSecret string `json:"credentialSecret,omitempty"`
 }
 
+// BundleArtefact is one artifact of a bundle: a database dump, a bucket's
+// archive, a volume's archive.
+type BundleArtefact struct {
+	// Kind is postgres, postgresOwned, mariadb, mariadbOwned, s3, volume or
+	// secrets; for what is the tenant's own also identity, mailboxes or
+	// rights.
+	Kind string `json:"kind"`
+	// Name is what the artifact was captured from: the database, bucket or
+	// volume claim, by its name in the tenant the bundle was taken of; for
+	// secrets, the app.
+	Name string `json:"name"`
+	// Path is the artifact's place in the bundle.
+	// +optional
+	Path string `json:"path,omitempty"`
+	// Release is the Helm release a captured volume claim recorded.
+	// +optional
+	Release string `json:"release,omitempty"`
+	// Target is where a restore puts the artifact: the database, bucket or
+	// claim of that kind in the tenant being restored into, which is named
+	// differently when the tenant is. Set by a restore only.
+	// +optional
+	Target string `json:"target,omitempty"`
+	// Databases are, for an archive of the databases an app made itself
+	// (postgresOwned, mariadbOwned), each database it held as
+	// "<name in the bundle>=<name here>", as the restore's Job reported
+	// them once it had put them back. Set by a restore only.
+	// +optional
+	// +listType=atomic
+	Databases []string `json:"databases,omitempty"`
+	// Claim is the volume claim a volume was captured from, as far as making
+	// it again takes. Recorded for the volumes of an app that was uninstalled
+	// with its data kept: where such an app's data is brought into a tenant
+	// that never had it, the claim is not there and is made from this.
+	// +optional
+	Claim *BundleClaim `json:"claim,omitempty"`
+}
+
+// AppAuthorizationStatus is what an export or a restore did with an app's
+// authorization store.
+type AppAuthorizationStatus struct {
+	// Tuples is how many tuples the bundle holds of the store.
+	// +optional
+	Tuples int32 `json:"tuples,omitempty"`
+	// RestoredAt is when a restore put the store back.
+	// +optional
+	RestoredAt *metav1.Time `json:"restoredAt,omitempty"`
+}
+
+// AppSecretsStatus is what an export or a restore did with an app's own
+// secrets (spec.secrets.generated of its profile, its extensions'
+// appSecrets, and the keys under spec.secrets.derived). An extension's
+// secret is named "<extension>/<name>", a declared key "derived:<key>".
+type AppSecretsStatus struct {
+	// Names are the secrets an export captured, or the ones a restore sets:
+	// those the bundle holds and the app's profile here declares.
+	// +optional
+	// +listType=atomic
+	Names []string `json:"names,omitempty"`
+	// NotDeclared are the secrets the bundle holds that the app's profile
+	// here does not declare. A restore writes none of them.
+	// +optional
+	// +listType=atomic
+	NotDeclared []string `json:"notDeclared,omitempty"`
+	// NotHeld are the secrets the app's profile here declares that the
+	// bundle holds no value for. A restore leaves them as they are.
+	// +optional
+	// +listType=atomic
+	NotHeld []string `json:"notHeld,omitempty"`
+	// Replaced are the secrets the app was handed anew: those whose stored
+	// value was another than the bundle's and was replaced by it, and those
+	// the vault held already while a Secret of the app did not. Restore
+	// only.
+	// +optional
+	// +listType=atomic
+	Replaced []string `json:"replaced,omitempty"`
+	// Releases are the Helm releases that are handed a replaced secret as a
+	// value, each with the revision it was at before the secret was
+	// replaced. The restore waits for each to have been upgraded.
+	// +optional
+	// +listType=atomic
+	Releases []SecretsRelease `json:"releases,omitempty"`
+	// Planned says Replaced and Releases are final: the stored values were
+	// compared with the bundle's.
+	// +optional
+	Planned bool `json:"planned,omitempty"`
+	// AppliedAt is when the vault held the bundle's values.
+	// +optional
+	AppliedAt *metav1.Time `json:"appliedAt,omitempty"`
+	// DeliveredAt is when the app's Secrets held them too and its releases
+	// had been upgraded with them.
+	// +optional
+	DeliveredAt *metav1.Time `json:"deliveredAt,omitempty"`
+}
+
+// SecretsRelease is one Helm release a restore waits for after replacing a
+// secret the release is handed as a value.
+type SecretsRelease struct {
+	// Name is the Release object's.
+	Name string `json:"name"`
+	// Revision is the revision the release was at before.
+	// +optional
+	Revision int64 `json:"revision,omitempty"`
+}
+
+// BundleClaim is a volume claim, as much of it as making it again takes.
+type BundleClaim struct {
+	// Size is the storage the claim asked for.
+	Size string `json:"size"`
+	// AccessModes are the claim's.
+	// +optional
+	// +listType=atomic
+	AccessModes []string `json:"accessModes,omitempty"`
+	// StorageClass is the class the claim named, empty for the default.
+	// +optional
+	StorageClass string `json:"storageClass,omitempty"`
+	// Labels and Annotations are the ones that say whose the claim is: the
+	// release it records is how the next install and a purge find it.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
 // AppExportStatus reports the capture of one app.
 type AppExportStatus struct {
+	// Retained says the app is not installed: it was uninstalled and its
+	// data kept. An export captures that data as it captures an installed
+	// app's, without pausing anything; a restore puts it back as retained and
+	// installs nothing.
+	// +optional
+	Retained bool `json:"retained,omitempty"`
+
 	// Name is the installed profile name.
 	// +optional
 	Name string `json:"name,omitempty"`
@@ -409,9 +605,32 @@ type AppExportStatus struct {
 	ChartVersion string `json:"chartVersion,omitempty"`
 
 	// Stores lists the kinds captured for this app (postgres, mariadb, s3,
-	// volumes), derived from the profile's kernelRequirements.
+	// volumes), derived from the profile's requires.services.
 	// +optional
 	Stores []string `json:"stores,omitempty"`
+
+	// Artefacts lists each artifact captured for this app, or planned to be
+	// restored for it: what the bundle's manifest says the bundle holds. An
+	// export writes them into the manifest; a restore reads them from it.
+	// +optional
+	// +listType=atomic
+	Artefacts []BundleArtefact `json:"artefacts,omitempty"`
+
+	// Digest is the pinned digest of the app's build, when the tenant pins one.
+	// +optional
+	Digest string `json:"digest,omitempty"`
+
+	// Secrets says what was done with the app's own secrets: which an
+	// export put into the bundle, and which a restore set from it. Names
+	// only; no value is ever in a status.
+	// +optional
+	Secrets *AppSecretsStatus `json:"secrets,omitempty"`
+
+	// Authorization says what was done with the app's authorization store:
+	// how many tuples an export put into the bundle, and when a restore
+	// put them back into a fresh store.
+	// +optional
+	Authorization *AppAuthorizationStatus `json:"authorization,omitempty"`
 
 	// Phase is this app's own phase, using the same vocabulary as the export.
 	// +optional
@@ -424,6 +643,17 @@ type AppExportStatus struct {
 	QuiesceStart *metav1.Time `json:"quiesceStart,omitempty"`
 	// +optional
 	QuiesceEnd *metav1.Time `json:"quiesceEnd,omitempty"`
+
+	// HeldBackAt is when a restore asked the edge to hold this app back
+	// (TenantRestoreStatus.HeldBack). Restore only.
+	// +optional
+	HeldBackAt *metav1.Time `json:"heldBackAt,omitempty"`
+
+	// RolloutStart is when a restore started this app again on the restored
+	// data, after its post-restore commands. The app is done once that
+	// rollout has finished. Restore only.
+	// +optional
+	RolloutStart *metav1.Time `json:"rolloutStart,omitempty"`
 
 	// Attempts counts capture Jobs run for this app. Bounded, because the
 	// shared Job waiter deletes a failed Job so it gets recreated — right for
@@ -443,7 +673,7 @@ type AppExportStatus struct {
 	// CompletedUnits records each capture Job that finished, by Job name.
 	//
 	// This is the durable completion record; the Job object is not one. A
-	// finished Job can be TTL-collected or swept by the kernel Job GC while a
+	// finished Job can be TTL-collected while a
 	// sibling unit is still running, and inferring completion from the Job's
 	// existence made the controller re-run a dump it had already uploaded.
 	// +optional

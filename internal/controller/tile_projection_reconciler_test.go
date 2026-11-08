@@ -1,0 +1,392 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
+)
+
+func tileFixtureRoute(name, namespace, host string) *gatewayv1.HTTPRoute {
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
+		},
+	}
+}
+
+// project runs the reconciler over the given objects and reads back what it
+// wrote, parsed the way the director parses it.
+func project(t *testing.T, objs ...client.Object) []tilecatalogue.Tile {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := gatewayv1.Install(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel",
+		KernelDomain: "k.example", TenancyMode: "multi"}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	cm := &corev1.ConfigMap{}
+	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
+	if err := c.Get(context.Background(), key, cm); err != nil {
+		t.Fatal(err)
+	}
+	catalogue, err := tilecatalogue.Parse([]byte(cm.Data[tilecatalogue.Key]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalogue.Tiles
+}
+
+func tileNames(got []tilecatalogue.Tile) []string {
+	out := make([]string, 0, len(got))
+	for _, t := range got {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
+// The catalog is what the cluster routes and nothing else. A console whose
+// route this operator did not compose is not offered, because a tile is a
+// promise that the address answers.
+func TestTheKernelCatalogueFollowsTheRoutes(t *testing.T) {
+	headlamp := tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example")
+	argocd := tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example")
+	identity := tileFixtureRoute(kernelRouteKeycloakAdmin, servicesNamespace, "id.k.example")
+	models := tileFixtureRoute(kernelRouteLiteLLM, servicesNamespace, "llm.k.example")
+
+	cases := map[string]struct {
+		routes []client.Object
+		want   string
+	}{
+		"every console routed": {
+			routes: []client.Object{headlamp, argocd, identity},
+			want:   "[headlamp argocd keycloak]",
+		},
+		"the claim switches the model gateway's console on": {
+			routes: []client.Object{headlamp, argocd, identity, models},
+			want:   "[headlamp argocd keycloak llm]",
+		},
+		"no kernel zone, so no console is routed": {
+			routes: nil,
+			want:   "[]",
+		},
+		"the layout has no observability namespace, so headlamp is not routed": {
+			routes: []client.Object{argocd, identity},
+			want:   "[argocd keycloak]",
+		},
+	}
+	for name, c := range cases {
+		if got := fmt.Sprint(tileNames(project(t, c.routes...))); got != c.want {
+			t.Errorf("%s: %s, want %s", name, got, c.want)
+		}
+	}
+}
+
+// The hosts, paths, icons and relations the kernel consoles have always had.
+// A tile is a link a person follows, so each of these is load-bearing: the
+// identity console's path names the realm because /admin/ alone lands on the
+// master realm's console, which a kernel-realm administrator may not open, and
+// Argo CD's path skips a login form the caller has no need of, and the model
+// gateway's leads to its console rather than to its API's reference.
+func TestTheKernelConsolesKeepTheirAddresses(t *testing.T) {
+	got := project(t,
+		tileFixtureRoute(kernelRouteHeadlamp, servicesNamespace, "headlamp.k.example"),
+		tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example"),
+		tileFixtureRoute(kernelRouteKeycloakAdmin, servicesNamespace, "id.k.example"),
+		tileFixtureRoute(kernelRouteLiteLLM, servicesNamespace, "llm.k.example"),
+	)
+	want := map[string]struct {
+		url   string
+		icon  string
+		anyOf string
+	}{
+		"headlamp": {"https://headlamp.k.example/", "bulb", "[can_configure can_operate_system]"},
+		"argocd":   {"https://argocd.k.example/auth/login", "kube", "[can_configure can_operate_system]"},
+		"keycloak": {"https://id.k.example/auth/admin/kernel/console/", "key", "[can_configure]"},
+		"llm":      {"https://llm.k.example/ui/", "analytics", "[can_configure]"},
+	}
+	for _, tile := range got {
+		w, ok := want[tile.Name]
+		if !ok {
+			t.Errorf("unexpected tile %s", tile.Name)
+			continue
+		}
+		if tile.URL != w.url || tile.Icon != w.icon || fmt.Sprint(tile.AnyOf) != w.anyOf {
+			t.Errorf("%s: url %s icon %s anyOf %v", tile.Name, tile.URL, tile.Icon, tile.AnyOf)
+		}
+		if tile.Object != "cluster:demo-cluster" {
+			t.Errorf("%s: object %s, want the cluster", tile.Name, tile.Object)
+		}
+		if tile.DisplayName == "" || tile.Description == "" {
+			t.Errorf("%s: the portal shows a name and a sentence", tile.Name)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", tileNames(got))
+	}
+}
+
+func tileFixtureTenant(name string) *gentianov1alpha1.Tenant {
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = name
+	return tenant
+}
+
+func tileFixtureComponent(name, namespace, profile string) *gentianov1alpha1.Component {
+	comp := &gentianov1alpha1.Component{}
+	comp.Name = name
+	comp.Namespace = namespace
+	comp.Spec.ProfileRef = gentianov1alpha1.ProfileRef{Name: profile}
+	return comp
+}
+
+func tileFixtureProfile(name string, tile *gentianov1alpha1.ExposureTile) *gentianov1alpha1.ComponentProfile {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Name = name
+	profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name:     "web",
+		Surface:  gentianov1alpha1.SurfaceGateway,
+		AuthMode: gentianov1alpha1.AuthModeOIDC,
+		Backend:  gentianov1alpha1.BackendRef{Service: "notes", Port: 8080},
+		Tile:     tile,
+	}}
+	return profile
+}
+
+// An installed app appears on the portal because its profile says how, and
+// because the operator routed it. Neither alone is enough: a declared tile
+// with no route would be a link to nothing, and a route whose profile declares
+// no tile is an entry point that was never meant to be advertised.
+// testTileLogo is what every component ships: its own PNG, inline. The
+// projection carries it through to the portal unchanged.
+const testTileLogo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg=="
+
+func TestAComponentTileNeedsBothTheProfileAndTheRoute(t *testing.T) {
+	tile := &gentianov1alpha1.ExposureTile{
+		DisplayName: "Notes", Description: "Write things down.",
+		Logo: testTileLogo,
+		Path: "/dashboard", Relation: "can_launch",
+	}
+	tenant := tileFixtureTenant("demo")
+	comp := tileFixtureComponent("notes", "tenant-demo", "notes")
+	route := tileFixtureRoute("notes-web", "tenant-demo", "notes.demo.k.example")
+
+	cases := map[string]struct {
+		objs []client.Object
+		want string
+	}{
+		"declared and routed": {
+			objs: []client.Object{tenant, comp, tileFixtureProfile("notes", tile), route},
+			want: "[demo/notes/web]",
+		},
+		"declared but not routed yet": {
+			objs: []client.Object{tenant, comp, tileFixtureProfile("notes", tile)},
+			want: "[]",
+		},
+		"routed but declares no tile": {
+			objs: []client.Object{tenant, comp, tileFixtureProfile("notes", nil), route},
+			want: "[]",
+		},
+		"routed in a namespace that is no tenant's": {
+			objs: []client.Object{comp, tileFixtureProfile("notes", tile), route},
+			want: "[]",
+		},
+	}
+	for name, c := range cases {
+		if got := fmt.Sprint(tileNames(project(t, c.objs...))); got != c.want {
+			t.Errorf("%s: %s, want %s", name, got, c.want)
+		}
+	}
+
+	// And what it says, once it is there: the host comes from the route, the
+	// path from the profile, and the relation is asked about the app object
+	// rather than about the cluster.
+	got := project(t, tenant, comp, tileFixtureProfile("notes", tile), route)
+	if len(got) != 1 {
+		t.Fatalf("got %v", tileNames(got))
+	}
+	if got[0].URL != "https://notes.demo.k.example/dashboard" || got[0].Object != "app:demo/notes" ||
+		fmt.Sprint(got[0].AnyOf) != "[can_launch]" || got[0].DisplayName != "Notes" {
+		t.Fatalf("tile = %+v", got[0])
+	}
+}
+
+// A profile that asks the portal to open its app at desktop mount has that on
+// its primary tile; its other tiles, and every other profile's, do not.
+func TestAProfileAsksForPreopenOnItsTile(t *testing.T) {
+	tile := &gentianov1alpha1.ExposureTile{DisplayName: "Notes", Logo: testTileLogo, Relation: "can_launch"}
+	tenant := tileFixtureTenant("demo")
+	comp := tileFixtureComponent("notes", "tenant-demo", "notes")
+	route := tileFixtureRoute("notes-web", "tenant-demo", "notes.demo.k.example")
+
+	for value, want := range map[string]bool{"true": true, "false": false, "": false} {
+		profile := tileFixtureProfile("notes", tile)
+		if value != "" {
+			profile.Annotations = map[string]string{portalPreopenAnnotation: value}
+		}
+		got := project(t, tenant, comp, profile, route)
+		if len(got) != 1 || got[0].Preopen != want {
+			t.Errorf("annotation %q: tiles %+v, want preopen %v", value, got, want)
+		}
+	}
+
+	// A second tile of the same app is an ordinary one.
+	profile := tileFixtureProfile("notes", tile)
+	profile.Annotations = map[string]string{portalPreopenAnnotation: "true"}
+	profile.Spec.Expose = append(profile.Spec.Expose, gentianov1alpha1.ExposureSpec{
+		Name:     "admin",
+		Surface:  gentianov1alpha1.SurfaceGateway,
+		AuthMode: gentianov1alpha1.AuthModeOIDC,
+		Backend:  gentianov1alpha1.BackendRef{Service: "notes", Port: 8080},
+		Tile:     &gentianov1alpha1.ExposureTile{DisplayName: "Notes settings", Logo: testTileLogo, Relation: "can_launch"},
+	})
+	got := project(t, tenant, comp, profile, route, tileFixtureRoute("notes-admin", "tenant-demo", "notes.demo.k.example"))
+	preopen := map[string]bool{}
+	for _, tl := range got {
+		preopen[tl.Name] = tl.Preopen
+	}
+	if fmt.Sprint(preopen) != "map[demo/notes/admin:false demo/notes/web:true]" {
+		t.Errorf("preopen per tile = %v", preopen)
+	}
+}
+
+// Rebuilding a catalog that has not changed must not rewrite the ConfigMap:
+// everything mounting it is woken by a write, and a projection that churns on
+// its requeue floor would wake them every ten minutes for nothing.
+func TestAnUnchangedCatalogueIsNotRewritten(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := gatewayv1.Install(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(tileFixtureRoute(kernelRouteArgoCD, servicesNamespace, "argocd.k.example")).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "demo-cluster", KernelRealm: "kernel",
+		KernelDomain: "k.example", TenancyMode: "multi"}
+	ctx := context.Background()
+	key := types.NamespacedName{Name: tilecatalogue.ConfigMapName, Namespace: layout.Namespace(layout.Control)}
+	versions := make([]string, 0, 2)
+	for i := 0; i < 2; i++ {
+		if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
+			t.Fatal(err)
+		}
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(ctx, key, cm); err != nil {
+			t.Fatal(err)
+		}
+		versions = append(versions, cm.ResourceVersion)
+	}
+	if versions[0] != versions[1] {
+		t.Fatalf("the ConfigMap was rewritten: %v", versions)
+	}
+}
+
+// An entry that runs nothing has no route to read a host from, and needs
+// none: its tile leads where the profile says, naming the tenant on the way.
+func tileFixtureLinkProfile(name, baseURL string, tile *gentianov1alpha1.ExposureTile) *gentianov1alpha1.ComponentProfile {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Name = name
+	profile.Spec.Package.API = &gentianov1alpha1.APIIntegration{
+		Runtime: gentianov1alpha1.APIIntegrationRuntimeRedirect,
+		BaseURL: baseURL,
+		Tile:    tile,
+	}
+	return profile
+}
+
+func TestAnEntryThatRunsNothingIsALink(t *testing.T) {
+	tile := &gentianov1alpha1.ExposureTile{
+		DisplayName: "Subscriptions", Logo: testTileLogo,
+		Relation: "can_administer", Object: gentianov1alpha1.TileObjectTenant,
+	}
+	tenant := tileFixtureTenant("demo")
+	comp := tileFixtureComponent("subscriptions", "tenant-demo", "subscriptions")
+
+	got := project(t, tenant, comp, tileFixtureLinkProfile("subscriptions", "https://corp.example/billing?plan=any", tile))
+	if len(got) != 1 {
+		t.Fatalf("got %v", tileNames(got))
+	}
+	link := got[0]
+	if link.Name != "demo/subscriptions/link" || link.Object != "tenant:demo" ||
+		fmt.Sprint(link.AnyOf) != "[can_administer]" {
+		t.Fatalf("tile = %+v", link)
+	}
+	// Straight to the service, with what it already said and the tenant's name.
+	if !strings.HasPrefix(link.URL, "https://corp.example/billing?") ||
+		!strings.Contains(link.URL, "plan=any") || !strings.Contains(link.URL, "tenantDomain=demo.k.example") {
+		t.Fatalf("url = %s", link.URL)
+	}
+
+	// No tile declared, no tile: an integration is not an advertisement.
+	if got := project(t, tenant, comp, tileFixtureLinkProfile("subscriptions", "https://corp.example", nil)); len(got) != 0 {
+		t.Fatalf("an entry with no tile got one: %v", tileNames(got))
+	}
+
+	// A proxied entry is reached through a host of the cluster's. A tile
+	// naming the service behind it would walk a person around the proxy.
+	proxied := tileFixtureLinkProfile("subscriptions", "https://corp.example", tile)
+	proxied.Spec.Package.API.Runtime = gentianov1alpha1.APIIntegrationRuntimePortalProxy
+	if got := project(t, tenant, comp, proxied); len(got) != 0 {
+		t.Fatalf("a proxied entry got a link: %v", tileNames(got))
+	}
+
+	// The service is told nothing about the tenant when the profile says so.
+	silent := tileFixtureLinkProfile("subscriptions", "https://corp.example/", tile)
+	silent.Spec.Package.API.TenantBinding = gentianov1alpha1.APIIntegrationTenantBindingNone
+	if got := project(t, tenant, comp, silent); len(got) != 1 || got[0].URL != "https://corp.example/" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// The kernel's consoles are for who runs the cluster. Reading it (can_audit)
+// or approving its exceptions (can_approve, can_approve_perimeter) opens none
+// of them: Headlamp and Argo CD take kernel-realm sign-ins alone, and a role
+// held by name is held for the consoles that answer it.
+func TestNoKernelConsoleOpensForReadingOrApproving(t *testing.T) {
+	for _, tile := range kernelTileTable("kernel") {
+		for _, rel := range tile.anyOf {
+			if rel != "can_configure" && rel != "can_operate_system" {
+				t.Errorf("%s opens for %s", tile.name, rel)
+			}
+		}
+	}
+}

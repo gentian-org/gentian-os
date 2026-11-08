@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -32,15 +26,6 @@ import (
 
 const conditionCrossplaneReady = "CrossplaneReady"
 
-func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bool {
-	for _, c := range tenant.Status.Conditions {
-		if c.Type == condType && c.Status == metav1.ConditionTrue {
-			return true
-		}
-	}
-	return false
-}
-
 // tenantFoundationConditions are the conditions a Tenant must carry, all True,
 // before it can be Ready: the identity and data-plane stages.
 //
@@ -52,7 +37,7 @@ func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bo
 //
 // Every one of them is set on every path its stage takes, including the
 // not-applicable path, which reports True with a reason saying so:
-// NoStorageRequired, PortalShellReady, "No apps require provisioning". So an
+// NoStorageRequired, NoDatabaseRequired, "No apps require provisioning". So an
 // absent condition here means the stage has not run, never that it had nothing
 // to do.
 var tenantFoundationConditions = []string{
@@ -67,7 +52,7 @@ var tenantFoundationConditions = []string{
 // or not True, or "" when all of them are True.
 //
 // The phase used to be decided by whether any stage asked to be requeued, which
-// is a different question. A Tenant reconciled before its AppProfiles resolve
+// is a different question. A Tenant reconciled before its ComponentProfiles resolve
 // runs the data-plane stage with nothing yet to do, asks for no requeue, and
 // finalizes — so it read Ready while carrying AppsReady=False and with all five
 // of the conditions above never set at all.
@@ -152,7 +137,7 @@ func (r *TenantReconciler) deleteTenantProvisioningConfigMap(ctx context.Context
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantProvisioningConfigMapName(tenantName),
-			Namespace: kernelNamespace,
+			Namespace: provisioningNamespace,
 		},
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, cm))

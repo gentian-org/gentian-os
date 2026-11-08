@@ -1,30 +1,18 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package keycloak
 
 import (
-	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
 )
-
-// ProvisionerBootstrap installs curl and jq before provisioner scripts run.
-const ProvisionerBootstrap = "apk add --no-cache --quiet curl jq >/dev/null 2>&1 || { echo 'ERROR: install curl/jq failed' >&2; exit 1; }; "
 
 // ShellJSONIDExtractor returns a POSIX sh helper that extracts the "id"
 // field from Keycloak Admin API JSON arrays. jq is preferred; sed/grep fallbacks
@@ -158,8 +146,9 @@ func ShellAdminToken() string {
 	return `
 TOKEN=$(curl -sf --max-time 30 \
   -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  --data-urlencode "client_id=${KEYCLOAK_CLIENT_ID}" \
+  --data-urlencode "client_secret=${KEYCLOAK_CLIENT_SECRET}" \
+  --data-urlencode "grant_type=client_credentials" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 if [ -z "${TOKEN}" ]; then
   echo "ERROR: could not obtain a Keycloak admin token" >&2
@@ -168,59 +157,42 @@ fi
 `
 }
 
-// ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
-func ExtractJSONIDByAttr(raw, attr, value string) string {
-	var walk func(any)
-	var found string
-	walk = func(v any) {
-		if found != "" {
-			return
-		}
-		m, ok := v.(map[string]any)
-		if !ok {
-			return
-		}
-		if fmt.Sprint(m[attr]) == value {
-			if id, ok := m["id"].(string); ok && id != "" {
-				found = id
-				return
-			}
-		}
-		for _, child := range m {
-			walk(child)
-		}
-	}
-	trimmed := strings.TrimSpace(raw)
-	if trimmed != "" {
-		var parsed any
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
-			if arr, ok := parsed.([]any); ok {
-				for _, item := range arr {
-					walk(item)
-				}
-			} else {
-				walk(parsed)
-			}
-			if found != "" {
-				return found
-			}
-		}
-	}
-	needle := `"` + attr + `":"` + value + `"`
-	idRe := regexp.MustCompile(`"id":"([^"]+)"`)
-	inner := strings.TrimSpace(raw)
-	inner = strings.TrimPrefix(inner, "[")
-	inner = strings.TrimSuffix(inner, "]")
-	if inner == "" {
-		return ""
-	}
-	for _, obj := range strings.Split(inner, "},{") {
-		if !strings.Contains(obj, needle) {
-			continue
-		}
-		if m := idRe.FindStringSubmatch(obj); len(m) > 1 {
-			return m[1]
-		}
-	}
-	return ""
+// ShellAdminCall defines kc_curl: one call to Keycloak's admin API that says
+// what failed when it fails.
+//
+// The scripts called curl -sf. -f turns any answer outside 2xx into exit
+// code 22 and discards the body -- and the body is the reason: a validation
+// message, a conflict, the name of a missing group. A Job that exits 22
+// with nothing in its log held a tenant at Provisioning, over and over, and
+// could not be diagnosed from the cluster. kc_curl keeps curl's options as
+// they were, prints the body on success exactly as -s did, and on any other
+// answer prints the status, the request with its bearer token blanked, and
+// the body to stderr, then exits as set -e would have.
+//
+// Holds a % (printf, curl's -w), so it is concatenated outside a
+// fmt.Sprintf format string, like ShellJSONIDExtractor.
+func ShellAdminCall() string {
+	return `
+kc_curl() {
+  _kc_body="$(mktemp)"
+  _kc_code="$(curl -sS --max-time 30 -o "${_kc_body}" -w '%{http_code}' "$@" 2>"${_kc_body}.err")" || {
+    echo "ERROR: $(printf '%s ' "$@" | sed 's/Bearer [^ "]*/Bearer ***/g'): $(cat "${_kc_body}.err")" >&2
+    rm -f "${_kc_body}" "${_kc_body}.err"
+    exit 1
+  }
+  case "${_kc_code}" in
+    2*)
+      cat "${_kc_body}"
+      rm -f "${_kc_body}" "${_kc_body}.err"
+      ;;
+    *)
+      echo "ERROR: HTTP ${_kc_code} from $(printf '%s ' "$@" | sed 's/Bearer [^ "]*/Bearer ***/g')" >&2
+      head -c 2000 "${_kc_body}" >&2
+      echo >&2
+      rm -f "${_kc_body}" "${_kc_body}.err"
+      exit 1
+      ;;
+  esac
+}
+`
 }

@@ -1,17 +1,11 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: MPL-2.0
 */
 
 package controller
@@ -32,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
 // backupRecipientsEnv names the cluster's age recipients, comma-separated.
@@ -44,7 +39,7 @@ const backupRecipientsEnv = "BACKUP_AGE_RECIPIENTS"
 // The public half only. The identity goes into the kit and nowhere else: a key
 // stored on the cluster it protects is readable by whoever takes that cluster,
 // which is the situation backups exist for.
-const BackupRecipientsPath = "gentian-os/kernel/backup/recipients"
+var BackupRecipientsPath = secrets.KernelPath("backup", "recipients")
 
 // backupRecipientsKey is the field at that path.
 const backupRecipientsKey = "recipients"
@@ -115,8 +110,8 @@ func splitRecipients(raw string) []string {
 }
 
 // passphraseSecretName is the copy placed beside the capture Jobs.
-func passphraseSecretName(exportName string) string {
-	return "tx-" + exportName + "-passphrase"
+func passphraseSecretName(tenantName, exportName string) string {
+	return "tx-" + tenantName + "-" + exportName + "-passphrase"
 }
 
 // resolveEncryption works out how this export's bundle is protected, and
@@ -129,6 +124,15 @@ func (r *TenantExportReconciler) resolveEncryption(
 	ctx context.Context,
 	export *gentianov1alpha1.TenantExport,
 ) (backup.Encryption, error) {
+	// Resolved once, like the destination: every artifact of a bundle is
+	// encrypted to the same keys. Looking them up again on a later pass
+	// could find none -- OpenBao briefly out of reach -- and fail an export
+	// that had already captured half the tenant with the keys it had.
+	if rec := export.Status.Encryption; rec != nil &&
+		rec.Mode == gentianov1alpha1.ExportEncryptionRecipient && len(rec.Recipients) > 0 {
+		return backup.Encryption{Mode: rec.Mode, Recipients: slices.Clone(rec.Recipients)}, nil
+	}
+
 	spec := export.Spec.Encryption
 	mode := spec.Resolved()
 
@@ -144,6 +148,34 @@ func (r *TenantExportReconciler) resolveEncryption(
 			// the whole reason to name your own key is that assumption being
 			// false.
 			enc.Recipients = spec.Recipients
+		} else if keys, err := r.storeRecipients(ctx, export); err != nil {
+			return enc, err
+		} else if len(keys) > 0 {
+			// A tenant's store that declares its keys is read by them, in
+			// place of the cluster's, for the reason an export's own
+			// recipients replace them. The keys are the tenant's
+			// declaration, so an export that names none -- an add-on's,
+			// which may name none (tenant-export-guard.yaml) -- is still
+			// the tenant's to read.
+			enc.Recipients = keys
+		}
+
+	case gentianov1alpha1.ExportEncryptionPolicy:
+		// The policy's keys, resolved now, as a recipient bundle: what the
+		// policy's own schedule copied into its exports
+		// (scheduleEncryption), asked for instead of copied.
+		enc.Mode = gentianov1alpha1.ExportEncryptionRecipient
+		enc.Recipients = r.clusterRecipients(ctx)
+		tenant := &gentianov1alpha1.Tenant{}
+		if err := r.Get(ctx, types.NamespacedName{Name: tenantNameFromNamespace(export.Namespace)}, tenant); err != nil {
+			return enc, fmt.Errorf("read the tenant for its backup policy's keys: %w", err)
+		}
+		eff, err := r.effectivePolicy(ctx, tenant)
+		if err != nil {
+			return enc, err
+		}
+		if len(eff.Recipients) > 0 {
+			enc.Recipients = slices.Clone(eff.Recipients)
 		}
 
 	case gentianov1alpha1.ExportEncryptionPassphrase:
@@ -153,7 +185,7 @@ func (r *TenantExportReconciler) resolveEncryption(
 		if err := r.stagePassphrase(ctx, export, spec); err != nil {
 			return enc, err
 		}
-		enc.PassphraseSecret = passphraseSecretName(export.Name)
+		enc.PassphraseSecret = passphraseSecretName(tenantNameFromNamespace(export.Namespace), export.Name)
 		enc.PassphraseKey = spec.PassphraseKey()
 	}
 
@@ -161,6 +193,22 @@ func (r *TenantExportReconciler) resolveEncryption(
 		return enc, err
 	}
 	return enc, nil
+}
+
+// storeRecipients are the keys the tenant's store an export goes to
+// declares, or none for any other destination.
+func (r *TenantExportReconciler) storeRecipients(ctx context.Context, export *gentianov1alpha1.TenantExport) ([]string, error) {
+	if export.Spec.Destination.Resolved() != gentianov1alpha1.ExportDestinationSource {
+		return nil, nil
+	}
+	store := &gentianov1alpha1.BundleSource{}
+	if err := r.Get(ctx, types.NamespacedName{Name: export.Spec.Destination.Source}, store); err != nil {
+		return nil, fmt.Errorf("read store %s: %w", export.Spec.Destination.Source, err)
+	}
+	if store.Spec.Tenant != tenantNameFromNamespace(export.Namespace) {
+		return nil, fmt.Errorf("store %s is not this tenant's", store.Name)
+	}
+	return store.Spec.Recipients, nil
 }
 
 // stagePassphrase copies the requester's passphrase next to the capture Jobs.
@@ -194,34 +242,9 @@ func (r *TenantExportReconciler) stagePassphrase(
 			spec.PassphraseSecretRef.Name, key)
 	}
 
-	copied := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      passphraseSecretName(export.Name),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:        tenantNameFromNamespace(export.Namespace),
-				managedByLabel:     managedByValue,
-				backup.ExportLabel: export.Name,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{key: value},
-	}
-
-	existing := &corev1.Secret{}
-	getErr := r.Get(ctx, types.NamespacedName{
-		Name:      copied.Name,
-		Namespace: kernelNamespace,
-	}, existing)
-	switch {
-	case apierrors.IsNotFound(getErr):
-		return r.Create(ctx, copied)
-	case getErr != nil:
-		return getErr
-	}
-
-	existing.Data = copied.Data
-	return r.Update(ctx, existing)
+	tenantName := tenantNameFromNamespace(export.Namespace)
+	return putRunSecret(ctx, r.Client, runSecret(passphraseSecretName(tenantName, export.Name), s3Namespace,
+		tenantName, export.Name, map[string][]byte{key: value}))
 }
 
 // discardPassphrase removes the staged copy.
@@ -235,8 +258,8 @@ func (r *TenantExportReconciler) discardPassphrase(
 ) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      passphraseSecretName(export.Name),
-			Namespace: kernelNamespace,
+			Name:      passphraseSecretName(tenantNameFromNamespace(export.Namespace), export.Name),
+			Namespace: s3Namespace,
 		},
 	}
 	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {

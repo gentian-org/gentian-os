@@ -6,9 +6,8 @@ metadata:
   name: test-oidc-catalog
   labels:
     gentianos.io/oidc-catalog: test
+    gentianos.io/profile-name: catalogue-test-app
 spec:
-  extraManagedByAttributeGroups:
-    - TestAppAdmin
   mapperTemplates:
     gentian_useruuid:
       protocolMapper: oidc-usermodel-attribute-mapper

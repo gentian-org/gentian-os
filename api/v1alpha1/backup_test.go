@@ -1,5 +1,5 @@
 /*
-Copyright 2026 Gentian Organization.
+Copyright The Gentian OS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
 */
 
 package v1alpha1
@@ -22,16 +24,13 @@ import (
 )
 
 // A profile that declares no backup block must still be captured correctly.
-// Most of the catalogue will never set spec.backup, so these defaults are the
+// Most of the catalog will never set spec.backup, so these defaults are the
 // contract for nearly every app, not an edge case.
 func TestBackupDefaultsForProfileDeclaringNothing(t *testing.T) {
 	var spec *BackupSpec // nil: exactly what a profile without the block yields
 
 	if got := spec.QuiesceMode(); got != BackupQuiesceScaleDown {
 		t.Errorf("QuiesceMode() = %q, want %q", got, BackupQuiesceScaleDown)
-	}
-	if got := spec.ConsistencyMode(); got != BackupConsistencyApp {
-		t.Errorf("ConsistencyMode() = %q, want %q", got, BackupConsistencyApp)
 	}
 	if got := spec.IncludedVolumes(); got != nil {
 		t.Errorf("IncludedVolumes() = %v, want nil (every release-owned claim)", got)
@@ -61,9 +60,6 @@ func TestBackupEmptyBlockMatchesNilDefaults(t *testing.T) {
 	if got := spec.QuiesceMode(); got != BackupQuiesceScaleDown {
 		t.Errorf("QuiesceMode() = %q, want %q", got, BackupQuiesceScaleDown)
 	}
-	if got := spec.ConsistencyMode(); got != BackupConsistencyApp {
-		t.Errorf("ConsistencyMode() = %q, want %q", got, BackupConsistencyApp)
-	}
 
 	withEmptyQuiesce := &BackupSpec{Quiesce: &BackupQuiesce{}}
 	if got := withEmptyQuiesce.QuiesceMode(); got != BackupQuiesceScaleDown {
@@ -87,14 +83,10 @@ func TestBackupDeclaredValuesWin(t *testing.T) {
 			Post:   [][]string{{"occ", "maintenance:data-fingerprint"}},
 			Verify: []string{"occ", "status"},
 		},
-		Consistency: BackupConsistencyPerStore,
 	}
 
 	if got := spec.QuiesceMode(); got != BackupQuiesceCommand {
 		t.Errorf("QuiesceMode() = %q, want %q", got, BackupQuiesceCommand)
-	}
-	if got := spec.ConsistencyMode(); got != BackupConsistencyPerStore {
-		t.Errorf("ConsistencyMode() = %q, want %q", got, BackupConsistencyPerStore)
 	}
 	if got := spec.QuiesceContainer(); got != "nextcloud" {
 		t.Errorf("QuiesceContainer() = %q, want %q", got, "nextcloud")

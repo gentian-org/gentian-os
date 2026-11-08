@@ -1,20 +1,16 @@
 name: CI
 
+# A branch is checked as a pull request, and what is merged is checked and
+# published as a push. Not both: a branch that ran on its push and again on its
+# pull request did the same work twice.
+#
+# A branch nobody opened a pull request for is not checked. Open one, as a
+# draft if it is not ready, or start the workflow by hand.
 on:
   push:
     branches:
       - main
       - develop
-      # test-cb is the pointer branch the test.gentian-os.org test cluster tracks.
-      # It is only ever force-pushed to the tip of whatever feature branch is
-      # under test — nothing is merged out of it — so it needs the same
-      # published image any tracked branch needs. See the docker job below.
-      - test-cb
-      # Feature branches, so a push is checked before a pull request exists.
-      # Nothing here publishes from one: see the docker job's push condition.
-      - "feat/**"
-      - "fix/**"
-      - "chore/**"
     tags: ["v*"]
   pull_request:
     branches:
@@ -22,7 +18,39 @@ on:
       - develop
   workflow_dispatch:
 
+# A newer commit on a branch replaces the run of the older one: only the tip
+# is what anybody waits for. main, develop and release tags
+# are never canceled — each of their commits publishes an image something may
+# pin, and what such a run started it finishes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main'
+    && github.ref != 'refs/heads/develop'
+    && !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
+  # What this run has to do, decided in one place and read by the jobs below.
+  #
+  #   publish    main, develop and release tags push an image. Every other
+  #              ref, and every pull request, builds one and pushes nothing.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - id: decide
+        run: |
+          publish=false
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            case "${GITHUB_REF}" in
+              refs/heads/main|refs/heads/develop|refs/tags/v*) publish=true ;;
+            esac
+          fi
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+
   go:
     name: Go — vet, build, test
     runs-on: ubuntu-latest
@@ -33,10 +61,67 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # Cached below instead. setup-go's cache is keyed on go.sum alone and
+          # is never written again once that key exists, and four jobs share
+          # the key — so it held whatever the first job to finish had built,
+          # which was the one that builds least, and `go vet` compiled the
+          # module from nothing on every run.
+          cache: false
+
+      # A key per commit and a prefix to restore from, so each run starts from
+      # the last run's build cache and leaves its own behind.
+      - name: Go caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-unit-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-
 
       - name: go vet
-        run: go vet ./...
+        run: go vet ./... ./api/...
+
+      - name: go test
+        run: go test $(go list ./... ./api/... | grep -v 'internal/controller') -race -count=1
+
+      - name: go build
+        run: go build ./... ./api/...
+
+      # Every bundle the published catalogs serve, held to this build's
+      # install and rollout checks: a platform change that breaks a published
+      # profile fails here, not at a tenant's install (docs/concepts/versioning.md).
+      - name: Published catalogues conform to this platform
+        env:
+          GENTIAN_CONFORMANCE_CATALOGUES: https://gentian-org.github.io/gentian-apps,https://gentian-org.github.io/gentian-apps/develop
+        run: go test ./internal/profilebundle/ -run TestThePublishedCataloguesConform -count=1 -v
+
+  # internal/controller, on its own runner beside the job above and not after
+  # it: envtest's watch goroutines are incompatible with the race detector, so
+  # it was always a separate `go test`, and the two share nothing but the
+  # checkout.
+  envtest:
+    name: Go — controller tests (envtest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Go caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-envtest-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-envtest-${{ runner.os }}-${{ hashFiles('go.sum', 'api/go.sum') }}-
 
       # Pinned, like controller-gen below. An unpinned @latest picks up a
       # toolchain bump on an unrelated day and fails a run nobody changed —
@@ -64,14 +149,7 @@ jobs:
           echo "KUBEBUILDER_ASSETS=${ASSETS}" >> "$GITHUB_ENV"
 
       - name: go test
-        run: |
-          # internal/controller uses envtest whose watch goroutines are incompatible
-          # with the race detector; run it separately without -race.
-          go test $(go list ./... | grep -v 'internal/controller') -race -count=1
-          go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
-
-      - name: go build
-        run: go build ./...
+        run: go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
 
   generate:
     name: Verify generated files
@@ -87,6 +165,12 @@ jobs:
 
       - name: Install controller-gen
         run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.3
+
+      # Most of the generators parse YAML (the CRDs, versions.yaml, the
+      # namespace layout) and until now ran only because the runner image
+      # happened to ship PyYAML; the lint job installs it for the same reason.
+      - name: generator dependencies
+        run: python3 -m pip install --quiet pyyaml
 
       - name: Verify generated deepcopy and CRD YAML are up to date
         run: make verify-gen
@@ -106,24 +190,28 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         with:
-          version: v2.11
+          version: v2.13
+
+      # A module of its own, with its own license header to check.
+      - name: golangci-lint (api)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        with:
+          version: v2.13
+          working-directory: api
 
       - name: yamllint
         uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c  # v3.1.1
         with:
           config_file: .yamllint.yml
 
-      - name: shellcheck
+      # Installed here and run by `make lint-shell` in the lints step below,
+      # over the same files, as is the step-contract check. Both used to have a
+      # step of their own as well and so ran twice.
+      - name: Install shellcheck
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
           shellcheck --version
-          mapfile -d '' -t files < <(git ls-files -z -- '*.sh')
-          files+=("scripts/kubectl-gentian")
-          shellcheck -x "${files[@]}"
-
-      - name: step contracts
-        run: make validate-steps
 
       # Every lint the repository defines, as one step.
       #
@@ -140,10 +228,13 @@ jobs:
       # recovery-kit check below: two of these are Python and parse YAML, and
       # until now they ran only because the runner image happened to ship it.
       - name: lint dependencies
-        run: python3 -m pip install --quiet pyyaml
+        run: python3 -m pip install --quiet pyyaml codespell
 
       - name: lints
-        run: make lint-shell lint-yaml lint-portability lint-image-digests
+        # lint-marker-ascii: a kubebuilder marker that carries a typographic
+        # quote renders a CRD the API server refuses, and nothing else catches
+        # it — not envtest, whose newer API server is more forgiving.
+        run: make lint-shell lint-yaml lint-job-scripts lint-portability lint-image-digests lint-marker-ascii lint-docs lint-spelling verify-openbao-cli-release
 
       # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
       # and only its export was ever exercised. age is installed rather than
@@ -163,7 +254,7 @@ jobs:
       # they prove the text came out as expected and can say nothing about what
       # it grants. A path glob with a typo — gentian-os/kernel* for
       # gentian-os/kernel/* — renders correctly, matches its golden, and opens a
-      # neighbouring path. The only way to catch that is to load the policy into
+      # neighboring path. The only way to catch that is to load the policy into
       # a real OpenBao and try the access.
       #
       # The sharp rule is cluster-admin being DENIED a tenant's data. That is
@@ -194,10 +285,8 @@ jobs:
           make test-policy
 
   # macOS is a supported install host, so the installer has to be exercised on
-  # BSD userland and stock bash 3.2 — not just checked for it. This job is
-  # SEPARATE from lint on purpose: it is expected to fail on portability until
-  # Phase 13 migrates the call sites, and burying that in the main lint job
-  # would either block every merge or train people to ignore a red X.
+  # BSD userland and stock bash 3.2 — not just checked for it. It runs as its
+  # own job, on a macOS runner, apart from lint.
   portability:
     name: Portability (macOS)
     runs-on: macos-latest
@@ -218,17 +307,155 @@ jobs:
           # driver's own logic.
           /bin/bash ./install.sh --explain
 
+  # The image is built beside the checks and not after them, so a run takes as
+  # long as its slowest job and not as long as two of them end to end. What
+  # waits for the checks is the NAME: see the publish job below.
   docker:
-    name: Docker build and push
+    name: Docker build
     runs-on: ubuntu-latest
-    needs: [go]
+    needs: [plan]
     permissions:
       contents: read
       packages: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # GHCR login occasionally times out from GitHub-hosted runners; retry before failing.
+      - name: Log in to GHCR
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        with:
+          timeout_minutes: 2
+          max_attempts: 5
+          retry_wait_seconds: 20
+          command: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ghcr.io/gentian-org/gentian-os
+
+      # Required for platforms:. Without buildx the default builder ignores the
+      # list and produces an amd64-only image, silently — which is the same
+      # failure mode as the single-arch digest pin this change exists to fix.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          # An SBOM and a SLSA provenance attestation travel with the image
+          # (docs/security/controls.md K3).
+          sbom: true
+          provenance: mode=max
+          context: .
+          platforms: linux/amd64,linux/arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          # The runtime stage's layers. Its package install runs emulated for
+          # arm64 and was the longest step of the build, repeated on every run
+          # for a line of the Dockerfile that almost never changes.
+          cache-from: type=gha,scope=gentian-os
+          cache-to: type=gha,scope=gentian-os,mode=min
+          # Where an image is published it is pushed by digest, with no tag:
+          # nothing follows a digest it has not been told, so until the publish
+          # job names it the image is in the registry and reachable by nobody.
+          # Everywhere else the build is the check and nothing is pushed.
+          outputs: >-
+            ${{ needs.plan.outputs.publish == 'true'
+            && 'type=image,name=ghcr.io/gentian-org/gentian-os,push-by-digest=true,name-canonical=true,push=true'
+            || 'type=cacheonly' }}
+
+      # The published image, signed with this workflow's identity and scanned
+      # (docs/security/controls.md K3, K5). Only where the build pushed: a
+      # pull request's image exists nowhere to be signed. The scan is advisory
+      # until the backlog it finds is triaged; dropping continue-on-error makes
+      # it block.
+      - name: Install cosign
+        if: needs.plan.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
+      # --new-bundle-format=false: cosign 3 stores a signature as a Sigstore bundle
+      # behind the OCI referrers API by default; the cluster's Kyverno 1.13 verifies
+      # the legacy form, a sha256-<digest>.sig tag, with its default verifier. The
+      # bundle form returns with the Kyverno upgrade (controls.md K3).
+      # --use-signing-config=false goes with it: the TUF signing config is only
+      # for the bundle form, and cosign refuses the legacy form while it is on.
+      - name: Sign the image
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes --new-bundle-format=false --use-signing-config=false "ghcr.io/gentian-org/gentian-os@${DIGEST}"
+      - name: Scan the image
+        if: needs.plan.outputs.publish == 'true'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ghcr.io/gentian-org/gentian-os@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # Known vulnerabilities in the Go dependency graph, from the Go vulnerability
+  # database, reported against the symbols the code actually reaches. Advisory:
+  # it reports and does not fail the run until what it finds on its first runs
+  # is triaged (docs/security/controls.md K4); dropping continue-on-error
+  # makes it block.
+  govulncheck:
+    name: Go — govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f  # v1.1.0
+        continue-on-error: true
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+
+  # Gives the image built above its tags, which is what publishes it: a cluster
+  # follows tags. It waits for every check -- the Go jobs, lint (the
+  # authorization policy tests are in lint), the generated files and the
+  # Crossplane unit tests -- so no tag exists for a commit that failed any of
+  # them.
+  publish:
+    name: Docker publish
+    runs-on: ubuntu-latest
+    needs: [plan, go, envtest, lint, generate, crossplane-unit, docker]
+    if: >-
+      ${{ !cancelled()
+      && needs.plan.outputs.publish == 'true'
+      && needs.docker.result == 'success'
+      && needs.go.result == 'success'
+      && needs.envtest.result == 'success'
+      && needs.lint.result == 'success'
+      && needs.generate.result == 'success'
+      && needs.crossplane-unit.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      # A release tag names the chart's version (deployment.md §5.4): the
+      # chart's appVersion is the image a cluster pulls where no tag is
+      # set, so a tag that disagrees with it would publish an image nothing
+      # renders. Refused here, before anything is pushed under the tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: startsWith(github.ref, 'refs/tags/v')
+      - name: The tag names the chart's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' charts/gentian-os/Chart.yaml | tr -d "\"'")"
+          if [ "v${version}" != "${TAG}" ]; then
+            echo "::error::tag ${TAG} does not name the chart's version ${version}: cut the release with the version commit (deployment.md §5.4)"
+            exit 1
+          fi
       - name: Log in to GHCR
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:
@@ -252,40 +479,129 @@ jobs:
             # tag above is published from every branch, so it cannot be tracked
             # safely — a main build would be a valid candidate for a develop
             # cluster. argocd-image-updater follows THIS pattern via allow-tags
-            # in kernel/bootstrap/chart/templates/gentian-os.yaml: the moving
-            # `develop` tag can never resolve to a new value, so tracking it
-            # meant image.tag never changed and new builds never deployed.
+            # (described at image.pullPolicy in charts/gentian-os/values.yaml):
+            # the moving `develop` tag never resolves to a new value, so
+            # tracking it would leave image.tag unchanged and new builds
+            # undeployed.
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
 
-      # Required for platforms:. Without buildx the default builder ignores the
-      # list and produces an amd64-only image, silently — which is the same
-      # failure mode as the single-arch digest pin this change exists to fix.
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
-      - name: Build and push image
+      - name: Tag the image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          test -n "${DIGEST}" || { echo "::error::the build job reported no digest"; exit 1; }
+          args=()
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] && args+=(--tag "${tag}")
+          done <<< "${TAGS}"
+          docker buildx imagetools create "${args[@]}" "ghcr.io/gentian-org/gentian-os@${DIGEST}"
+
+  # The images beside the operator's. Each pushes and signs from its build
+  # step, so it runs only once every check passed: a failed check publishes
+  # and signs nothing.
+  images:
+    name: ${{ matrix.title }}
+    runs-on: ubuntu-latest
+    needs: [plan, go, envtest, lint, generate, crossplane-unit]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      # One image's failure leaves the other's build and publish running.
+      fail-fast: false
+      matrix:
+        include:
+          # The provider jar is a Keycloak plugin: it is copied into the
+          # running Keycloak's providers directory by an init container, so
+          # the image only has to carry the file. It is
+          # architecture-independent, but the copy runs beside Keycloak, so it
+          # is built for the same platforms.
+          #
+          # The identity appset names this image by the operator's tag
+          # (gentian.os.revision.placeholder): <branch>-<sha> for the
+          # installer's checkout, or a release's version. type=ref,event=tag
+          # publishes a release under v0.5.0 too, the spelling a chart
+          # rendered without the installer falls back to.
+          - title: Keycloak event listener image
+            image: keycloak-event-listener
+            context: kernel/extensions/keycloak-event-listener
+            release-tag: type=ref,event=tag
+          # What the Jobs that move a tenant's objects run (rclone, age, tar),
+          # tagged as the operator is, so the operator names its own build's.
+          - title: Storage tools image
+            image: storage-tools
+            context: kernel/images/storage-tools
+            release-tag: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Log in to GHCR
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        with:
+          timeout_minutes: 2
+          max_attempts: 5
+          retry_wait_seconds: 20
+          command: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # An empty line among the tags (release-tag of an image that has none)
+      # is no tag.
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ghcr.io/gentian-org/${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            ${{ matrix.release-tag }}
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Build and push the image
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
-          context: .
+          # An SBOM and a SLSA provenance attestation travel with the image
+          # (docs/security/controls.md K3).
+          sbom: true
+          provenance: mode=max
+          context: ${{ matrix.context }}
           platforms: linux/amd64,linux/arm64
-          # main, develop, test-cb and release tags publish. A feature branch
-          # builds the image — which is the check — and pushes nothing.
-          #
-          # test-cb publishes because a cluster tracks it: without a
-          # test-cb-<sha> tag in GHCR, argocd-image-updater's allow-tags
-          # regexp in kernel/bootstrap/chart/templates/gentian-os.yaml matches
-          # no candidate and the cluster keeps running whatever it ran before,
-          # silently. It is a flat name on purpose — docker/metadata-action
-          # slugifies {{branch}}, so a branch with a "/" publishes feat-xyz-<sha>
-          # while the regexp interpolates the raw "feat/xyz" and never matches.
-          push: >-
-            ${{ github.event_name != 'pull_request'
-            && (github.ref == 'refs/heads/main'
-            || github.ref == 'refs/heads/develop'
-            || github.ref == 'refs/heads/test-cb'
-            || startsWith(github.ref, 'refs/tags/v')) }}
+          push: ${{ needs.plan.outputs.publish == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The published image, signed with this workflow's identity and scanned
+      # (docs/security/controls.md K3, K5). Only where the build pushed: a
+      # pull request's image exists nowhere to be signed. The scan is advisory
+      # until the backlog it finds is triaged; dropping continue-on-error makes
+      # it block.
+      - name: Install cosign
+        if: needs.plan.outputs.publish == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
+      - name: Sign the image
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/gentian-org/${{ matrix.image }}
+        run: cosign sign --yes --new-bundle-format=false --use-signing-config=false "${IMAGE}@${DIGEST}"
+      - name: Scan the image
+        if: needs.plan.outputs.publish == 'true'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ghcr.io/gentian-org/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
 
   crossplane-unit:
     name: Crossplane — unit tests (render + functions + schema)
@@ -307,22 +623,59 @@ jobs:
           trap 'rm -rf "$tmpdir"' EXIT
           (
             cd "$tmpdir"
-            XP_VERSION=v2.2.1 bash "${GITHUB_WORKSPACE}/scripts/bootstrap/install-crossplane-cli.sh"
+            # The script installs versions.yaml's crossplane cli pin.
+            bash "${GITHUB_WORKSPACE}/scripts/bootstrap/install-crossplane-cli.sh"
             sudo mv crossplane /usr/local/bin/crossplane
           )
           crossplane version || true   # exits 1 when no cluster, CLI itself is OK
 
       - name: Install kubeconform
-        run: |
-          KUBECONFORM_VERSION=v0.6.7
-          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-          curl -sL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-${OS}-${ARCH}.tar.gz" \
-            | sudo tar -xz -C /usr/local/bin kubeconform
-          kubeconform -v
+        run: make install-kubeconform
 
-      - name: Install Python test dependencies
-        run: pip install pytest
+      # Every chart rendered and validated against the Kubernetes schemas.
+      - name: chart schemas
+        run: make lint-chart-schemas
 
       - name: Run crossplane unit tests
         run: make test-unit
+
+  # The release itself, made from the tag once every image is published:
+  # the notes the tree carries for the tag's line, and under them GitHub's
+  # list of the pull requests since the previous tag. A tag whose line has
+  # no docs/releases/vX.Y.md is not released: the notes are written before
+  # the tag (deployment.md §5.4). Re-running the tag's workflow leaves an
+  # existing release alone.
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [plan, publish, images]
+    if: >-
+      ${{ !cancelled()
+      && startsWith(github.ref, 'refs/tags/v')
+      && needs.publish.result == 'success'
+      && needs.images.result == 'success' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Create the release from the notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} exists; nothing to do"
+            exit 0
+          fi
+          line="$(printf '%s' "${TAG#v}" | cut -d. -f1,2)"
+          notes="docs/releases/v${line}.md"
+          if [ ! -f "${notes}" ]; then
+            echo "::error::${notes} is missing: write the release notes before tagging (deployment.md §5.4)"
+            exit 1
+          fi
+          prerelease=""
+          case "${TAG}" in *-*) prerelease="--prerelease" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "${TAG}" --verify-tag --title "Gentian OS ${TAG}" \
+            --notes-file "${notes}" --generate-notes ${prerelease}

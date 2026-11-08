@@ -41,7 +41,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - https://registry.example.net
@@ -74,7 +74,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: repo-infra-charts
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         data:
         - remoteRef:
@@ -128,7 +128,7 @@ spec:
         labels:
           gentianos.io/credential-requirement: infra-charts
         name: credreq-repository-infra-charts
-        namespace: gentian-system
+        namespace: kernel-control
       spec:
         data:
         - remoteRef:

@@ -1,0 +1,163 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package authn_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gentian-org/gentian-os/internal/director/authn"
+	"github.com/gentian-org/gentian-os/internal/director/directortest"
+)
+
+const audience = "gentian-director"
+
+func verifier(t *testing.T, is *directortest.Issuer) *authn.Verifier {
+	t.Helper()
+	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestVerifyAcceptsATokenFromAnyRealmOfThisIssuer(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian", "tenant-demo")
+	v := verifier(t, is)
+	for _, realm := range []string{"gentian", "tenant-demo"} {
+		id, err := v.Verify(context.Background(), is.Token(t, directortest.Claims{
+			Realm: realm, Subject: "u-1", Audience: audience, Name: "Ada", Email: "ada@example.com"}))
+		if err != nil {
+			t.Fatalf("realm %s: %v", realm, err)
+		}
+		if id.Subject != "u-1" || id.Realm != realm || id.Email != "ada@example.com" || id.SessionID != "sid-u-1" {
+			t.Fatalf("identity = %+v", id)
+		}
+	}
+}
+
+func TestVerifyRefuses(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian")
+	other := directortest.NewIssuer(t, "gentian")
+	v := verifier(t, is)
+	ok := directortest.Claims{Realm: "gentian", Subject: "u-1", Audience: audience}
+
+	cases := map[string]string{
+		"garbage":            "not-a-token",
+		"alg none":           "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1LTEifQ.",
+		"wrong audience":     is.Token(t, with(ok, func(c *directortest.Claims) { c.Audience = "some-other-service" })),
+		"expired":            is.Token(t, with(ok, func(c *directortest.Claims) { c.Expiry = time.Now().Add(-time.Hour) })),
+		"foreign issuer":     other.Token(t, ok),
+		"issuer lookalike":   is.Token(t, with(ok, func(c *directortest.Claims) { c.Issuer = is.URL + ".evil.example/realms/gentian" })),
+		"realm traversal":    is.Token(t, with(ok, func(c *directortest.Claims) { c.Issuer = is.URL + "/realms/../../admin" })),
+		"realm with a slash": is.Token(t, with(ok, func(c *directortest.Claims) { c.Issuer = is.URL + "/realms/gentian/extra" })),
+		"unknown realm":      is.Token(t, with(ok, func(c *directortest.Claims) { c.Realm = "nope" })),
+		"unpublished key":    is.Token(t, with(ok, func(c *directortest.Claims) { c.Key = directortest.OtherKey(t) })),
+		"unknown key id":     is.Token(t, with(ok, func(c *directortest.Claims) { c.KeyID = "rotated-away" })),
+		"no subject":         is.Token(t, with(ok, func(c *directortest.Claims) { c.Subject = "" })),
+		"an ID token":        is.Token(t, with(ok, func(c *directortest.Claims) { c.Type = "ID" })),
+		"a refresh token":    is.Token(t, with(ok, func(c *directortest.Claims) { c.Type = "Refresh" })),
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := v.Verify(context.Background(), raw)
+			if !errors.Is(err, authn.ErrUnauthenticated) {
+				t.Fatalf("err = %v, want ErrUnauthenticated", err)
+			}
+		})
+	}
+}
+
+// The edge reads an ID token where the Authorization header is not its to
+// read. It is held against the zone's client, it must say it is an ID token,
+// and nothing that takes a bearer accepts it.
+func TestAnIDTokenIsAcceptedOnlyAsOneAndOnlyForItsClient(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian")
+	v := verifier(t, is)
+	const client = "gentian-edge-kernel"
+	idToken := directortest.Claims{Realm: "gentian", Subject: "u-1", Audience: client, Type: "ID", Email: "ada@example.com"}
+
+	id, err := v.VerifyIDToken(context.Background(), is.Token(t, idToken), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Subject != "u-1" || id.SessionID != "sid-u-1" || id.Email != "ada@example.com" {
+		t.Fatalf("identity = %+v", id)
+	}
+
+	refused := map[string]struct{ raw, client string }{
+		"another client's ID token": {is.Token(t, idToken), "gentian-edge-acme"},
+		"no client named":           {is.Token(t, idToken), ""},
+		"an access token":           {is.Token(t, with(idToken, func(c *directortest.Claims) { c.Type = "Bearer" })), client},
+		"a token of no stated kind": {is.Token(t, with(idToken, func(c *directortest.Claims) { c.Type = "" })), client},
+		"the director's access token": {is.Token(t, directortest.Claims{
+			Realm: "gentian", Subject: "u-1", Audience: audience}), audience},
+		"expired": {is.Token(t, with(idToken, func(c *directortest.Claims) { c.Expiry = time.Now().Add(-time.Hour) })), client},
+	}
+	for name, c := range refused {
+		t.Run(name, func(t *testing.T) {
+			if _, err := v.VerifyIDToken(context.Background(), c.raw, c.client); !errors.Is(err, authn.ErrUnauthenticated) {
+				t.Fatalf("err = %v, want ErrUnauthenticated", err)
+			}
+		})
+	}
+	// And the other way round: an ID token is not a bearer, even when its
+	// audience is the one the verifier was configured with.
+	asBearer := is.Token(t, with(idToken, func(c *directortest.Claims) { c.Audience = audience }))
+	if _, err := v.Verify(context.Background(), asBearer); !errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("an ID token passed for an access token: %v", err)
+	}
+}
+
+// A token signed with a symmetric key derived from the public key is the
+// classic confusion attack; the algorithm allow-list is what refuses it.
+func TestVerifyRefusesSymmetricAlgorithms(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian")
+	v := verifier(t, is)
+	hs := "eyJhbGciOiJIUzI1NiIsImtpZCI6InRlc3Qta2V5LTEifQ." +
+		"eyJpc3MiOiJ4Iiwic3ViIjoidS0xIn0.c2ln"
+	if _, err := v.Verify(context.Background(), hs); !errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestKeySetIsCachedAndUnknownKeyIDsCannotHammerTheIssuer(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian")
+	v := verifier(t, is)
+	ok := directortest.Claims{Realm: "gentian", Subject: "u-1", Audience: audience}
+	for i := 0; i < 5; i++ {
+		if _, err := v.Verify(context.Background(), is.Token(t, ok)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 20; i++ {
+		bad := with(ok, func(c *directortest.Claims) { c.KeyID = "invented" })
+		_, _ = v.Verify(context.Background(), is.Token(t, bad))
+	}
+	if is.Served != 1 {
+		t.Fatalf("issuer served its key set %d times, want 1", is.Served)
+	}
+}
+
+func TestNewVerifierRequiresAnAudience(t *testing.T) {
+	_, err := authn.NewVerifier(authn.Config{IssuerBase: "https://id.example"})
+	if err == nil || !strings.Contains(err.Error(), "audience") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func with(c directortest.Claims, f func(*directortest.Claims)) directortest.Claims {
+	f(&c)
+	return c
+}

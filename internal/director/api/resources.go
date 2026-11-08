@@ -1,0 +1,565 @@
+/*
+Copyright The Gentian OS Authors.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+SPDX-License-Identifier: MPL-2.0
+*/
+
+package api
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/guard"
+	"github.com/gentian-org/gentian-os/internal/locales"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
+)
+
+// A tenant's resource plan.
+//
+// The cluster knows the ceiling it enforces and what is committed under it;
+// git knows which plan was chosen. Reading either is the usher's. What is
+// here is the write: a commit the caller is allowed to make, validated against
+// the operator's answer first. The operator has no write to call. It reads the
+// plan back from git once Argo CD has synced it, like every other change to a
+// tenant.
+
+type setResourcePlanRequest struct {
+	Plan string `json:"plan"`
+	// Force skips the downgrade guard: the plan is written although what the
+	// tenant has committed does not fit under it. The cluster's
+	// administrator has decided the tenant will be shrunk and accepts the
+	// pods that will not come back as a known cost.
+	Force bool `json:"force,omitempty"`
+}
+
+// setResourcePlan writes the chosen plan to git.
+//
+// The choice is validated against the operator's answer for this tenant: a
+// plan the catalog does not have is 404, a retired one is 409, and one the
+// tenant's committed usage does not fit under is 409 unless forced. What is
+// written is the plan's own quantities, so the ceiling the tenant ends up on
+// is exactly one the platform has priced.
+func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call) {
+	var body setResourcePlanRequest
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Plan) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"plan": "<name>"}`)
+		return
+	}
+	if body.Force && c.id.Delegated() {
+		// Shrinking a tenant below what it uses is a decision a person
+		// makes at the screen, not one a component makes on their behalf.
+		s.fail(w, r, http.StatusForbidden, "a token obtained on the person's behalf does not force a plan")
+		return
+	}
+	tenant := r.PathValue("t")
+	plans, err := s.cfg.Lifecycle.Plans(r.Context(), tenant)
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	var chosen *lifecycle.Plan
+	previous := ""
+	for i := range plans {
+		if plans[i].Current {
+			previous = plans[i].Name
+		}
+		if plans[i].Name == body.Plan {
+			chosen = &plans[i]
+		}
+	}
+	if chosen == nil {
+		s.fail(w, r, http.StatusNotFound, "no such resource plan on this cluster")
+		return
+	}
+	if !chosen.Selectable {
+		switch chosen.BlockedBy {
+		case "fit":
+			if !body.Force {
+				// 409, not 400: the request is well formed and would be
+				// accepted once the tenant frees something, or forced.
+				s.fail(w, r, http.StatusConflict, chosen.Blocked)
+				return
+			}
+		default:
+			// Retired: kept for the tenants on it, offered to no other.
+			s.fail(w, r, http.StatusConflict, chosen.Blocked)
+			return
+		}
+	}
+	res, err := s.cfg.Repo.SetResourcePlan(r.Context(), tenant, gitops.Plan{Name: chosen.Name, Quotas: chosen.Quotas}, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	answer := map[string]any{"status": res.Status, "tenant": tenant, "plan": chosen.Name, "previousPlan": previous}
+	if !res.Changed {
+		answer["message"] = "the tenant is already on this plan"
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	answer["message"] = "committed to the deployments repository; Argo CD applies it on the next sync"
+	s.json(w, http.StatusAccepted, answer)
+}
+
+// lifecycleError answers a failed question to the operator. Its refusals
+// carry over -- an unknown tenant is its 400 -- and its absence is a 502
+// that says so.
+func (s *Server) lifecycleError(w http.ResponseWriter, r *http.Request, err error) {
+	var upstream *lifecycle.UpstreamError
+	if errors.As(err, &upstream) {
+		s.fail(w, r, upstream.Status, upstream.Message)
+		return
+	}
+	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", guard.ID(r.Context()), "error", err.Error())
+	s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+}
+
+func backupsPath(r *http.Request, suffix string) string {
+	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + suffix
+}
+
+// tenantBundleDownload relays the operator's stream of one bundle. The
+// director's write deadline is lifted for it: the transfer takes as long as
+// the bundle is big, and the request's context ends it if the reader goes.
+func (s *Server) tenantBundleDownload(w http.ResponseWriter, r *http.Request, _ call) {
+	resp, err := s.cfg.Lifecycle.Stream(r.Context(), backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))+"/download"))
+	if err != nil {
+		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", guard.ID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for _, h := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// ── Backup: declared state, and actions ─────────────────────────────────────
+
+// setTenantBackupPolicy writes what should be true of this tenant's backups
+// from now on. A commit, like every other change to declared state.
+func (s *Server) setTenantBackupPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.BackupPolicy
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a backup policy")
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantBackupPolicy(r.Context(), r.PathValue("t"), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// clearTenantBackupPolicy stops this tenant declaring one, which is how it
+// goes back to the cluster's. There is no "inherit" value to write: a tenant
+// inherits by saying nothing.
+func (s *Server) clearTenantBackupPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.ClearTenantBackupPolicy(r.Context(), r.PathValue("t"), c.meta)
+	s.written(w, r, res, err)
+}
+
+func (s *Server) setClusterBackupPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.BackupPolicy
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a backup policy")
+		return
+	}
+	res, err := s.cfg.Repo.SetClusterBackupPolicy(r.Context(), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// startBackup asks the cluster to take one now.
+func (s *Server) startBackup(w http.ResponseWriter, r *http.Request, c call) {
+	var body map[string]any
+	if err := decode(r, &body); err != nil {
+		body = map[string]any{}
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/backup", c.meta.ActorName(), body)
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
+}
+
+// deleteBackup removes one run's record. Also an action: the bundle's fate is
+// the retention policy's, and nothing about the tenant's desired state changes.
+func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &body); err != nil || body.Name == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<backup>"}`)
+		return
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/delete-backup",
+		c.meta.ActorName(), map[string]string{"name": body.Name})
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
+}
+
+// ── The realm policy a tenant runs under ────────────────────────────────────
+
+// tenantSecurityPolicy answers what the tenant declares.
+//
+// From git rather than from Keycloak, and that is not a shortcut: the
+// composition writes these fields onto the realm on every reconcile, so what
+// git says is what the realm is. Asking Keycloak instead would need a
+// credential the director does not hold and should not.
+func (s *Server) tenantSecurityPolicy(w http.ResponseWriter, r *http.Request, _ call) {
+	policy, err := s.cfg.Repo.TenantSecurityPolicy(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	// Nothing declared is a real answer, and an empty object is how it is
+	// said: the screen renders the defaults rather than a blank form.
+	if policy == nil {
+		policy = &gitops.SecurityPolicy{}
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant": r.PathValue("t"),
+		"policy": policy,
+		// What the realm does when the tenant states nothing. Not a guess:
+		// these are the values crossplane/compositions/tenant-default.yaml
+		// writes, and they are here so a console can say "12 hours, unless
+		// you change it" instead of leaving a zero to be interpreted.
+		"defaults": map[string]any{"session": map[string]any{"idleMinutes": 720, "maxHours": 12}},
+	})
+}
+
+// tenantLocales answers which languages this tenant's realm offers, from git.
+//
+// Nothing declared is a real answer and the usual one: the realm offers the
+// platform's own set, which the response names so a screen can show it rather
+// than an empty list somebody has to interpret.
+func (s *Server) tenantLocales(w http.ResponseWriter, r *http.Request, _ call) {
+	declared, err := s.cfg.Repo.TenantLocales(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if declared == nil {
+		declared = []string{}
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":  r.PathValue("t"),
+		"locales": declared,
+		// What the realm offers when the tenant declares nothing. Not a guess:
+		// these are the languages the platform ships its own strings in.
+		"defaults": locales.Default,
+	})
+}
+
+// setTenantLocales commits them. An empty list means "the platform's own set"
+// rather than "no languages": a realm offering none would be a login page
+// nobody could read.
+func (s *Server) setTenantLocales(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Locales []string `json:"locales"`
+	}
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"locales": ["de", "en"]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantLocales(r.Context(), r.PathValue("t"), body.Locales, c.meta)
+	var refusal *schemacheck.Refusal
+	if err != nil && !errors.Is(err, gitops.ErrInvalidName) && !errors.As(err, &refusal) {
+		// A language that is not a language code is the caller's mistake, and
+		// the message names the value. A write refused over the cluster's
+		// definitions is not the caller's, and is answered as one below.
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// tenantCountry answers the tenant's country, from git; "" when it names none.
+func (s *Server) tenantCountry(w http.ResponseWriter, r *http.Request, _ call) {
+	country, err := s.cfg.Repo.TenantCountry(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "country": country})
+}
+
+// setTenantCountry commits it. An empty country removes it.
+func (s *Server) setTenantCountry(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Country *string `json:"country"`
+	}
+	if err := decode(r, &body); err != nil || body.Country == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"country": "CH"}, or {"country": ""} for none`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantCountry(r.Context(), r.PathValue("t"), *body.Country, c.meta)
+	if errors.Is(err, gitops.ErrInvalidCountry) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// tenantOrganization answers who the tenant is, from git, and which of the
+// facts an app needs are still missing.
+func (s *Server) tenantOrganization(w http.ResponseWriter, r *http.Request, _ call) {
+	org, err := s.cfg.Repo.TenantOrganization(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, org)
+}
+
+// setTenantOrganization commits the display name and organization. An empty
+// display name keeps the one there; a currency left empty is the country's.
+func (s *Server) setTenantOrganization(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		DisplayName  string                               `json:"displayName"`
+		Organization *gentianov1alpha1.TenantOrganization `json:"organization"`
+	}
+	if err := decode(r, &body); err != nil || body.Organization == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"displayName": "<name>", "organization": {"legalName": "...", ...}}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantOrganization(r.Context(), r.PathValue("t"), body.DisplayName, *body.Organization, c.meta)
+	if errors.Is(err, gitops.ErrInvalidOrganization) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// setTenantSecurityPolicy commits it.
+func (s *Server) setTenantSecurityPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.SecurityPolicy
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a security policy")
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantSecurityPolicy(r.Context(), r.PathValue("t"), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// ── What changed, and under what authority ──────────────────────────────────
+
+// changeWindow reads the two parameters a change list takes.
+func changeWindow(r *http.Request) (int, string) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	return limit, r.URL.Query().Get("since")
+}
+
+// tenantChanges answers a tenant's history from git.
+//
+// Nothing is stored for this. The commits are the record, the trailer is the
+// authority, and the answer marks a commit that carries no trailer as what it
+// is: a change pushed by hand, which is the thing an audit most wants to see
+// rather than have smoothed over.
+func (s *Server) tenantChanges(w http.ResponseWriter, r *http.Request, _ call) {
+	limit, since := changeWindow(r)
+	changes, err := s.cfg.Repo.TenantChanges(r.Context(), r.PathValue("t"), limit, since)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":  r.PathValue("t"),
+		"changes": changes,
+		// Said in the answer, because a screen headed "audit" that showed
+		// only this would be claiming more than it has.
+		"covers": "changes to declared state, from git. Sign-ins, refused requests and reads of data are recorded elsewhere and are not in this list.",
+	})
+}
+
+// perimeterHistory answers who published, reviewed or withdrew which of the
+// tenant's public entries, and when, from the commits that did it.
+func (s *Server) perimeterHistory(w http.ResponseWriter, r *http.Request, _ call) {
+	limit, since := changeWindow(r)
+	changes, err := s.cfg.Repo.TenantExposureChanges(r.Context(), r.PathValue("t"), limit, since)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":  r.PathValue("t"),
+		"changes": changes,
+		"covers":  "publications, reviews and withdrawals of this tenant's entries, from git. Requests to the published addresses are not in this list.",
+	})
+}
+
+func (s *Server) clusterChanges(w http.ResponseWriter, r *http.Request, _ call) {
+	limit, since := changeWindow(r)
+	changes, err := s.cfg.Repo.ClusterChanges(r.Context(), limit, since)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"cluster": s.cfg.Cluster,
+		"changes": changes,
+		"covers":  "changes to declared state, from git. Sign-ins, refused requests and reads of data are recorded elsewhere and are not in this list.",
+	})
+}
+
+// ── Grants and platform security ────────────────────────────────────────────
+
+// setAppGrant writes what one app may consume. Declared state: a commit.
+func (s *Server) setAppGrant(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.AppGrant
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"consume": [...], "allowConsumers": [...]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetAppGrant(r.Context(), r.PathValue("t"), r.PathValue("app"), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// clearAppGrant withdraws everything one app was permitted.
+func (s *Server) clearAppGrant(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.ClearAppGrant(r.Context(), r.PathValue("t"), r.PathValue("app"), c.meta)
+	s.written(w, r, res, err)
+}
+
+// platformSecurity answers the allowlist git declares, and only that.
+//
+// From git because this is the list the screen edits: read from the cluster
+// it would be the last thing that synced, and an edit made on top of that
+// drops a change committed a moment earlier. What the cluster has, and what
+// the catalog asks of it, is live state and the usher's to answer.
+func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
+	declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if declared == nil {
+		declared = []gitops.MacWaiver{}
+	}
+	roles, err := s.cfg.Repo.PlatformClusterRoles(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if roles == nil {
+		roles = []gitops.ClusterRoleAllowance{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"allowedMacWaivers": declared, "allowedClusterRoles": roles})
+}
+
+// setPlatformSecurity commits which of the platform's cluster roles the
+// cluster permits, under can_set_admission.
+//
+// The waivers in the same object are the security officer's (setMacWaivers).
+// A body may still carry them -- a screen that read the whole object sends it
+// back -- but only as they are: a change to them is refused here and named
+// to the route that makes it, so break-glass is never what edits the
+// waivers by accident, and nothing it sends empties them.
+func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		AllowedMacWaivers   *[]gitops.MacWaiver            `json:"allowedMacWaivers"`
+		AllowedClusterRoles *[]gitops.ClusterRoleAllowance `json:"allowedClusterRoles"`
+	}
+	if err := decode(r, &body); err != nil || body.AllowedClusterRoles == nil && body.AllowedMacWaivers == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedClusterRoles": [{"profile":…,"role":…}]}`)
+		return
+	}
+	if body.AllowedMacWaivers != nil {
+		declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if !sameWaivers(declared, *body.AllowedMacWaivers) {
+			s.fail(w, r, http.StatusForbidden, "which waivers the cluster permits is the security officer's (can_approve): "+
+				"PUT /v1/clusters/"+r.PathValue("c")+"/platform-security/waivers, or approve the waiver under Approvals")
+			return
+		}
+	}
+	if body.AllowedClusterRoles == nil {
+		s.written(w, r, gitops.Result{Status: "unchanged"}, nil)
+		return
+	}
+	res, err := s.cfg.Repo.SetPlatformClusterRoles(r.Context(), *body.AllowedClusterRoles, c.meta)
+	if errors.Is(err, gitops.ErrInvalidName) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// setMacWaivers commits which pod-security waivers the cluster permits, under
+// can_approve: the security officer's, who also approves each install's
+// grant. The list replaces the one git declares.
+func (s *Server) setMacWaivers(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		AllowedMacWaivers *[]gitops.MacWaiver `json:"allowedMacWaivers"`
+	}
+	if err := decode(r, &body); err != nil || body.AllowedMacWaivers == nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetPlatformSecurity(r.Context(), *body.AllowedMacWaivers, c.meta)
+	if errors.Is(err, gitops.ErrInvalidName) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// sameWaivers is whether two allowlists permit the same waivers, in any order.
+func sameWaivers(a, b []gitops.MacWaiver) bool {
+	set := map[gitops.MacWaiver]int{}
+	for _, w := range a {
+		set[w]++
+	}
+	for _, w := range b {
+		set[w]--
+	}
+	for _, n := range set {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// publishNotification says something to a tenant's people. An action: it happens once,
+// and the person who published it is recorded because a notice nobody can
+// ask about is worse than none.
+func (s *Server) publishNotification(w http.ResponseWriter, r *http.Request, c call) {
+	var body map[string]any
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"title": "…", "body": "…"}`)
+		return
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/notify", c.meta.ActorName(), body)
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
+}
