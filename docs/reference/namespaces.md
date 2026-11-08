@@ -31,7 +31,7 @@ The cluster's namespace layout by tier, as `kernel/namespaces.yaml` declares it:
 |---|---|---|---|
 | `system-postgresql` | postgresql | the CNPG cluster tenant databases are provisioned on; the kernel's own is kernel-postgres, in kernel-data |  |
 | `system-mariadb` | mariadb | MariaDB, for catalog apps that speak no other engine |  |
-| `system-cache` | cache | Redis |  |
+| `system-cache` | cache | Valkey, the shared cache apps speak the Redis protocol to |  |
 | `system-s3` | s3 | SeaweedFS, the object store apps take buckets from |  |
 | `system-authorization` | authorization | the app instance of OpenFGA, with the components' authorization stores, and the arbiter, the one way into it | requires.services.authorization |
 | `system-turn-dmz` | turn-dmz | the TURN edge — STUNner's daemon, its load balancer, its certificate and the record of turn.\<kernel domain>; it relays only to its own pods | requires.services.turn |

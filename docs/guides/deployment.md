@@ -361,19 +361,22 @@ the claim, so leave it out after the first run.
 ```mermaid
 flowchart TD
     FeatureBranches["feature branches"]
-    Develop["develop"]
-    ImageDev["ghcr.io/.../gentian-os:develop"]
-    DevCluster["homelab / dev cluster"]
+    Develop["develop (X.(Y+1).0-dev)"]
+    ImageDev["ghcr.io/.../gentian-os:develop-<sha>"]
+    DevCluster["dev cluster"]
+    ReleaseBranch["release/vX.Y.Z (X.Y.Z)"]
     Main["main + tag vX.Y.Z"]
-    ImageProd["ghcr.io/.../gentian-os:vX.Y.Z"]
-    ProdCluster["cloud / prod cluster"]
-    
-    FeatureBranches --> Develop
+    ImageProd["ghcr.io/.../gentian-os:X.Y.Z + GitHub Release"]
+    ProdCluster["prod cluster"]
+
+    FeatureBranches -->|"pull request"| Develop
     Develop -->|"CI"| ImageDev
-    Develop -->|"./install.sh --only B-01"| DevCluster
-    DevCluster -->|"manual: merge develop → main, tag vX.Y.Z"| Main
-    Main -->|"CI"| ImageProd
-    Main -->|"GENTIAN_OS_BRANCH=vX.Y.Z, ./install.sh"| ProdCluster
+    Develop -->|"./install.sh"| DevCluster
+    Develop -->|"version commit"| ReleaseBranch
+    ReleaseBranch -->|"pull request, tag"| Main
+    ReleaseBranch -->|"next-dev commit, pull request"| Develop
+    Main -->|"CI on the tag"| ImageProd
+    ImageProd -->|"GENTIAN_OS_BRANCH=vX.Y.Z, ./install.sh"| ProdCluster
 ```
 
 ### 5.3 Tenant workflow
@@ -396,61 +399,123 @@ data moves between clusters as an export bundle
 
 ### 5.4 Release runbook
 
-Cutting a release is a repository operation; rolling it onto a cluster is a
-separate one, done per cluster and repeatable. The first production release
-runs both back to back, which is why they are listed together.
+A platform release is one tag `vX.Y.Z` on gentian-os, gentian-ui and
+gentian-apps: the platform, the user interfaces and the catalog that were
+tested together. Cutting it is a repository operation, done per repository
+in the order below; rolling it onto a cluster is a separate one, done per
+cluster and repeatable. The release issue carries this list as its
+checklist, and every step is a command or a pull request, so that a bot can
+run it.
+
+**What the flow rests on**
+
+- `develop` is where work lands. `main` is what is released and receives
+  nothing but release merges (a patch release's included, below): Dependabot,
+  governance and tooling changes target `develop`. `main` is therefore
+  always an ancestor of `develop`, and a release merge never conflicts.
+- A tree that is not a release never carries a release's bare number (§5.5).
+  The bare number is written on a release branch and reaches `main` from
+  there; `develop` carries `X.(Y+1).0-dev` and never names a tag that does
+  not exist.
+- CI builds the release from the tag. The tag run refuses a tag whose name
+  is not the chart's version, publishes the images, and creates the GitHub
+  Release from `docs/releases/vX.Y.md` with the pull requests since the
+  previous tag listed under it.
+- A cluster takes the release by naming the tag in `install.env`; nothing
+  on a cluster is pinned by hand.
 
 **Preconditions**
 
-- CI is green on `develop`. The tag rebuilds the same tree, so a red
-  `develop` is a red release.
-- The dev cluster has been running that tree long enough to trust it.
+1. CI is green on `develop` in all three repositories. The tag rebuilds the
+   same tree, so a red `develop` is a red release.
+2. A fresh install of `develop`'s tip on a throwaway cluster passed, with
+   tenants imported from bundles of the previous release.
+3. `main` is an ancestor of `develop` in each repository:
+   `git merge-base --is-ancestor origin/main origin/develop`. Where it is
+   not, merge `main` into `develop` first, as a pull request. A merge that
+   keeps `develop`'s tree (`-s ours`) is right only when every commit on
+   `main` is superseded; the merge message says so, commit by commit.
+4. Dependabot pull requests are merged or closed, and the milestone holds
+   nothing but the release issue.
+5. The release notes, `docs/releases/vX.Y.md`, are on `develop`: what the
+   release contains and what an operator must do differently after it,
+   with the commit count against the previous release in the header. A
+   patch release adds a section to its line's file.
 
-**Cut the release**
+**1. gentian-apps**
 
-1. On `develop`, set `version` and `appVersion` in
-   `charts/gentian-os/Chart.yaml` to `X.Y.0` as its own `chore(release):`
-   commit, and run `make gen-platform-version`: the platform's version
-   line, which the operator and the director compare profiles' floors and
-   backup bundles against, is written from the chart. This is load-bearing,
-   not bookkeeping: the chart's Deployments render
+The catalog is released first, because a cluster installed from a
+gentian-os tag reads the released catalog
+(`https://gentian-org.github.io/gentian-apps/`), and the released catalog
+is what `main` publishes. Its own rules are in that repository's
+`docs/releasing.md`: a release pull request from `develop` into `main`
+takes every profile from its `-dev` version to the bare number, every chart
+pin from `<version>-develop.<sha7>` to the plain version and every image
+from `develop-<sha7>` to its `IMAGE_TAG`; CI refuses a development name on
+a pull request into `main`. Merging it publishes the root catalog. Tag
+`vX.Y.Z` on that `main` commit; nothing is built from the tag.
+
+**2. gentian-ui**
+
+Merge `develop` into `main` by pull request and tag `vX.Y.Z` on `main`.
+The tag runs the three workflows, which publish the desktop, the
+administration console and the concierge images and their charts under the
+tag: `<chart base>-vX.Y.Z`, the chart's own version in its `Chart.yaml`
+followed by the tag. A cluster that pins the tag reads nothing from
+`develop`. Wait for the three runs before rolling a cluster.
+
+**3. gentian-os**
+
+1. Branch `release/vX.Y.Z` off `develop`. One `chore(release): vX.Y.Z`
+   commit sets `version` and `appVersion` in `charts/gentian-os/Chart.yaml`
+   to `X.Y.Z` and runs `make gen-platform-version`, and commits everything
+   it rewrites: `internal/platformversion/line.go`, the Cluster composition
+   and the render fixtures under `crossplane/tests/unit/render/`
+   (`make verify-gen` fails while they disagree with the chart). This is
+   load-bearing: the chart's Deployments render
    `image.tag | default .Chart.AppVersion`, so `appVersion` is the image a
-   cluster pulls where no tag is set. It must match what CI publishes —
-   `docker/metadata-action` strips the `v`, so tag `vX.Y.Z` becomes image
-   `:X.Y.Z`. The same target points the Cluster composition's infra charts
-   (`charts/infra/packages`) at the tag `vX.Y.0`, so the release installs
-   its own charts and not `develop`'s; the tag in step 3 must therefore be
-   `v` plus the chart's version. Commit everything it rewrites:
-   `internal/platformversion/line.go`,
-   `crossplane/compositions/cluster-default.yaml` and the render fixtures
-   under `crossplane/tests/unit/render/` (`make verify-gen` fails while they
-   disagree with the chart). Between releases the tree carries the next-dev
-   number (§5.5): the commit after the tag sets `X.(Y+1).0-dev` and runs
-   `make gen-platform-version` again, which points the infra charts back at
-   `develop`, so a build from `develop` is never mistaken for a release.
-2. Merge `develop` → `main`.
-3. Write the release notes as `docs/releases/vX.Y.md` — what the release
-   contains, and what an operator must do differently after it. Create an
-   annotated tag `vX.Y.Z` on `main` whose message summarizes them.
-   Tag promptly, and run the next-dev commit right after: from the release
-   commit until the tag exists, `develop` names a tag that is not there, so
-   an install or re-run from `develop` in that window cannot fetch the infra
-   charts. It recovers by itself once the tag is pushed.
-4. Wait for CI on the tag. Its `docker` job publishes
-   `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y`; nothing downstream can
-   adopt the release until that lands.
+   cluster pulls where no tag is set, and it must be what CI publishes
+   (`docker/metadata-action` strips the `v`, so tag `vX.Y.Z` becomes image
+   `:X.Y.Z`). The same target points the composition's infra charts
+   (`charts/infra/packages`) at the tag `vX.Y.Z`, so the release installs
+   its own charts and not `develop`'s.
+2. Open the pull request `release/vX.Y.Z` → `main`. Its body is the
+   release notes' summary. Merge it once CI is green.
+3. Tag the merge commit on `main`, annotated, with a message that
+   summarizes the notes, and push the tag:
+
+   ```bash
+   git fetch origin main
+   git tag -a vX.Y.Z -m "Gentian OS vX.Y.Z: ..." origin/main
+   git push origin vX.Y.Z
+   ```
+
+   The tag run checks that the tag names the chart's version, publishes
+   `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y` with the event
+   listener and storage-tools images, and creates the GitHub Release from
+   `docs/releases/vX.Y.md`. Nothing downstream can adopt the release until
+   that run is green.
+4. On the same branch add the next-dev commit, `chore: X.(Y+1).0-dev`,
+   which sets the chart to `X.(Y+1).0-dev` and runs
+   `make gen-platform-version` again (which points the infra charts back at
+   `develop`), and merge the branch into `develop` by pull request. The
+   branch may be deleted once both pull requests are merged.
+5. Close the release issue and the milestone.
 
 **Roll it onto a cluster**
 
-5. Set `GENTIAN_OS_BRANCH=vX.Y.Z` in that cluster's `install.env` (§4 — the
-   tag must be named explicitly; checking it out is not enough).
-6. Pin the user interfaces in the same file if this cluster should not
-   follow gentian-ui's defaults: `GENTIAN_UI_BRANCH` (default `main`) and
-   `PORTAL_IMAGE_TAG` (default `develop`, the branch the charts are published
-   from) are independent of `GENTIAN_OS_BRANCH`.
-7. Re-run `./install.sh`. It is idempotent; the bootstrap Applications are
+1. In that cluster's `install.env` set `GENTIAN_OS_BRANCH=vX.Y.Z` (§4: the
+   tag must be named; checking it out is not enough) and
+   `PORTAL_IMAGE_TAG=vX.Y.Z`, the gentian-ui tag whose charts and images
+   the cluster installs. `GENTIAN_UI_BRANCH` stays `main`. The catalog
+   follows the ref: a tag reads the released catalog, a branch the
+   development one (`GENTIAN_CATALOGUE_URL` overrides either).
+2. Run `./install.sh`. It is idempotent; the bootstrap Applications are
    re-rendered against the new ref and Argo CD follows the tag from there.
-8. Confirm the cluster actually moved:
+   A release whose notes say the cluster layout changed is not applied in
+   place: it is a fresh install and a tenant import, as the notes'
+   upgrade section says.
+3. Confirm the cluster moved:
 
    ```bash
    kubectl -n kernel-control get deploy gentian-os \
@@ -463,15 +528,24 @@ runs both back to back, which is why they are listed together.
   `profiles/prod.yaml` exists in the deployments repository first.
 - Create the tenants afterwards (§5.3).
 
+**A patch release**
+
+A fix for a released line is released from `main`, not from `develop`:
+branch `release/vX.Y.(Z+1)` off the tag, cherry-pick the fixes from
+`develop` (where they land first), add the version commit and follow steps
+2 and 3 above. Then merge `main` into `develop` by pull request, so `main`
+stays an ancestor of `develop`; `develop`'s own number is unchanged. The
+notes are a new section in `docs/releases/vX.Y.md`.
+
 ### 5.5 Release numbering
 
 A tree that is not a release never carries a release's bare number. The
-commit that cuts a release sets `version` in `charts/gentian-os/Chart.yaml`
-to `X.Y.0` and is tagged; the next commit on `develop` sets it to
-`X.(Y+1).0-dev`, and it stays there until the next release commit. The tree
-always says which release it is heading for, and a build from it cannot be
-mistaken for one. The pre-release suffix is SemVer's: `0.5.0-dev` sorts below
-`0.5.0` and above every `0.4.x`.
+release branch's version commit sets `version` in
+`charts/gentian-os/Chart.yaml` to `X.Y.Z` and is what `main` is tagged at;
+the next-dev commit sets `X.(Y+1).0-dev` and `develop` stays there until the
+next release. The tree always says which release it is heading for, and a
+build from it cannot be mistaken for one. The pre-release suffix is SemVer's:
+`0.5.0-dev` sorts below `0.5.0` and above every `0.4.x`.
 
 The platform version line is the major and minor of that number. The
 constant the operator and the director compare profiles' floors and backup
@@ -480,7 +554,7 @@ bundles against is generated from the chart
 `internal/platformversion/line.go`), so the chart and the binary cannot
 disagree ([versioning.md §2](../concepts/versioning.md)). The same target
 writes the git ref the Cluster composition reads the infra charts at:
-`develop` on a `-dev` number, the tag `vX.Y.Z` on a release.
+`develop` on any number with a suffix, the tag `vX.Y.Z` on a bare one.
 
 A profile build follows the same rule: `spec.version` on the apps
 repository's `develop` carries the `-dev` suffix with a counter per change
@@ -536,13 +610,15 @@ flowchart TD
 
 **Code (gentian-os):**
 
-1. `develop` → homelab dev (`./install.sh --only B-01`).
-2. Tag `vX.Y.Z-rc.N` on `main` → roll it onto staging.
-3. After validation, tag `vX.Y.Z` → roll it onto prod.
+1. `develop` → dev (`./install.sh --only B-01`).
+2. Tag `vX.Y.Z-rc.N` on the release branch → roll it onto staging.
+3. After validation, merge and tag `vX.Y.Z` → roll it onto prod.
 
-Each tag is cut and rolled out by the §5.4 runbook — an RC differs only in
-the tag it creates, and still needs its own chart bump so the staging
-cluster pulls the RC image rather than the last stable one.
+An RC is cut by the §5.4 runbook from the release branch before it is
+merged, with its own version commit (`X.Y.Z-rc.N`), so the staging cluster
+pulls the RC image rather than the last stable one. A number with a suffix
+reads the infra charts from `develop` (§5.5), so an RC proves the platform
+image and the catalog, not the pinned charts.
 
 **Stage policy (`gentian-deployments/profiles/`):** edit `staging.yaml` or
 `prod.yaml` directly — since it's shared by every cluster of that tier,
