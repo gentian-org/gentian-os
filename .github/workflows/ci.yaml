@@ -440,6 +440,22 @@ jobs:
       packages: write
       id-token: write
     steps:
+      # A release tag names the chart's version (deployment.md §5.4): the
+      # chart's appVersion is the image a cluster pulls where no tag is
+      # set, so a tag that disagrees with it would publish an image nothing
+      # renders. Refused here, before anything is pushed under the tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: startsWith(github.ref, 'refs/tags/v')
+      - name: The tag names the chart's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' charts/gentian-os/Chart.yaml | tr -d "\"'")"
+          if [ "v${version}" != "${TAG}" ]; then
+            echo "::error::tag ${TAG} does not name the chart's version ${version}: cut the release with the version commit (deployment.md §5.4)"
+            exit 1
+          fi
       - name: Log in to GHCR
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:
@@ -622,3 +638,44 @@ jobs:
 
       - name: Run crossplane unit tests
         run: make test-unit
+
+  # The release itself, made from the tag once every image is published:
+  # the notes the tree carries for the tag's line, and under them GitHub's
+  # list of the pull requests since the previous tag. A tag whose line has
+  # no docs/releases/vX.Y.md is not released: the notes are written before
+  # the tag (deployment.md §5.4). Re-running the tag's workflow leaves an
+  # existing release alone.
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [plan, publish, images]
+    if: >-
+      ${{ !cancelled()
+      && startsWith(github.ref, 'refs/tags/v')
+      && needs.publish.result == 'success'
+      && needs.images.result == 'success' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Create the release from the notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} exists; nothing to do"
+            exit 0
+          fi
+          line="$(printf '%s' "${TAG#v}" | cut -d. -f1,2)"
+          notes="docs/releases/v${line}.md"
+          if [ ! -f "${notes}" ]; then
+            echo "::error::${notes} is missing: write the release notes before tagging (deployment.md §5.4)"
+            exit 1
+          fi
+          prerelease=""
+          case "${TAG}" in *-*) prerelease="--prerelease" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "${TAG}" --verify-tag --title "Gentian OS ${TAG}" \
+            --notes-file "${notes}" --generate-notes ${prerelease}
