@@ -674,8 +674,16 @@ jobs:
             echo "::error::${notes} is missing: write the release notes before tagging (deployment.md §5.4)"
             exit 1
           fi
+          # The page is read on GitHub, not in the docs site: the front matter
+          # goes, and a relative link resolves against the tag's tree.
+          body="$(mktemp)"
+          tree="https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}"
+          sed '1{/^---$/!b};1,/^---$/d' "${notes}" | sed '/./,$!d' \
+            | sed -E -e "s#\]\(\.\./\.\./([^)]+)\)#](${tree}/\\1)#g" \
+                     -e "s#\]\(\.\./([^)]+)\)#](${tree}/docs/\\1)#g" \
+            > "${body}"
           prerelease=""
           case "${TAG}" in *-*) prerelease="--prerelease" ;; esac
           # shellcheck disable=SC2086
           gh release create "${TAG}" --verify-tag --title "Gentian OS ${TAG}" \
-            --notes-file "${notes}" --generate-notes ${prerelease}
+            --notes-file "${body}" --generate-notes ${prerelease}
