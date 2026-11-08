@@ -108,7 +108,7 @@ func cachedComponentProfile(
 }
 
 func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.ComponentProfile) []string {
-	if profile == nil || !appProfileDeclaresOIDC(profile) {
+	if profile == nil || !profileDeclaresOIDC(profile) {
 		return nil
 	}
 	// Every gateway host this component answers on. All of them, not just the
@@ -151,7 +151,7 @@ func oidcRedirectURISubdomain(uri string) string {
 	return label
 }
 
-func appProfileDeclaresOIDC(profile *gentianov1alpha1.ComponentProfile) bool {
+func profileDeclaresOIDC(profile *gentianov1alpha1.ComponentProfile) bool {
 	if profile.Services() != nil &&
 		profile.Services().Identity != nil &&
 		profile.Services().Identity.OIDC != nil {

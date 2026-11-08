@@ -115,7 +115,7 @@ func (r *TenantReconciler) buildTenantDropIns(
 		if app.Config == nil || len(app.Config.DropIns) == 0 {
 			continue
 		}
-		profile, exists := appProfileForApp(profileIndex, app)
+		profile, exists := profileForApp(profileIndex, app)
 		if !exists {
 			return nil, fmt.Errorf("app %q: ComponentProfile not found", app.Profile)
 		}

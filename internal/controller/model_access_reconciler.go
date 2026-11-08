@@ -122,7 +122,7 @@ func (r *TenantReconciler) ensureModelAccess(
 			continue
 		}
 		installed[name] = true
-		profile, ok := appProfileFromIndex(profiles, name)
+		profile, ok := profileFromIndex(profiles, name)
 		if !ok {
 			// A profile that cannot be read says nothing about what the app
 			// declared; nothing of the app's is touched.
@@ -173,7 +173,7 @@ func (r *TenantReconciler) ensureModelAccess(
 		// tenant no longer has: the platform took the component away. It was
 		// never the tenant's to uninstall, so nothing of it is retained. An
 		// uninstalled app's key is kept.
-		if profile, ok := appProfileFromIndex(profiles, app); ok && operatorPlaced(profile) {
+		if profile, ok := profileFromIndex(profiles, app); ok && operatorPlaced(profile) {
 			stale = append(stale, app)
 		}
 	}

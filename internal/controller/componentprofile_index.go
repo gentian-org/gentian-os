@@ -25,7 +25,7 @@ import (
 // loadComponentProfileIndex lists cluster ComponentProfiles once per tenant
 // reconcile, by name, and beside them every verified ProfileBuild as the
 // profile it carries, by "<name>@<digest>": what a tenant pinned to a build
-// that is not the profile's current one runs (appProfileForApp).
+// that is not the profile's current one runs (profileForApp).
 func loadComponentProfileIndex(ctx context.Context, c client.Client) (map[string]*gentianov1alpha1.ComponentProfile, error) {
 	list := &gentianov1alpha1.ComponentProfileList{}
 	if err := c.List(ctx, list); err != nil {
@@ -57,7 +57,7 @@ func loadComponentProfileIndex(ctx context.Context, c client.Client) (map[string
 
 func buildKey(name, digest string) string { return name + "@" + digest }
 
-func appProfileFromIndex(index map[string]*gentianov1alpha1.ComponentProfile, name string) (*gentianov1alpha1.ComponentProfile, bool) {
+func profileFromIndex(index map[string]*gentianov1alpha1.ComponentProfile, name string) (*gentianov1alpha1.ComponentProfile, bool) {
 	if index == nil || name == "" {
 		return nil, false
 	}
@@ -65,12 +65,12 @@ func appProfileFromIndex(index map[string]*gentianov1alpha1.ComponentProfile, na
 	return profile, ok
 }
 
-// appProfileFor is the profile a tenant's install runs: the build it is
+// profileFor is the profile a tenant's install runs: the build it is
 // pinned to, when the cluster holds that build and the profile by name is
 // another; otherwise the profile by name. digest is "" for an install
 // pinned to nothing.
-func appProfileFor(index map[string]*gentianov1alpha1.ComponentProfile, name, digest string) (*gentianov1alpha1.ComponentProfile, bool) {
-	current, ok := appProfileFromIndex(index, name)
+func profileFor(index map[string]*gentianov1alpha1.ComponentProfile, name, digest string) (*gentianov1alpha1.ComponentProfile, bool) {
+	current, ok := profileFromIndex(index, name)
 	if digest == "" || !ok {
 		return current, ok
 	}
@@ -83,9 +83,9 @@ func appProfileFor(index map[string]*gentianov1alpha1.ComponentProfile, name, di
 	return current, true
 }
 
-// appProfileForApp is appProfileFor for an entry of a tenant's manifest.
-func appProfileForApp(index map[string]*gentianov1alpha1.ComponentProfile, app gentianov1alpha1.TenantApp) (*gentianov1alpha1.ComponentProfile, bool) {
-	return appProfileFor(index, app.Profile, app.Digest)
+// profileForApp is profileFor for an entry of a tenant's manifest.
+func profileForApp(index map[string]*gentianov1alpha1.ComponentProfile, app gentianov1alpha1.TenantApp) (*gentianov1alpha1.ComponentProfile, bool) {
+	return profileFor(index, app.Profile, app.Digest)
 }
 
 // getProfileFor reads the profile an install runs, by name and by the build

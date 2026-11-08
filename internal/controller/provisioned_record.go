@@ -52,7 +52,7 @@ func (r *TenantReconciler) recordProvisionedStores(ctx context.Context, tenant *
 		return err
 	}
 	for _, app := range installed {
-		profile, ok := appProfileForApp(profiles, app)
+		profile, ok := profileForApp(profiles, app)
 		if !ok {
 			continue
 		}

@@ -1281,7 +1281,7 @@ func (r *TenantExportReconciler) appsWithBoundSecrets(ctx context.Context, expor
 	}
 	var names []string
 	for _, app := range export.Status.Apps {
-		if profile, ok := appProfileFromIndex(profiles, app.Name); ok && profile.Spec.Backup != nil && len(profile.Spec.Backup.BoundSecrets) > 0 {
+		if profile, ok := profileFromIndex(profiles, app.Name); ok && profile.Spec.Backup != nil && len(profile.Spec.Backup.BoundSecrets) > 0 {
 			names = append(names, app.Name)
 		}
 	}

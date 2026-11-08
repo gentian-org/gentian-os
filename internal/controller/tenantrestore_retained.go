@@ -104,7 +104,7 @@ func (r *TenantRestoreReconciler) restoreRetained(
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile, _ := appProfileFromIndex(profiles, appName)
+		profile, _ := profileFromIndex(profiles, appName)
 		done, failure, err := r.restoreAppSecrets(ctx, restore, tenant, appName, profile)
 		entry = appStatus(&restore.Status.Apps, appName)
 		if err != nil {
