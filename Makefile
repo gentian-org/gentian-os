@@ -949,6 +949,6 @@ install-kubeconform:
 # E2E tests (live dev cluster required)
 # ---------------------------------------------------------------------------
 
-## Re-run kernel service smoke checks without full install
+## Re-run the kernel mail (Dovecot) smoke check without a full install
 verify-kernel-services:
 	@crossplane/tests/e2e/scripts/e2e-verify-kernel-services.sh
