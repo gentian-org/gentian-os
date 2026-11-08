@@ -411,8 +411,10 @@ run it.
 
 - `develop` is where work lands. `main` is what is released and receives
   nothing but release merges (a patch release's included, below): Dependabot,
-  governance and tooling changes target `develop`. `main` is therefore
-  always an ancestor of `develop`, and a release merge never conflicts.
+  governance and tooling changes target `develop`. Every release merge is
+  followed by a merge of `main` back into `develop`, by pull request, since
+  the merge commit exists on `main` alone; so `main` is always an ancestor
+  of `develop`, and a release merge never conflicts.
 - A tree that is not a release never carries a release's bare number (§5.5).
   The bare number is written on a release branch and reaches `main` from
   there; `develop` carries `X.(Y+1).0-dev` and never names a tag that does
@@ -453,7 +455,9 @@ takes every profile from its `-dev` version to the bare number, every chart
 pin from `<version>-develop.<sha7>` to the plain version and every image
 from `develop-<sha7>` to its `IMAGE_TAG`; CI refuses a development name on
 a pull request into `main`. Merging it publishes the root catalog. Tag
-`vX.Y.Z` on that `main` commit; nothing is built from the tag.
+`vX.Y.Z` on that `main` commit; nothing is built from the tag. Then merge
+`main` into `develop` by pull request: the bare numbers come to `develop`,
+and the next change to a bundle bumps its profile to `X.Y.(Z+1)-dev.1`.
 
 **2. gentian-ui**
 
@@ -462,7 +466,8 @@ The tag runs the three workflows, which publish the desktop, the
 administration console and the concierge images and their charts under the
 tag: `<chart base>-vX.Y.Z`, the chart's own version in its `Chart.yaml`
 followed by the tag. A cluster that pins the tag reads nothing from
-`develop`. Wait for the three runs before rolling a cluster.
+`develop`. Wait for the three runs before rolling a cluster, and merge
+`main` into `develop` by pull request.
 
 **3. gentian-os**
 
@@ -495,11 +500,13 @@ followed by the tag. A cluster that pins the tag reads nothing from
    listener and storage-tools images, and creates the GitHub Release from
    `docs/releases/vX.Y.md`. Nothing downstream can adopt the release until
    that run is green.
-4. On the same branch add the next-dev commit, `chore: X.(Y+1).0-dev`,
-   which sets the chart to `X.(Y+1).0-dev` and runs
-   `make gen-platform-version` again (which points the infra charts back at
-   `develop`), and merge the branch into `develop` by pull request. The
-   branch may be deleted once both pull requests are merged.
+4. On the same branch merge `main` (`git merge origin/main`: the release
+   merge commit, whose tree the branch already has) and add the next-dev
+   commit, `chore: X.(Y+1).0-dev`, which sets the chart to `X.(Y+1).0-dev`
+   and runs `make gen-platform-version` again (which points the infra
+   charts back at `develop`). Merge the branch into `develop` by pull
+   request; `main` is an ancestor of `develop` again. The branch may be
+   deleted once both pull requests are merged.
 5. Close the release issue and the milestone.
 
 **Roll it onto a cluster**
