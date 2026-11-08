@@ -377,7 +377,7 @@ jobs:
       # it block.
       - name: Install cosign
         if: needs.plan.outputs.publish == 'true'
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
       # --new-bundle-format=false: cosign 3 stores a signature as a Sigstore bundle
       # behind the OCI referrers API by default; the cluster's Kyverno 1.13 verifies
       # the legacy form, a sha256-<digest>.sig tag, with its default verifier. The
@@ -570,7 +570,7 @@ jobs:
       # it block.
       - name: Install cosign
         if: needs.plan.outputs.publish == 'true'
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
       - name: Sign the image
         if: needs.plan.outputs.publish == 'true'
         env:
