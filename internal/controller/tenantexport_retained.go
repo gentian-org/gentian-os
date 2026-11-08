@@ -109,7 +109,7 @@ func (r *TenantExportReconciler) retainedApps(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	profiles := func(name string) (*gentianov1alpha1.ComponentProfile, error) {
-		profile, _ := appProfileFromIndex(index, name)
+		profile, _ := profileFromIndex(index, name)
 		return profile, nil
 	}
 	installed := backup.TenantApps(tenant)

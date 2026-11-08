@@ -20,12 +20,6 @@ SPDX-License-Identifier: Apache-2.0
 // what it is packaged as, how its values are mapped, what it backs up, and
 // what it puts on a desktop.
 //
-// This was appprofile_types.go. AD-4 says there is one catalog kind, and
-// AppProfile was the other one -- so the kind is gone, along with the portal
-// tile and the browser-proxy route that only it had. What is left is what
-// ComponentProfile was always built from and had merely inherited from a file
-// named after something else.
-//
 // Separate from componentprofile_types.go because the two together are two
 // thousand lines, and the split that reads best is the kind in one file and
 // its parts in another.
@@ -1737,7 +1731,7 @@ type BackupBoundSecret struct {
 	// a pattern rather than a CEL rule is deliberate. CEL here costs more than
 	// it is worth: Kubernetes bounds the estimated cost of every rule in a CRD,
 	// and one rule over an unbounded string inside an unbounded list put the
-	// whole AppProfile schema over budget, so the API server refused to install
+	// whole profile schema over budget, so the API server refused to install
 	// it at all. The pattern is also the more precise statement, since a name
 	// like "my..app" traverses nothing and should be allowed.
 	// +kubebuilder:validation:Required

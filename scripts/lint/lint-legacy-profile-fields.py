@@ -19,9 +19,7 @@
 #
 # So the check lives here. It reads every YAML document that is a
 # ComponentProfile and refuses the old spellings by name, with the new one
-# beside each, and the removed fields by name, with what holds instead. AppProfile is untouched: kernelRequirements, deploymentMethod,
-# compositionRef and customization.addon are still that kind's own vocabulary,
-# and stay until the catalog converts.
+# beside each, and the removed fields by name, with what holds instead.
 # =============================================================================
 
 import shutil

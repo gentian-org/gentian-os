@@ -31,21 +31,15 @@ webhooks:
         path: /validate-gentianos-io-v1alpha1-tenant
         port: 443
   {{- /*
-    AppProfile admission. The operator has served this path since
-    internal/webhook/appprofile_validator.go was written, and cmd/main.go
-    registers it, but nothing routed to it — this configuration declared only
-    vtenant — so AllowedCategories never rejected anything and the validator was
-    dead code reachable only by hand.
+    Only the Tenant webhook is routed. The +kubebuilder:webhook marker on the
+    validator does not produce this: the manifests target generates crd and
+    rbac only, so this file is hand-maintained and a new webhook has to be
+    added here by hand.
 
-    The +kubebuilder:webhook marker on the validator does not produce this: the
-    manifests target generates crd and rbac only, so this file is hand-maintained
-    and a new webhook has to be added here by hand.
-
-    The profile webhook is gone. Its one check was spec.categories, and a
-    category is presentation: AD-3 moves it to the store's listing, outside the
-    cluster. What a profile must satisfy is now CEL on the CRD itself — exactly
-    one package, launch agreeing with the tiles, a service's console only on
-    the gateway — which the API server enforces without a webhook to be
-    unavailable.
+    There is no profile webhook. What a profile must satisfy is CEL on the
+    CRD itself — exactly one package, launch agreeing with the tiles, a
+    service's console only on the gateway — which the API server enforces
+    without a webhook to be unavailable. A category is presentation and lives
+    in the store's listing (AD-3), outside the cluster.
   */}}
 {{- end }}

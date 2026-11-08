@@ -149,13 +149,6 @@ func (r *IntegrationBindingReconciler) seedContract(ctx context.Context, ib *gen
 		endpoint = contractURL(ib.Spec.Endpoint, ib.Namespace)
 	case ib.Spec.Contract == "calendar", ib.Spec.Contract == "contacts":
 		// The provider's profile, for the Service its contract is served on.
-		//
-		// A ComponentProfile: AD-4 leaves one catalog kind, and this read
-		// asked for the other one long after the catalog stopped shipping
-		// it -- so every binding failed here with a NotFound and no contract
-		// credential was ever seeded. Found by deleting the AppProfile type
-		// rather than by anything noticing at runtime, which is the argument
-		// for deleting a type instead of leaving it defined and unused.
 		var providerProfile gentianov1alpha1.ComponentProfile
 		if err := r.Get(ctx, client.ObjectKey{Name: ib.Spec.Provider.App}, &providerProfile); err != nil {
 			return fmt.Errorf("failed to get provider ComponentProfile: %w", err)

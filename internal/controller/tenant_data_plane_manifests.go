@@ -46,7 +46,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, nil, err
 	}
 	for _, appName := range pgApps {
-		profile, _ := appProfileFromIndex(pgProfileIndex, appName)
+		profile, _ := profileFromIndex(pgProfileIndex, appName)
 		dbName := databaseName(tenant, appName)
 		rolePassword := ""
 		if r.Seeder != nil {

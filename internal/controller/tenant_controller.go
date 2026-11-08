@@ -672,7 +672,7 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := appProfileFromIndex(profileIndex, profileName); !ok {
+		if _, ok := profileFromIndex(profileIndex, profileName); !ok {
 			missingMap[profileName] = struct{}{}
 		}
 	}

@@ -108,7 +108,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile, ok := appProfileFromIndex(profileIndex, profileName)
+		profile, ok := profileFromIndex(profileIndex, profileName)
 		if !ok {
 			r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
 				fmt.Sprintf("ComponentProfile %q not found", profileName))

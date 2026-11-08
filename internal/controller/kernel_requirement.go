@@ -61,7 +61,7 @@ func (r *TenantReconciler) collectKernelApps(
 	}
 	var apps []string
 	for _, app := range installed {
-		profile, ok := appProfileForApp(profileIndex, app)
+		profile, ok := profileForApp(profileIndex, app)
 		if !ok {
 			continue
 		}

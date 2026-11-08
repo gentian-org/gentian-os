@@ -880,13 +880,9 @@ type ExposureTile struct {
 	// one language and stays one line, and a profile that has translations does
 	// not have to restate the fallback in a map.
 	//
-	// It exists because the old AppProfile tile carried displayName as a map
-	// and thirty tiles across the catalog were genuinely translated --
-	// "Automatisierung", "Dateien", "Präsentation", every Odoo module. When the
-	// tile path moved to this type those strings stopped being read, and
-	// rewriting the profiles is the moment they would have been deleted rather
-	// than merely unused. A migration is the worst time to lose something
-	// quietly.
+	// Thirty tiles across the catalog are genuinely translated --
+	// "Automatisierung", "Dateien", "Präsentation", every Odoo module -- and
+	// this map is where those strings live.
 	// +optional
 	// +kubebuilder:validation:MaxProperties=32
 	DisplayNames map[string]string `json:"displayNames,omitempty"`

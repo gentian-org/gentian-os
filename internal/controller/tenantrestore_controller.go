@@ -1182,7 +1182,7 @@ func (r *TenantRestoreReconciler) plan(
 				now.installed = true
 			}
 		}
-		profile, ok := appProfileFromIndex(profiles, app)
+		profile, ok := profileFromIndex(profiles, app)
 		if ok {
 			now.profile = profile
 		}
