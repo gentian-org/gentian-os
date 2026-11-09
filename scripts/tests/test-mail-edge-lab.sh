@@ -227,6 +227,31 @@ sleep 2
 check "Postfix logs the client's address with the login" "$(postfix_log)" 'postfix/edge-submission/smtpd.*client=[^ ]*\[172\.31\.0\.50\], sasl_method=PLAIN, sasl_username=smtp-tenant'
 check "and with the failed one" "$(postfix_log)" 'edge-submission/smtpd.*\[172\.31\.0\.50\]: SASL (PLAIN|LOGIN) authentication failed'
 
+echo "(b2) a signed-in client sends only as an address its login owns"
+sub() { pod smtp "postfix-dev.${SVC}" 587 "$@"; }
+got="$(sub ada@tenant.lab.test bob@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "a person sends as their own address" "${got}" '^accepted: ada@tenant.lab.test -> bob@tenant.lab.test$'
+got="$(sub Ada@Tenant.Lab.Test bob@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "in capitals too" "${got}" '^accepted: Ada@Tenant.Lab.Test -> '
+got="$(sub bob@tenant.lab.test carol@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "a person cannot send as a colleague: refused while submitting, permanently" "${got}" "^refused: \\{'carol@tenant.lab.test': \\(553, '5\\.7\\.1 <bob@tenant\\.lab\\.test>: Sender address rejected: not owned by user ada@tenant\\.lab\\.test'\\)\\}\$"
+got="$(sub someone@gmail.com bob@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "nor as an address of a domain the cluster does not host" "${got}" "^refused: .*\\(553, '5\\.7\\.1 <someone@gmail\\.com>: Sender address rejected: not owned by user"
+got="$(sub docmost@tenant.lab.test bob@tenant.lab.test smtp-tenant smtp-secret)"
+check "the tenant's apps send as any address of the tenant's domain" "${got}" '^accepted: docmost@tenant.lab.test -> '
+got="$(sub docmost@lab.test bob@tenant.lab.test smtp-tenant smtp-secret)"
+check "but not as one of another domain" "${got}" "^refused: .*\\(553, '5\\.7\\.1 <docmost@lab\\.test>: Sender address rejected: not owned by user smtp-tenant'"
+got="$(sub noreply@lab.test bob@tenant.lab.test noreply@tenant.lab.test realm-secret)"
+check "a tenant realm sends as the kernel domain's noreply@" "${got}" '^accepted: noreply@lab.test -> '
+got="$(sub admin@lab.test bob@tenant.lab.test noreply@tenant.lab.test realm-secret)"
+check "and as nothing else of it" "${got}" "^refused: .*\\(553, '5\\.7\\.1 <admin@lab\\.test>: Sender address rejected: not owned by user noreply@tenant\\.lab\\.test'"
+got="$(sub '' bob@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "a bounce (empty sender) is not a sender anybody owns, and passes" "${got}" '^accepted:  -> bob@tenant.lab.test$'
+got="$(pod smtp "postfix-dev.${SVC}" 25 bob@tenant.lab.test carol@tenant.lab.test)"
+check "a pod that does not sign in is not asked: mail to a hosted domain is accepted as before" "${got}" '^accepted: bob@tenant.lab.test -> carol@tenant.lab.test$'
+sleep 2
+check "Postfix logs the refusal with the login" "$(postfix_log)" 'NOQUEUE: reject: RCPT from [^ ]*\[172\.30\.0\.60\]: 553 5\.7\.1 <bob@tenant\.lab\.test>: Sender address rejected: not owned by user ada@tenant\.lab\.test'
+
 echo "(c) IMAPS on the proxy's port 993"
 got="$(out imaps "${EDGE_OUT}" 2993 ada@tenant.lab.test imap-secret)"
 check "an app password logs in, TLS ending at Dovecot" "${got}" '^login: OK$'

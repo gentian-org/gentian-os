@@ -33,7 +33,13 @@ doms = 'lab.test OK\ntenant.lab.test OK\n'
 # recipient first (removedRecipients); who may send is the domains alone.
 removed = 'gone@tenant.lab.test 550 5.1.1 User unknown\n'
 for k, v in {'virtual_mailbox_domains': doms + removed, 'sender_access': doms,
-             'virtual_mailbox_maps': '@lab.test lab.test/\n@tenant.lab.test tenant.lab.test/\n', 'virtual_alias': ''}.items():
+             'virtual_mailbox_maps': '@lab.test lab.test/\n@tenant.lab.test tenant.lab.test/\n', 'virtual_alias': '',
+             # Who may send as which address (mail_sender_owners.go): the
+             # realms own the kernel domain's noreply@, a person their own
+             # address, the tenant's apps the tenant's domain.
+             'sender_login': '/^noreply@lab\\.test$/ noreply@lab.test,noreply@tenant.lab.test\n'
+                             '/^([^@]+)@lab\\.test$/ ${1}@lab.test\n'
+                             '/^([^@]+)@tenant\\.lab\\.test$/ ${1}@tenant.lab.test,smtp-tenant\n'}.items():
     (d/'kernel-maps'/k).write_text(v)
 (d/'tenant-keys').mkdir(exist_ok=True); (d/'dkim-keys').mkdir(exist_ok=True)
 
@@ -48,6 +54,7 @@ def passwd(app, tenant, user, pw):
     (d/'apppw'/f'{f}.conf').write_text("passdb {\n  driver = passwd-file\n  args = /etc/dovecot/apppw/%s.users\n  result_failure = continue\n  result_internalfail = continue\n}\n" % f)
 passwd('nextcloud-mail', 'tenant', 'ada@tenant.lab.test', 'imap-secret')
 passwd('tenant-apps', 'tenant', 'smtp-tenant', 'smtp-secret')
+passwd('keycloak-smtp', 'tenant', 'noreply@tenant.lab.test', 'realm-secret')
 # The edge: the chart's haproxy.cfg.
 d = out/'edge'; d.mkdir(exist_ok=True)
 (d/'haproxy.cfg').write_text(cm(ed, 'mail-edge-dev-config')['haproxy.cfg'])

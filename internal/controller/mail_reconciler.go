@@ -973,7 +973,12 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	// limited to the kernel domain while inbound tracked every tenant.
 	//
 	// One derivation for both directions: a domain that may receive may send.
+	kernelRealmLogin, err := r.kernelRealmSubmissionLogin(ctx)
+	if err != nil {
+		return err
+	}
 	desired := map[string]string{
+		postfixSenderLoginKey:           renderSenderLoginMap(senderOwners(registry.Data, r.KernelDomain, kernelRealmLogin)),
 		postfixVirtualMailboxDomainsKey: recipientAccess,
 		postfixVirtualMailboxMapsKey:    desiredMaps,
 		postfixSenderAccessKey:          desiredDomains,
@@ -1003,7 +1008,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	// map and refused every tenant domain while each tenant reported its
 	// mail as ready.
 	maps := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{
+	err = r.Get(ctx, types.NamespacedName{
 		Name: postfixVirtualMailboxMapsConfigMap, Namespace: postfixNamespace,
 	}, maps)
 	if errors.IsNotFound(err) {
@@ -1537,7 +1542,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 		return fmt.Errorf("generate SMTP password for tenant %s: %w", tenant.Name, randErr)
 	}
 	password := base64.RawURLEncoding.EncodeToString(passBytes)
-	username := fmt.Sprintf("smtp-%s", tenant.Name)
+	username := smtpAppLogin(tenant.Name)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
