@@ -1731,6 +1731,10 @@ spec:
                     # or "" for the mode's default. The operator reads it with
                     # the mode, since the two decide one thing together.
                     mainAddress.tenant: {{ dig "mainAddress" "tenant" "" $spec | quote }}
+                    # The tenant whose people the cluster's domain also
+                    # delivers to and sends for, or "" for none. The operator
+                    # reads it on every sync of the mail maps.
+                    mainAddress.mailTenant: {{ dig "mainAddress" "mailTenant" "" $spec | quote }}
                     # How a credential nothing has stored yet is made: derived
                     # from the master password, or random. The installer reads
                     # the claim for the kernel's credentials; this is where the

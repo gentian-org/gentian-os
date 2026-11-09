@@ -927,6 +927,7 @@ checkout and running `./install.sh`, without the checkout.
 ```bash
 kubectl gentian settings show                                   # the claim's settings, as JSON
 kubectl gentian settings set tenancyMode=multi mainAddress.tenant=customers   # one commit
+kubectl gentian settings set mainAddress.mailTenant=team        # team's people also receive and send at the cluster's domain
 kubectl gentian settings set certificates.dnsZones=gentian.org  # a list: comma-separated
 kubectl gentian settings set "certificates.dnsRecords=docs.gentian.org CNAME gentian-org.github.io"   # quoted: an item holds spaces
 kubectl gentian settings set logForwarding.destination.endpoint=https://evidence.example.org/ingest   # empty removes the forwarder

@@ -214,9 +214,11 @@ the apex in this certificate would advertise a name that listener cannot serve:
 a browser reads the certificate, coalesces apex requests onto an open
 `<sub>.${effectiveDomain}` connection, Envoy picks the filter chain by SNI, and
 the request lands where no route matches — `404 route_not_found`. Leaving it out
-means the apex opens its own connection with its own SNI and is served by the
-hostname-less kernel listener, whose certificate covers
-`<tenant>.<kernelDomain>` already.
+means the apex opens its own connection with its own SNI: a zone under the
+cluster's domain is served by the hostname-less kernel listener, whose
+certificate covers `<tenant>.<kernelDomain>` already, and a domain of the
+tenant's own by a perimeter listener for exactly its bare name, with a
+certificate that names that name alone (§5).
 
 Gateway listeners consume these certificate secrets directly, reading tenant
 secrets across namespaces under the tenant's ReferenceGrant.
@@ -878,10 +880,24 @@ Nothing is forwarded by the page. The `concierge-lookup` ConfigMap the
 operator keeps in the platform tenant's namespace holds one file per custom
 domain and nothing else; there is no `_single.json`.
 
-A **tenant** apex redirects to `https://desktop.<effectiveDomain>/`, path and
-query kept. Two tenants have none: the platform tenant, whose apex is its
-desktop, and the user tenant of a single-tenancy cluster, whose apex is the
-cluster's.
+A **tenant** apex -- the bare name of its zone or of a domain of its own --
+redirects, path and query kept, to the first of:
+
+1. the home the tenant set for sign-up (`spec.signUp.home`), a choice;
+2. `www.<effectiveDomain>`, when the tenant publishes a public site there
+   whose approval has not expired: whoever types the bare name is looking
+   for the organization, not for its sign-in;
+3. `https://desktop.<effectiveDomain>/`.
+
+Two tenants have none: the platform tenant, whose apex is its desktop, and
+the user tenant of a single-tenancy cluster, whose apex is the cluster's.
+
+The bare name of a **domain of the tenant's own** is served on the perimeter
+Gateway, on a listener for exactly that name with a certificate that names it
+alone (`tenant-<name>-apex`, issued like the wildcard). The cluster's
+catch-all listener would answer it with the cluster's certificate, which does
+not name it. A zone under the cluster's domain needs neither: the cluster's
+certificate names `<tenant>.<kernelDomain>`.
 
 Application-specific redirects and rewrites are expressed with Gateway API route
 filters or Envoy extension policies where advanced behavior is needed.

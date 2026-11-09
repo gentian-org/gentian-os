@@ -189,7 +189,29 @@ data:
         # below decide, not the announcement.
         broken_sasl_auth_clients: "yes"
         smtpd_client_restrictions: "permit_sasl_authenticated, permit_mynetworks, permit"
-        smtpd_sender_restrictions: "permit_sasl_authenticated, permit_mynetworks, reject_non_fqdn_sender, reject_unknown_sender_domain, permit"
+        # A signed-in client sends only as an address its login owns.
+        #
+        # Without this check permit_sasl_authenticated let any credential --
+        # a person's, a tenant's apps', a realm's -- send as any address of any
+        # tenant. The owners are a table the operator derives from the mail
+        # registry (internal/controller/mail_sender_owners.go): a person owns
+        # their own address, a tenant's apps own the tenant's domain, and the
+        # realms own noreply@ of the kernel domain. An address in no hosted
+        # domain has no owner and is refused.
+        #
+        # The refusal is a permanent 553 while the message is submitted
+        # (reported at RCPT, as smtpd_delay_reject has every refusal), so the
+        # sending app gets the error itself and nothing is queued. That is
+        # deliberate: a sender that is not allowed fails where it is
+        # configured, not later in a bounce nobody reads.
+        #
+        # pcre:, because one line covers a whole domain ("every address is
+        # owned by the login of the same name"), which texthash cannot say.
+        # Read from the operator's ConfigMap like the maps below; a file that
+        # is not there yet is a lookup failure, which Postfix answers with a
+        # temporary 451 rather than a refusal.
+        smtpd_sender_login_maps: "pcre:/etc/postfix/kernel-maps/sender_login"
+        smtpd_sender_restrictions: "reject_authenticated_sender_login_mismatch, permit_sasl_authenticated, permit_mynetworks, reject_non_fqdn_sender, reject_unknown_sender_domain, permit"
         # Never offer AUTH before TLS.
         #
         # Submission is published on the internet, so without this a password

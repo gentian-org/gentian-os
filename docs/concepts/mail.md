@@ -457,6 +457,33 @@ no app-specific mail logic in the platform.
   into every app's OpenBao path *because* they all authenticate to the same
   submission endpoint as one user. Revoking one app's access to send mail
   means rotating the tenant's shared credential, which revokes every app.
+- **A signed-in client sends only as an address its login owns.** Postfix
+  refuses any other envelope sender with `553 5.7.1 <address>: Sender address
+  rejected: not owned by user <login>`, permanently and while the message is
+  submitted, so the sending app gets the error itself and nothing is queued.
+  The owners are a table the operator writes beside the maps
+  (`sender_login`, a `pcre:` map, `mail_sender_owners.go`):
+
+  | Sender | Owned by |
+  | --- | --- |
+  | `<anything>@<domain>`, for every hosted domain | the login of the same name: a person signs in with their address |
+  | `<anything>@<tenant domain>` | also `smtp-<tenant>`, the login the tenant's apps share |
+  | `noreply@<kernelDomain>` | every realm: each tenant realm's `noreply@<tenant domain>` and the kernel realm's own login |
+
+  An address in no hosted domain has no owner, so the cluster sends only for
+  its own domains.
+
+  With a mail tenant named for the cluster's domain
+  (`mainAddress.mailTenant`), `<anything>@<kernelDomain>` is also owned by
+  `<the same>@<that tenant's domain>`, and Postfix delivers it there: one
+  `@<kernelDomain> @<tenant domain>` line in `virtual_alias`, after a line
+  mapping each kernel-realm address to itself, so the kernel realm's people
+  and the role addresses keep their mailboxes. A person of the tenant then
+  receives at `ada@<kernelDomain>` in the mailbox of `ada@<tenant domain>`
+  and may send from it; their login does not change. Without the kernel
+  realm's addresses the alias would take their mail, so a failed lookup in
+  Keycloak leaves the maps as they were until the next sync. A client that does not sign in (the pod range,
+  `mynetworks`) is not asked, and a bounce (empty sender) passes.
 - **IMAP authentication does not use a shared or per-tenant credential at
   all.** Each user gets a credential per client application — the pattern
   Google and Fastmail use — because Keycloak identities are OIDC and IMAP
@@ -544,8 +571,9 @@ kubectl exec -n system-mail deploy/dovecot-<stage> -- find /var/mail -type f -na
 
 **When a message is refused, read the Postfix log line rather than guessing.**
 `Recipient address rejected` means the domain is missing from
-`virtual_mailbox_domains`; `Sender address rejected` means it is missing from
-`sender_access`; and `Server configuration error` against either means the map
+`virtual_mailbox_domains`; `Sender address rejected: Access denied` means it
+is missing from `sender_access`; `Sender address rejected: not owned by user`
+means the client's login does not own that sender (§7); and `Server configuration error` against either means the map
 file itself could not be opened — usually because it was added after Postfix
 started, which needs a `postfix reload`.
 
