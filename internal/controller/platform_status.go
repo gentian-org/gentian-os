@@ -14,9 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gentian-org/gentian-os/internal/platformversion"
+	"github.com/gentian-org/gentian-os/internal/releaseindex"
 )
 
 // PlatformStatusWriter writes which platform this cluster runs onto the
@@ -53,10 +52,11 @@ type PlatformStatusWriter struct {
 	Interval time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
-	// ReleaseFeed is where the platform's releases are published, as the
-	// GitHub releases API answers: the newest one is written on the status
-	// beside the version this cluster runs, so a person sees that a newer
-	// release exists without leaving the cluster. "" asks nothing.
+	// ReleaseFeed is where the platform's release index is published
+	// (docs/releases/index.yaml on main, read by internal/releaseindex): the
+	// newest release is written on the status beside the version this
+	// cluster runs, so a person sees that a newer release exists without
+	// leaving the cluster. "" asks nothing.
 	ReleaseFeed string
 	// HTTP fetches the feed; nil is a client with a short timeout.
 	HTTP *http.Client
@@ -133,6 +133,13 @@ func (w *PlatformStatusWriter) WriteOnce(ctx context.Context) error {
 // claim: what the operator writes the cluster's status on. A claim whose
 // composite does not exist yet is skipped and written on the next pass.
 func forEachClusterComposite(ctx context.Context, reader client.Reader, fn func(xr *unstructured.Unstructured) error) error {
+	return forEachClusterClaim(ctx, reader, func(_, xr *unstructured.Unstructured) error { return fn(xr) })
+}
+
+// forEachClusterClaim calls fn with every Cluster claim and its composite:
+// the claim for what was asked (its spec), the composite for what is
+// written back (its status, which Crossplane copies onto the claim).
+func forEachClusterClaim(ctx context.Context, reader client.Reader, fn func(claim, xr *unstructured.Unstructured) error) error {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
@@ -155,15 +162,15 @@ func forEachClusterComposite(ctx context.Context, reader client.Reader, fn func(
 		if err := reader.Get(ctx, types.NamespacedName{Name: ref["name"]}, xr); err != nil {
 			return fmt.Errorf("read the composite %s of Cluster claim %s: %w", ref["name"], claim.GetName(), err)
 		}
-		if err := fn(xr); err != nil {
+		if err := fn(claim, xr); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// latest reads the newest release from the feed. A feed that cannot be read
-// is logged and leaves the last answer standing.
+// latest reads the newest release from the index. An index that cannot be
+// read is logged and leaves the last answer standing.
 func (w *PlatformStatusWriter) latest(ctx context.Context) latestRelease {
 	if w.ReleaseFeed == "" {
 		return latestRelease{}
@@ -172,27 +179,15 @@ func (w *PlatformStatusWriter) latest(ctx context.Context) latestRelease {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.ReleaseFeed, nil)
+	idx, err := releaseindex.Fetch(ctx, client, w.ReleaseFeed)
 	if err != nil {
+		log.FromContext(ctx).V(1).Info("the release index could not be read", "feed", w.ReleaseFeed, "error", err.Error())
 		return w.last
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	res, err := client.Do(req)
-	if err != nil {
-		log.FromContext(ctx).V(1).Info("the release feed could not be read", "feed", w.ReleaseFeed, "error", err.Error())
+	newest, ok := idx.Newest()
+	if !ok {
 		return w.last
 	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return w.last
-	}
-	var release struct {
-		TagName string `json:"tag_name"`
-		HTMLURL string `json:"html_url"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&release); err != nil || release.TagName == "" {
-		return w.last
-	}
-	w.last = latestRelease{Version: strings.TrimPrefix(release.TagName, "v"), NotesURL: release.HTMLURL}
+	w.last = latestRelease{Version: newest.Version[1:], NotesURL: newest.Notes}
 	return w.last
 }
