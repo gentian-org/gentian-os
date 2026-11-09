@@ -24,7 +24,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func reconcileKeycloakIDPGatewayRoute(ctx context.Context, c client.Client, kernelDomain, tenancyMode string) error {
+func reconcileKeycloakIDPGatewayRoute(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) error {
 	if kernelDomain == "" {
 		return nil
 	}
@@ -34,23 +34,12 @@ func reconcileKeycloakIDPGatewayRoute(ctx context.Context, c client.Client, kern
 		return fmt.Errorf("list tenants for Keycloak IdP gateway route: %w", err)
 	}
 
-	var effectiveDomains []string
-	var tenantNames []string
-	for i := range tenantList.Items {
-		if tenantList.Items[i].DeletionTimestamp != nil {
-			continue
-		}
-		if d := tenantList.Items[i].EffectiveDomain(kernelDomain, tenancyMode); d != "" {
-			effectiveDomains = append(effectiveDomains, d)
-			tenantNames = append(tenantNames, tenantList.Items[i].Name)
-		}
-	}
-	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, c, tenantList.Items)
+	framers, err := signInFramers(ctx, c, tenantList.Items, kernelDomain, tenancyMode, kernelRealm)
 	if err != nil {
-		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
+		return fmt.Errorf("collect the pages that may frame sign-in: %w", err)
 	}
 
-	desiredFilters := keycloakGatewayResponseFilters(kernelDomain, effectiveDomains, oidcSubs, tenantNames)
+	desiredFilters := keycloakGatewayResponseFilters(framers)
 	if len(desiredFilters) == 0 {
 		return nil
 	}
@@ -89,32 +78,21 @@ func reconcileKeycloakIDPGatewayRoute(ctx context.Context, c client.Client, kern
 	if err := c.Patch(ctx, existing, patch); err != nil {
 		return fmt.Errorf("patch Keycloak IdP HTTPRoute frame-ancestors: %w", err)
 	}
-	log.FromContext(ctx).Info("updated Keycloak IdP HTTPRoute frame-ancestors for portal-embedded SSO",
-		"route", existing.Name, "namespace", servicesNamespace, "tenantZones", len(effectiveDomains))
+	log.FromContext(ctx).Info("updated Keycloak IdP HTTPRoute frame-ancestors",
+		"route", existing.Name, "namespace", servicesNamespace, "framers", len(framers))
 	return nil
 }
 
-func keycloakGatewayFramePolicyApplied(ctx context.Context, c client.Client, kernelDomain, tenancyMode string) bool {
+func keycloakGatewayFramePolicyApplied(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) bool {
 	tenantList := &gentianov1alpha1.TenantList{}
 	if err := c.List(ctx, tenantList); err != nil {
 		return false
 	}
-	var effectiveDomains []string
-	var tenantNames []string
-	for i := range tenantList.Items {
-		if tenantList.Items[i].DeletionTimestamp != nil {
-			continue
-		}
-		if d := tenantList.Items[i].EffectiveDomain(kernelDomain, tenancyMode); d != "" {
-			effectiveDomains = append(effectiveDomains, d)
-			tenantNames = append(tenantNames, tenantList.Items[i].Name)
-		}
-	}
-	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, c, tenantList.Items)
+	framers, err := signInFramers(ctx, c, tenantList.Items, kernelDomain, tenancyMode, kernelRealm)
 	if err != nil {
 		return false
 	}
-	desiredFilters := keycloakGatewayResponseFilters(kernelDomain, effectiveDomains, oidcSubs, tenantNames)
+	desiredFilters := keycloakGatewayResponseFilters(framers)
 	if len(desiredFilters) == 0 {
 		return true
 	}

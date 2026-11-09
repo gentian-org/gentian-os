@@ -113,9 +113,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	effectiveDomains, tenantNames := zonedTenantDomains(tenantList.Items, r.KernelDomain, r.TenancyMode)
-	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, r.Client, tenantList.Items)
+	framers, err := signInFramers(ctx, r.Client, tenantList.Items, r.KernelDomain, r.TenancyMode, r.kernelRealm())
 	if err != nil {
-		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
+		return fmt.Errorf("collect the pages that may frame sign-in: %w", err)
 	}
 	consoles := kernelConsolesRouted(ctx, r.Client)
 	for _, ns := range kernelRouteGrantNamespaces(consoles) {
@@ -136,7 +136,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			return fmt.Errorf("main address: %w", err)
 		}
 	}
-	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
+	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, framers, tenantNames,
 		consoles, r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
 	profileList := &gentianov1alpha1.ComponentProfileList{}
@@ -376,7 +376,7 @@ func kernelFrontDoorOf(tenants []gentianov1alpha1.Tenant, kernelDomain, kernelRe
 func kernelHTTPRouteSpecs(
 	kernelDomain string,
 	tenantEffectiveDomains []string,
-	tenantOIDCSubdomains map[string][]string,
+	signInFramers []string,
 	tenantNames []string,
 	consoles kernelConsoles,
 	cluster string,
@@ -389,7 +389,7 @@ func kernelHTTPRouteSpecs(
 	kcService := keycloakHTTPServiceName()
 	kcPort := int32(8080)
 
-	idFilters := keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)
+	idFilters := keycloakGatewayResponseFilters(signInFramers)
 	specs := []kernelHTTPRouteSpec{
 		// The identity provider is a kernel-owned perimeter surface: no
 		// session, because it is the issuer, and a path allowlist, because it
