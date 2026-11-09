@@ -239,17 +239,24 @@ catalog through the director (`kubectl gentian apps install <app> --tenant
 
 ## 4. Image update policies per stage
 
-Nothing in the cluster moves its image. The installer pins the platform's
-image to the build of the commit it installs from, and renders that tag into
-the `gentian-os` Application; any run of `./install.sh` from a newer checkout
-advances it, and `./install.sh --only B-01` does that and nothing else. `argocd-image-updater` is installed with Argo CD, and
+The Cluster claim declares what a cluster runs, under `spec.release`
+([versioning.md §2](../concepts/versioning.md)): a release tag the cluster
+runs exactly, or a branch it follows build by build. The operator applies
+it: every Application on the gentian-os repository, its own image, the
+gentian-ui charts and the catalog move together, and `status.release` says
+what was applied and what the release index offers. Nothing else in the
+cluster moves an image: `argocd-image-updater` is installed with Argo CD, and
 the platform ships no `ImageUpdater` resource for itself. The detail is in
 [reference/install.md](../reference/install.md) §4, "Image tags".
 
 | Stage | Follows | By |
 | --- | --- | --- |
-| **dev** | a branch | `GENTIAN_OS_BRANCH=<branch>`; re-run `--only B-01` to take a newer build |
-| **prod** | a release | `GENTIAN_OS_BRANCH=vX.Y.Z` (§5.4) |
+| **dev** | a branch | `release.track: <branch>`; the cluster takes each build once CI has published it |
+| **prod** | a release | `release.version: vX.Y.Z`, moved by `kubectl gentian release set` or, inside the window, by `autoUpgrade` (§5.4) |
+
+The installer writes the first value from `GENTIAN_OS_BRANCH` when it
+scaffolds the claim, and from then on renders what the claim says: a run
+whose `install.env` names another ref stops and says so.
 
 ### Which tag a cluster runs
 
@@ -305,20 +312,23 @@ references.** In order of strength:
   `GENTIAN_OS_BRANCH=v1.2.3`, `<branch>-<short-sha>` for a branch. Set
   `GENTIAN_OS_IMAGE_TAG` only to run something else.
 
-`GENTIAN_OS_BRANCH` (`install.env`) is the ref a cluster runs. It decides
-which gentian-os a cluster **runs**, which need not be the one you are
-installing **from**. For a release tag, every in-cluster Application on the
-gentian-os repository — the kernel ApplicationSets, the operator Application
-and the bootstrap Applications — follows the tag. For a branch they follow
-the commit of the checkout `install.sh` runs from, the commit the operator
-image is built from, not the branch tip: a commit merged later reaches the
-cluster with the next installer run, together with its build.
+`GENTIAN_OS_BRANCH` (`install.env`) is the ref the first install renders,
+and what the scaffold writes into the claim's `spec.release`: a tag becomes
+`version`, a branch `track`. It decides which gentian-os a cluster
+**runs**, which need not be the one you are installing **from**. For a
+release tag, every in-cluster Application on the gentian-os repository — the
+kernel ApplicationSets, the operator Application and the bootstrap
+Applications — follows the tag. For a branch the installer renders the
+commit of the checkout it runs from, the commit the operator image is built
+from; the operator then follows the branch tip, build by build, as CI
+publishes each.
 
 Left unset it is the branch of the checkout `install.sh` runs from, in every
 place the installer uses it — an observation, not a guess. Where there is no branch to read, which is exactly
 what `git checkout v0.4.0` leaves behind, the installer stops and asks rather
 than answering `develop` for a cluster somebody meant to pin. **Pinning a
-cluster to a release means naming the tag**, not checking it out. See §5.4.
+cluster to a release means naming the tag**, not checking it out. Once the
+claim exists it is the claim that names it (§5.4).
 
 ---
 
@@ -511,23 +521,40 @@ followed by the tag. A cluster that pins the tag reads nothing from
 
 **Roll it onto a cluster**
 
-1. In that cluster's `install.env` set `GENTIAN_OS_BRANCH=vX.Y.Z` (§4: the
-   tag must be named; checking it out is not enough) and
-   `PORTAL_IMAGE_TAG=vX.Y.Z`, the gentian-ui tag whose charts and images
-   the cluster installs. `GENTIAN_UI_BRANCH` stays `main`. The catalog
-   follows the ref: a tag reads the released catalog, a branch the
-   development one (`GENTIAN_CATALOGUE_URL` overrides either).
-2. Run `./install.sh`. It is idempotent; the bootstrap Applications are
-   re-rendered against the new ref and Argo CD follows the tag from there.
-   A release whose notes say the cluster layout changed is not applied in
-   place: it is a fresh install and a tenant import, as the notes'
-   upgrade section says.
-3. Confirm the cluster moved:
+A cluster takes a release through its Cluster claim, not through the
+installer. One command, as the cluster's administrator:
 
-   ```bash
-   kubectl -n kernel-control get deploy gentian-os \
-     -o jsonpath='{.spec.template.spec.containers[0].image}'
-   ```
+```bash
+kubectl gentian release set vX.Y.Z                      # this release, moved by a person from here on
+kubectl gentian release set vX.Y.Z --auto-upgrade patch # ... and every later patch of the line by itself
+```
+
+The director writes `spec.release` and points the `gentian` catalog source
+at the released catalog, in one signed commit. The operator reads the claim,
+looks the release up in the index, moves every Application on the gentian-os
+repository to the tag, its own image to `X.Y.Z` and the gentian-ui charts to
+the ones the index names for the release, and writes `status.release`.
+`kubectl gentian release show` follows it; the move is done when the state
+is `Applied` and the operator's build is the release:
+
+```bash
+kubectl gentian release show
+kubectl -n kernel-control get deploy gentian-os \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Under `autoUpgrade: patch` the director commits the next patch of the line
+by itself inside the maintenance window (`spec.catalogue.updates.window`);
+under `minor` the next minor too, where the index says it is applied in
+place. A release the mode does not take is `pending` on the status and in
+the console, for a person. A release whose notes say the cluster layout
+changed lists no line under `upgradesFrom` and is never taken by itself: it
+is a fresh install and a tenant import, as the notes' upgrade section says.
+
+A cluster installed before the claim carried `spec.release` gets the field
+on its next `./install.sh` run, naming what that run renders; after that
+the claim is where the release is declared, and `GENTIAN_OS_BRANCH` in
+`install.env` may go.
 
 **Additionally, when the target is a new production cluster**
 
