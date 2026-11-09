@@ -14,10 +14,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
@@ -132,6 +134,9 @@ func (s *Server) runReleaseMove(ctx context.Context) bool {
 		log.WarnContext(ctx, "the cluster's side of the release could not be read; nothing is moved", "detail", view.Partial)
 		return false
 	}
+	if pending, _ := view.Status["pending"].(string); pending != "" {
+		s.announcePendingRelease(ctx, view.Spec.Version, pending, view.Status)
+	}
 	available, _ := view.Status["available"].(string)
 	if available == "" || available == view.Spec.Version {
 		return false
@@ -149,6 +154,62 @@ func (s *Server) runReleaseMove(ctx context.Context) bool {
 	}
 	if res.Changed {
 		log.InfoContext(ctx, "the cluster moves to a release by its autoUpgrade mode", "from", view.Spec.Version, "to", available, "mode", view.Spec.AutoUpgrade, "commit", res.Commit)
+		s.notifyAdministrators(ctx,
+			fmt.Sprintf("Gentian OS: cluster %s moves to %s", s.cfg.Cluster, available),
+			fmt.Sprintf("The cluster %s was on %s and moves to %s now, by its autoUpgrade mode %s inside the maintenance window.\n\nThe operator applies the release; follow it with:\n  kubectl gentian release show\n", s.cfg.Cluster, view.Spec.Version, available, view.Spec.AutoUpgrade),
+			"", "info")
 	}
 	return res.Changed
+}
+
+// announcePendingRelease tells the administrators once that a release
+// waits for them: the first pass that sees it, and again only when the
+// pending release changes. The memory is the director's own; a restarted
+// director says it once more, which is the right side to err on.
+func (s *Server) announcePendingRelease(ctx context.Context, running, pending string, status map[string]any) {
+	s.releaseNotices.Lock()
+	seen := s.releaseNotices.pending == pending
+	if !seen {
+		s.releaseNotices.pending = pending
+	}
+	s.releaseNotices.Unlock()
+	if seen {
+		return
+	}
+	notes, _ := status["pendingNotes"].(string)
+	text := fmt.Sprintf("Release %s of Gentian OS is out. The cluster %s runs %s, and its autoUpgrade mode does not take %s by itself.\n\nTo move the cluster:\n  kubectl gentian release set %s\nor take it in the administration console, under Release.\n", pending, s.cfg.Cluster, running, pending, pending)
+	if notes != "" {
+		text += "\nRelease notes: " + notes + "\n"
+	}
+	s.notifyAdministrators(ctx, fmt.Sprintf("Gentian OS %s waits for cluster %s", pending, s.cfg.Cluster), text, notes, "warning")
+}
+
+// notifyAdministrators says something to the cluster's administrators in
+// both places they read: a notice in the platform tenant's console, and a
+// mail through the operator, which holds the platform's mail settings. A
+// cluster without mail gets the notice alone; neither failure is the
+// mover's to stop on.
+func (s *Server) notifyAdministrators(ctx context.Context, subject, text, link, severity string) {
+	if s.cfg.Lifecycle == nil {
+		return
+	}
+	log := s.cfg.Log.With("worker", "release")
+	notice := map[string]any{"title": subject, "body": text, "severity": severity}
+	if link != "" {
+		notice["linkUrl"] = link
+		notice["linkLabel"] = "Release notes"
+	}
+	if status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/tenants/"+authz.PlatformTenant+"/actions/notify", releaseMoverPrincipal, notice); err != nil || status >= 300 {
+		log.WarnContext(ctx, "the release notice could not be published in the console", "detail", upstreamFailure(status, body, err))
+	}
+	status, body, err := s.cfg.Lifecycle.Do(ctx, applifecycle.NotifyAdministratorsPath, releaseMoverPrincipal,
+		applifecycle.NotifyAdministratorsRequest{Subject: subject, Text: text})
+	switch {
+	case err == nil && status == http.StatusAccepted:
+		log.InfoContext(ctx, "the cluster's administrators were mailed", "subject", subject)
+	case err == nil && status == http.StatusServiceUnavailable:
+		log.InfoContext(ctx, "no mail to the administrators: the cluster has no mail or no administrator with an address", "detail", upstreamFailure(status, body, err))
+	default:
+		log.WarnContext(ctx, "the administrators could not be mailed", "detail", upstreamFailure(status, body, err))
+	}
 }

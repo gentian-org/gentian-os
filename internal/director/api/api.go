@@ -254,6 +254,13 @@ type Server struct {
 	// platformApps keeps two placements of the platform's apps from
 	// running at once (platform_apps.go).
 	platformApps sync.Mutex
+	// releaseNotices remembers which release the administrators were last
+	// told about, so a release that stays pending is announced once per
+	// director, not once per pass (release.go).
+	releaseNotices struct {
+		sync.Mutex
+		pending string
+	}
 	// placementAbsent is what the last placement found withdrawn, by
 	// tenant and app; held under platformApps (platform_apps.go).
 	placementAbsent map[string]bool

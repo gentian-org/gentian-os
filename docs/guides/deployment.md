@@ -549,7 +549,8 @@ Under `autoUpgrade: patch` the director commits the next patch of the line
 by itself inside the maintenance window (`spec.catalogue.updates.window`);
 under `minor` the next minor too, where the index says it is applied in
 place. A release the mode does not take is `pending` on the status and in
-the console, for a person. A release whose notes say the cluster layout
+the console, for a person, who is told once by a console notice and by
+mail. A release whose notes say the cluster layout
 changed lists no line under `upgradesFrom` and is never taken by itself: it
 is a fresh install and a tenant import, as the notes' upgrade section says.
 
