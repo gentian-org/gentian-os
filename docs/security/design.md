@@ -285,7 +285,16 @@ allows on the main address only a website whose scripts the organization
 controls; a website can protect its visitors itself with a strict content
 security policy and no third-party scripts.
 
-**The rule.** A website goes on the main address only if the organization
+**A tenant's own bare name.** Every other tenant may put a website on its
+own bare name, its zone (`<tenant>.<kernelDomain>`) or a domain bound to it,
+under the same controls, with the tenant's perimeter approver deciding. Only
+the main address is the cluster administrator's to give. A script there can
+set cookies for the tenant's domain, which reach that tenant's desktop and
+apps. On a zone under the cluster's domain it can also set them for the
+cluster's domain, as a page on any public host under that domain already can
+(a site at `www.<tenant>.<kernelDomain>`); the bare name adds no reach.
+
+**The rule.** A website goes on a bare name only if the organization
 itself controls every script it runs: no third-party scripts (analytics,
 embeds, widgets, anything loaded from another host) and no pages uploaded by
 users.
@@ -905,7 +914,7 @@ the code does.
 | Publishing an entry: who may approve (`can_expose`) | The tenant's perimeter approver and the cluster's, named on the Cluster claim, and the cluster's administrator in every tenant (§2.14) |
 | Publishing an entry: approval by the tenant's perimeter approver, of what an installed app declares | The director lists every perimeter entry an installed app declares and refuses an approval of anything else, or with a main-address setting that is not the entry's (`internal/director/api/exposure_requests.go`, `internal/addresses`; [routing.md §5](../concepts/routing.md)) |
 | A tenant people sign up to (`spec.signUp.enabled`) | Off unless the tenant is made with it. The realm takes registrations with the address confirmed by mail and the platform's own proof-of-work check (no third party); an account made that way is in no group and holds no relation, so every enforcement point refuses it, and it is not counted ([iam.md §1.1b](../concepts/iam.md)) |
-| A website on the cluster's main address | §2.10: one tenant only -- the user tenant under single, or the tenant the claim names under either mode -- two people say so, the approver acknowledges the rule. A script there can disturb sign-in on the other addresses |
+| A website on a bare name | §2.10: the cluster's main address for one tenant only -- the user tenant under single, or the tenant the claim names under either mode -- and each other tenant's own bare name for that tenant; two people say so, the approver acknowledges the rule. A script there can disturb sign-in on the other addresses |
 | Address names the platform keeps | `internal/hostnames`, asked by the director and the operator (§2.11) |
 | Default profiles the installer places | Written only when the file hashes to the digest its catalog's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed. The operator holds the Component it creates for a default profile to the bundle recorded with the profile; nothing apart from the profile states that digest |
 | Mail: one proxy faces the internet, the mail servers do not | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |

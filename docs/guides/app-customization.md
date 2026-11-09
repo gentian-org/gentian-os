@@ -956,23 +956,27 @@ the entry and the label), and a Component that exists anyway is held by the
 operator with `HostReserved`; stating `trustTier: platform` changes nothing
 ([routing.md §3.1](../concepts/routing.md)).
 
-"For the main address" is the same entry with `apex: true` (and no
-`subDomain`). It asks for the cluster's bare domain and needs all of this:
+"For a bare name" is the same entry with `apex: true` (and no
+`subDomain`). It asks for the tenant's bare name and needs all of this:
 
-- the cluster's tenancy mode is `single`, the tenant is its user tenant, and
-  that tenant is not on a domain of its own;
+- the tenant has one: the cluster's main address if the cluster
+  administrator names the tenant for it (`mainAddress.tenant`) or it is the
+  user tenant of a single-tenancy cluster, otherwise the tenant's own zone
+  (`<tenant>.<kernelDomain>`) or a domain bound to it. The platform tenant
+  and a tenant on the cluster's domain that the cluster does not name have
+  none;
 - the approver sends `{"apex": true, "acknowledgeMainAddressRule": true}`
   with the request (the CLI: `--acknowledge-main-address-rule`, which `--yes`
   does not imply) -- an entry that says `apex` is not published at all
   without `apex`, and the director refuses `apex` without the acknowledgement
   (`400`, with the warning below);
-- no other surface holds the main address;
+- no other surface of the tenant holds that bare name;
 - the entry declares no path inside `/branding/`, `/sign-in`,
   `/.well-known/acme-challenge/` or `/.well-known/pki-validation/`. Those stay
   the platform's.
 
-**Before you approve a website for the main address.** A script in a page on
-the main address can set cookies that browsers also send to the desktop, the
+**Before you approve a website for a bare name.** A script in a page on a
+bare name can set cookies that browsers also send to the desktop, the
 consoles and sign-in. It cannot read anybody's session. It can stop people
 from signing in until they clear their cookies, and it can sign a person in
 to an account the script's author chose, without the person noticing. The

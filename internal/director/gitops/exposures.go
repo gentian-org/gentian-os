@@ -83,12 +83,14 @@ type Exposure struct {
 	// public, and when. Publishing is the first review.
 	LastReviewedBy string `json:"lastReviewedBy,omitempty"`
 	LastReviewedAt string `json:"lastReviewedAt,omitempty"`
-	// Apex says this surface is for the cluster's main address, the bare
-	// domain: the approver's own word, which the profile's entry must match.
-	// One surface holds the main address at a time.
+	// Apex says this surface is for the tenant's bare name: the cluster's
+	// main address for the tenant the cluster names for it, the tenant's own
+	// domain for any other (addresses.Inputs.BareName). The approver's own
+	// word, which the profile's entry must match. One surface per tenant
+	// holds it at a time.
 	Apex bool `json:"apex,omitempty"`
 	// ApexAcknowledgedBy and ApexAcknowledgedAt are who acknowledged the rule
-	// for a website on the main address -- only a site whose scripts the
+	// for a website on a bare name -- only a site whose scripts the
 	// organization itself controls -- and when. The approver's, from the
 	// caller's token, on every publication and every review of an apex
 	// entry. Empty on an entry approved before the rule was asked.
@@ -122,12 +124,12 @@ func validKind(k string) bool {
 
 // ErrMainAddressHeld is a second surface asked for the cluster's main
 // address while another holds it.
-var ErrMainAddressHeld = errors.New("the cluster's main address is already held")
+var ErrMainAddressHeld = errors.New("the tenant's bare name is already held")
 
 // ErrMainAddressNotAcknowledged is a surface asked for the cluster's main
 // address without the approver's acknowledgement of the rule for it.
 var ErrMainAddressNotAcknowledged = errors.New(
-	"a website on the cluster's main address needs the approver's acknowledgement of the rule for it")
+	"a website on a bare name needs the approver's acknowledgement of the rule for it")
 
 // live reports an entry that has not expired.
 func (e Exposure) live(now time.Time) bool {
@@ -204,7 +206,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 		return Result{}, fmt.Errorf("%w: kind %q", ErrInvalidName, e.Kind)
 	}
 	if e.Apex && e.Kind != "" && e.Kind != KindPublic {
-		return Result{}, fmt.Errorf("the cluster's main address is for a public address that passes no credential on")
+		return Result{}, fmt.Errorf("a bare name is for a public address that passes no credential on")
 	}
 	if e.ReviewAt == "" {
 		return Result{}, fmt.Errorf("an exposure needs a review date: what is public is looked at again")
@@ -231,7 +233,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 		return Result{}, err
 	}
 	if e.Apex {
-		// One surface holds the main address at a time. Refused here, with
+		// One surface holds the tenant's bare name at a time. Refused here, with
 		// the holder's name, rather than committed and left for the operator
 		// to ignore: the approver should hear it when they ask.
 		for _, h := range have {
@@ -264,7 +266,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 			// was first published are the entry's own. So is its alias: the
 			// cluster administrator gave it, and an approver's review is not
 			// what takes it away. Only a surface that stays a public address
-			// off the main address keeps one.
+			// off a bare name keeps one.
 			e.Owner, e.PublishedAt = h.Owner, h.PublishedAt
 			if e.Kind != KindSignInAppAuthorization && !e.Apex {
 				e.Alias, e.AliasSetBy, e.AliasSetAt = h.Alias, h.AliasSetBy, h.AliasSetAt
@@ -282,7 +284,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	}
 	what := e.Install + "/" + e.ExposureName
 	if e.Apex {
-		what += " on the cluster's main address"
+		what += " on the tenant's bare name"
 	}
 	// The commit says what was approved: a reviewer of the history should
 	// not have to open the file to learn that a credential is passed on.
@@ -372,12 +374,12 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		b.WriteString("      owner: " + e.Owner + "\n")
 		b.WriteString("      reviewAt: " + e.ReviewAt + "\n")
 		if e.Apex {
-			b.WriteString("      # For the cluster's main address: the bare domain.\n")
+			b.WriteString("      # For the tenant's bare name: the cluster's main address, or its own domain.\n")
 			b.WriteString("      apex: true\n")
 		}
 		if e.ApexAcknowledgedBy != "" {
-			b.WriteString("      # Who acknowledged the rule for the main address (only a site whose\n")
-			b.WriteString("      # scripts the organisation itself controls), and when.\n")
+			b.WriteString("      # Who acknowledged the rule for a bare name (only a site whose\n")
+			b.WriteString("      # scripts the organization itself controls), and when.\n")
 			b.WriteString("      apexAcknowledgedBy: " + e.ApexAcknowledgedBy + "\n")
 			b.WriteString("      apexAcknowledgedAt: " + e.ApexAcknowledgedAt + "\n")
 		}

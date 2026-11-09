@@ -96,9 +96,12 @@ func mainInputs(t *testing.T, mode string, tenants ...*gentianov1alpha1.Tenant) 
 	return in
 }
 
-// Who may hold the cluster's main address: the user tenant of a
-// single-tenancy cluster, with the profile's word and the approver's, one
-// surface at a time. Everybody else is told why not.
+// Which bare name a website takes. The cluster's main address goes to the
+// user tenant of a single-tenancy cluster, or to the tenant the cluster names,
+// with the profile's word and the approver's, one surface at a time. Every
+// other tenant's website takes its own bare name: its zone, or a domain of its
+// own. The platform tenant, and a tenant on the cluster's domain that the
+// cluster does not name, are told why not.
 func TestWhoHoldsTheMainAddress(t *testing.T) {
 	now := time.Now()
 	withSite := func(tenant *gentianov1alpha1.Tenant, e ...gentianov1alpha1.TenantExposure) *gentianov1alpha1.Tenant {
@@ -118,23 +121,24 @@ func TestWhoHoldsTheMainAddress(t *testing.T) {
 		tenant *gentianov1alpha1.Tenant
 		holds  bool
 		reason string
+		host   string
 	}{
-		{"single, approved for the main address", "single", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), true, "Published"},
-		{"multi: the main address is the sign-in form", "multi", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "MultiTenancy"},
-		{"multi, another tenant", "multi", withSite(readyTenant(acmeTenantFixture()), approved("website", now)), false, "MultiTenancy"},
-		{"single, a tenant that is not the user tenant", "single", withSite(readyTenant(acmeTenantFixture()), approved("website", now)), false, "NotTheUserTenant"},
-		{"the platform tenant gets nothing beyond its own page", "single", withSite(platformWithConcierge(), approved("website", now)), false, "NotTheUserTenant"},
-		{"published, but not for the main address", "single", withSite(readyTenant(singleUserTenantFixture()), unasked), false, "NotRequested"},
-		{"the approval expired", "single", withSite(readyTenant(singleUserTenantFixture()), expired), false, "Expired"},
-		{"the tenant is not Ready yet", "single", withSite(singleUserTenantFixture(), approved("website", now)), false, "TenantNotReady"},
-		{"the tenant is on a domain of its own", "single", custom, false, "OwnDomain"},
+		{"single, approved for the main address", "single", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), true, "Published", mainKD},
+		{"multi: the tenant's own zone, not the main address", "multi", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "Published", "user." + mainKD},
+		{"multi, another tenant: its own zone", "multi", withSite(readyTenant(acmeTenantFixture()), approved("website", now)), false, "Published", "acme." + mainKD},
+		{"single, a tenant beside the user tenant: its own zone", "single", withSite(readyTenant(acmeTenantFixture()), approved("website", now)), false, "Published", "acme." + mainKD},
+		{"the platform tenant gets nothing beyond its own page", "single", withSite(platformWithConcierge(), approved("website", now)), false, "NoBareName", ""},
+		{"published, but not for the main address", "single", withSite(readyTenant(singleUserTenantFixture()), unasked), false, "NotRequested", ""},
+		{"the approval expired", "single", withSite(readyTenant(singleUserTenantFixture()), expired), false, "Expired", ""},
+		{"the tenant is not Ready yet", "single", withSite(singleUserTenantFixture(), approved("website", now)), false, "TenantNotReady", ""},
+		{"the user tenant on a domain of its own: that domain's bare name", "single", custom, false, "Published", "acme.example"},
 	}
 	for _, tc := range cases {
 		in := mainInputs(t, tc.mode, platformWithConcierge(), tc.tenant)
 		if tc.tenant.Name == "platform" {
 			in = mainInputs(t, tc.mode, tc.tenant)
 		}
-		check(t, tc.what, in, tc.tenant, tc.holds, tc.reason)
+		check(t, tc.what, in, tc.tenant, tc.holds, tc.reason, tc.host)
 	}
 
 	// The cluster may name the tenant instead (mainAddress.tenant on the
@@ -149,17 +153,18 @@ func TestWhoHoldsTheMainAddress(t *testing.T) {
 		tenant *gentianov1alpha1.Tenant
 		holds  bool
 		reason string
+		host   string
 	}{
-		{"multi, the tenant the cluster names", "multi", namedAcme, true, "Published"},
-		{"multi, the named tenant on a domain of its own", "multi", namedCustom, true, "Published"},
-		{"single, the tenant the cluster names, which is not the user tenant", "single", namedAcme, true, "Published"},
-		{"multi, another tenant than the one named", "multi", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "NotTheMainAddressTenant"},
-		{"single, the user tenant where the cluster names another", "single", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "NotTheMainAddressTenant"},
+		{"multi, the tenant the cluster names", "multi", namedAcme, true, "Published", mainKD},
+		{"multi, the named tenant on a domain of its own", "multi", namedCustom, true, "Published", mainKD},
+		{"single, the tenant the cluster names, which is not the user tenant", "single", namedAcme, true, "Published", mainKD},
+		{"multi, another tenant than the one named: its own zone", "multi", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "Published", "user." + mainKD},
+		{"single, the user tenant where the cluster names another", "single", withSite(readyTenant(singleUserTenantFixture()), approved("website", now)), false, "NotTheMainAddressTenant", ""},
 	}
 	for _, tc := range named {
 		in := mainInputs(t, tc.mode, platformWithConcierge(), tc.tenant)
 		in.MainAddressTenant = "acme"
-		check(t, tc.what, in, tc.tenant, tc.holds, tc.reason)
+		check(t, tc.what, in, tc.tenant, tc.holds, tc.reason, tc.host)
 	}
 	// Naming the platform tenant names nobody: its page is the sign-in form.
 	platformIn := mainInputs(t, "multi", withSite(platformWithConcierge(), approved("website", now)))
@@ -207,17 +212,17 @@ func TestWhoHoldsTheMainAddress(t *testing.T) {
 
 // check holds one case of TestWhoHoldsTheMainAddress: who holds the address
 // and what the tenant is told.
-func check(t *testing.T, what string, in mainAddressInputs, tenant *gentianov1alpha1.Tenant, holds bool, reason string) {
+func check(t *testing.T, what string, in mainAddressInputs, tenant *gentianov1alpha1.Tenant, holds bool, reason, host string) {
 	t.Helper()
 	holder := mainAddressHolder(in)
 	if (holder != nil) != holds {
-		t.Errorf("%s: holder = %v, want held=%v", what, holder, holds)
+		t.Errorf("%s: holder of the main address = %v, want held=%v", what, holder, holds)
 	}
 	verdict, applies := mainAddressVerdictFor(in, tenant, "website")
-	if !applies || verdict.Reason != reason || (verdict.Entry != "") != holds {
-		t.Errorf("%s: verdict = %+v (applies=%v), want reason %s", what, verdict, applies, reason)
+	if !applies || verdict.Reason != reason || verdict.Host != host || (verdict.Entry != "") != (host != "") {
+		t.Errorf("%s: verdict = %+v (applies=%v), want reason %s on %q", what, verdict, applies, reason, host)
 	}
-	if !holds && !strings.Contains(verdict.Message, "othing is published") && reason != "TenantNotReady" {
+	if host == "" && !strings.Contains(verdict.Message, "othing is published") && reason != "TenantNotReady" {
 		t.Errorf("%s: the message does not say that nothing is published: %q", what, verdict.Message)
 	}
 }
@@ -492,8 +497,8 @@ func (m *mainAddressCluster) expect(what string, want map[string]string) {
 func TestTheMainAddressPathByPath(t *testing.T) {
 	now := time.Now()
 
-	// multi: the concierge's, whole. A website approved for the main address
-	// is not published.
+	// multi: the concierge's, whole. A website approved for a bare name takes
+	// the tenant's own zone, not the main address.
 	multi := newMainAddressCluster(t, "multi")
 	multi.publish(approved("website", now))
 	multi.reconcile()
@@ -503,7 +508,7 @@ func TestTheMainAddressPathByPath(t *testing.T) {
 		"/.well-known/acme-challenge/x": "concierge",
 	})
 	if cond := apimeta.FindStatusCondition(multi.website.Status.Conditions, ConditionMainAddress); cond == nil ||
-		cond.Status != metav1.ConditionFalse || cond.Reason != "MultiTenancy" {
+		cond.Status != metav1.ConditionTrue || cond.Reason != "Published" || !strings.Contains(cond.Message, "https://user."+mainKD+"/") {
 		t.Fatalf("multi: the website's condition = %+v", cond)
 	}
 

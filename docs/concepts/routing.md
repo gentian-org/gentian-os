@@ -790,8 +790,11 @@ domain, with the cluster's certificate.
    the request (`can_expose`, the same relation as every published surface).
    The entry is in the exposure registry with its owner, publish date and
    review date, marked `apex: true`.
-3. The cluster's mode is `single`, the tenant is the user tenant on the
-   cluster's own domain and is Ready, and no other surface holds the address.
+3. The tenant has the main address as its bare name: the cluster
+   administrator names it (`mainAddress.tenant`), or, where nobody is named,
+   it is the user tenant of a single-tenancy cluster on the cluster's own
+   domain. It is Ready, and no other surface holds the address. Every other
+   tenant's apex entry takes the tenant's own bare name instead (below).
 
 *The rule, and the acknowledgement.* A website goes on the main address only
 if the organization itself controls every script it runs: no third-party
@@ -823,11 +826,12 @@ for one it does. The operator would publish nothing for either. An entry
 recorded that way earlier stays, is listed without an address, can be
 withdrawn, and is renewed only with the setting the entry has.
 
-One surface holds the main address at a time. The director refuses a second
-request with `409` and names the holder. If two entries reach the cluster
+One surface holds the main address at a time, as one holds each tenant's
+bare name. The director refuses a second request with `409` and names the
+holder. If two entries reach the cluster
 anyway, the one published first keeps the address. The component's
 `MainAddress` condition says which case applies (`Published`, `NotRequested`,
-`MultiTenancy`, `NotTheUserTenant`, `OwnDomain`, `Expired`, `ReservedPath`,
+`NotTheMainAddressTenant`, `NoBareName`, `Expired`, `ReservedPath`,
 `TenantNotReady`, `HeldByAnother`, `NotAMainAddressEntry`).
 
 *The platform's paths.* The website can never answer these:
@@ -883,7 +887,17 @@ operator keeps in the platform tenant's namespace holds one file per custom
 domain and nothing else; there is no `_single.json`.
 
 A **tenant** apex -- the bare name of its zone or of a domain of its own --
-redirects, path and query kept, to the first of:
+is the tenant's. A website of the tenant's may take it under the same three
+conditions as the main address, with the tenant's own perimeter approver
+deciding and acknowledging the same rule; only the main address is the
+cluster administrator's to give. The director refuses `apex: true` only where
+the tenant has no bare name: the platform tenant, and a tenant on the
+cluster's own domain that the cluster does not name. The website's route goes
+on the perimeter's listener for the bare name, and the tenant's apex route
+moves to that listener. Once the website's proxy serves, the apex route keeps
+`/sign-in` alone, to the tenant's desktop; the website's proxy refuses the
+platform's other paths, as on the main address. Until then, and without such
+a website, the bare name redirects, path and query kept, to the first of:
 
 1. the home the tenant set for sign-up (`spec.signUp.home`), a choice;
 2. `www.<effectiveDomain>`, when the tenant publishes a public site there
@@ -892,14 +906,16 @@ redirects, path and query kept, to the first of:
 3. `https://desktop.<effectiveDomain>/`.
 
 Two tenants have none: the platform tenant, whose apex is its desktop, and
-the user tenant of a single-tenancy cluster, whose apex is the cluster's.
+the user tenant of a single-tenancy cluster, whose apex is the cluster's
+until a domain of its own is bound to it.
 
 The bare name of a **domain of the tenant's own** is served on the perimeter
 Gateway, on a listener for exactly that name with a certificate that names it
 alone (`tenant-<name>-apex`, issued like the wildcard). The cluster's
 catch-all listener would answer it with the cluster's certificate, which does
-not name it. A zone under the cluster's domain needs neither: the cluster's
-certificate names `<tenant>.<kernelDomain>`.
+not name it. A zone under the cluster's domain needs no certificate of its
+own: the cluster's names `<tenant>.<kernelDomain>`. It gets a perimeter
+listener for its bare name only while a website holds it.
 
 Application-specific redirects and rewrites are expressed with Gateway API route
 filters or Envoy extension policies where advanced behavior is needed.

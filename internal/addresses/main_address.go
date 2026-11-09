@@ -101,9 +101,12 @@ func reservedPath(e *gentianov1alpha1.ExposureSpec) string {
 	return ""
 }
 
-// Claim is one surface a tenant's approver published for the main address.
+// Claim is one surface a tenant's approver published for a bare name.
 type Claim struct {
 	Tenant, Install, Exposure string
+	// Host is the bare name it holds: the cluster's main address or the
+	// tenant's own (Inputs.BareName).
+	Host string
 }
 
 func (c Claim) String() string { return c.Install + "/" + c.Exposure }
@@ -163,14 +166,63 @@ func ApexEntry(profile *gentianov1alpha1.ComponentProfile, name string) *gentian
 	return nil
 }
 
-// Refusal is why one published surface is not on the main address, as a reason and a sentence for the tenant's administrator; both
-// empty when nothing but another claim could stand in its way.
+// BareName is where a tenant's apex entry answers, or "" where the tenant
+// has no bare name of its own to give a website.
+//
+//   - The tenant that holds the cluster's main address (MainTenant): the
+//     cluster's bare domain. That tenant is the cluster administrator's
+//     choice (mainAddress.tenant), or the user tenant of a single-tenancy
+//     cluster, so a website there always has the administrator's word.
+//   - The user tenant of a single-tenancy cluster that names nobody, once a
+//     domain of its own is bound to it: that domain. The cluster's domain is
+//     then no longer its address.
+//   - Any other tenant: its own domain's bare name, the zone under the
+//     cluster's domain (team.<kernel>) or a domain bound to it (acme.example).
+//   - Nobody else. Not the platform tenant, whose page is on the bare domain
+//     either way, and not a tenant whose domain is the cluster's own without
+//     the cluster naming it: that is the cluster's address, not the tenant's.
+func (in Inputs) BareName(tenant *gentianov1alpha1.Tenant) string {
+	if tenant == nil || AdoptsKernelRealm(tenant, in.KernelRealm) {
+		return ""
+	}
+	domain := tenant.EffectiveDomain(in.KernelDomain, in.TenancyMode)
+	if main := in.MainTenant(); main != nil && main.Name == tenant.Name {
+		if in.MainAddressTenant == "" && domain != "" && !onClusterDomain(domain, in.KernelDomain) {
+			return domain
+		}
+		return in.KernelDomain
+	}
+	if domain == "" || onClusterDomain(domain, in.KernelDomain) {
+		return ""
+	}
+	return domain
+}
+
+// onMainAddress says a bare name is the cluster's main address.
+func (in Inputs) onMainAddress(host string) bool {
+	return host != "" && host == in.KernelDomain
+}
+
+// whereLabel is how the messages name a bare name: the cluster's main address,
+// or the tenant's own.
+func (in Inputs) whereLabel(host string) string {
+	if host == "" || in.onMainAddress(host) {
+		return "the cluster's main address"
+	}
+	return "the tenant's bare name " + host
+}
+
+// Refusal is why one published surface is not on its tenant's bare name, as
+// a reason and a sentence for the tenant's administrator; both empty when
+// nothing but another claim could stand in its way.
 func (in Inputs) Refusal(tenant *gentianov1alpha1.Tenant, e *gentianov1alpha1.TenantExposure) (reason, message string) {
+	host := in.BareName(tenant)
+	where := in.whereLabel(host)
 	entry := ApexEntry(in.Profiles[e.Install], e.ExposureName)
 	switch {
 	case entry == nil:
 		return "NotAMainAddressEntry", fmt.Sprintf(
-			"%s/%s was published for the cluster's main address, but the profile does not declare it as a perimeter entry with apex: true. Nothing is published",
+			"%s/%s was published for a bare name, but the profile does not declare it as a perimeter entry with apex: true. Nothing is published",
 			e.Install, e.ExposureName)
 	case !entry.ApprovedAs(e.Kind):
 		return "ApprovedAsAnotherKind", fmt.Sprintf(
@@ -178,49 +230,52 @@ func (in Inputs) Refusal(tenant *gentianov1alpha1.Tenant, e *gentianov1alpha1.Te
 			e.Install, e.ExposureName)
 	case !e.Apex:
 		return "NotRequested", fmt.Sprintf(
-			"%s/%s is declared for the cluster's main address and is published only when the approver says so (apex: true on the request). Nothing is published",
+			"%s/%s is declared for a bare name and is published only when the approver says so (apex: true on the request). Nothing is published",
 			e.Install, e.ExposureName)
-	case in.MainTenantName() == "":
-		return "MultiTenancy", "this cluster's tenancy mode is multi and it names no tenant for its main address (mainAddress.tenant on the Cluster claim): the main address is the sign-in form and no tenant's website. Nothing is published"
-	case in.MainAddressTenant != "" && (in.MainTenant() == nil || in.MainTenant().Name != tenant.Name):
+	case host == "" && in.MainAddressTenant != "":
 		return "NotTheMainAddressTenant", fmt.Sprintf(
-			"the cluster names the tenant %q for its main address (mainAddress.tenant on the Cluster claim), and only that tenant may put a website there. Nothing is published",
+			"this tenant's address is the cluster's own domain, and the cluster names the tenant %q for its main address (mainAddress.tenant on the Cluster claim, the cluster administrator's setting). Only that tenant may put a website there. Nothing is published",
 			in.MainAddressTenant)
-	case in.MainTenant() == nil || in.MainTenant().Name != tenant.Name:
-		return "NotTheUserTenant", fmt.Sprintf(
-			"only the user tenant %q may put a website on the cluster's main address. Nothing is published",
-			gentianov1alpha1.SingleUserTenantName)
-	// The user tenant holds the main address because it is that tenant's own
-	// address, and it is not once a domain of its own is bound to it. A
-	// tenant the cluster names holds it because the cluster says so, on
-	// whatever domain its other addresses are.
-	case in.MainAddressTenant == "" && !onClusterDomain(tenant.EffectiveDomain(in.KernelDomain, in.TenancyMode), in.KernelDomain):
-		return "OwnDomain", "this tenant is on a domain of its own, so the cluster's main address is not its address. Nothing is published"
+	case host == "":
+		return "NoBareName", "this tenant's address is the cluster's own domain, and the cluster does not name it for its main address: that address is the cluster administrator's to give (mainAddress.tenant on the Cluster claim). Nothing is published"
 	case e.ExpiresAt != nil && !in.Now.Before(e.ExpiresAt.Time):
-		return "Expired", fmt.Sprintf("the approval of %s/%s for the main address has expired. Nothing is published", e.Install, e.ExposureName)
+		return "Expired", fmt.Sprintf("the approval of %s/%s for %s has expired. Nothing is published", e.Install, e.ExposureName, where)
 	case len(Prefixes(entry)) == 0:
 		return "NoPaths", fmt.Sprintf("%s/%s declares no paths, so it publishes nothing", e.Install, e.ExposureName)
 	}
 	if reserved := reservedPath(entry); reserved != "" {
 		return "ReservedPath", fmt.Sprintf(
-			"%s/%s declares a path inside %s, which the platform keeps on the main address (%s). Nothing is published",
+			"%s/%s declares a path inside %s, which the platform keeps on every bare name (%s). Nothing is published",
 			e.Install, e.ExposureName, reserved, strings.Join(ReservedPrefixes, ", "))
 	}
 	if tenant.Status.Phase != gentianov1alpha1.TenantPhaseReady {
-		return "TenantNotReady", "the tenant is not Ready yet; the main address changes once it is"
+		return "TenantNotReady", "the tenant is not Ready yet; " + where + " changes once it is"
 	}
 	return "", ""
 }
 
 // Holder is the surface that holds the cluster's main address, or
 // nil when none does.
+func Holder(in Inputs) *Claim {
+	tenant := in.MainTenant()
+	if tenant == nil || !in.onMainAddress(in.BareName(tenant)) {
+		return nil
+	}
+	return HolderOf(in, tenant)
+}
+
+// HolderOf is the surface that holds a tenant's bare name (BareName), or nil
+// when none does.
 //
 // One at a time. Where several were published for it, the one published
 // first holds it and keeps it: a later request cannot take a running website
 // off the address.
-func Holder(in Inputs) *Claim {
-	tenant := in.MainTenant()
-	if tenant == nil {
+func HolderOf(in Inputs, tenant *gentianov1alpha1.Tenant) *Claim {
+	if tenant == nil || tenant.DeletionTimestamp != nil {
+		return nil
+	}
+	host := in.BareName(tenant)
+	if host == "" {
 		return nil
 	}
 	type candidate struct {
@@ -237,7 +292,7 @@ func Holder(in Inputs) *Claim {
 			continue
 		}
 		live = append(live, candidate{
-			claim: Claim{Tenant: tenant.Name, Install: e.Install, Exposure: e.ExposureName},
+			claim: Claim{Tenant: tenant.Name, Install: e.Install, Exposure: e.ExposureName, Host: host},
 			at:    e.PublishedAt,
 		})
 	}
@@ -257,19 +312,33 @@ func Holder(in Inputs) *Claim {
 	return &live[0].claim
 }
 
+// BareNameHolders are the surfaces that hold a tenant's own bare name, every
+// tenant's but the main address's holder, by tenant name.
+func BareNameHolders(in Inputs) map[string]*Claim {
+	out := map[string]*Claim{}
+	for i := range in.Tenants {
+		t := &in.Tenants[i]
+		if c := HolderOf(in, t); c != nil && !in.onMainAddress(c.Host) {
+			out[t.Name] = c
+		}
+	}
+	return out
+}
+
 // Verdict is what the tenant's administrator reads on a component
-// one of whose surfaces is for the main address.
+// one of whose surfaces is for a bare name.
 type Verdict struct {
-	// Entry is the profile entry that holds the main address; empty when
-	// none of this component's does.
-	Entry           string
+	// Entry is the profile entry that holds the bare name, and Host that
+	// name; both empty when none of this component's does.
+	Entry, Host     string
 	Reason, Message string
 }
 
 // VerdictFor decides for one component of one tenant. applies is
-// false for a component that has nothing to do with the main address.
+// false for a component that has nothing to do with a bare name.
 func VerdictFor(in Inputs, tenant *gentianov1alpha1.Tenant, install string) (verdict Verdict, applies bool) {
-	holder := Holder(in)
+	holder := HolderOf(in, tenant)
+	host := in.BareName(tenant)
 	for i := range tenant.Spec.Exposures {
 		e := &tenant.Spec.Exposures[i]
 		if e.Install != install {
@@ -282,21 +351,22 @@ func VerdictFor(in Inputs, tenant *gentianov1alpha1.Tenant, install string) (ver
 			verdict, applies = Verdict{Reason: reason, Message: message}, true
 			continue
 		}
-		if holder != nil && holder.Tenant == tenant.Name && holder.Install == install && holder.Exposure == e.ExposureName {
+		if holder != nil && holder.Install == install && holder.Exposure == e.ExposureName {
 			return Verdict{
 				Entry:  e.ExposureName,
+				Host:   host,
 				Reason: "Published",
 				Message: fmt.Sprintf(
-					"%s/%s is published on the cluster's main address, https://%s/. The front page shows it once its proxy is up; %s on that address stay the platform's, and https://%s%s always leads to sign-in",
-					install, e.ExposureName, in.KernelDomain, strings.Join(ReservedPrefixes, ", "),
-					in.KernelDomain, SignInPrefix),
+					"%s/%s is published on %s, https://%s/. It shows there once its proxy is up; %s on that address stay the platform's, and https://%s%s always leads to sign-in",
+					install, e.ExposureName, in.whereLabel(host), host, strings.Join(ReservedPrefixes, ", "),
+					host, SignInPrefix),
 			}, true
 		}
 		verdict, applies = Verdict{
 			Reason: "HeldByAnother",
 			Message: fmt.Sprintf(
-				"the cluster's main address is already held by %s, and one surface holds it at a time. Withdraw that one first. Nothing is published",
-				holder),
+				"%s is already held by %s, and one surface holds it at a time. Withdraw that one first. Nothing is published",
+				in.whereLabel(host), holder),
 		}, true
 	}
 	return verdict, applies
