@@ -1252,6 +1252,20 @@ type PasswordPolicy struct {
 	MaxAgeDays int32 `json:"maxAgeDays,omitempty"`
 }
 
+// DefaultSessionMaxHours is how long a sign-in lasts when the tenant states
+// nothing: the twelve hours crossplane/compositions/tenant-default.yaml
+// writes into a tenant's realm, and the kernel realm's, which the installer
+// sets (scripts/lib/portal-login-bootstrap.sh).
+const DefaultSessionMaxHours int32 = 12
+
+// SessionMaxHours is how long this tenant's sign-ins last at most.
+func (t *Tenant) SessionMaxHours() int32 {
+	if t.Spec.Security != nil && t.Spec.Security.Session != nil && t.Spec.Security.Session.MaxHours > 0 {
+		return t.Spec.Security.Session.MaxHours
+	}
+	return DefaultSessionMaxHours
+}
+
 // SessionPolicy is how long a sign-in lasts.
 type SessionPolicy struct {
 	// IdleMinutes ends a session that has done nothing for this long.

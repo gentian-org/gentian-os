@@ -538,12 +538,18 @@ func (r *ComponentReconciler) ensureSignInACSRateLimit(ctx context.Context, comp
 	if limit == nil {
 		return r.deleteSignInACSRateLimit(ctx, route.Namespace, route.Name)
 	}
-	spec := map[string]interface{}{
+	// The route's own policy replaces the Gateway's, so it carries the
+	// stream limit too.
+	streamDuration, err := sessionStreamDuration(ctx, r.Client)
+	if err != nil {
+		return err
+	}
+	spec := withMaxStreamDuration(map[string]interface{}{
 		"targetRefs": []interface{}{map[string]interface{}{
 			"group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "name": route.Name,
 		}},
 		"rateLimit": limit,
-	}
+	}, streamDuration)
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(backendTrafficPolicyGVK)
 	desired.SetName(route.Name)

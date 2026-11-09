@@ -113,6 +113,10 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	effectiveDomains, tenantNames := zonedTenantDomains(tenantList.Items, r.KernelDomain, r.TenancyMode)
+	streamDuration, err := sessionStreamDuration(ctx, r.Client)
+	if err != nil {
+		return err
+	}
 	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, r.Client, tenantList.Items)
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
@@ -186,7 +190,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 		if spec.policy != nil {
-			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec); err != nil {
+			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec, streamDuration); err != nil {
 				return fmt.Errorf("ensure kernel BackendTrafficPolicy %s: %w", spec.name, err)
 			}
 		}
@@ -1083,11 +1087,13 @@ func attachKernelClientTrafficPolicyTarget(spec map[string]interface{}, sectionN
 	}
 }
 
-func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicy(ctx context.Context, spec kernelHTTPRouteSpec) error {
+// ensureKernelBackendTrafficPolicy is a kernel route's own policy. It
+// replaces the Gateway's, so it carries the stream limit too.
+func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicy(ctx context.Context, spec kernelHTTPRouteSpec, streamDuration string) error {
 	if spec.policy == nil {
 		return nil
 	}
-	policySpec := cloneMap(spec.policy)
+	policySpec := withMaxStreamDuration(spec.policy, streamDuration)
 	attachBackendTrafficPolicyTarget(policySpec, spec.name)
 	return r.ensureKernelBackendTrafficPolicyNamed(ctx, fmt.Sprintf("btp-%s", spec.name), policySpec)
 }

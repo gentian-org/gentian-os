@@ -224,8 +224,8 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 
 	// The authenticated Gateway's default, which every route on it inherits.
 	create("the authenticated Gateway's backend policy", backendTrafficPolicyGVK,
-		authenticatedGatewayBackendTrafficPolicySpec())
-	keycloak := keycloakProxyBackendTrafficPolicySpec()
+		authenticatedGatewayBackendTrafficPolicySpec("8760h"))
+	keycloak := withMaxStreamDuration(keycloakProxyBackendTrafficPolicySpec(), "12h")
 	attachBackendTrafficPolicyTarget(keycloak, kernelRouteKeycloakIDP)
 	create("Keycloak's backend policy", backendTrafficPolicyGVK, keycloak)
 	// The sign-in limits, keyed each way a cluster can be reached.

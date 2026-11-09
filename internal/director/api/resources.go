@@ -246,7 +246,7 @@ func (s *Server) tenantSecurityPolicy(w http.ResponseWriter, r *http.Request, _ 
 		// these are the values crossplane/compositions/tenant-default.yaml
 		// writes, and they are here so a console can say "12 hours, unless
 		// you change it" instead of leaving a zero to be interpreted.
-		"defaults": map[string]any{"session": map[string]any{"idleMinutes": 720, "maxHours": 12}},
+		"defaults": map[string]any{"session": map[string]any{"idleMinutes": 720, "maxHours": gentianov1alpha1.DefaultSessionMaxHours}},
 	})
 }
 

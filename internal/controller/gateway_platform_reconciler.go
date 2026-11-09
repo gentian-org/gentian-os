@@ -103,7 +103,12 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "ensure edge Gateways")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
-	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, authenticatedGatewayBackendTrafficPolicySpec()); err != nil {
+	streamDuration, err := sessionStreamDuration(ctx, r.Client)
+	if err != nil {
+		logger.Error(err, "the longest session")
+		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
+	}
+	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, authenticatedGatewayBackendTrafficPolicySpec(streamDuration)); err != nil {
 		logger.Error(err, "ensure the authenticated Gateway's backend policy")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
@@ -570,9 +575,10 @@ const authenticatedGatewayPolicyName = "btp-gateway-" + AuthenticatedGatewayName
 
 // authenticatedGatewayBackendTrafficPolicySpec is the policy every route on
 // the authenticated Gateway inherits. A route with a policy of its own (the
-// identity provider's, a sign-in sidecar's) takes that one instead.
-func authenticatedGatewayBackendTrafficPolicySpec() map[string]interface{} {
-	return map[string]interface{}{
+// identity provider's, a sign-in sidecar's) takes that one instead, so each
+// of those carries streamDuration (sessionStreamDuration) as well.
+func authenticatedGatewayBackendTrafficPolicySpec(streamDuration string) map[string]interface{} {
+	return withMaxStreamDuration(map[string]interface{}{
 		"targetRefs": []interface{}{
 			map[string]interface{}{
 				"group": gatewayv1.GroupName,
@@ -583,7 +589,7 @@ func authenticatedGatewayBackendTrafficPolicySpec() map[string]interface{} {
 		"timeout": map[string]interface{}{
 			"http": map[string]interface{}{"requestTimeout": authenticatedGatewayRequestTimeout},
 		},
-	}
+	}, streamDuration)
 }
 
 func servedByKernelEdge(effectiveDomain, kernelDomain string) bool {

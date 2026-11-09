@@ -95,10 +95,59 @@ func recordStreamDurationPolicies(ctx context.Context, c client.Client, scheme *
 		return nil, err
 	}
 	sidecarSpec, _, _ := unstructured.NestedMap(sidecar.Object, "spec")
+	d, err := sessionStreamDuration(ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	return []recordedPolicy{
-		{"authenticated-gateway", authenticatedGatewayBackendTrafficPolicySpec()},
-		{"identity-provider-proxy", keycloakProxyBackendTrafficPolicySpec()},
-		{"identity-provider-realm", keycloakRealmBackendTrafficPolicySpec("")},
+		{"authenticated-gateway", authenticatedGatewayBackendTrafficPolicySpec(d)},
+		{"identity-provider-proxy", withMaxStreamDuration(keycloakProxyBackendTrafficPolicySpec(), d)},
+		{"identity-provider-realm", withMaxStreamDuration(keycloakRealmBackendTrafficPolicySpec(""), d)},
 		{"sign-in-sidecar-assertion", sidecarSpec},
 	}, nil
+}
+
+// The longest session is the bound, and a tenant's shorter one does not
+// lower it for the rest.
+func TestSessionStreamDurationIsTheLongestSession(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	for _, tc := range []struct {
+		hours []int32
+		want  string
+	}{
+		{nil, "12h"},
+		{[]int32{0}, "12h"},
+		{[]int32{1}, "12h"},
+		{[]int32{1, 48}, "48h"},
+		{[]int32{8760}, "8760h"},
+	} {
+		var objs []client.Object
+		for i, h := range tc.hours {
+			objs = append(objs, streamDurationTenant(fmt.Sprintf("t%d", i), h))
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		got, err := sessionStreamDuration(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("sessions %v: %s, want %s", tc.hours, got, tc.want)
+		}
+	}
+}
+
+// Setting the limit keeps the policy's other timeouts and leaves the policy
+// it was given as it was.
+func TestWithMaxStreamDurationKeepsTheRest(t *testing.T) {
+	in := map[string]interface{}{"timeout": map[string]interface{}{"http": map[string]interface{}{"requestTimeout": "360s"}}}
+	out := withMaxStreamDuration(in, "12h")
+	got, _ := json.Marshal(out)
+	if string(got) != `{"timeout":{"http":{"maxStreamDuration":"12h","requestTimeout":"360s"}}}` {
+		t.Fatalf("out = %s", got)
+	}
+	was, _ := json.Marshal(in)
+	if string(was) != `{"timeout":{"http":{"requestTimeout":"360s"}}}` {
+		t.Fatalf("in changed: %s", was)
+	}
 }
