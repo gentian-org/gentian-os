@@ -176,8 +176,8 @@ func TestEveryRouteBehindASessionIsLimited(t *testing.T) {
 					t.Errorf("%s: rule %d counts only some requests (%s); behind a session every request counts", name, i, narrowing)
 				}
 			}
-			if l := rules[i]["limit"].(map[string]interface{}); l["requests"] != int64(6000) || l["unit"] != "Minute" {
-				t.Errorf("%s: rule %d allows %v, want 6000 a minute", name, i, l)
+			if l := rules[i]["limit"].(map[string]interface{}); l["requests"] != int64(30000) || l["unit"] != "Minute" {
+				t.Errorf("%s: rule %d allows %v, want 30000 a minute", name, i, l)
 			}
 		}
 	}
@@ -209,7 +209,7 @@ func TestEveryRouteBehindASessionIsLimited(t *testing.T) {
 		t.Errorf("the session allowance changed the sign-in limit: %v", l)
 	}
 	t.Setenv("EDGE_SESSION_REQUESTS_PER_MINUTE", "plenty")
-	if l := rateLimitRules(t, edgeSessionRateLimit(""))[0]["limit"].(map[string]interface{}); l["requests"] != int64(6000) {
+	if l := rateLimitRules(t, edgeSessionRateLimit(""))[0]["limit"].(map[string]interface{}); l["requests"] != int64(30000) {
 		t.Errorf("an unusable value replaced the default: %v", l)
 	}
 	t.Setenv("EDGE_SESSION_REQUESTS_PER_MINUTE", "0")

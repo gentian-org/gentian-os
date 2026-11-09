@@ -100,15 +100,24 @@ func TestTheEdgeRunsTheSessionFilterBeforeTheBouncer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(order) != 1 {
-			t.Fatalf("filterOrder = %v, want the one move", order)
+		// The rate limit first, then the session, then the bouncer: the moves
+		// apply in turn, so the limit is moved before the bouncer and the
+		// session in between.
+		want := [][2]string{
+			{"envoy.filters.http.local_ratelimit", "envoy.filters.http.ext_authz"},
+			{"envoy.filters.http.oauth2", "envoy.filters.http.ext_authz"},
 		}
-		move := order[0].(map[string]interface{})
-		if move["name"] != "envoy.filters.http.oauth2" || move["before"] != "envoy.filters.http.ext_authz" {
-			t.Fatalf("filterOrder = %v: the OAuth2 filter must be moved before ext_authz", move)
+		if len(order) != len(want) {
+			t.Fatalf("filterOrder = %v, want %v", order, want)
 		}
-		if _, both := move["after"]; both {
-			t.Fatalf("filterOrder = %v", move)
+		for i, w := range want {
+			move := order[i].(map[string]interface{})
+			if move["name"] != w[0] || move["before"] != w[1] {
+				t.Fatalf("filterOrder[%d] = %v, want %s before %s", i, move, w[0], w[1])
+			}
+			if _, both := move["after"]; both {
+				t.Fatalf("filterOrder[%d] = %v", i, move)
+			}
 		}
 		// Both Gateways are one fleet, so one EnvoyProxy orders both.
 		if merged, _, _ := unstructured.NestedBool(proxy.Object, "spec", "mergeGateways"); !merged {

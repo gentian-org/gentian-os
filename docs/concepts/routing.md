@@ -460,7 +460,9 @@ bouncer, which asks OpenFGA whether this person may reach this host.
 Envoy Gateway's own order runs `ext_authz` before the OAuth2 filter. This
 platform reverses it, with `filterOrder` on the edge `EnvoyProxy`
 (`kernel/manifests/gateway/chart`), and installer step A-05 does not report
-the edge installed without it. The reason is that the bouncer must judge a
+the edge installed without it. The same `filterOrder` puts the per-address
+rate limit ahead of both, so a client is counted before sign-in or the
+bouncer does any work for it. The reason is that the bouncer must judge a
 request by a token somebody has validated, and in Envoy Gateway's order there
 is none yet: the session is cookies, the OAuth2 filter encrypts them, and a
 bouncer that ran first could only wave through what it could not read.

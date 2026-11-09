@@ -55,8 +55,10 @@ const defaultEdgeSignInPostsPerMinute = 60
 
 // defaultEdgeSessionRequestsPerMinute is how many requests one client
 // address may make a minute to one route behind a session, at each Envoy
-// pod: a hundred a second on average, and the whole minute's worth at once.
-const defaultEdgeSessionRequestsPerMinute = 6000
+// pod: five hundred a second on average, and the whole minute's worth at
+// once. It sits above what one person's clients make, so it holds back a
+// single runaway client and nobody else.
+const defaultEdgeSessionRequestsPerMinute = 30000
 
 // edgeSignInPostsPerMinute is the sign-in limit in force. The cluster's
 // administrator may set it through the operator's environment
