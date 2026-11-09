@@ -933,6 +933,14 @@ kubectl gentian settings set "certificates.dnsRecords=docs.gentian.org CNAME gen
 kubectl gentian settings set logForwarding.destination.endpoint=https://evidence.example.org/ingest   # empty removes the forwarder
 ```
 
+Whether each domain the cluster serves has the DNS records it needs, as the
+operator last found them ([routing.md §3a](../concepts/routing.md)):
+
+```bash
+kubectl gentian domains              # every record: present, pending, missing, or held by another record
+kubectl gentian domains --problems   # only what is not present
+```
+
 The director holds the list of what may be set and refuses anything else, and
 refuses `tenancyMode=single` on a cluster carrying more than the one user
 tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the

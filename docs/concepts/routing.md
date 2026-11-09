@@ -361,6 +361,19 @@ routes, and `crd` (`DNSEndpoint`) for records with no HTTP object behind them,
 which is how mail publishes and how the claim's `certificates.dnsRecords`
 reach a zone. There is no per-provider DNS code in the operator.
 
+**Whether the records are there.** external-dns creates a record only at a
+name where it owns every record, and says nothing at its default log level
+when it does not: a mail-forwarding MX left at a tenant's bare name keeps the
+cluster's MX, SPF and address off that name. So the operator asks each zone's
+authoritative servers every five minutes for every record a `DNSEndpoint`
+asks for, and for the address of every bare name and `www` host it routes.
+It writes the answer per served domain to the ConfigMap `gentian-dns-status`
+in its namespace: each record is `present`, `pending` (within ten minutes of
+being asked for), `missing`, or `heldByOther`, with what is served instead.
+The director passes it on (`GET /v1/clusters/{c}/domains`, `can_audit`) to
+the Operations Console and to `kubectl gentian domains`. A record held by
+another is never overwritten: whoever owns the zone removes it.
+
 What a tunnel actually lacks is not a writer but a **target**. external-dns
 publishes what a Gateway resolves to, and a tunneled Gateway has no address:
 traffic arrives through `cloudflared`, not a LoadBalancer. So the ingress

@@ -331,6 +331,12 @@ func main() {
 	if os.Getenv("DNS_PUBLICATION_VERIFY") != "false" {
 		if err := mgr.Add(&controller.DNSPublicationVerifier{
 			Client: mgr.GetClient(),
+			// The status by domain (gentian-dns-status), which the director
+			// reads for the Operations Console and kubectl gentian domains.
+			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			TenancyMode:  tenancyMode,
+			KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+			Namespace:    envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 			// The core-API recorder, deliberately. Its replacement writes
 			// events.k8s.io/v1 Events, which the operator's RBAC does not grant;
 			// the existing rule covers core Events. controller-runtime marks its

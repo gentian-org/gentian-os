@@ -518,6 +518,9 @@ func (s *Server) routes() {
 		// one write, which the auto-upgrade mover shares.
 		s.guarded("GET /v1/clusters/{c}/release", "can_audit", s.clusterObject, s.clusterRelease)
 		s.action("POST /v1/clusters/{c}/actions/set-release", "can_configure", s.clusterObject, s.setRelease)
+		// Each served domain's DNS records and whether the internet has them
+		// (domains.go), as the operator's DNS check last found them.
+		s.guarded("GET /v1/clusters/{c}/domains", "can_audit", s.clusterObject, s.clusterDomains)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/apps/{p}/update-mode", "can_configure", s.clusterObject, s.setAppUpdateMode)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
 		// The brand every page shows: read like a setting, written like one.
