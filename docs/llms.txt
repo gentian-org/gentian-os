@@ -6,7 +6,7 @@
 
 ## Overview
 
-- [Gentian OS — Platform Architecture](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/architecture.md): Gentian OS is a cloud-native operating system for open-source business applications.
+- [Gentian OS — Platform Architecture](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/architecture.md): Gentian OS is a cloud operating system for open-source business applications: a kernel and a user land.
 - [FAQ](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/faq.md): A Kubernetes cluster, version 1.33 or newer: your own servers or any provider.
 - [Gentian OS in plain terms](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/introduction.md): For readers who know software and servers but not Kubernetes.
 - [Why a Cloud OS](https://github.com/gentian-org/gentian-os/blob/develop/docs/overview/why-a-cloud-os.md): Open-source business software is excellent — Nextcloud, OpenProject, Element/Matrix, OX App Suite, XWiki, Jitsi each rival or surpass their proprietary competitors in their own domain.
@@ -44,7 +44,7 @@
 - [The life of a tenant's and an app's data](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/data-lifecycle.md): The platform keeps one list of the kinds of things an app and a tenant own.
 - [The tenant's data is the tenant's](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/data-ownership.md): Gentian OS is open source, and what that gives a tenant is this: at any moment a tenant can take all of their data with them, and at any moment they can have all of it destroyed, without asking the…
 - [Identity and Access Management (IAM)](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/iam.md): This document describes identity, roles, and access control in Gentian OS.
-- [The Kernel and the Default Install](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/kernel.md): A traditional OS kernel mediates between hardware and applications by providing a small, stable set of services every app needs.
+- [The Kernel and the Default Install](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/kernel.md): Gentian OS is a cloud operating system: a kernel and a user land.
 - [LLM Serving Integration Design](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/llms.md): This document details the architecture for integrating Large Language Model (LLM) serving capabilities into Gentian OS.
 - [Mail Kernel Extension](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/mail.md): Three layers are easy to conflate:
 - [Multi-Tenancy, Domains and Security](https://github.com/gentian-org/gentian-os/blob/develop/docs/concepts/multi-tenancy.md): A tenant is an organization.

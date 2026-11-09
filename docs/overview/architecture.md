@@ -12,8 +12,10 @@ type: overview
 
 ## 1. What Gentian OS Is
 
-Gentian OS is a **cloud-native operating system** for open-source
-business applications. It runs on Kubernetes and exposes the same
+Gentian OS is a **cloud operating system** for open-source business
+applications: a kernel and a user land. It is installed onto a running
+Kubernetes cluster; from then on the cluster is part of the operating
+system ([kernel.md §1](../concepts/kernel.md)). It exposes the same
 "install / uninstall / use" experience to organizations that a desktop
 OS exposes to a single user — except the "user" is a tenant
 (organization) and the "apps" are full multi-user products like
@@ -34,23 +36,12 @@ and why a kernel-style abstraction is the right answer — see
 
 ## 2. The OS Analogy
 
-Gentian OS is structured like a traditional operating system, with
-direct analogues for every layer:
-
-| Traditional OS | Gentian OS |
-|---|---|
-| Syscall API (`open`, `socket`, `fork`) | **CRDs**: `Tenant`, `ComponentProfile`, `Component`, `IntegrationBinding` |
-| `libc` — friendly call → raw syscalls | **Crossplane Compositions** |
-| Syscall dispatcher / VFS | **Crossplane Composition engine** |
-| Loadable kernel modules / device drivers | **Crossplane providers** (`provider-helm`, `provider-vault`, `provider-kubernetes`, `provider-keycloak`) |
-| Hardware (disks, NICs) | **External operators & APIs** (Keycloak, CloudNativePG, SeaweedFS, OpenBao, cloud APIs) |
-| File descriptor / process handle | **Managed Resource (MR) status** |
-| Kernel scheduler / writeback | **Crossplane reconcile loop** |
-| `init` / `systemd` | **Argo CD** |
-| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** (Keycloak, OpenFGA, OpenBao, PostgreSQL, SeaweedFS, Envoy Gateway, the desktop, …) |
-
-The reasoning behind each mapping is in
-[kernel.md](../concepts/kernel.md).
+Gentian OS is structured like a traditional operating system, with a
+counterpart for every layer: the Kubernetes scheduler and namespaces where
+an OS has a process scheduler and isolation, CRDs where it has a syscall
+API, Crossplane Compositions for `libc`, Argo CD for `init`, Keycloak and
+OpenFGA for `/etc/passwd` and PAM. The one table that holds the mapping, and
+the reasoning behind each row, is [kernel.md §2](../concepts/kernel.md).
 
 ---
 
@@ -347,9 +338,11 @@ fields, tiers and contracts are in
 
 ## 5. The Kernel and the Default Install
 
-Like a desktop OS, Gentian OS ships with a default install — components
-that must exist before any tenant app can run. Namespaces are named by tier
-and function; the list is `kernel/namespaces.yaml`.
+Like a desktop OS, Gentian OS ships with a default install: the kernel, the
+system engines that run on every cluster, and the user-interface components
+below. The kernel and those engines must exist before any tenant app can run.
+Namespaces are named by tier and function; the list is
+`kernel/namespaces.yaml`.
 
 | Function | Component | Namespace |
 |---|---|---|
@@ -373,14 +366,17 @@ Kernel namespaces are created by the installer; system namespaces are
 composed from the Cluster claim; each tenant gets `tenant-<t>` and
 `tenant-<t>-dmz`.
 
-**The user interfaces are components, not kernel services.** The desktop
-(`desktop.<tenant domain>`), the administration console (`admin.`), the App
-Store app (`store.`) and the sign-in page (the concierge) are built in
-[gentian-ui](https://github.com/gentian-org/gentian-ui), described by
-`ComponentProfile`s this repository's chart ships, and installed into tenant
-namespaces by the operator like any other component. The platform is itself
-a tenant: its desktop answers at `platform.<kernel domain>` and shows platform
-administrators the kernel's consoles.
+**The user interfaces are components, not kernel services, and part of the
+default install.** The desktop (`desktop.<tenant domain>`) and the
+administration console (`admin.`) are installed into every tenant, the
+sign-in page (the concierge) into the platform tenant, and the App Store app
+(`store.`) where a store is offered. All four are built in
+[gentian-ui](https://github.com/gentian-org/gentian-ui). The first three are
+described by `ComponentProfile`s this repository's chart ships, the App Store
+app by the store's catalog; the operator installs each into a tenant
+namespace like any other component, and none holds a kernel credential. The platform is itself a tenant: its desktop answers at
+`platform.<kernel domain>` and shows platform administrators the kernel's
+consoles.
 
 **Catalog apps** (Nextcloud, Element, …) are installed per tenant from a
 catalog (§3.1). See [kernel.md](../concepts/kernel.md) for the kernel

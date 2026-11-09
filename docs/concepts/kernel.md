@@ -11,6 +11,14 @@ type: concept
 
 ## 1. Kernel Functions
 
+Gentian OS is a cloud operating system: a kernel and a user land. The kernel
+is built from Kubernetes primitives — scheduling, isolation, networking,
+quotas — and from the kernel services: control, identity and authorization,
+secrets, data, edge, admission, provisioning and GitOps, one `kernel-*`
+namespace each (§6). Gentian OS is installed onto a running Kubernetes
+cluster; from then on the cluster is part of the operating system. The user
+of the OS is a tenant; apps are what it installs.
+
 A traditional OS kernel mediates between hardware and applications by
 providing a small, stable set of services every app needs. The Gentian
 OS kernel does the same for cloud-native applications.
@@ -38,15 +46,21 @@ Each layer of a traditional OS has a direct counterpart in Gentian OS:
 
 | Traditional OS | Gentian OS |
 |---|---|
+| Hardware | **Nodes, their disks, the load balancer, cloud APIs** — what the cluster runs on |
+| Process scheduler | **The Kubernetes scheduler** |
+| Process isolation — cgroups, ulimits | **Namespaces, ResourceQuotas, LimitRanges** |
+| Network stack | **CNI, NetworkPolicies, the Gateway API edge** |
+| Device drivers | **Operators and Crossplane providers** — CloudNativePG, Envoy Gateway, External Secrets, cert-manager, `provider-helm`, `provider-keycloak`, … |
 | Syscall API (`open`, `socket`, `fork`) — stable, declarative | **CRDs**: `Tenant`, `ComponentProfile`, `Component`, `IntegrationBinding` |
 | `libc` — friendly call → raw syscalls | **Crossplane Compositions** — claim → managed resources |
 | Syscall dispatcher / VFS | **Crossplane Composition engine** |
-| Loadable kernel modules / drivers | **Crossplane providers** |
-| Hardware behind the drivers | **External operators & APIs** |
 | File descriptor / process handle | **Managed Resource (MR) status** |
-| Scheduler / writeback thread | **Crossplane reconcile loop** |
+| Writeback thread | **Crossplane reconcile loop** |
 | `init` / `systemd` | **Argo CD** |
-| Default mounts (`C:`, `/`, `~/`) | **Default-install kernel components** |
+| `/etc/passwd` + PAM | **Keycloak + OpenFGA** |
+| Keychain | **OpenBao** |
+| Page cache | **Valkey / Memcached** |
+| Default mounts (`C:`, `/`, `~/`) | **The default install** (§3) |
 
 Two consequences worth calling out:
 
@@ -67,9 +81,12 @@ A desktop OS ships with default mounts: `C:`, `/`, `~/`. These are not
 "apps" — they are the filesystem the OS exposes so every other app has
 somewhere to read/write data through a standard API.
 
-Gentian OS ships a **kernel** that must be Ready before any tenant app
-can run. Kernel components provide **platform primitives**; catalog
-apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
+The **default install** is what a cluster has before any catalog app is
+installed: the kernel, the system engines that run on every cluster
+(PostgreSQL and the object store, §7), and the user-interface components
+the operator installs into each tenant. The kernel must be Ready before any
+tenant app can run. Kernel components provide **platform primitives**;
+catalog apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 `ComponentProfile`, rendered by the operator
 ([app-catalog.md](app-catalog.md)).
 
@@ -80,8 +97,19 @@ apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Valkey / Memcached** | Page cache, `tmpfs` | `cache` requirement |
 | Edge routing | **Gateway API** (Envoy Gateway) | Network stack + firewall | TLS termination, HTTPRoute, tenant wildcards |
-| Window manager | The **desktop** and the **administration console**, components installed for every tenant, ([gentian-ui](https://github.com/gentian-org/gentian-ui)), and the **App Store app** where a store is offered (from the store's catalog, implementing [store-contract.md](store-contract.md)) | Desktop shell, Start menu, Settings | Tiles (`spec.expose[].tile`) |
 | Secret store | **OpenBao** | Keychain | Underlying store for ESO-backed Secrets |
+
+**The user interfaces are in the default install and are not kernel
+services.** The **desktop** and the **administration console** are installed
+into every tenant, the **sign-in page** (the concierge) into the platform
+tenant, and the **App Store app** into a tenant where a store is offered
+(from the store's catalog, implementing [store-contract.md](store-contract.md)).
+They are built in [gentian-ui](https://github.com/gentian-org/gentian-ui),
+described by `ComponentProfile`s this repository's chart ships, and installed
+by the operator like any other component: they run in a tenant namespace,
+under its quota and policies, and hold no kernel credential. They are the
+window manager of the analogy — desktop shell, Start menu, Settings — and
+what they show are tiles (`spec.expose[].tile`).
 
 **Not kernel** — installed from a catalog; what a tenant has installed
 is listed in `Tenant.spec.apps`:
@@ -93,10 +121,10 @@ is listed in `Tenant.spec.apps`:
 | Office editing | **Collabora** (catalog app) | embed |
 | Self-hosted mail UI | mail app profiles in `gentian-apps` | SMTP/IMAP kernel requirements |
 
-In Crossplane terms: the default install is the set of `Cluster`-XR
-managed resources that must be Ready before any `Tenant` claim can
-reach Ready. They are the **kernel devices** the syscall layer assumes
-are present — formatted, mounted, addressable — at boot.
+In Crossplane terms: the kernel and the always-on engines are the set of
+`Cluster`-XR managed resources that must be Ready before any `Tenant`
+claim can reach Ready. They are the **kernel devices** the syscall layer
+assumes are present — formatted, mounted, addressable — at boot.
 
 A tenant can swap implementations (e.g. external S3 instead of
 SeaweedFS) without breaking apps that program against the contract,
