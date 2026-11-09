@@ -306,8 +306,8 @@ func (r *TenantReconciler) derivedKey(ctx context.Context, tenant *gentianov1alp
 		value, err := r.Seeder.SeedDerivedKey(ctx, tenant.Name, app, key)
 		switch {
 		case stderrors.Is(err, secrets.ErrNoMasterPassword):
-			return "", fmt.Sprintf("the key %s is derived from the master password, which the operator could not read when it started; "+
-				"it is made once the operator has been restarted with the master password readable", key), nil
+			return "", fmt.Sprintf("the key %s is derived from the master password, which the operator cannot read yet (%v); "+
+				"it is made on a later pass, once the master password and its salt can be read", key, err), nil
 		case err != nil:
 			return "", fmt.Sprintf("the vault did not keep the key %s: %v", key, err), nil
 		}
