@@ -977,8 +977,32 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	if err != nil {
 		return err
 	}
+	// The cluster's domain, delivered to and sent from by its mail tenant's
+	// people as well (mainAddress.mailTenant).
+	mailTenant := clusterConfigValueOr(ctx, r.Client, clusterConfigMailTenantKey, "")
+	mailTarget := kernelDomainMailTarget(registry.Data, mailTenant, r.KernelDomain)
+	if mailTenant != "" && mailTarget == "" {
+		log.FromContext(ctx).Error(nil, "mainAddress.mailTenant names a tenant whose mail domain cannot take the cluster's: it has none here, or it is the cluster's already. Nothing is delivered to it",
+			"tenant", mailTenant)
+	}
+	if mailTarget != "" && emitted[r.KernelDomain] {
+		// The kernel realm's people keep their mailboxes. Without the list
+		// the alias would deliver their mail to the tenant, so a failed
+		// lookup leaves the maps as they are until the next sync.
+		people, err := r.keycloakRealmAddresses(ctx, r.KernelRealm)
+		if err != nil {
+			return fmt.Errorf("list the kernel realm's addresses before delivering %s to %s: %w", r.KernelDomain, mailTenant, err)
+		}
+		taken := map[string]bool{}
+		for _, line := range strings.Split(aliasFile.String(), "\n") {
+			if f := strings.Fields(line); len(f) > 0 {
+				taken[strings.ToLower(f[0])] = true
+			}
+		}
+		aliasFile.WriteString(kernelDomainDelivery(r.KernelDomain, mailTarget, people, taken))
+	}
 	desired := map[string]string{
-		postfixSenderLoginKey:           renderSenderLoginMap(senderOwners(registry.Data, r.KernelDomain, kernelRealmLogin)),
+		postfixSenderLoginKey:           renderSenderLoginMap(senderOwners(registry.Data, r.KernelDomain, kernelRealmLogin, mailTarget)),
 		postfixVirtualMailboxDomainsKey: recipientAccess,
 		postfixVirtualMailboxMapsKey:    desiredMaps,
 		postfixSenderAccessKey:          desiredDomains,

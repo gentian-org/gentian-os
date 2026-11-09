@@ -47,8 +47,11 @@ import (
 //     noreply@<kernelDomain>, as does the kernel realm with the identity the
 //     installer gave it, so that one address has those owners as well.
 //
-// Further owners join the same list: an address of another domain granted to a
-// tenant's people is one more entry, not another mechanism.
+// The cluster's mail tenant (mainAddress.mailTenant) is one more owner of the
+// cluster's domain: its people send as <local>@<kernelDomain> as well as from
+// their own address (christian@team.example.org as christian@example.org).
+// A per-person address later is one more entry of the same list, not another
+// mechanism.
 const postfixSenderLoginKey = "sender_login"
 
 // mailAddressOwner is one entry of the table: an address, or "@domain" for every
@@ -65,7 +68,7 @@ func smtpAppLogin(tenant string) string { return "smtp-" + tenant }
 // senderOwners derives the table from the mail registry (registry key to mail
 // domain; the kernel's own entry is kernelMailRegistryKey) and the login the
 // kernel realm submits with, which may be empty.
-func senderOwners(registry map[string]string, kernelDomain, kernelRealmLogin string) []mailAddressOwner {
+func senderOwners(registry map[string]string, kernelDomain, kernelRealmLogin, mailTarget string) []mailAddressOwner {
 	domains := map[string][]string{}
 	noreplyOwners := []string{}
 	add := func(list []string, v string) []string {
@@ -96,6 +99,9 @@ func senderOwners(registry map[string]string, kernelDomain, kernelRealmLogin str
 	var exact []mailAddressOwner
 	if kernelDomain != "" {
 		domains[kernelDomain] = add(domains[kernelDomain], "$1@"+kernelDomain)
+		if mailTarget != "" {
+			domains[kernelDomain] = add(domains[kernelDomain], "$1@"+mailTarget)
+		}
 		owners := []string{mailSubmissionLocalPart + "@" + kernelDomain}
 		if kernelRealmLogin != "" {
 			owners = add(owners, strings.ToLower(kernelRealmLogin))
@@ -146,4 +152,46 @@ func (r *TenantReconciler) kernelRealmSubmissionLogin(ctx context.Context) (stri
 		return "", client.IgnoreNotFound(err)
 	}
 	return strings.TrimSpace(string(sec.Data["smtp_user"])), nil
+}
+
+// kernelDomainMailTarget is the mail domain of the tenant the cluster names
+// for its own domain's mail, or "" where it names none or one that cannot
+// take it: a tenant that has no mail domain here, or whose mail domain is
+// the cluster's already (the user tenant of a single-tenancy cluster, and
+// the kernel realm's people, who are addressed at the cluster's domain).
+func kernelDomainMailTarget(registry map[string]string, tenant, kernelDomain string) string {
+	if tenant == "" || tenant == kernelMailRegistryKey {
+		return ""
+	}
+	d := strings.ToLower(strings.TrimSpace(registry[tenant]))
+	if d == "" || d == strings.ToLower(kernelDomain) {
+		return ""
+	}
+	return d
+}
+
+// kernelDomainDelivery are the virtual_alias lines that deliver the cluster's
+// domain to its mail tenant's mailboxes: every address of the domain to the
+// same local part at the tenant's domain, after the addresses that keep
+// their own mailbox.
+//
+// A domain-wide alias rewrites every address of the domain, so whoever is
+// addressed at the cluster's domain already -- the kernel realm's people --
+// is mapped to themselves first: virtual(5) looks the whole address up
+// before the domain, and an address mapped to itself is not rewritten.
+// taken are the addresses the alias file names already (the role addresses,
+// the configured forwards), which keep their own line.
+func kernelDomainDelivery(kernelDomain, target string, kernelPeople []string, taken map[string]bool) string {
+	var b strings.Builder
+	kernelDomain = strings.ToLower(kernelDomain)
+	for _, a := range kernelPeople {
+		a = strings.ToLower(a)
+		if !strings.HasSuffix(a, "@"+kernelDomain) || taken[a] {
+			continue
+		}
+		taken[a] = true
+		fmt.Fprintf(&b, "%s %s\n", a, a)
+	}
+	fmt.Fprintf(&b, "@%s @%s\n", kernelDomain, target)
+	return b.String()
 }

@@ -704,6 +704,21 @@ spec:
                         and sign-in. Name a tenant only where the cluster's
                         operator controls that website's scripts, as on a
                         cluster of one organisation.
+                    mailTenant:
+                      type: string
+                      pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+                      description: >
+                        The one tenant whose people also have the cluster's
+                        domain as their mail domain: ada@team.example.org
+                        receives at ada@example.org in the mailbox they
+                        have, and may send from it. The addresses of the
+                        kernel realm's people and the role addresses keep
+                        their own mailboxes. Their login does not change.
+
+                        Unset: the cluster's domain receives only for the
+                        kernel realm's people and the role addresses. A tenant
+                        whose mail domain is the cluster's already (the user
+                        tenant of a single-tenancy cluster) needs nothing.
                 networkMode:
                   type: string
                   description: >

@@ -252,6 +252,20 @@ check "a pod that does not sign in is not asked: mail to a hosted domain is acce
 sleep 2
 check "Postfix logs the refusal with the login" "$(postfix_log)" 'NOQUEUE: reject: RCPT from [^ ]*\[172\.30\.0\.60\]: 553 5\.7\.1 <bob@tenant\.lab\.test>: Sender address rejected: not owned by user ada@tenant\.lab\.test'
 
+echo "(b3) the cluster's domain for the tenant's people (mainAddress.mailTenant)"
+got="$(out smtp "${EDGE_OUT}" 2525 someone@gmail.com bob@lab.test)"
+check "mail to a person at the cluster's domain is accepted" "${got}" '^accepted: someone@gmail.com -> bob@lab.test$'
+got="$(out smtp "${EDGE_OUT}" 2525 someone@gmail.com admin@lab.test)"
+check "and so is mail to the kernel realm's own address" "${got}" '^accepted: someone@gmail.com -> admin@lab.test$'
+got="$(sub ada@lab.test bob@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "the person sends from it" "${got}" '^accepted: ada@lab.test -> '
+got="$(sub bob@lab.test carol@tenant.lab.test ada@tenant.lab.test imap-secret)"
+check "and not from a colleague's address there" "${got}" "^refused: .*\\(553, '5\\.7\\.1 <bob@lab\\.test>: Sender address rejected: not owned by user ada@tenant\\.lab\\.test'"
+sleep 3
+log="$(postfix_log)"
+check "it is delivered to the mailbox the person has" "${log}" 'postfix/lmtp.*to=<bob@tenant\.lab\.test>, orig_to=<bob@lab\.test>.*status=sent'
+check "the kernel realm's address keeps its own mailbox" "${log}" 'postfix/lmtp.*to=<admin@lab\.test>.*status=sent'
+
 echo "(c) IMAPS on the proxy's port 993"
 got="$(out imaps "${EDGE_OUT}" 2993 ada@tenant.lab.test imap-secret)"
 check "an app password logs in, TLS ending at Dovecot" "${got}" '^login: OK$'

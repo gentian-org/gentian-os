@@ -33,12 +33,15 @@ doms = 'lab.test OK\ntenant.lab.test OK\n'
 # recipient first (removedRecipients); who may send is the domains alone.
 removed = 'gone@tenant.lab.test 550 5.1.1 User unknown\n'
 for k, v in {'virtual_mailbox_domains': doms + removed, 'sender_access': doms,
-             'virtual_mailbox_maps': '@lab.test lab.test/\n@tenant.lab.test tenant.lab.test/\n', 'virtual_alias': '',
+             'virtual_mailbox_maps': '@lab.test lab.test/\n@tenant.lab.test tenant.lab.test/\n',
+             # The cluster's domain for the tenant's people (mainAddress.mailTenant),
+             # with the kernel realm's own address mapped to itself first.
+             'virtual_alias': 'admin@lab.test admin@lab.test\n@lab.test @tenant.lab.test\n',
              # Who may send as which address (mail_sender_owners.go): the
              # realms own the kernel domain's noreply@, a person their own
              # address, the tenant's apps the tenant's domain.
              'sender_login': '/^noreply@lab\\.test$/ noreply@lab.test,noreply@tenant.lab.test\n'
-                             '/^([^@]+)@lab\\.test$/ ${1}@lab.test\n'
+                             '/^([^@]+)@lab\\.test$/ ${1}@lab.test,${1}@tenant.lab.test\n'
                              '/^([^@]+)@tenant\\.lab\\.test$/ ${1}@tenant.lab.test,smtp-tenant\n'}.items():
     (d/'kernel-maps'/k).write_text(v)
 (d/'tenant-keys').mkdir(exist_ok=True); (d/'dkim-keys').mkdir(exist_ok=True)

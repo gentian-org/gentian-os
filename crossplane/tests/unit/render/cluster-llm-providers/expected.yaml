@@ -375,6 +375,7 @@ spec:
         mail.egressHost: ""
         mail.serviceMode: ""
         mail.smtpHost: ""
+        mainAddress.mailTenant: ""
         mainAddress.tenant: ""
         monitoring.enabled: "false"
         network.edgeNamespace: kernel-edge

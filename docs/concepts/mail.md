@@ -471,7 +471,18 @@ no app-specific mail logic in the platform.
   | `noreply@<kernelDomain>` | every realm: each tenant realm's `noreply@<tenant domain>` and the kernel realm's own login |
 
   An address in no hosted domain has no owner, so the cluster sends only for
-  its own domains. A client that does not sign in (the pod range,
+  its own domains.
+
+  With a mail tenant named for the cluster's domain
+  (`mainAddress.mailTenant`), `<anything>@<kernelDomain>` is also owned by
+  `<the same>@<that tenant's domain>`, and Postfix delivers it there: one
+  `@<kernelDomain> @<tenant domain>` line in `virtual_alias`, after a line
+  mapping each kernel-realm address to itself, so the kernel realm's people
+  and the role addresses keep their mailboxes. A person of the tenant then
+  receives at `ada@<kernelDomain>` in the mailbox of `ada@<tenant domain>`
+  and may send from it; their login does not change. Without the kernel
+  realm's addresses the alias would take their mail, so a failed lookup in
+  Keycloak leaves the maps as they were until the next sync. A client that does not sign in (the pod range,
   `mynetworks`) is not asked, and a bounce (empty sender) passes.
 - **IMAP authentication does not use a shared or per-tenant credential at
   all.** Each user gets a credential per client application — the pattern
