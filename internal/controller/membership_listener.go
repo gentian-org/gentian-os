@@ -52,6 +52,9 @@ type MembershipListener struct {
 	Addr string
 	// Handler verifies a statement and applies it to the graph.
 	Handler http.Handler
+	// Receiver is Handler, for the sweep that applies the statements that
+	// did not arrive (MembershipSweep).
+	Receiver *membership.Receiver
 	// Log is the operator's logger, for the lines this server writes itself.
 	Log *slog.Logger
 }
@@ -101,9 +104,10 @@ func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logge
 		receiver.SetMirror(mirror)
 	}
 	return &MembershipListener{
-		Addr:    envvar.Or("GENTIAN_MEMBERSHIP_ADDR", ":8090"),
-		Handler: receiver,
-		Log:     logger,
+		Addr:     envvar.Or("GENTIAN_MEMBERSHIP_ADDR", ":8090"),
+		Handler:  receiver,
+		Receiver: receiver,
+		Log:      logger,
 	}, nil
 }
 

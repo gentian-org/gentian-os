@@ -324,3 +324,32 @@ func TestDeleteClient(t *testing.T) {
 		t.Fatal("a client that is still there was reported deleted")
 	}
 }
+
+// An account is there when Keycloak answers for its id, gone on a 404, and
+// any other answer is an error rather than a guess either way.
+func TestUserExistsTellsGoneFromUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 300})
+		case r.URL.Path == "/admin/realms/demo/users/u-here":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "u-here"})
+		case r.URL.Path == "/admin/realms/demo/users/u-gone":
+			http.NotFound(w, r)
+		default:
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := testAdminClient(srv, "admin", "pw")
+	ctx := context.Background()
+	if ok, err := c.UserExists(ctx, "demo", "u-here"); !ok || err != nil {
+		t.Fatalf("u-here: %v %v", ok, err)
+	}
+	if ok, err := c.UserExists(ctx, "demo", "u-gone"); ok || err != nil {
+		t.Fatalf("u-gone: %v %v", ok, err)
+	}
+	if _, err := c.UserExists(ctx, "other", "u-here"); err == nil {
+		t.Fatal("a 503 was taken for an answer")
+	}
+}
