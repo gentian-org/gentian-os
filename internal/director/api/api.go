@@ -229,6 +229,9 @@ type Config struct {
 	// CommissionKeys are the components that may commission partners,
 	// as the operator lists them (partners.go). Nil recognizes none.
 	CommissionKeys *CommissionKeys
+	// CallerLimit is the limit each caller is held to (rate_limit.go,
+	// CallerLimitFromEnv). The zero value is none.
+	CallerLimit CallerLimit
 }
 
 // Server is the director's API.
@@ -264,6 +267,8 @@ type Server struct {
 	// placementAbsent is what the last placement found withdrawn, by
 	// tenant and app; held under platformApps (platform_apps.go).
 	placementAbsent map[string]bool
+	// limits holds each caller to cfg.CallerLimit (rate_limit.go).
+	limits *callerLimits
 }
 
 // New returns a Server with every route registered.
@@ -274,7 +279,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), limits: newCallerLimits(cfg.CallerLimit)}
 	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
 	s.startUpdater()
@@ -366,7 +371,8 @@ func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Re
 
 // gate is the guard of this director's routes.
 func (s *Server) gate() *guard.Guard {
-	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Scoped: true, Log: s.cfg.Log, Fail: s.fail}
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Scoped: true, Log: s.cfg.Log, Fail: s.fail,
+		Limit: s.limitPerson}
 }
 
 // clusterObject accepts only this director's own cluster. Another id is not

@@ -93,6 +93,10 @@ type Guard struct {
 	// (authn.Identity.MayCall), before the store is asked. Authorize only.
 	Scoped bool
 	Log    *slog.Logger
+	// Limit, where set, is asked once the caller is known and before the
+	// store is: false answers 429, and the caller may try again a second
+	// later.
+	Limit func(*authn.Identity) bool
 	// Fail answers a refusal in the service's own shape.
 	Fail func(w http.ResponseWriter, r *http.Request, code int, msg string)
 }
@@ -185,6 +189,11 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request, route strin
 	if err != nil {
 		g.Log.WarnContext(ctx, "authentication failed", "request_id", ID(ctx), "reason", err.Error(), "route", route)
 		g.Fail(w, r, http.StatusUnauthorized, "unauthenticated")
+		return nil, "", false
+	}
+	if g.Limit != nil && !g.Limit(ident) {
+		w.Header().Set("Retry-After", "1")
+		g.Fail(w, r, http.StatusTooManyRequests, "too many requests")
 		return nil, "", false
 	}
 	return ident, user, true
