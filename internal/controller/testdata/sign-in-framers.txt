@@ -1,0 +1,21 @@
+multi:
+  'self'
+  https://platform.example.test
+  https://id.example.test
+  https://*.example.test
+  https://*.acme.ch
+  https://wiki.acme.ch
+  https://*.demo.example.test
+  https://files.demo.example.test
+  https://office.demo.example.test
+  https://wiki.demo.example.test
+  https://*.platform.example.test
+single:
+  'self'
+  https://platform.example.test
+  https://id.example.test
+  https://*.example.test
+  https://*.platform.example.test
+  https://files.example.test
+  https://office.example.test
+  https://wiki.example.test
