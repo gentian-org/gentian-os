@@ -440,6 +440,12 @@ How to read it:
 
 - Verifies the caller's token against the realm that issued it. A token must
   be issued for the audience `gentian-director`.
+- Holds each caller -- a person by their account, a component that
+  commissions partners by its key -- to 10 requests a second, with 100 at
+  once, counted in each director replica; then answers `429` with
+  `Retry-After: 1`, before it asks OpenFGA anything. The director's
+  environment may change the numbers (`DIRECTOR_REQUESTS_PER_SECOND`,
+  `DIRECTOR_REQUEST_BURST`; `0` requests a second turns the limit off).
 - Asks OpenFGA the permission each route names, on the tenant or the cluster
   the route is about, before doing anything else.
 - Makes each permitted change as one commit to the deployment repository. The

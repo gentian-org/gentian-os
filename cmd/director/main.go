@@ -306,7 +306,8 @@ func run(log *slog.Logger) error {
 		StoreURL:       storeURL,
 		Cluster:        cluster,
 		Lifecycle:      lc,
-		CommissionKeys: commissionKeys})
+		CommissionKeys: commissionKeys,
+		CallerLimit:    api.CallerLimitFromEnv()})
 	if err != nil {
 		return err
 	}
