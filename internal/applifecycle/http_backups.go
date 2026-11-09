@@ -155,6 +155,9 @@ func (h *HTTPServer) registerPlatformRoutes(mux router) {
 	// what became of it. Open to the reader because it is the cluster's own
 	// statement, shown to whoever may audit the cluster.
 	mux.Read("GET /v1/usage-statistics", h.handleUsageStatistics)
+	// The release the Cluster claim declares and what the operator made of
+	// it, for the director, which cannot read the claim itself.
+	h.registerReleaseRoutes(mux)
 }
 
 func (h *HTTPServer) handleUsageStatistics(w http.ResponseWriter, r *http.Request) {

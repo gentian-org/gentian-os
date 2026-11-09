@@ -456,6 +456,12 @@ jobs:
             echo "::error::tag ${TAG} does not name the chart's version ${version}: cut the release with the version commit (deployment.md §5.4)"
             exit 1
           fi
+          # A cluster learns about a release from the index; a tag the
+          # index does not list is a release no cluster will ever see.
+          if ! grep -qE "^  - version: ${TAG}\$" docs/releases/index.yaml; then
+            echo "::error::docs/releases/index.yaml does not list ${TAG}: the version commit writes the entry (make gen-platform-version)"
+            exit 1
+          fi
       - name: Log in to GHCR
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:

@@ -270,6 +270,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The release the Cluster claim declares (spec.release): the
+	// Applications of the gentian-os repository, the operator's image and
+	// the gentian-ui charts follow it; a branch follows build by build.
+	if err := mgr.Add(&controller.ReleaseReconciler{
+		Reader:   mgr.GetAPIReader(),
+		Client:   mgr.GetClient(),
+		IndexURL: releaseFeed(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the release reconciler to manager")
+		os.Exit(1)
+	}
+
 	// The arbiter's platform path, for the app authorization stores of a
 	// tenant's export, restore and deletion.
 	arbiterPlatform := arbiter.NewPlatformClient()
@@ -816,11 +828,11 @@ func main() {
 // recorded one. An image built from a copy of the sources without their git
 // history records none, and the report then identifies the build by the
 // digest of its definitions alone.
-// releaseFeed is where the operator reads the newest release from:
-// GENTIAN_RELEASE_FEED_URL, the GitHub releases API of gentian-os by
+// releaseFeed is where the operator reads the release index from:
+// GENTIAN_RELEASE_FEED_URL, docs/releases/index.yaml on gentian-os's main by
 // default, or nothing for "none".
 func releaseFeed() string {
-	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", "https://api.github.com/repos/gentian-org/gentian-os/releases/latest")
+	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", "https://raw.githubusercontent.com/gentian-org/gentian-os/main/docs/releases/index.yaml")
 	if feed == "none" {
 		return ""
 	}

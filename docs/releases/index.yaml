@@ -1,0 +1,45 @@
+# The platform's releases, newest last. What a cluster reads to learn that a
+# release exists and whether its mode may take it (docs/concepts/versioning.md
+# §2, docs/guides/deployment.md §5.4). The version commit of a release branch
+# writes the entry (make gen-platform-version); the tag run refuses a tag
+# without one. A release is one coherent set: the platform, the gentian-ui
+# charts built for it and the catalog it reads.
+#
+#   version       the tag
+#   line          its version line, major.minor
+#   date          the day it was cut
+#   notes         the release notes
+#   upgradesFrom  the version lines a cluster moves from in place; [] is a
+#                 release that is installed fresh and never taken automatically
+#   ui            the gentian-ui chart versions of this release (absent before
+#                 gentian-ui published charts under its tags)
+#   catalogue     the catalog a cluster on this release reads
+releases:
+  - version: v0.4.0
+    line: "0.4"
+    date: 2026-09-15
+    notes: https://github.com/gentian-org/gentian-os/releases/tag/v0.4.0
+    upgradesFrom: []
+    catalogue: https://gentian-org.github.io/gentian-apps
+  - version: v0.4.1
+    line: "0.4"
+    date: 2026-09-15
+    notes: https://github.com/gentian-org/gentian-os/releases/tag/v0.4.1
+    upgradesFrom: ["0.4"]
+    catalogue: https://gentian-org.github.io/gentian-apps
+  - version: v0.4.2
+    line: "0.4"
+    date: 2026-10-09
+    notes: https://github.com/gentian-org/gentian-os/releases/tag/v0.4.2
+    upgradesFrom: ["0.4"]
+    catalogue: https://gentian-org.github.io/gentian-apps
+  - version: v0.5.0
+    line: "0.5"
+    date: 2026-11-08
+    notes: https://github.com/gentian-org/gentian-os/releases/tag/v0.5.0
+    upgradesFrom: []
+    ui:
+      desktop: 0.1.0-v0.5.0
+      adminConsole: 0.1.1-v0.5.0
+      concierge: 0.1.0-v0.5.0
+    catalogue: https://gentian-org.github.io/gentian-apps

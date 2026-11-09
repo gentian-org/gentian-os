@@ -19,12 +19,24 @@ branch. The render fixtures carry the same URL and are rewritten with it.
     charts/gentian-os/Chart.yaml  ->  crossplane/compositions/cluster-default.yaml
                                       crossplane/tests/unit/render/*/expected.yaml
 
+On a release (a bare version) it also writes the release's entry into the
+release index, docs/releases/index.yaml, which a cluster reads to learn that
+the release exists (internal/releaseindex): the version, its line, the day,
+the notes' address, the gentian-ui charts of the release (the bases the
+bootstrap chart names, under the release's tag) and the released catalog. An
+entry that exists is left alone, so the author's edits -- above all
+upgradesFrom -- stand; a patch is in place from its own line by default, an
+X.Y.0 from nothing until the author says so.
+
+    charts/gentian-os/Chart.yaml  ->  docs/releases/index.yaml
+
 Run by `make gen-platform-version` (part of gen-all); verify-gen checks the
 output is committed.
 """
 
 from __future__ import annotations
 
+import datetime
 import pathlib
 import re
 import sys
@@ -34,6 +46,11 @@ CHART = ROOT / "charts" / "gentian-os" / "Chart.yaml"
 OUT = ROOT / "internal" / "platformversion" / "line.go"
 COMPOSITION = ROOT / "crossplane" / "compositions" / "cluster-default.yaml"
 RENDER_FIXTURES = ROOT / "crossplane" / "tests" / "unit" / "render"
+INDEX = ROOT / "docs" / "releases" / "index.yaml"
+BOOTSTRAP_OPERATOR = ROOT / "kernel" / "bootstrap" / "chart" / "templates" / "gentian-os.yaml"
+UI_COMPONENTS = ("desktop", "adminConsole", "concierge")
+REPO_URL = "https://github.com/gentian-org/gentian-os"
+RELEASED_CATALOGUE = "https://gentian-org.github.io/gentian-apps"
 CHARTS_URL = re.compile(r"https://raw\.githubusercontent\.com/gentian-org/gentian-os/[^/\s\"]+/charts/infra/packages")
 
 HEADER = """/*
@@ -75,7 +92,11 @@ def main() -> int:
     line = f"{parts.group(1)}.{parts.group(2)}"
     OUT.write_text(HEADER % (version, line, version), encoding="utf-8")
     print(f"platform version line {line} (chart {version}) -> {OUT.relative_to(ROOT)}")
-    return write_chart_ref(version)
+    if rc := write_chart_ref(version):
+        return rc
+    if "-" in version:
+        return 0
+    return write_index_entry(f"v{version.removeprefix('v')}", line, int(parts.group(3) or 0))
 
 
 def write_chart_ref(version: str) -> int:
@@ -93,6 +114,48 @@ def write_chart_ref(version: str) -> int:
         if new != text:
             fixture.write_text(new, encoding="utf-8")
     print(f"infra charts at ref {ref} -> {COMPOSITION.relative_to(ROOT)} and render fixtures")
+    return 0
+
+
+def ui_chart_bases() -> dict[str, str]:
+    """The gentian-ui chart bases the bootstrap chart names, per component.
+
+    The chart pins each UI as `<base>-<branch or tag>`; the base is the
+    literal in its template (printf "0.1.0-%s"), read here so the index and
+    the chart cannot disagree.
+    """
+    text = BOOTSTRAP_OPERATOR.read_text(encoding="utf-8")
+    bases = {}
+    for component in UI_COMPONENTS:
+        m = re.search(r'printf "(\d+\.\d+\.\d+)-%s" \(\.Values\.' + component + r"\.chartBranch", text)
+        if not m:
+            raise SystemExit(f"{BOOTSTRAP_OPERATOR}: no chart base for {component}")
+        bases[component] = m.group(1)
+    return bases
+
+
+def write_index_entry(tag: str, line: str, patch: int) -> int:
+    """Add the release's entry to the index unless it is there already."""
+    text = INDEX.read_text(encoding="utf-8")
+    if re.search(rf"^  - version: {re.escape(tag)}$", text, re.M):
+        print(f"release index already lists {tag} -> {INDEX.relative_to(ROOT)}")
+        return 0
+    if not text.endswith("\n"):
+        text += "\n"
+    upgrades_from = f'["{line}"]' if patch else "[]"
+    entry = [
+        f"  - version: {tag}",
+        f'    line: "{line}"',
+        f"    date: {datetime.date.today().isoformat()}",
+        f"    notes: {REPO_URL}/releases/tag/{tag}",
+        f"    upgradesFrom: {upgrades_from}",
+        "    ui:",
+    ]
+    for component, base in ui_chart_bases().items():
+        entry.append(f"      {component}: {base}-{tag}")
+    entry.append(f"    catalogue: {RELEASED_CATALOGUE}")
+    INDEX.write_text(text + "\n".join(entry) + "\n", encoding="utf-8")
+    print(f"release {tag} added to the release index -> {INDEX.relative_to(ROOT)}")
     return 0
 
 

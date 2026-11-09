@@ -770,7 +770,7 @@ sent, for a platform admin to read
   listener; Keycloak, with membership events; the Kubernetes API server, for
   admission.
 - Calls: the Kubernetes API, Keycloak, the vault, OpenFGA, the arbiter, the
-  platform's release feed, and the usage statistics address when reporting
+  platform's release index, and the usage statistics address when reporting
   is on.
 
 **If it is unavailable**

@@ -2622,12 +2622,50 @@ gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
 # their own -- main, develop and the checkout's branch -- so a run with
 # GENTIAN_OS_BRANCH unset could describe three different refs.
 gentian_os_ref() {
-    local ref="${GENTIAN_OS_BRANCH:-}"
+    local ref
+    # The claim first: spec.release is where a cluster's release is declared
+    # once it exists (docs/concepts/versioning.md §2), and the installer
+    # renders what the claim says. install.env names the ref of the first
+    # install, which the scaffold writes into the claim.
+    ref="$(claim_release_ref || true)"
+    [[ -n "${ref}" ]] || ref="${GENTIAN_OS_BRANCH:-}"
     if [[ -z "${ref}" ]]; then
         ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
         [[ "${ref}" != "HEAD" ]] || ref=""
     fi
     printf '%s\n' "${ref}"
+}
+
+# cluster_claim_path -- this cluster's Cluster claim in the deployments
+# checkout, whether or not it exists yet.
+cluster_claim_path() {
+    printf '%s/clusters/%s/kernel/claims/cluster.yaml\n' \
+        "${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}" \
+        "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
+}
+
+# claim_release_ref -- the ref the Cluster claim's spec.release names: its
+# version (a tag) or its track (a branch). Nothing when the claim does not
+# exist or names no release. Read with yq where there is one, else with awk
+# over the two-space indented block, which is the shape the scaffold and the
+# director write.
+claim_release_ref() {
+    local claim out
+    claim="$(cluster_claim_path)"
+    [[ -f "${claim}" ]] || return 1
+    if out="$(yq_get '.spec.release.version // .spec.release.track' "${claim}" 2>/dev/null)" && [[ -n "${out}" ]]; then
+        printf '%s\n' "${out}"
+        return 0
+    fi
+    out="$(awk '
+        /^  release:[[:space:]]*$/ { inblock = 1; next }
+        inblock && /^  [^ #]/ { inblock = 0 }
+        inblock && /^    (version|track):/ {
+            sub(/^    (version|track):[[:space:]]*/, ""); sub(/[[:space:]]*#.*$/, ""); gsub(/["'"'"']/, "")
+            if ($0 != "") { print; exit }
+        }' "${claim}")"
+    [[ -n "${out}" ]] || return 1
+    printf '%s\n' "${out}"
 }
 
 # The gentian-ui refs a cluster follows when install.env names none, each
@@ -2638,11 +2676,38 @@ gentian_os_ref() {
 GENTIAN_UI_DEFAULT_BRANCH="main"
 GENTIAN_UI_DEFAULT_CHART_BRANCH="develop"
 gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_BRANCH}}"; }
-gentian_ui_chart_branch()  { printf '%s\n' "${PORTAL_IMAGE_TAG:-${GENTIAN_UI_DEFAULT_CHART_BRANCH}}"; }
+# The UI charts follow the release: a cluster on a release tag installs the
+# charts gentian-ui published under that tag, a cluster on a branch the
+# branch's. PORTAL_IMAGE_TAG overrides, for a cluster whose UIs are
+# deliberately elsewhere.
+gentian_ui_chart_branch() {
+    if [[ -n "${PORTAL_IMAGE_TAG:-}" ]]; then
+        printf '%s\n' "${PORTAL_IMAGE_TAG}"
+        return 0
+    fi
+    local ref
+    ref="$(claim_release_ref || true)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "${ref}" ;;
+        "") printf '%s\n' "${GENTIAN_UI_DEFAULT_CHART_BRANCH}" ;;
+        *) printf '%s\n' "${ref}" ;;
+    esac
+}
 
 resolve_gentian_os_branch() {
-    local branch
-    if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
+    local branch declared
+    declared="$(claim_release_ref || true)"
+    if [[ -n "${declared}" && -n "${GENTIAN_OS_BRANCH:-}" && "${declared}" != "${GENTIAN_OS_BRANCH}" ]]; then
+        error "install.env names GENTIAN_OS_BRANCH=${GENTIAN_OS_BRANCH}, and the Cluster claim's"
+        error "  spec.release names ${declared}. The claim is where the cluster's release is"
+        error "  declared, and this run renders what it says. To move the cluster:"
+        error "    kubectl gentian release set vX.Y.Z    (or: release track <branch>)"
+        error "  then remove GENTIAN_OS_BRANCH from install.env, or set it to ${declared}."
+        return 1
+    fi
+    if [[ -n "${declared}" ]]; then
+        branch="${declared}"
+    elif [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
         branch="${GENTIAN_OS_BRANCH}"
     else
         branch="$(gentian_os_ref)"
