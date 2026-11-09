@@ -20,9 +20,13 @@ SPDX-License-Identifier: MPL-2.0
 // The rules are networking.k8s.io/v1 NetworkPolicy and nothing else, so that
 // they mean the same on every network plugin that enforces it. Per kernel
 // namespace: one policy that selects every pod, which is what denies an
-// ingress nothing lists, with one rule per group of ports that share their
-// callers. Ports are the POD's ports: a plugin matches a connection after
-// the Service's address and port have been replaced by a pod's.
+// ingress nothing lists, and carries the namespace's own traffic and the
+// ports open to anybody; and per workload whose ports name their callers,
+// one policy that selects that workload's pods, with one rule per group of
+// its ports that share their callers. A port is admitted on the pods that
+// serve it, not on every pod of the namespace. Ports are the POD's ports: a
+// plugin matches a connection after the Service's address and port have
+// been replaced by a pod's.
 package kernelnet
 
 import (
@@ -157,10 +161,11 @@ func (inv *Inventory) validate() error {
 		if ns.Egress != "open" {
 			return fmt.Errorf("%s: egress is %q; these rules restrict no egress", ns.Name, ns.Egress)
 		}
-		// A rule is by port for the whole namespace, so two workloads that
-		// share a port number share its callers. One saying closed while
-		// another admits somebody would be a line that is not true.
-		admitted := map[int32]string{}
+		// A port open to anybody is opened for the whole namespace, so a
+		// workload saying closed while another opens the same number would be
+		// a line that is not true. Ports that name their callers are admitted
+		// on their own workload's pods only.
+		opened := map[int32]string{}
 		closed := map[int32]string{}
 		for _, w := range ns.Workloads {
 			if w.InstalledBy == "" || w.ReadAt == "" || len(w.PodLabels) == 0 {
@@ -191,8 +196,8 @@ func (inv *Inventory) validate() error {
 					}
 					continue
 				}
-				if len(p.From) > 0 || p.Open != "" {
-					admitted[p.Port] = w.Name
+				if p.Open != "" {
+					opened[p.Port] = w.Name
 				}
 				if p.Closed != "" {
 					closed[p.Port] = w.Name
@@ -200,8 +205,8 @@ func (inv *Inventory) validate() error {
 			}
 		}
 		for port, w := range closed {
-			if other, ok := admitted[port]; ok {
-				return fmt.Errorf("%s: port %d is closed for %s and admitted for %s, and the rule is by port for the namespace", ns.Name, port, w, other)
+			if other, ok := opened[port]; ok {
+				return fmt.Errorf("%s: port %d is closed for %s and open for %s, and an open port is open for the namespace", ns.Name, port, w, other)
 			}
 		}
 	}
@@ -292,13 +297,53 @@ func (inv *Inventory) Policies() []*networkingv1.NetworkPolicy {
 				},
 			})
 		}
+		// The workloads' own rules also come before it, so that a port
+		// is admitted on its pods before the namespace's policy stops
+		// admitting it on every pod.
+		for _, w := range ns.Workloads {
+			if p := inv.workloadPolicy(ns, w); p != nil {
+				out = append(out, p)
+			}
+		}
 		out = append(out, inv.namespacePolicy(ns))
 	}
 	return out
 }
 
+// workloadPolicy selects one workload's pods and admits the callers each of
+// its ports names, or is nil for a workload whose ports name nobody.
+func (inv *Inventory) workloadPolicy(ns Namespace, w Workload) *networkingv1.NetworkPolicy {
+	if w.AllIngress != "" {
+		return nil
+	}
+	peersOf := map[int32]map[string]bool{}
+	for _, p := range w.Ports {
+		for _, f := range p.From {
+			if peersOf[p.Port] == nil {
+				peersOf[p.Port] = map[string]bool{}
+			}
+			peersOf[p.Port][f.Peer] = true
+		}
+	}
+	if len(peersOf) == 0 {
+		return nil
+	}
+	return &networkingv1.NetworkPolicy{
+		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: NamespacePolicyName + "-" + w.Name, Namespace: ns.Name, Labels: policyLabels(ns.Name),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: w.PodLabels},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress:     inv.rulesByPeers(peersOf),
+		},
+	}
+}
+
 // namespacePolicy selects every pod of the namespace, which denies whatever
-// no rule lists, and carries one rule per set of ports with the same callers.
+// no rule lists, and carries the namespace's own traffic and the ports open
+// to anybody.
 func (inv *Inventory) namespacePolicy(ns Namespace) *networkingv1.NetworkPolicy {
 	var rules []networkingv1.NetworkPolicyIngressRule
 	if ns.SameNamespace {
@@ -307,9 +352,7 @@ func (inv *Inventory) namespacePolicy(ns Namespace) *networkingv1.NetworkPolicy 
 		})
 	}
 
-	// Per port: open, or the set of peers admitted.
 	open := map[int32]bool{}
-	peersOf := map[int32]map[string]bool{}
 	for _, w := range ns.Workloads {
 		if w.AllIngress != "" {
 			continue
@@ -318,19 +361,11 @@ func (inv *Inventory) namespacePolicy(ns Namespace) *networkingv1.NetworkPolicy 
 			if p.Open != "" {
 				open[p.Port] = true
 			}
-			for _, f := range p.From {
-				if peersOf[p.Port] == nil {
-					peersOf[p.Port] = map[string]bool{}
-				}
-				peersOf[p.Port][f.Peer] = true
-			}
 		}
 	}
-
 	var openPorts []int32
 	for port := range open {
 		openPorts = append(openPorts, port)
-		delete(peersOf, port)
 	}
 	sort.Slice(openPorts, func(i, j int) bool { return openPorts[i] < openPorts[j] })
 	if len(openPorts) > 0 {
@@ -341,7 +376,22 @@ func (inv *Inventory) namespacePolicy(ns Namespace) *networkingv1.NetworkPolicy 
 		rules = append(rules, rule)
 	}
 
-	// Ports that share their callers share a rule.
+	return &networkingv1.NetworkPolicy{
+		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: NamespacePolicyName, Namespace: ns.Name, Labels: policyLabels(ns.Name),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress:     rules,
+		},
+	}
+}
+
+// rulesByPeers is one rule per set of ports with the same callers, in the
+// order of each set's lowest port.
+func (inv *Inventory) rulesByPeers(peersOf map[int32]map[string]bool) []networkingv1.NetworkPolicyIngressRule {
 	byPeers := map[string][]int32{}
 	for port, peers := range peersOf {
 		names := make([]string, 0, len(peers))
@@ -363,6 +413,7 @@ func (inv *Inventory) namespacePolicy(ns Namespace) *networkingv1.NetworkPolicy 
 		}
 		return keys[i] < keys[j]
 	})
+	var rules []networkingv1.NetworkPolicyIngressRule
 	for _, key := range keys {
 		rule := networkingv1.NetworkPolicyIngressRule{}
 		for _, name := range strings.Split(key, ",") {
@@ -373,18 +424,7 @@ func (inv *Inventory) namespacePolicy(ns Namespace) *networkingv1.NetworkPolicy 
 		}
 		rules = append(rules, rule)
 	}
-
-	return &networkingv1.NetworkPolicy{
-		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: NamespacePolicyName, Namespace: ns.Name, Labels: policyLabels(ns.Name),
-		},
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
-			Ingress:     rules,
-		},
-	}
+	return rules
 }
 
 // Manifest is the policies as the one file the installer applies.

@@ -555,13 +555,13 @@ namespaces:
             evidence: [charts/gentian-os/templates/networkpolicy.yaml:53]
           - port: 8080
             what: metrics
-            elsewhere: gentian-os-operator admits any source
+            elsewhere: gentian-os-operator admits the Prometheus pods of kernel-observability
           - port: 8081
             what: health
-            elsewhere: gentian-os-operator admits any source
+            elsewhere: gentian-os-operator lists it nowhere; the kubelet's probes come from the pod's own node
           - port: 8090
             what: Keycloak's event listener posts membership events here
-            elsewhere: gentian-os-operator admits any source
+            elsewhere: gentian-os-operator admits the Keycloak pods of kernel-authentication
             evidence: [kernel/appsets/raw/09-identity.yaml:63]
           - port: 9443
             what: the Tenant admission webhook

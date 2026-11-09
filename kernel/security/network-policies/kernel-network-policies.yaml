@@ -52,15 +52,10 @@ metadata:
     gentianos.io/function: secrets
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
-  name: kernel-ingress
+  name: kernel-ingress-openbao
   namespace: kernel-secrets
 spec:
   ingress:
-  - from:
-    - podSelector: {}
-  - ports:
-    - port: 10250
-      protocol: TCP
   - from:
     - namespaceSelector:
         matchLabels:
@@ -103,7 +98,57 @@ spec:
     ports:
     - port: 8200
       protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: openbao
+      app.kubernetes.io/name: openbao
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: secrets
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress
+  namespace: kernel-secrets
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
+  - ports:
+    - port: 10250
+      protocol: TCP
   podSelector: {}
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: seal
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-openbao-transit
+  namespace: kernel-seal
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-secrets
+    ports:
+    - port: 8200
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: openbao-transit
+      app.kubernetes.io/name: openbao
   policyTypes:
   - Ingress
 ---
@@ -121,13 +166,6 @@ spec:
   ingress:
   - from:
     - podSelector: {}
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: kernel-secrets
-    ports:
-    - port: 8200
-      protocol: TCP
   podSelector: {}
   policyTypes:
   - Ingress
@@ -161,12 +199,10 @@ metadata:
     gentianos.io/function: authentication
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
-  name: kernel-ingress
+  name: kernel-ingress-keycloak
   namespace: kernel-authentication
 spec:
   ingress:
-  - from:
-    - podSelector: {}
   - from:
     - namespaceSelector:
         matchLabels:
@@ -192,6 +228,26 @@ spec:
     ports:
     - port: 8080
       protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keycloakx
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: authentication
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress
+  namespace: kernel-authentication
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
   podSelector: {}
   policyTypes:
   - Ingress
@@ -204,12 +260,10 @@ metadata:
     gentianos.io/function: authorization
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
-  name: kernel-ingress
+  name: kernel-ingress-openfga
   namespace: kernel-authorization
 spec:
   ingress:
-  - from:
-    - podSelector: {}
   - from:
     - namespaceSelector:
         matchLabels:
@@ -227,7 +281,131 @@ spec:
     ports:
     - port: 8080
       protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openfga
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: authorization
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress
+  namespace: kernel-authorization
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
   podSelector: {}
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: control
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-director
+  namespace: kernel-control
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: director
+      app.kubernetes.io/name: gentian-os
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: control
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-usher
+  namespace: kernel-control
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: usher
+      app.kubernetes.io/name: gentian-os
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: control
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-custodian
+  namespace: kernel-control
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 9444
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: custodian
+      app.kubernetes.io/name: gentian-os
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: control
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-registrar
+  namespace: kernel-control
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 9445
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: registrar
+      app.kubernetes.io/name: gentian-os
   policyTypes:
   - Ingress
 ---
@@ -242,18 +420,6 @@ metadata:
   name: kernel-ingress
   namespace: kernel-control
 spec:
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          gentianos.io/tier: tenant
-    ports:
-    - port: 8080
-      protocol: TCP
-    - port: 9444
-      protocol: TCP
-    - port: 9445
-      protocol: TCP
   podSelector: {}
   policyTypes:
   - Ingress
@@ -285,13 +451,38 @@ metadata:
     gentianos.io/function: edge
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
-  name: kernel-ingress
+  name: kernel-ingress-envoy-gateway
   namespace: kernel-edge
 spec:
   ingress:
-  - ports:
-    - port: 10250
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-edge
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy
+    ports:
+    - port: 18000
       protocol: TCP
+  podSelector:
+    matchLabels:
+      control-plane: envoy-gateway
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: edge
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-bouncer
+  namespace: kernel-edge
+spec:
+  ingress:
   - from:
     - namespaceSelector:
         matchLabels:
@@ -307,11 +498,57 @@ spec:
         matchLabels:
           app.kubernetes.io/name: envoy
     ports:
-    - port: 8089
-      protocol: TCP
     - port: 9001
       protocol: TCP
-    - port: 18000
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: bouncer
+      app.kubernetes.io/name: gentian-os
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: edge
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-acme-http01-solver
+  namespace: kernel-edge
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-edge
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy
+    ports:
+    - port: 8089
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: edge
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress
+  namespace: kernel-edge
+spec:
+  ingress:
+  - ports:
+    - port: 10250
       protocol: TCP
   podSelector: {}
   policyTypes:
@@ -346,15 +583,38 @@ metadata:
     gentianos.io/function: observability
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
-  name: kernel-ingress
+  name: kernel-ingress-headlamp
   namespace: kernel-observability
 spec:
   ingress:
   - from:
-    - podSelector: {}
-  - ports:
-    - port: 10250
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-edge
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy
+    ports:
+    - port: 4466
       protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: headlamp
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: observability
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-grafana
+  namespace: kernel-observability
+spec:
+  ingress:
   - from:
     - namespaceSelector:
         matchLabels:
@@ -365,7 +625,28 @@ spec:
     ports:
     - port: 3000
       protocol: TCP
-    - port: 4466
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: observability
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress
+  namespace: kernel-observability
+spec:
+  ingress:
+  - from:
+    - podSelector: {}
+  - ports:
+    - port: 10250
       protocol: TCP
   podSelector: {}
   policyTypes:
