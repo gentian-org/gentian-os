@@ -139,6 +139,15 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		consoles, r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return fmt.Errorf("list profiles for kernel HTTPRoutes: %w", err)
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
+	withTenantWWW(specs, tenantWWW(tenantList.Items, profiles, r.KernelDomain, r.TenancyMode, r.kernelRealm(), time.Now()))
 	homes := tenantHomes(tenantList.Items)
 	withTenantHomes(specs, homes)
 	// The identity provider's public route is held to a rate of sign-in
@@ -545,12 +554,20 @@ func kernelHTTPRouteSpecs(
 			if domain == platformDesktopHost(kernelDomain) {
 				continue
 			}
-			specs = append(specs, kernelHTTPRouteSpec{
+			spec := kernelHTTPRouteSpec{
 				name:        fmt.Sprintf("tenant-%s-apex", tenantNames[i]),
 				host:        domain,
 				sectionName: wildcardListenerName,
 				rules:       []gatewayv1.HTTPRouteRule{hostRedirectRule(desktopHost(domain))},
-			})
+			}
+			// A domain of the tenant's own has a listener of its own on the
+			// perimeter, with the certificate that names its bare name; the
+			// catch-all would answer it with the cluster's.
+			if ownDomainApex(domain, kernelDomain) {
+				spec.gateway = PerimeterGatewayName
+				spec.sectionName = perimeterListenerName(domain)
+			}
+			specs = append(specs, spec)
 		}
 	}
 	specs = append(specs,
@@ -876,6 +893,50 @@ func tenantHomes(tenants []gentianov1alpha1.Tenant) map[string]string {
 		}
 	}
 	return homes
+}
+
+// tenantWWW are the tenants that publish a public site at www.<their zone>,
+// by name, with that host.
+//
+// The bare name then leads to the site rather than to the desktop: whoever
+// types acme.com is looking for Acme, not for its sign-in. It is derived from
+// what the tenant's approver already published, so it needs no setting, and
+// it ends with the publication -- an approval that has expired leads back to
+// the desktop. A home the tenant set (spec.signUp.home) is a choice and wins
+// over it (withTenantHomes runs after).
+func tenantWWW(tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile, kernelDomain, tenancyMode, kernelRealm string, now time.Time) map[string]string {
+	out := map[string]string{}
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+		www := "www." + zone.domain
+		for j := range tenant.Spec.Exposures {
+			e := &tenant.Spec.Exposures[j]
+			if e.ExpiresAt != nil && !now.Before(e.ExpiresAt.Time) {
+				continue
+			}
+			if publishedHost(e, profiles, zone, kernelDomain) == www {
+				out[tenant.Name] = www
+				break
+			}
+		}
+	}
+	return out
+}
+
+// withTenantWWW points the apex of a tenant with a site at www there instead
+// of at its desktop, path and query kept.
+func withTenantWWW(specs []kernelHTTPRouteSpec, www map[string]string) {
+	for name, host := range www {
+		for i := range specs {
+			if specs[i].name == fmt.Sprintf("tenant-%s-apex", name) {
+				specs[i].rules = []gatewayv1.HTTPRouteRule{hostRedirectRule(host)}
+			}
+		}
+	}
 }
 
 // withTenantHomes points the apex of a tenant with a home at that home
