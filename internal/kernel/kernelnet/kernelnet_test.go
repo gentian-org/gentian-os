@@ -263,6 +263,8 @@ func TestWhatIsRefused(t *testing.T) {
 	certManager := at("kernel-edge", map[string]string{"app.kubernetes.io/name": "cert-manager"})
 	argocd := at("kernel-gitops", map[string]string{"app.kubernetes.io/name": "argocd-repo-server"})
 	otherPod := at("kernel-control", map[string]string{"gentianos.io/component": "something-else"})
+	desktop := at("tenant-acme", map[string]string{"app.kubernetes.io/instance": "tenant-acme-desktop"})
+	adminConsole := at("tenant-platform", map[string]string{"app.kubernetes.io/instance": "tenant-platform-admin-console"})
 	for _, f := range []struct {
 		what string
 		src  pod
@@ -298,6 +300,14 @@ func TestWhatIsRefused(t *testing.T) {
 		{"a pod outside the layout reaches Keycloak", at("default", map[string]string{"app": "x"}), at("kernel-authentication", keycloakPod), 8080},
 		{"a pod outside the layout reaches the director", at("default", map[string]string{"app": "x"}), at("kernel-control", chart("director")), 8080},
 		{"a system namespace's pod reaches the director", at("system-s3", map[string]string{"app.kubernetes.io/name": "seaweedfs"}), at("kernel-control", chart("director")), 8080},
+		// A port is admitted on the pods of the workload that serves it,
+		// not on every pod of the namespace.
+		{"the desktop reaches the operator on the director's port", desktop, at("kernel-control", chart("operator")), 8080},
+		{"the desktop reaches the custodian on the director's port", desktop, at("kernel-control", chart("custodian")), 8080},
+		{"the administration console reaches the registrar on the custodian's port", adminConsole, at("kernel-control", chart("registrar")), 9444},
+		{"the administration console reaches the operator on the registrar's port", adminConsole, at("kernel-control", chart("operator")), 9445},
+		{"a component reaches cert-manager on the rights check's port", tenantApp, certManager, 8082},
+		{"Envoy reaches cert-manager on the bouncer's port", at("kernel-edge", envoyPod), certManager, 9001},
 	} {
 		if admitted(policies, f.src, f.dst, f.port) {
 			t.Errorf("admitted: %s (%s -> %s:%d)", f.what, f.src.namespace, f.dst.namespace, f.port)
