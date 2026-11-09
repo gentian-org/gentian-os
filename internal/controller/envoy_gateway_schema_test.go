@@ -222,9 +222,18 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 			zoneSecurityPolicySpec("k.example", zone, "files-web", authz, servicesNamespace, "gentian-os-bouncer"))
 	}
 
-	// The authenticated Gateway's default, which every route on it inherits.
-	create("the authenticated Gateway's backend policy", backendTrafficPolicyGVK,
-		authenticatedGatewayBackendTrafficPolicySpec("8760h"))
+	// The authenticated Gateway's default, which every route on it inherits,
+	// with the limit behind a session keyed each way a cluster can be reached.
+	for _, header := range []string{"", cloudflareClientAddressHeader} {
+		gateway := authenticatedGatewayBackendTrafficPolicySpec("8760h", header)
+		if gateway["rateLimit"] == nil {
+			t.Fatal("the authenticated Gateway's policy carries no rate limit")
+		}
+		create("the authenticated Gateway's backend policy ("+header+")", backendTrafficPolicyGVK, gateway)
+		admin := keycloakAdminBackendTrafficPolicySpec(header)
+		attachBackendTrafficPolicyTarget(admin, kernelRouteKeycloakAdmin)
+		create("the identity provider's administration policy ("+header+")", backendTrafficPolicyGVK, admin)
+	}
 	keycloak := withMaxStreamDuration(keycloakProxyBackendTrafficPolicySpec(), "12h")
 	attachBackendTrafficPolicyTarget(keycloak, kernelRouteKeycloakIDP)
 	create("Keycloak's backend policy", backendTrafficPolicyGVK, keycloak)
