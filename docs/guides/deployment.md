@@ -361,7 +361,7 @@ the claim, so leave it out after the first run.
 ```mermaid
 flowchart TD
     FeatureBranches["feature branches"]
-    Develop["develop (X.(Y+1).0-dev)"]
+    Develop["develop (next release, -dev)"]
     ImageDev["ghcr.io/.../gentian-os:develop-<sha>"]
     DevCluster["dev cluster"]
     ReleaseBranch["release/vX.Y.Z (X.Y.Z)"]
@@ -417,7 +417,7 @@ run it.
   of `develop`, and a release merge never conflicts.
 - A tree that is not a release never carries a release's bare number (§5.5).
   The bare number is written on a release branch and reaches `main` from
-  there; `develop` carries `X.(Y+1).0-dev` and never names a tag that does
+  there; `develop` carries the next release's number with `-dev` and never names a tag that does
   not exist.
 - CI builds the release from the tag. The tag run refuses a tag whose name
   is not the chart's version, publishes the images, and creates the GitHub
@@ -502,7 +502,9 @@ followed by the tag. A cluster that pins the tag reads nothing from
    that run is green.
 4. On the same branch merge `main` (`git merge origin/main`: the release
    merge commit, whose tree the branch already has) and add the next-dev
-   commit, `chore: X.(Y+1).0-dev`, which sets the chart to `X.(Y+1).0-dev`
+   commit, `chore: <next>-dev`, which sets the chart to the number of the
+   release that comes next with `-dev` (`X.Y.(Z+1)-dev` for a patch, `X.(Y+1).0-dev`
+   for a minor)
    and runs `make gen-platform-version` again (which points the infra
    charts back at `develop`). Merge the branch into `develop` by pull
    request; `main` is an ancestor of `develop` again. The branch may be
@@ -549,8 +551,10 @@ notes are a new section in `docs/releases/vX.Y.md`.
 A tree that is not a release never carries a release's bare number. The
 release branch's version commit sets `version` in
 `charts/gentian-os/Chart.yaml` to `X.Y.Z` and is what `main` is tagged at;
-the next-dev commit sets `X.(Y+1).0-dev` and `develop` stays there until the
-next release. The tree always says which release it is heading for, and a
+the next-dev commit sets the number of the release that comes next, with
+`-dev`: `X.Y.(Z+1)-dev` while the line is still being built out (a patch is
+the next release), `X.(Y+1).0-dev` once the next release is a minor; and
+`develop` stays there until that release. The tree always says which release it is heading for, and a
 build from it cannot be mistaken for one. The pre-release suffix is SemVer's:
 `0.5.0-dev` sorts below `0.5.0` and above every `0.4.x`.
 
