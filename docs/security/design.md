@@ -802,8 +802,12 @@ age somebody chose, for an app that renews its tokens at the realm; an app
 that keeps its own cookie session without doing so is bounded by its own
 session setting alone.
 
-**WebSockets** are authorized at upgrade; the connection carries no duration
-limit (§3.0).
+**WebSockets** are authorized at upgrade, and the edge ends any stream,
+a WebSocket included, after the longest session a realm on the cluster
+allows: the kernel realm's twelve hours or a tenant's longer `maxHours`
+(`stream_duration.go`). Every BackendTrafficPolicy a signed-in stream passes
+carries that `maxStreamDuration`: the authenticated Gateway's and each
+route's own, which replaces it (§3.0).
 
 ### 2.20 An app without single sign-on: the options
 
@@ -919,7 +923,7 @@ the code does.
 | Who may set a namespace's tier, function and mac-waiver labels | Tier: the installer, provider-kubernetes, the operator. Function: the installer, provider-kubernetes. Mac-waiver: the operator. And `system:masters`; never Argo CD or provider-helm (§12.4) |
 | What a tenant's chart may create | Installed as `provider-helm-tenant-apps`, which holds rights in tenant namespaces only: the namespaced kinds tenant charts render, nothing at cluster scope or in another namespace. The kernel's charts, and the charts of a profile bundle's own Composition, are installed as cluster-admin (§12.4) |
 | What ESO reads for a tenant's namespace | A store, a role and a policy per tenant (`tenant-default.yaml`): that tenant's app, repository and contract credentials, no kernel path, no other tenant's. The kernel's store is usable from kernel and system namespaces and from no tenant's, the platform tenant's included: its desktop's database password is at `tenants/platform/apps/shell/database` and read through that tenant's own store (§5). No admission rule applies to `ExternalSecret`, `SecretStore` or `ClusterSecretStore` |
-| Gateway rate limit | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session, the token endpoint and WebSocket duration carry no limit |
+| Gateway rate limit | Envoy's local limit per client address on the identity provider's sign-in pages and on a sign-in sidecar's answer path (`edge_rate_limit.go`, §2.14). Routes behind a session and the token endpoint carry no rate limit; a stream, a WebSocket included, ends after the longest session a realm allows (§2.19) |
 | Caller identity between platform services | The operator's app-lifecycle listener admits its two callers, the director and the usher, by ServiceAccount: each presents a projected token for the audience `gentian-os-operator` and the operator asks the API server whose it is (`internal/applifecycle/auth.go`). Every other call between platform services rests on a shared key or on the person's token |
 | One credential per process at the rights store | Each service has its own OpenFGA preshared key, so one can be replaced without the others. OpenFGA cannot tell them apart: each can read and write |
 | Human-identified secret writes (token exchange, no service token) | `internal/custodian/` |
