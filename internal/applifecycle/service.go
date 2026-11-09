@@ -25,6 +25,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/mailer"
+	"github.com/gentian-org/gentian-os/internal/releaseindex"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
@@ -61,6 +62,9 @@ type Service struct {
 	// the relay and Keycloak; nil is the real thing, a test sets them.
 	sendMail         func(ctx context.Context, s mailer.Settings, m mailer.Message) error
 	listGroupMembers func(ctx context.Context, realm, group string) ([]authz.KeycloakUser, error)
+	// fetchReleaseIndex, when set, is the release index in place of the
+	// configured feed. Tests set it.
+	fetchReleaseIndex func(ctx context.Context) (releaseindex.Index, error)
 	// groups, when set, is the identity provider to use in place of the one
 	// the keycloak-admin Secret names. Tests set it.
 	groups AccessGroups

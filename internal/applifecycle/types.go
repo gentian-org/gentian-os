@@ -56,6 +56,10 @@ type Options struct {
 	// RefreshEvery is the least time between two such refreshes; zero is
 	// refreshEvery. Tests set it.
 	RefreshEvery time.Duration
+	// ReleaseFeed is the address of the platform's release index: where a
+	// mail to the administrators takes the release numbers and notes from.
+	// Empty sends no release mail.
+	ReleaseFeed string
 }
 
 // Result is returned from lifecycle operations.

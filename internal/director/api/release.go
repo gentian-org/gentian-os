@@ -157,7 +157,9 @@ func (s *Server) runReleaseMove(ctx context.Context) bool {
 		s.notifyAdministrators(ctx,
 			fmt.Sprintf("Gentian OS: cluster %s moves to %s", s.cfg.Cluster, available),
 			fmt.Sprintf("The cluster %s was on %s and moves to %s now, by its autoUpgrade mode %s inside the maintenance window.\n\nThe operator applies the release; follow it with:\n  kubectl gentian release show\n", s.cfg.Cluster, view.Spec.Version, available, view.Spec.AutoUpgrade),
-			"", "info")
+			"", "info", applifecycle.NotifyAdministratorsRequest{
+				Event: applifecycle.EventReleaseMoved, Release: available, From: view.Spec.Version, Mode: view.Spec.AutoUpgrade,
+			})
 	}
 	return res.Changed
 }
@@ -181,15 +183,16 @@ func (s *Server) announcePendingRelease(ctx context.Context, running, pending st
 	if notes != "" {
 		text += "\nRelease notes: " + notes + "\n"
 	}
-	s.notifyAdministrators(ctx, fmt.Sprintf("Gentian OS %s waits for cluster %s", pending, s.cfg.Cluster), text, notes, "warning")
+	s.notifyAdministrators(ctx, fmt.Sprintf("Gentian OS %s waits for cluster %s", pending, s.cfg.Cluster), text, notes, "warning",
+		applifecycle.NotifyAdministratorsRequest{Event: applifecycle.EventReleasePending, Release: pending, From: running})
 }
 
 // notifyAdministrators says something to the cluster's administrators in
 // both places they read: a notice in the platform tenant's console, and a
-// mail through the operator, which holds the platform's mail settings. A
-// cluster without mail gets the notice alone; neither failure is the
-// mover's to stop on.
-func (s *Server) notifyAdministrators(ctx context.Context, subject, text, link, severity string) {
+// mail through the operator, which holds the platform's mail settings and
+// writes the mail itself from the event that mail names. A cluster without
+// mail gets the notice alone; neither failure is the mover's to stop on.
+func (s *Server) notifyAdministrators(ctx context.Context, subject, text, link, severity string, mail applifecycle.NotifyAdministratorsRequest) {
 	if s.cfg.Lifecycle == nil {
 		return
 	}
@@ -202,11 +205,10 @@ func (s *Server) notifyAdministrators(ctx context.Context, subject, text, link, 
 	if status, body, err := s.cfg.Lifecycle.Do(ctx, "/v1/tenants/"+authz.PlatformTenant+"/actions/notify", releaseMoverPrincipal, notice); err != nil || status >= 300 {
 		log.WarnContext(ctx, "the release notice could not be published in the console", "detail", upstreamFailure(status, body, err))
 	}
-	status, body, err := s.cfg.Lifecycle.Do(ctx, applifecycle.NotifyAdministratorsPath, releaseMoverPrincipal,
-		applifecycle.NotifyAdministratorsRequest{Subject: subject, Text: text})
+	status, body, err := s.cfg.Lifecycle.Do(ctx, applifecycle.NotifyAdministratorsPath, releaseMoverPrincipal, mail)
 	switch {
 	case err == nil && status == http.StatusAccepted:
-		log.InfoContext(ctx, "the cluster's administrators were mailed", "subject", subject)
+		log.InfoContext(ctx, "the cluster's administrators were mailed", "event", mail.Event, "release", mail.Release)
 	case err == nil && status == http.StatusServiceUnavailable:
 		log.InfoContext(ctx, "no mail to the administrators: the cluster has no mail or no administrator with an address", "detail", upstreamFailure(status, body, err))
 	default:

@@ -30,8 +30,8 @@ type releaseOperator struct {
 	importingOperator
 	mu     sync.Mutex
 	status map[string]any
-	// told is every notification the director asked for: the path and the
-	// subject or title.
+	// told is every notification the director asked for: the path, and the
+	// notice's title or the mail's event and release.
 	told []string
 }
 
@@ -42,9 +42,12 @@ func (o *releaseOperator) Do(ctx context.Context, path, actor string, body any) 
 		raw, _ := json.Marshal(body)
 		var m map[string]any
 		_ = json.Unmarshal(raw, &m)
-		subject, _ := m["subject"].(string)
-		if subject == "" {
-			subject, _ = m["title"].(string)
+		subject, _ := m["title"].(string)
+		if event, _ := m["event"].(string); event != "" {
+			release, _ := m["release"].(string)
+			from, _ := m["from"].(string)
+			mode, _ := m["mode"].(string)
+			subject = strings.TrimSpace(event + " " + release + " from " + from + " " + mode)
 		}
 		o.told = append(o.told, actor+" "+path+" "+subject)
 		return http.StatusAccepted, []byte(`{"recipients":["ops@example.org"]}`), nil
@@ -150,7 +153,7 @@ func TestTheMoverTakesWhatTheModeAllowsInsideTheWindow(t *testing.T) {
 		t.Fatal("moved with nothing available")
 	}
 	told := op.notices()
-	if len(told) != 2 || !strings.Contains(told[0], "policy:autoUpgrade /v1/tenants/platform/actions/notify Gentian OS v0.6.0 waits") || !strings.Contains(told[1], "/v1/actions/notify-administrators Gentian OS v0.6.0 waits") {
+	if len(told) != 2 || !strings.Contains(told[0], "policy:autoUpgrade /v1/tenants/platform/actions/notify Gentian OS v0.6.0 waits") || !strings.Contains(told[1], "/v1/actions/notify-administrators release-pending v0.6.0 from v0.5.1") {
 		t.Fatalf("notices after two passes = %v", told)
 	}
 	// The operator says v0.5.2 may be taken: one commit, the mode kept, and
@@ -160,7 +163,7 @@ func TestTheMoverTakesWhatTheModeAllowsInsideTheWindow(t *testing.T) {
 		t.Fatal("did not move to the available release")
 	}
 	told = op.notices()
-	if len(told) != 4 || !strings.Contains(told[3], "/v1/actions/notify-administrators Gentian OS: cluster "+directortest.Cluster+" moves to v0.5.2") {
+	if len(told) != 4 || !strings.Contains(told[3], "/v1/actions/notify-administrators release-moved v0.5.2 from v0.5.1 patch") {
 		t.Fatalf("notices after the move = %v", told)
 	}
 	claim := directortest.RemoteFile(t, h.remote, directortest.ClaimPath)

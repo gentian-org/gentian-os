@@ -50,6 +50,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
+	"github.com/gentian-org/gentian-os/internal/releaseindex"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/usage"
@@ -264,7 +265,7 @@ func main() {
 		Build:  buildVersion(),
 		// The platform's releases, so the status says when a newer one
 		// exists. "none" asks nothing: an air-gapped cluster.
-		ReleaseFeed: releaseFeed(),
+		ReleaseFeed: releaseindex.FeedFromEnv(),
 	}); err != nil {
 		setupLog.Error(err, "unable to add the platform status writer to manager")
 		os.Exit(1)
@@ -276,7 +277,7 @@ func main() {
 	if err := mgr.Add(&controller.ReleaseReconciler{
 		Reader:   mgr.GetAPIReader(),
 		Client:   mgr.GetClient(),
-		IndexURL: releaseFeed(),
+		IndexURL: releaseindex.FeedFromEnv(),
 	}); err != nil {
 		setupLog.Error(err, "unable to add the release reconciler to manager")
 		os.Exit(1)
@@ -828,17 +829,6 @@ func main() {
 // recorded one. An image built from a copy of the sources without their git
 // history records none, and the report then identifies the build by the
 // digest of its definitions alone.
-// releaseFeed is where the operator reads the release index from:
-// GENTIAN_RELEASE_FEED_URL, docs/releases/index.yaml on gentian-os's main by
-// default, or nothing for "none".
-func releaseFeed() string {
-	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", "https://raw.githubusercontent.com/gentian-org/gentian-os/main/docs/releases/index.yaml")
-	if feed == "none" {
-		return ""
-	}
-	return feed
-}
-
 func buildVersion() string {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
