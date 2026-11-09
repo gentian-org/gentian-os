@@ -1,0 +1,15 @@
+no tenants:
+  authenticated-gateway timeout={"http":{"requestTimeout":"360s"}}
+  identity-provider-proxy timeout=null
+  identity-provider-realm timeout=null
+  sign-in-sidecar-assertion timeout=null
+default sessions:
+  authenticated-gateway timeout={"http":{"requestTimeout":"360s"}}
+  identity-provider-proxy timeout=null
+  identity-provider-realm timeout=null
+  sign-in-sidecar-assertion timeout=null
+8h and 24h sessions:
+  authenticated-gateway timeout={"http":{"requestTimeout":"360s"}}
+  identity-provider-proxy timeout=null
+  identity-provider-realm timeout=null
+  sign-in-sidecar-assertion timeout=null
