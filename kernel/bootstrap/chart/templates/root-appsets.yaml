@@ -48,6 +48,10 @@ spec:
         llmEnabled: {{ .Values.llmEnabled | default "false" | quote }}
         relayHost: {{ .Values.smtpHost | default "" | quote }}
         egressHost: {{ .Values.mailEgressHost | default "" | quote }}
+        {{- /* toString, not default: a boolean false is empty to default
+             and would come out as "", which serves the port. */}}
+        mailSubmission: {{ ternary "" (toString .Values.mailSubmission) (kindIs "invalid" .Values.mailSubmission) | quote }}
+        mailImaps: {{ ternary "" (toString .Values.mailImaps) (kindIs "invalid" .Values.mailImaps) | quote }}
         storageClass: {{ .Values.storageClass | default "" | quote }}
         {{- /* The stores' NetworkPolicies: on unless the cluster says
              "false". Compared as a string, the way the phase switches are:

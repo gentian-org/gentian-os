@@ -173,6 +173,11 @@ mailServiceMode: external
 # The name mail leaves from, when the cluster sends from an address it owns
 # (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""
+# Whether the mail edge serves mail clients on 587 (submission) and 993
+# (imaps), from the Cluster claim (spec.mail.listeners). "true" or "false";
+# empty, for a claim that names neither, keeps both served.
+mailSubmission: ""
+mailImaps: ""
 
 # Whether the shared stores of the system tier -- PostgreSQL, MariaDB, Redis,
 # SeaweedFS -- each get the NetworkPolicy that says who may connect to them. On by

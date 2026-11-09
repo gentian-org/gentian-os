@@ -93,6 +93,13 @@ spec:
               value: 'mail.relay.placeholder'
             - name: egressHost
               value: 'mail.egress.placeholder'
+            # The ports the edge serves to mail clients, from the claim's
+            # mail.listeners (25 is always served). Only the edge's chart
+            # reads them.
+            - name: listeners.submission.enabled
+              value: 'mail.submission.placeholder'
+            - name: listeners.imaps.enabled
+              value: 'mail.imaps.placeholder'
             # Each chart carries the NetworkPolicy that says who may connect
             # to its server, synced with the values the server is installed
             # from. The switch is the stores' (kernel/appsets/values.yaml

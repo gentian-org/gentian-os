@@ -1658,6 +1658,11 @@ _claim_cluster_fields() {
         printf '    # starttls: true            defaults to true\n'
     else
         printf '    # host:                     not used while serviceMode is system\n'
+        # Mail clients' ports stay closed until the claim says otherwise:
+        # true is the approval to serve one, and the signed commit its record.
+        printf '    listeners:\n'
+        printf '      submission: false         # 587, where mail clients send\n'
+        printf '      imaps: false              # 993, where mail clients read\n'
     fi
 
     # egressHost, in both modes, because load_deployments_cluster_settings reads

@@ -1029,7 +1029,7 @@ load_deployments_cluster_settings() {
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
              LETSENCRYPT_EMAIL KV_MOUNT OPENBAO_STORAGE ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
-             MAIL_EGRESS_HOST; do
+             MAIL_EGRESS_HOST MAIL_SUBMISSION MAIL_IMAPS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1044,6 +1044,8 @@ load_deployments_cluster_settings() {
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
+        claim_setting MAIL_SUBMISSION   mail.listeners.submission "${claim_file}"
+        claim_setting MAIL_IMAPS        mail.listeners.imaps "${claim_file}"
         claim_setting SECRETS_AT_REST   controlPlane.secretsAtRest "${claim_file}"
         claim_setting MONITORING_ENABLED monitoring.enabled "${claim_file}"
         claim_setting MONITORING_ALERTS_WEBHOOK monitoring.alerts.webhook "${claim_file}"
