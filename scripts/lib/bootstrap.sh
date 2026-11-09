@@ -1816,6 +1816,7 @@ _claim_cluster_fields() {
     # access. A cluster with no source still works: it materializes nothing on
     # reference, and its profiles arrive with the kernel.
     _claim_catalogue_section
+    _claim_release_section
     if [[ "$(gentian_extra_services_enabled)" == "true" ]]; then
         _claim_partners_section
     fi
@@ -2089,6 +2090,71 @@ _claim_catalogue_section() {
     printf '        url: %s\n' "$(gentian_catalogue_url)"
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
+}
+
+# _claim_release_section -- spec.release: the platform release this cluster
+# runs (docs/concepts/versioning.md §2), from the ref this install renders. A
+# tag is a version the cluster runs exactly; a branch is a track it follows
+# build by build. Written once by the scaffold; from then on the claim is
+# where the release is declared, the director writes it (kubectl gentian
+# release set) and the operator applies it.
+_claim_release_section() {
+    local ref
+    ref="$(gentian_os_ref)"
+    printf '\n'
+    printf '  # The platform release this cluster runs. version: a release tag the\n'
+    printf '  # cluster runs exactly, moved by a person (kubectl gentian release set)\n'
+    printf '  # or, inside the maintenance window, by autoUpgrade: patch takes the\n'
+    printf '  # next patch of the line, minor the next minor too where the release\n'
+    printf '  # index says it is applied in place; absent, none. track: a gentian-os\n'
+    printf '  # branch the cluster follows build by build (a development cluster).\n'
+    printf '  release:\n'
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*)
+            printf '    version: %s\n' "${ref}"
+            printf '    # autoUpgrade: patch\n'
+            ;;
+        "")
+            printf '    # version: v0.5.1\n'
+            printf '    track: develop\n'
+            ;;
+        *)
+            printf '    track: %s\n' "${ref}"
+            ;;
+    esac
+}
+
+# ensure_claim_release_section <claim file>
+# A claim written before spec.release existed gets the section, naming the
+# ref this run renders; a claim that has it is left alone -- from then on
+# the claim says what the cluster runs, not install.env.
+ensure_claim_release_section() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    if claim_release_ref >/dev/null 2>&1 || grep -qE '^  release:' "${claim}"; then
+        return 0
+    fi
+    local last
+    last="$(grep -E '^[A-Za-z]' "${claim}" | tail -n 1)"
+    if [[ "${last}" != "spec:" ]]; then
+        warn "claims/cluster.yaml names no release (spec.release), and spec is not its last"
+        warn "  section, so it is not added. Declare it: kubectl gentian release set <vX.Y.Z>"
+        return 0
+    fi
+    [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
+    _claim_release_section >> "${claim}"
+    info "claims/cluster.yaml: spec.release added, naming $(gentian_os_ref); the claim declares the cluster's release from here on."
+}
+
+# preview_claim_release_section <claim file> -- what ensure_claim_release_section
+# would do, without doing it.
+preview_claim_release_section() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    if claim_release_ref >/dev/null 2>&1 || grep -qE '^  release:' "${claim}"; then
+        return 0
+    fi
+    info "would add spec.release to claims/cluster.yaml, naming $(gentian_os_ref)"
 }
 
 # _claim_extra_services_lines -- the claim's record of --no-extra-services,
@@ -3425,10 +3491,12 @@ require_cluster_deployment() {
     # (ensure_claim_store_catalogues, catalogue.sh).
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
+        preview_claim_release_section "${claim}"
         preview_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
+        ensure_claim_release_section "${claim}"
         ensure_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
     fi
     if [[ -f "${claim}" ]]; then

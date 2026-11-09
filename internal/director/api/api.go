@@ -108,6 +108,10 @@ type Repository interface {
 	ProfileOnCluster(ctx context.Context, name string) (gitops.MaterialisedProfile, error)
 	BuildOnCluster(ctx context.Context, name, digest string) (gitops.StoredBuild, bool, error)
 	UpdatePolicy(ctx context.Context) (gitops.UpdatePolicy, error)
+	// Release is spec.release as the claim declares it; SetRelease writes
+	// it and the gentian catalog source in one signed commit.
+	Release(ctx context.Context) (gitops.ReleaseSpec, error)
+	SetRelease(ctx context.Context, want gitops.ReleaseSpec, meta gitops.Meta) (gitops.Result, error)
 	SetAppUpdateMode(ctx context.Context, tenant, profile, mode string, meta gitops.Meta) (gitops.Result, error)
 	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
@@ -502,6 +506,11 @@ func (s *Server) routes() {
 		// administrator cannot give themselves the tenant mode.
 		s.guarded("GET /v1/clusters/{c}/updates", "can_audit", s.clusterObject, s.updatesForCluster)
 		s.action("POST /v1/clusters/{c}/actions/move-outdated", "can_configure", s.clusterObject, s.moveOutdated)
+		// The platform release the cluster runs (release.go): what the claim
+		// declares, what the operator applied, what the index offers; and the
+		// one write, which the auto-upgrade mover shares.
+		s.guarded("GET /v1/clusters/{c}/release", "can_audit", s.clusterObject, s.clusterRelease)
+		s.action("POST /v1/clusters/{c}/actions/set-release", "can_configure", s.clusterObject, s.setRelease)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/apps/{p}/update-mode", "can_configure", s.clusterObject, s.setAppUpdateMode)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
 		// The brand every page shows: read like a setting, written like one.

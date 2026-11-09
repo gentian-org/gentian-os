@@ -285,8 +285,9 @@ itself exports first, verifies after and rolls back by itself
 
 The platform this cluster runs is on the Cluster claim's status
 (`status.platform`): the version line and the build the operator runs, and
-the newest release the platform's feed publishes
-(`GENTIAN_RELEASE_FEED_URL`; `none` on a cluster that reaches nothing). A
+the newest release the platform's release index lists
+(`GENTIAN_RELEASE_FEED_URL`, `docs/releases/index.yaml` on `main`; `none` on a
+cluster that reaches nothing). A
 profile declares the oldest line it runs on (`spec.requires.platform`), and
 the director refuses a build whose floor this line does not meet.
 

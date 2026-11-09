@@ -87,6 +87,9 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                                (no provider's token: that is a credential)
 
   kubectl gentian settings show                the Cluster claim's settings, as JSON
+  kubectl gentian release show                 the release this cluster runs, what it may take by itself and what waits for a person
+  kubectl gentian release set <vX.Y.Z> [--auto-upgrade none|patch|minor]   run this release; one signed commit by the director
+  kubectl gentian release track <branch>       follow a gentian-os branch build by build (a development cluster)
   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
                                                platformRoles.auditor=gentian:platform:auditor ...

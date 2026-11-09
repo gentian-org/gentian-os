@@ -86,6 +86,9 @@
 #                                                (no provider's token: that is a credential)
 #
 #   kubectl gentian settings show                the Cluster claim's settings, as JSON
+#   kubectl gentian release show                 the release this cluster runs, what it may take by itself and what waits for a person
+#   kubectl gentian release set <vX.Y.Z> [--auto-upgrade none|patch|minor]   run this release; one signed commit by the director
+#   kubectl gentian release track <branch>       follow a gentian-os branch build by build (a development cluster)
 #   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
 #                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
 #                                                platformRoles.auditor=gentian:platform:auditor ...
@@ -1559,6 +1562,63 @@ cmd_settings() {
             fi
             ;;
         *) die "usage: kubectl gentian settings show|set <path>=<value> ..." ;;
+    esac
+}
+
+# release: the platform release this cluster runs (docs/concepts/versioning.md
+# §2). `show` reads what the claim declares, what the operator applied and
+# what the release index offers under the cluster's autoUpgrade mode. `set`
+# and `track` are one request to the director, which writes spec.release
+# and the gentian catalog source as one signed commit; the operator moves the
+# cluster from there.
+cmd_release() {
+    local sub="${1:-}" answer status
+    shift || true
+    case "${sub}" in
+        show|"")
+            need jq
+            _discover
+            answer="$(_call GET "/v1/clusters/${_CLUSTER}/release")" || exit 1
+            printf '%s' "${answer}" | jq -r '
+                def line(k; v): if (v // "") != "" then "\(k): \(v)" else empty end;
+                (if (.spec.version // "") != "" then "Runs:        \(.spec.version) (autoUpgrade \(.spec.autoUpgrade // "none"))"
+                 elif (.spec.track // "") != "" then "Follows:     branch \(.spec.track)"
+                 else "Declared:    nothing -- the cluster stays on what the installer rendered (kubectl gentian release set <vX.Y.Z>)" end),
+                line("Applied";     (if (.status.revision // "") != "" then "\(.status.revision) (image \(.status.image)), \(.status.state): \(.status.message)" else .status.state end)),
+                line("Operator";    (if (.platform.version // "") != "" then "\(.platform.version) build \(.platform.build)" else "" end)),
+                line("Available";   (if (.status.available // "") != "" then "\(.status.available), taken in the window by autoUpgrade" else "" end)),
+                line("Pending";     (if (.status.pending // "") != "" then "\(.status.pending) waits for a person: kubectl gentian release set \(.status.pending)" + (if (.status.pendingNotes // "") != "" then "  (\(.status.pendingNotes))" else "" end) else "" end)),
+                line("Window";      (if .window then "\(.window.start)-\(.window.end) \(.window.timezone // "UTC"), " + (if .windowOpen then "open now" else "closed now" end) else "any time" end))'
+            ;;
+        set|track)
+            local ref="${1:-}" mode="" body
+            [[ -n "${ref}" ]] || die "usage: kubectl gentian release ${sub} <$([[ "${sub}" == set ]] && echo vX.Y.Z || echo branch)> [--auto-upgrade none|patch|minor]"
+            shift
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --auto-upgrade) mode="${2:?--auto-upgrade needs none, patch or minor}"; shift 2 ;;
+                    --auto-upgrade=*) mode="${1#*=}"; shift ;;
+                    *) die "unknown option: $1" ;;
+                esac
+            done
+            need jq
+            if [[ "${sub}" == set ]]; then
+                body="$(jq -cn --arg v "${ref}" --arg m "${mode}" '{version: $v} + (if $m != "" then {autoUpgrade: $m} else {} end)')"
+            else
+                [[ -z "${mode}" ]] || die "--auto-upgrade has no meaning with a track: a cluster on a branch follows every build of it"
+                body="$(jq -cn --arg t "${ref}" '{track: $t}')"
+            fi
+            _discover
+            answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/set-release" "${body}")" || exit 1
+            status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
+            if [[ "${status}" == "unchanged" ]]; then
+                echo "The claim already says so; nothing was committed."
+            else
+                echo "Release committed ($(_committed "${answer}")). The operator moves the cluster once Argo CD has synced the claim; follow it with:"
+                echo "  kubectl gentian release show"
+            fi
+            ;;
+        *) die "usage: kubectl gentian release show|set <vX.Y.Z> [--auto-upgrade none|patch|minor]|track <branch>" ;;
     esac
 }
 
@@ -3212,6 +3272,7 @@ main() {
         repository|repositories) cmd_repositories "$@" ;;
         model|models) cmd_models "$@" ;;
         setting|settings) cmd_settings "$@" ;;
+        release) cmd_release "$@" ;;
         platform-role|platform-roles) cmd_platform_roles "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         approval|approvals) cmd_approvals "$@" ;;
