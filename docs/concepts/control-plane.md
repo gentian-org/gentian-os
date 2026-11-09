@@ -441,7 +441,7 @@ How to read it:
 - Verifies the caller's token against the realm that issued it. A token must
   be issued for the audience `gentian-director`.
 - Holds each caller -- a person by their account, a component that
-  commissions partners by its key -- to 10 requests a second, with 100 at
+  commissions partners by its key -- to 20 requests a second, with 200 at
   once, counted in each director replica; then answers `429` with
   `Retry-After: 1`, before it asks OpenFGA anything. The director's
   environment may change the numbers (`DIRECTOR_REQUESTS_PER_SECOND`,

@@ -34,10 +34,10 @@ import (
 const (
 	// DefaultCallerRequestsPerSecond is how many requests one caller may make
 	// a second, on average.
-	DefaultCallerRequestsPerSecond = 10
+	DefaultCallerRequestsPerSecond = 20
 	// DefaultCallerRequestBurst is how many one caller may make at once: a
 	// console page that asks for everything it shows together.
-	DefaultCallerRequestBurst = 100
+	DefaultCallerRequestBurst = 200
 )
 
 // CallerLimit is the limit each caller is held to. The zero value is no
