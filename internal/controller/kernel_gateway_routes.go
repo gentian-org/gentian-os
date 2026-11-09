@@ -155,13 +155,18 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	homes := tenantHomes(tenantList.Items)
 	withTenantHomes(specs, homes)
 	// The identity provider's public route is held to a rate of sign-in
-	// posts per client address, and which address that is has to be asked of
-	// the cluster (edgeClientAddressHeader), so it is set here and not where
-	// the routes are listed.
+	// posts per client address, and its administration, behind the kernel
+	// session, to the allowance of every route behind a session. Which
+	// address that is has to be asked of the cluster
+	// (edgeClientAddressHeader), so it is set here and not where the routes
+	// are listed.
 	clientAddressHeader := edgeClientAddressHeader(ctx, r.Client)
 	for i := range specs {
-		if specs[i].name == kernelRouteKeycloakIDP {
+		switch specs[i].name {
+		case kernelRouteKeycloakIDP:
 			specs[i].policy = keycloakRealmBackendTrafficPolicySpec(clientAddressHeader)
+		case kernelRouteKeycloakAdmin:
+			specs[i].policy = keycloakAdminBackendTrafficPolicySpec(clientAddressHeader)
 		}
 	}
 	// The bouncer's table first: a route whose policy asks the bouncer before the
@@ -1046,6 +1051,18 @@ func keycloakProxyBackendTrafficPolicySpec() map[string]interface{} {
 func keycloakRealmBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
 	spec := keycloakProxyBackendTrafficPolicySpec()
 	if limit := edgeSignInRateLimit(keycloakSignInPostPattern, clientAddressHeader); limit != nil {
+		spec["rateLimit"] = limit
+	}
+	return spec
+}
+
+// keycloakAdminBackendTrafficPolicySpec is the policy of the identity
+// provider's administration route: the proxy's, and the allowance of a route
+// behind a session (edge_rate_limit.go). The route is on the perimeter
+// Gateway, so it does not inherit the authenticated Gateway's.
+func keycloakAdminBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
+	spec := keycloakProxyBackendTrafficPolicySpec()
+	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
 		spec["rateLimit"] = limit
 	}
 	return spec

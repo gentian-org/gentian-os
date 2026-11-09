@@ -108,7 +108,8 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "the longest session")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
-	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, authenticatedGatewayBackendTrafficPolicySpec(streamDuration)); err != nil {
+	gatewayPolicy := authenticatedGatewayBackendTrafficPolicySpec(streamDuration, edgeClientAddressHeader(ctx, r.Client))
+	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, gatewayPolicy); err != nil {
 		logger.Error(err, "ensure the authenticated Gateway's backend policy")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
@@ -600,8 +601,12 @@ const authenticatedGatewayPolicyName = "btp-gateway-" + AuthenticatedGatewayName
 // the authenticated Gateway inherits. A route with a policy of its own (the
 // identity provider's, a sign-in sidecar's) takes that one instead, so each
 // of those carries streamDuration (sessionStreamDuration) as well.
-func authenticatedGatewayBackendTrafficPolicySpec(streamDuration string) map[string]interface{} {
-	return withMaxStreamDuration(map[string]interface{}{
+//
+// It holds each client address to the allowance of a route behind a session
+// (edgeSessionRateLimit); clientAddressHeader is edgeClientAddressHeader's
+// answer for this cluster.
+func authenticatedGatewayBackendTrafficPolicySpec(streamDuration, clientAddressHeader string) map[string]interface{} {
+	spec := withMaxStreamDuration(map[string]interface{}{
 		"targetRefs": []interface{}{
 			map[string]interface{}{
 				"group": gatewayv1.GroupName,
@@ -613,6 +618,10 @@ func authenticatedGatewayBackendTrafficPolicySpec(streamDuration string) map[str
 			"http": map[string]interface{}{"requestTimeout": authenticatedGatewayRequestTimeout},
 		},
 	}, streamDuration)
+	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
+		spec["rateLimit"] = limit
+	}
+	return spec
 }
 
 func servedByKernelEdge(effectiveDomain, kernelDomain string) bool {
