@@ -119,11 +119,7 @@ func (l *MembershipListener) Start(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	srv := &http.Server{
-		Addr:              l.Addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := newMembershipServer(l.Addr, mux)
 	errs := make(chan error, 1)
 	go func() {
 		log.FromContext(ctx).Info("membership listener accepting statements from Keycloak", "addr", l.Addr)
@@ -143,6 +139,22 @@ func (l *MembershipListener) Start(ctx context.Context) error {
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdown)
+	}
+}
+
+// newMembershipServer bounds what one connection can hold: the headers'
+// size, and how long reading a request, answering it and waiting for the
+// next may take. A statement is at most 256 KiB and is applied in one pass,
+// so none of these is near what Keycloak's sender needs.
+func newMembershipServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    32 << 10,
 	}
 }
 

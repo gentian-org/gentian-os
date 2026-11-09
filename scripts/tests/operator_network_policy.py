@@ -13,6 +13,10 @@ import sys
 import yaml
 
 COMPONENT = "app.kubernetes.io/component"
+KEYCLOAK_PEER = {
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kernel-authentication"}},
+    "podSelector": {"matchLabels": {"app.kubernetes.io/name": "keycloakx"}},
+}
 
 
 def main() -> int:
@@ -68,9 +72,21 @@ def main() -> int:
         else:
             open_ports |= ports
 
+    # The membership listener's port admits Keycloak's pods alone.
+    membership = served.get("membership")
+    if membership is not None:
+        keycloak = [g for g in guarded if g[0] == {membership}]
+        if len(keycloak) != 1:
+            return fail(f"want one rule for the membership port {membership} alone")
+        guarded.remove(keycloak[0])
+        if keycloak[0][1] != [KEYCLOAK_PEER]:
+            return fail(f"the membership port admits {keycloak[0][1]}, want the Keycloak pods of kernel-authentication alone")
+    if any(membership in g[0] for g in guarded) or (membership is not None and membership in open_ports):
+        return fail("the membership port is admitted by another rule")
+
     # Every other port the pod serves stays reachable; the listener's is not
     # among the open ones.
-    others = {port for name, port in served.items() if name != "lifecycle"}
+    others = {port for name, port in served.items() if name not in ("lifecycle", "membership")}
     if open_ports != others:
         return fail(f"ports open to anybody are {sorted(open_ports)}; the operator serves {sorted(others)} beside its listener")
     if lifecycle in open_ports:

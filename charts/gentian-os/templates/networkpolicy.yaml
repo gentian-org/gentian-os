@@ -13,13 +13,16 @@
 
     metrics     scraped by whatever the cluster runs for that
     health      the kubelet's probes
-    membership  Keycloak's event listener, in the authentication namespace
     webhook     the API server, for Tenant admission
 
   Narrowing those is not done here. The API server and the kubelet do not
   arrive from a pod, so a rule naming their source differs per CNI and per
   cluster; a ports-only rule is what keeps admission and probes working
   everywhere.
+
+  The membership listener's port admits the Keycloak pods of the
+  authentication namespace and no other source: Keycloak's event listener
+  is the one sender of membership statements.
 
   It selects the operator's pods only -- by the component label, because the
   release's other workloads in this namespace carry the same name and
@@ -65,6 +68,21 @@ spec:
         - protocol: TCP
           port: {{ .Values.appLifecycle.port }}
     {{- end }}
+    {{- if .Values.membershipListener.keysSecretRef.name }}
+    {{- /* Keycloak's event listener is the one sender of membership
+           statements, and it runs in a pod, so it is named: the Keycloak
+           pods of the authentication namespace. */}}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.layout.authentication | default "kernel-authentication" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloakx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.membershipListener.port }}
+    {{- end }}
     - ports:
         # metrics and health: the manager's --metrics-bind-address and
         # --health-probe-bind-address in deployment.yaml.
@@ -72,10 +90,6 @@ spec:
           port: 8080
         - protocol: TCP
           port: 8081
-        {{- if .Values.membershipListener.keysSecretRef.name }}
-        - protocol: TCP
-          port: {{ .Values.membershipListener.port }}
-        {{- end }}
         {{- if ($webhook.enabled | default false) }}
         - protocol: TCP
           port: {{ $webhook.port | default 9443 }}

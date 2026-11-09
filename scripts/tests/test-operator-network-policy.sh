@@ -10,7 +10,8 @@
 #     fails its probes, or the API server cannot reach the admission webhook
 #     and every Tenant write is refused;
 #   - the listener's port is listed with no source, or the policy selects
-#     more than the operator, and the control it exists for is not there.
+#     more than the operator, and the control it exists for is not there;
+#   - the membership listener's port admits more than Keycloak's pods.
 #
 # Rendered with helm, no cluster.
 # =============================================================================
@@ -42,6 +43,8 @@ echo ""
 all="$(render --set director.enabled=true --set usher.enabled=true \
     --set membershipListener.keysSecretRef.name=keys --set webhook.enabled=true)"
 check "director and usher deployed: the listener admits those two and no other pod" "${all}" director usher
+check "membership listener on: its port admits the Keycloak pods of kernel-authentication alone" \
+    "$(render --set membershipListener.keysSecretRef.name=keys)" defaults
 check "defaults: whatever the chart deploys by default is what the listener admits" "$(render)" defaults
 check "director only: the listener admits the director" \
     "$(render --set director.enabled=true --set usher.enabled=false)" director
