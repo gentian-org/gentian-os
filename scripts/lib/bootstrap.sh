@@ -196,7 +196,7 @@ create_crossplane_secrets() {
         m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
         s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
     fi
-    gentian_settle_derivation "${m_val}" "${s_val}"
+    gentian_settle_derivation "${m_val}" "${s_val}" || exit 1
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key.
     #

@@ -923,7 +923,15 @@ func buildSeeder() *secrets.Seeder {
 	}
 	setupLog.Info("secret seeder enabled",
 		"bao_addr", baoAddr, "bao_role", role, "secretMode", configured)
-	return secrets.NewSeeder(kv, nil).WithMode(mode)
+	seeder := secrets.NewSeeder(kv, nil).WithMode(mode)
+	// A check, not a gate: the operator starts either way, and the Seeder
+	// reads again each time it is asked to make a credential.
+	if modeErr == nil {
+		if err := seeder.CheckDerivation(ctx); err != nil {
+			setupLog.Error(err, "no credential can be made yet; reconciles that need one are retried until it can")
+		}
+	}
+	return seeder
 }
 
 // bundleSigningKey reads the cluster's bundle signing key from the vault

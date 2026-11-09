@@ -72,7 +72,7 @@ existing_secret=$(bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}"
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
-gentian_settle_derivation "${existing_master}" "${existing_salt}"
+gentian_settle_derivation "${existing_master}" "${existing_salt}" || exit 1
 
 if [ -z "${MASTER_PASSWORD}" ]; then
     echo "Error: MASTER_PASSWORD is empty. A master password must be provided as MASTER_PASSWORD or pre-seeded in OpenBao." >&2
