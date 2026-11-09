@@ -119,9 +119,12 @@ catalog directories, not each tenant app install.
 
 ## 6. Metrics
 
-The operator exposes Prometheus metrics (`internal/controller/metrics.go`); the
-chart ships a `ServiceMonitor` for them, off unless `metrics.serviceMonitor`
-is enabled. The platform installs no Prometheus.
+The operator exposes Prometheus metrics (`internal/controller/metrics.go`) on
+port 8080, plain HTTP. With the Cluster claim's `monitoring.enabled`, the
+platform's Prometheus in `kernel-observability` scrapes them; the operator's
+NetworkPolicy admits those Prometheus pods to the port and no other source,
+so with monitoring off nothing reaches it. The chart also ships a
+`ServiceMonitor`, off unless `metrics.serviceMonitor` is enabled.
 
 | Metric | Description |
 |---|---|

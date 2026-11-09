@@ -13,6 +13,10 @@ import sys
 import yaml
 
 COMPONENT = "app.kubernetes.io/component"
+PROMETHEUS_PEER = {
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kernel-observability"}},
+    "podSelector": {"matchLabels": {"app.kubernetes.io/name": "prometheus"}},
+}
 KEYCLOAK_PEER = {
     "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kernel-authentication"}},
     "podSelector": {"matchLabels": {"app.kubernetes.io/name": "keycloakx"}},
@@ -86,10 +90,23 @@ def main() -> int:
 
     # Every other port the pod serves stays reachable; the listener's is not
     # among the open ones.
+    # The metrics port admits the Prometheus pods of the observability
+    # namespace alone: plain HTTP, read by the platform's monitoring.
+    metrics = served.get("metrics")
+    if metrics is not None:
+        scrape = [g for g in guarded if g[0] == {metrics}]
+        if len(scrape) != 1:
+            return fail(f"want one rule for the metrics port {metrics} alone")
+        guarded.remove(scrape[0])
+        if scrape[0][1] != [PROMETHEUS_PEER]:
+            return fail(f"the metrics port admits {scrape[0][1]}, want the Prometheus pods of kernel-observability alone")
+        if metrics in open_ports or any(metrics in g[0] for g in guarded):
+            return fail("the metrics port is admitted by another rule")
+
     health = served.get("health")
     if health is not None and (health in open_ports or any(health in g[0] for g in guarded)):
         return fail("the health port is listed; the kubelet's probes need no rule")
-    others = {port for name, port in served.items() if name not in ("lifecycle", "membership", "health")}
+    others = {port for name, port in served.items() if name not in ("lifecycle", "membership", "health", "metrics")}
     if open_ports != others:
         return fail(f"ports open to anybody are {sorted(open_ports)}; the operator serves {sorted(others)} beside its listener")
     if lifecycle in open_ports:

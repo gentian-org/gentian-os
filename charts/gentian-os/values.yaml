@@ -806,9 +806,10 @@ membershipListener:
 # the app-lifecycle port (appLifecycle.port) reachable only from the
 # director's and the usher's pods in this namespace, the membership
 # listener's only from the Keycloak pods of the authentication namespace,
-# lists metrics and the admission webhook as open as they are without a
-# policy, and lists the health port nowhere (the kubelet's probes come from
-# the pod's own node, which NetworkPolicy always admits). Needs a CNI that enforces
+# the metrics port only from the Prometheus pods of the observability
+# namespace, lists the admission webhook as open as it is without a policy,
+# and lists the health port nowhere (the kubelet's probes come from the pod's
+# own node, which NetworkPolicy always admits). Needs a CNI that enforces
 # NetworkPolicy; on one that does not it has no effect. Off removes the
 # policy and leaves the callers' ServiceAccount identity as the only check.
 networkPolicy:

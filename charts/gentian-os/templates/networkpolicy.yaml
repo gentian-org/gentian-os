@@ -11,12 +11,15 @@
   so every other port the operator serves is listed too, each as open as it
   was with no policy -- a rule with ports and no `from` admits any source:
 
-    metrics     scraped by whatever the cluster runs for that
     webhook     the API server, for Tenant admission
 
-  Narrowing those is not done here. The API server does not arrive from a
-  pod, so a rule naming its source differs per CNI and per cluster; a
-  ports-only rule is what keeps admission working everywhere.
+  Narrowing it is not done here. The API server does not arrive from a pod,
+  so a rule naming its source differs per CNI and per cluster; a ports-only
+  rule is what keeps admission working everywhere.
+
+  The metrics port admits the Prometheus pods of the observability
+  namespace and no other source: the platform's monitoring, when the
+  Cluster claim switches it on, is what reads it.
 
   The health port is listed nowhere. The kubelet's probes come from the
   pod's own node, which NetworkPolicy admits whatever the policies say, and
@@ -85,12 +88,23 @@ spec:
         - protocol: TCP
           port: {{ .Values.membershipListener.port }}
     {{- end }}
-    - ports:
-        # metrics: the manager's --metrics-bind-address in deployment.yaml.
+    {{- /* The manager's --metrics-bind-address in deployment.yaml: plain
+           HTTP, read by the platform's Prometheus when the Cluster claim
+           switches monitoring on. With it off no pod matches, and nothing
+           reaches the port. */}}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.layout.observability | default "kernel-observability" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
         - protocol: TCP
           port: 8080
-        {{- if ($webhook.enabled | default false) }}
+    {{- if ($webhook.enabled | default false) }}
+    - ports:
         - protocol: TCP
           port: {{ $webhook.port | default 9443 }}
-        {{- end }}
+    {{- end }}
 {{- end }}
