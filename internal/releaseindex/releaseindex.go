@@ -27,6 +27,8 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 // Release is one entry of the index.
@@ -159,6 +161,20 @@ func Parse(text []byte) (Index, error) {
 		return a.Compare(b) < 0
 	})
 	return idx, nil
+}
+
+// DefaultFeed is the index as published on gentian-os's main.
+const DefaultFeed = "https://raw.githubusercontent.com/gentian-org/gentian-os/main/docs/releases/index.yaml"
+
+// FeedFromEnv is where the operator reads the release index from:
+// GENTIAN_RELEASE_FEED_URL, DefaultFeed when unset, and nothing ("") for
+// "none", an air-gapped cluster.
+func FeedFromEnv() string {
+	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", DefaultFeed)
+	if feed == "none" {
+		return ""
+	}
+	return feed
 }
 
 // Fetch reads the index from its address. The body is capped at one MiB.

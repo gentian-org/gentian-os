@@ -64,8 +64,8 @@ func (h *HTTPServer) handleRelease(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Release reads the one Cluster claim's release fields.
-func (s *Service) Release(ctx context.Context) (*ReleaseView, error) {
+// clusterClaim is the one Cluster claim of this cluster.
+func (s *Service) clusterClaim(ctx context.Context) (*unstructured.Unstructured, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(clusterClaimGVK.GroupVersion().WithKind(clusterClaimGVK.Kind + "List"))
 	if err := s.client.List(ctx, list, client.InNamespace(layout.Namespace(layout.Provisioning))); err != nil {
@@ -74,7 +74,16 @@ func (s *Service) Release(ctx context.Context) (*ReleaseView, error) {
 	if len(list.Items) == 0 {
 		return nil, ErrNoClusterClaim
 	}
-	claim := list.Items[0].Object
+	return &list.Items[0], nil
+}
+
+// Release reads the one Cluster claim's release fields.
+func (s *Service) Release(ctx context.Context) (*ReleaseView, error) {
+	c, err := s.clusterClaim(ctx)
+	if err != nil {
+		return nil, err
+	}
+	claim := c.Object
 	view := &ReleaseView{}
 	if m, found, _ := unstructured.NestedMap(claim, "spec", "release"); found {
 		view.Spec = m
