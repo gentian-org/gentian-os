@@ -25,7 +25,8 @@ func DerivedKeyPath(tenant, app, key string) string {
 }
 
 // ErrNoMasterPassword says a value that has to be derived from the master
-// password was not made, because the Seeder does not hold it.
+// password was not made, because the master password or the salt cannot be
+// read.
 var ErrNoMasterPassword = errors.New("the master password is not available")
 
 // derivedKeyLength is the length of a declared key's value in hex characters:
@@ -40,41 +41,33 @@ const derivedKeyLength = 64
 // ModeRandom it is drawn at random. Either way the first value stored at the
 // path stays the path's value, and that one is returned.
 //
-// Unlike the other credentials, nothing stands in for a master password that
-// is not there: in ModeDerived without one no value is made, and the error is
-// ErrNoMasterPassword. A key that is already stored is returned whatever the
-// Seeder holds.
+// As for every derived value, nothing stands in for a master password that
+// cannot be read: in ModeDerived without one no value is made, and the error
+// wraps ErrNoMasterPassword. A key that is already stored is returned all the
+// same.
 func (s *Seeder) SeedDerivedKey(ctx context.Context, tenant, app, key string) (string, error) {
 	path := DerivedKeyPath(tenant, app, key)
 	fail := func(err error) (string, error) {
 		return "", fmt.Errorf("seed derived key(%s/%s/%s): %w", tenant, app, key, err)
 	}
 
-	mode := ModeDerived
-	if s.mode != nil {
-		m, err := s.mode(ctx)
-		if err != nil {
-			return fail(fmt.Errorf("secret mode: %w", err))
-		}
-		mode = m
-	}
+	d, err := s.derivation(ctx)
 	var value string
-	switch mode {
-	case ModeDerived:
-		if s.d == nil || !s.d.HasMaster() {
-			// What an earlier pass stored is still the key's value. A read
-			// that fails and a path that holds nothing both mean there is
-			// no value to hand on.
-			if held, err := s.w.Get(ctx, path); err == nil && held["value"] != "" {
-				return held["value"], nil
-			}
-			return fail(ErrNoMasterPassword)
+	switch {
+	case errors.Is(err, ErrNoMasterPassword):
+		// What an earlier pass stored is still the key's value. A read that
+		// fails and a path that holds nothing both mean there is no value to
+		// hand on.
+		if held, err := s.w.Get(ctx, path); err == nil && held["value"] != "" {
+			return held["value"], nil
 		}
-		value = s.d.Derive(path, "value", derivedKeyLength)
-	case ModeRandom:
-		value = randomHex(derivedKeyLength)
+		return fail(err)
+	case err != nil:
+		return fail(err)
+	case d != nil:
+		value = d.Derive(path, "value", derivedKeyLength)
 	default:
-		return fail(fmt.Errorf("secret mode: %q is neither %q nor %q", mode, ModeDerived, ModeRandom))
+		value = randomHex(derivedKeyLength)
 	}
 
 	if err := s.w.PutOnce(ctx, path, map[string]string{"value": value}); err != nil {

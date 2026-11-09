@@ -316,8 +316,8 @@ func TestSeederSeedModelAccessIsStablePerTenantAndApp(t *testing.T) {
 	if err != nil || again.APIKey != first.APIKey {
 		t.Errorf("after a purge: %q, %v; want the derived key again", again.APIKey, err)
 	}
-	// Without a master it is random, and still write-once.
-	random := secrets.NewSeeder(newClient(t, fresh.URL), nil)
+	// In random mode it is random, and still write-once.
+	random := secrets.NewSeeder(newClient(t, fresh.URL), nil).WithMode(fixed(secrets.ModeRandom))
 	a, err := random.SeedModelAccess(ctx, "demo", "notes", "sk-", "http://gateway:4000/v1")
 	if err != nil {
 		t.Fatal(err)

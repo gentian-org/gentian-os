@@ -1620,9 +1620,12 @@ Properties:
   holding a value that is neither mode — it makes no credential and the
   reconcile is tried again. A ConfigMap that is not there yet, or that
   carries no mode, reads as `derived`. Under `derived`, the
-  operator generates random values only when it finds no master password at
-  start; a key declared under `secrets.derived` is the exception and is not
-  made at all then.
+  operator reads the master password and the salt
+  (`gentian-os/kernel/internal/master-password`) when it first derives a
+  value; while either is missing or unreadable it makes no credential, the
+  reconcile fails with the reason and is tried again, and the first pass that
+  reads both makes the derived value. A credential already stored is
+  returned without them.
 - **A key a profile declares under `secrets.derived`** (Open WebUI's
   `WEBUI_SECRET_KEY` is the one in the catalog) is stored at
   `…/apps/<app>/derived/<key>` and delivered in the
@@ -1632,9 +1635,8 @@ Properties:
   context, so it differs per tenant, app and key; under `random` it is drawn
   at random. Either way it is stored once and read back, and never made
   again while it is stored. Without the master password under `derived`, no
-  value is made, the app's Secret is not written and its release waits; the
-  operator reads the master password at start only, so it has to be
-  restarted once the master password is readable.
+  value is made, the app's Secret is not written and its release waits until
+  a later pass can read the master password.
 
 
 **An app's own secrets** (`spec.secrets.generated` of its profile and an
