@@ -77,6 +77,19 @@ func TestTheMessageIsRFC5322(t *testing.T) {
 	if _, err := Render("noreply@example.org", Message{To: []string{"a@example.org"}}, at); err == nil {
 		t.Error("no subject must be refused")
 	}
+	for _, bad := range []Message{
+		{To: []string{"a@example.org\r\nBcc: x@evil.example"}, Subject: "s"},
+		{To: []string{"Eve <a@example.org>"}, Subject: "s"},
+		{To: []string{"a@example.org, b@example.org"}, Subject: "s"},
+		{To: []string{"a@example.org"}, Subject: "s\r\nBcc: x@evil.example"},
+	} {
+		if _, err := Render("noreply@example.org", bad, at); err == nil {
+			t.Errorf("Render(%+v) must be refused", bad)
+		}
+	}
+	if _, err := Render("noreply@example.org\r\nX: y", Message{To: []string{"a@example.org"}, Subject: "s"}, at); err == nil {
+		t.Error("a sender with a line break must be refused")
+	}
 }
 
 // A server that offers no STARTTLS gets no password.
@@ -85,14 +98,14 @@ func TestSendRefusesACleartextServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	seen := make(chan string, 8)
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		r := bufio.NewReader(conn)
 		_, _ = conn.Write([]byte("220 plain.example ESMTP\r\n"))
 		for {

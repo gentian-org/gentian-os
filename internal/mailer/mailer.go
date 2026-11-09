@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -93,6 +94,20 @@ func Render(from string, m Message, now time.Time) ([]byte, error) {
 	if strings.TrimSpace(m.Subject) == "" {
 		return nil, errors.New("a message needs a subject")
 	}
+	// Every address is one bare address, and nothing that goes into a
+	// header carries a line break: a recipient or subject that did could
+	// add headers or recipients of its own.
+	if err := checkAddress(from); err != nil {
+		return nil, fmt.Errorf("sender: %w", err)
+	}
+	for _, to := range m.To {
+		if err := checkAddress(to); err != nil {
+			return nil, fmt.Errorf("recipient: %w", err)
+		}
+	}
+	if strings.ContainsAny(m.Subject, "\r\n") {
+		return nil, errors.New("a subject is one line")
+	}
 	id := make([]byte, 12)
 	if _, err := rand.Read(id); err != nil {
 		return nil, err
@@ -115,6 +130,18 @@ func Render(from string, m Message, now time.Time) ([]byte, error) {
 		b.WriteString("\r\n")
 	}
 	return []byte(b.String()), nil
+}
+
+// checkAddress accepts one bare address, "user@host", and nothing else.
+func checkAddress(addr string) error {
+	if strings.ContainsAny(addr, "\r\n<>,") {
+		return fmt.Errorf("%q is not a single bare address", addr)
+	}
+	parsed, err := mail.ParseAddress(addr)
+	if err != nil || parsed.Address != addr || parsed.Name != "" {
+		return fmt.Errorf("%q is not a single bare address", addr)
+	}
+	return nil
 }
 
 // Send submits the message. The connection is TLS before the password is
