@@ -693,6 +693,16 @@ func main() {
 				os.Exit(1)
 			}
 			setupLog.Info("membership listener enabled", "addr", listener.Addr)
+			// The statements that did not arrive: people no longer in
+			// Keycloak lose their memberships at the next sweep.
+			if err := mgr.Add(&controller.MembershipSweep{
+				Receiver: listener.Receiver,
+				Client:   mgr.GetClient(),
+				Log:      listener.Log,
+			}); err != nil {
+				setupLog.Error(err, "unable to add the membership sweep")
+				os.Exit(1)
+			}
 		}
 	}
 
