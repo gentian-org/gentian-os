@@ -277,6 +277,23 @@ func (c *KeycloakAdminClient) listRealmUsers(ctx context.Context, realm string, 
 	return out, nil
 }
 
+// UserExists asks a realm for one account by id, enabled or not.
+func (c *KeycloakAdminClient) UserExists(ctx context.Context, realm, id string) (bool, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return false, err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/users/%s", url.PathEscape(realm), url.PathEscape(id))
+	status, err := c.doAdmin(ctx, token, http.MethodGet, path, nil)
+	if status == http.StatusNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("keycloak get user: %w", err)
+	}
+	return true, nil
+}
+
 // CountRealmUsers answers how many enabled accounts a realm holds, as Keycloak
 // counts them. A number and nothing about who.
 func (c *KeycloakAdminClient) CountRealmUsers(ctx context.Context, realm string) (int, error) {

@@ -47,7 +47,7 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{}, nil
 	}
 
-	if err := reconcileKeycloakIDPGatewayRoute(ctx, r.Client, r.KernelDomain, r.TenancyMode); err != nil {
+	if err := reconcileKeycloakIDPGatewayRoute(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.kernelRealm()); err != nil {
 		logger.Error(err, "Keycloak IdP HTTPRoute frame-ancestors reconcile failed")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
@@ -66,7 +66,7 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
-	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
+	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode, r.kernelRealm()) {
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
 
@@ -74,10 +74,7 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 }
 
 func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context.Context) error {
-	kernelRealm := r.KernelRealm
-	if kernelRealm == "" {
-		kernelRealm = "kernel"
-	}
+	kernelRealm := r.kernelRealm()
 	tr := &TenantReconciler{
 		Client:      r.Client,
 		KernelRealm: kernelRealm,
@@ -141,4 +138,13 @@ func (r *KeycloakPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 		).
 		Complete(r)
+}
+
+// kernelRealm is the realm the platform tenant signs in to: "kernel" unless
+// the operator is told otherwise.
+func (r *KeycloakPlatformReconciler) kernelRealm() string {
+	if r.KernelRealm == "" {
+		return "kernel"
+	}
+	return r.KernelRealm
 }

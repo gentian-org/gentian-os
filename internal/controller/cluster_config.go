@@ -41,6 +41,10 @@ const (
 	clusterConfigMailEgressKey  = "mail.egressHost"
 	clusterConfigSecretModeKey  = "secretMode"
 	clusterConfigMainAddressKey = "mainAddress.tenant"
+	// The tenant whose people also have the cluster's domain as their mail
+	// domain (spec.mainAddress.mailTenant); read on every sync of the mail
+	// maps, not at start.
+	clusterConfigMailTenantKey = "mainAddress.mailTenant"
 	// The cluster's random id (spec.clusterUID), which a bundle records and
 	// a restore compares. No environment fallback: a cluster whose claim
 	// carries none has none, and says so.

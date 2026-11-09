@@ -188,6 +188,9 @@ The gentian-os operator creates, for every tenant with edge-routed apps:
    is deliberately absent: the tenant listener is scoped to `*.effectiveDomain`
    and cannot route it, so naming it would let browsers coalesce apex requests
    onto a connection that answers 404. See `docs/concepts/routing.md` §3.
+   For a domain of the tenant's own, a second one names the bare domain alone
+   (`tenant-<name>-apex`), for the perimeter listener that serves it
+   (routing.md §5).
 2. Secret `tenant-{name}-wildcard-tls` in the tenant namespace.
 3. One Gateway API `HTTPRoute` per app host, attached to the tenant Gateway and
    `kernel-public-gateway`, all using that TLS secret on the tenant listener.
@@ -247,7 +250,7 @@ named by its SHA-256, so a domain is found by whoever already knows it and the
 cluster's list of customers is not published.
 
 - **OIDC issuer** stays at `https://id.<kernel_domain>/realms/<tenant>` — app URL changes do not invalidate tokens.
-- **DNS:** Customer points `*.acme.com` (or per-host records) at the platform edge proxy/tunnel.
+- **DNS:** Customer points `acme.com` and `*.acme.com` (or per-host records) at the platform edge proxy/tunnel. Where the zone is listed in `certificates.dnsZones`, external-dns writes them from the routes, but only at a name where it owns every record already there: a record somebody else put at the bare domain (a mail forwarder's MX, a TXT) keeps external-dns from adding any record there.
 - **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token).
 
 ### Kernel DNS credential

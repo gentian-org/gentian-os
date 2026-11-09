@@ -489,7 +489,7 @@ anybody in: the path makes no session.
 
 Every kernel namespace refuses an ingress that nothing lists. The list is one file, `internal/kernel/kernelnet/inventory.yaml`: per namespace, every pod set, every port it listens on, and for each port who is admitted, with where in the repository that was read. The NetworkPolicies are generated from it (`kernel/security/network-policies/kernel-network-policies.yaml`, `make gen-kernel-network-policies`), so no rule exists without a line that says who it is for.
 
-They are plain `networking.k8s.io/v1` NetworkPolicy and name no address block, so they mean the same on every network plugin that enforces NetworkPolicy. Each namespace has one policy, `kernel-ingress`, that selects every pod; rules are by the pod's port, because a plugin matches a connection after a Service's port has become the pod's.
+They are plain `networking.k8s.io/v1` NetworkPolicy and name no address block, so they mean the same on every network plugin that enforces NetworkPolicy. Each namespace has one policy, `kernel-ingress`, that selects every pod and carries the namespace's own traffic and the ports open to any source. A port that names its callers is admitted by a policy of its own workload, `kernel-ingress-<workload>`, on that workload's pods alone: the director's 8080 is not opened on the operator, nor the bouncer's 8082 on cert-manager. Rules are by the pod's port, because a plugin matches a connection after a Service's port has become the pod's.
 
 | Namespace | Admitted from outside the namespace | Pods of the namespace reach each other |
 | --- | --- | --- |

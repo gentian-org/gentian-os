@@ -1713,24 +1713,31 @@ func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *
 		}
 	}
 	add(zoneDesktopHost(zone.zoneNames))
-	var own []string
-	if profile != nil {
-		for i := range profile.Spec.Expose {
-			e := &profile.Spec.Expose[i]
-			if e.Surface != gentianov1alpha1.SurfaceGateway {
-				continue
-			}
-			if e.Backend.Component != "" && e.Backend.Component != comp.Name {
-				continue
-			}
-			own = append(own, exposureHost(zone, comp, e))
-		}
-	}
-	sort.Strings(own)
-	for _, h := range own {
+	for _, h := range componentOwnHosts(zone.zoneNames, comp, profile) {
 		add(h)
 	}
 	return framers
+}
+
+// componentOwnHosts is every host a component answers on through the
+// gateway, sorted: its profile's gateway entries that are its own.
+func componentOwnHosts(zone zoneNames, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) []string {
+	var own []string
+	if profile == nil {
+		return nil
+	}
+	for i := range profile.Spec.Expose {
+		e := &profile.Spec.Expose[i]
+		if e.Surface != gentianov1alpha1.SurfaceGateway {
+			continue
+		}
+		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+			continue
+		}
+		own = append(own, exposureHostIn(zone, comp.Name, e))
+	}
+	sort.Strings(own)
+	return own
 }
 
 // buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.

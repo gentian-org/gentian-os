@@ -432,6 +432,29 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kern
 			), true))
 		}
 	}
+	// The bare name of a domain of a tenant's own, with the certificate that
+	// names it alone (buildTenantApexCertificate). The cluster's catch-all
+	// listener would answer it with the cluster's certificate, which does not
+	// name it, so without this the bare name fails in the browser whatever
+	// is routed there. The tenant's apex route attaches here.
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		domain := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm).domain
+		if !ownDomainApex(domain, kernelDomain) {
+			continue
+		}
+		if _, dup := seen[domain]; dup {
+			continue
+		}
+		seen[domain] = struct{}{}
+		out = append(out, withAllowedRoutes(tlsListener(
+			perimeterListenerName(domain), gatewayv1.Hostname(domain),
+			tenantApexSecretName(tenant.Name), tenantNamespaceName(tenant),
+		), true))
+	}
 	// A tenant's website on the cluster's main address answers on the bare
 	// domain, with the cluster's own certificate. The platform's page is
 	// normally published there already and this adds nothing; where it is

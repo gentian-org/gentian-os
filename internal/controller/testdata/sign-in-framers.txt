@@ -1,0 +1,13 @@
+multi:
+  'self'
+  https://platform.example.test
+  https://desktop.acme.ch
+  https://desktop.demo.example.test
+  https://files.demo.example.test
+  https://office.demo.example.test
+single:
+  'self'
+  https://platform.example.test
+  https://desktop.example.test
+  https://files.example.test
+  https://office.example.test
