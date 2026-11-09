@@ -2100,7 +2100,7 @@ _claim_catalogue_section() {
 # release set) and the operator applies it.
 _claim_release_section() {
     local ref
-    ref="${GENTIAN_OS_BRANCH:-$(gentian_os_ref)}"
+    ref="$(gentian_os_ref)"
     printf '\n'
     printf '  # The platform release this cluster runs. version: a release tag the\n'
     printf '  # cluster runs exactly, moved by a person (kubectl gentian release set)\n'
