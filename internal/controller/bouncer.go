@@ -179,6 +179,24 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 	return zoneSecurityPolicySpec(kernelDomain, zone, route, authz, "", bouncerService)
 }
 
+// edgeLoginTTL is how long a login the edge starts stays valid: Keycloak's
+// own login timeout (the realm's accessCodeLifespanLogin, its default of 30
+// minutes on every realm), so no login the realm accepts comes back to an
+// edge that has dropped it. Envoy's default is ten minutes.
+const edgeLoginTTL = "30m"
+
+// edgeDenyRedirect names the requests the edge answers 401 rather than send
+// to sign in: every one that is not a navigation, by the mode the browser
+// declares (Fetch Metadata). A document or an iframe navigates; a fetch, an
+// image, a script, a stylesheet, a web manifest or a socket does not.
+func edgeDenyRedirect() map[string]interface{} {
+	return map[string]interface{}{
+		"headers": []interface{}{
+			map[string]interface{}{"name": "Sec-Fetch-Mode", "type": "RegularExpression", "value": "cors|no-cors|same-origin|websocket"},
+		},
+	}
+}
+
 // zoneSecurityPolicySpec is the session-and-bouncer policy for one route: L1,
 // the zone's session, and L2, the bouncer.
 //
@@ -202,10 +220,17 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 //     one. There is no pass-through: passThroughAuthHeader is not set, and
 //     must not be without the bouncer's table saying what such a request may
 //     reach.
-//   - A request a page makes in the background is answered 401, not sent to
-//     sign in (denyRedirect). The browser cannot follow that redirect from a
-//     fetch, so the page never learns the session ended and may retry without
-//     pause. This passes nothing: the request stops at the filter.
+//   - Only a navigation is sent to sign in. Every other request is answered
+//     401 (denyRedirect on Sec-Fetch-Mode): a fetch cannot follow the
+//     redirect, so the page would never learn the session ended, and a
+//     favicon, a web manifest or an image would start a login of its own
+//     beside the one the person is in. This passes nothing: the request
+//     stops at the filter. A browser that sends no Sec-Fetch-Mode is sent to
+//     sign in, as before.
+//   - A login stays valid for as long as the realm lets a person take over
+//     its login page (csrfTokenTTL): a first sign-in that sets a password,
+//     enrolls a second factor or verifies an address would otherwise come
+//     back after the edge has forgotten it.
 //
 // The token cookies stay encrypted, which is the filter's default. Nothing
 // but the filter reads them.
@@ -257,11 +282,8 @@ func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, au
 		"forwardAccessToken": !authz.sessionByIDToken(),
 		"scopes":             []interface{}{"openid", "profile", "email"},
 		"refreshToken":       true,
-		"denyRedirect": map[string]interface{}{
-			"headers": []interface{}{
-				map[string]interface{}{"name": "Sec-Fetch-Dest", "type": "Exact", "value": "empty"},
-			},
-		},
+		"csrfTokenTTL":       edgeLoginTTL,
+		"denyRedirect":       edgeDenyRedirect(),
 	}
 	if authz.sessionByIDToken() {
 		oidc["forwardIDToken"] = map[string]interface{}{"header": edgeIDTokenHeader}

@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,12 +64,24 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheBouncer(t *testing.T) {
 	if oidc["refreshToken"] != true {
 		t.Fatalf("refreshToken = %v", oidc["refreshToken"])
 	}
-	// A background request gets 401 and nothing else does: a navigation must
-	// still be sent to sign in.
+	// Only a navigation is sent to sign in; every other request gets 401.
 	deny := oidc["denyRedirect"].(map[string]interface{})["headers"].([]interface{})
-	if len(deny) != 1 || deny[0].(map[string]interface{})["name"] != "Sec-Fetch-Dest" ||
-		deny[0].(map[string]interface{})["value"] != "empty" {
+	if len(deny) != 1 || deny[0].(map[string]interface{})["name"] != "Sec-Fetch-Mode" ||
+		deny[0].(map[string]interface{})["type"] != "RegularExpression" {
 		t.Fatalf("denyRedirect = %v", oidc["denyRedirect"])
+	}
+	re := regexp.MustCompile("^(?:" + deny[0].(map[string]interface{})["value"].(string) + ")$")
+	for _, mode := range []string{"cors", "no-cors", "same-origin", "websocket"} {
+		if !re.MatchString(mode) {
+			t.Errorf("Sec-Fetch-Mode %q would start a login", mode)
+		}
+	}
+	if re.MatchString("navigate") {
+		t.Errorf("a navigation would be answered 401 instead of sent to sign in")
+	}
+	// As long as Keycloak keeps its login page open.
+	if oidc["csrfTokenTTL"] != "30m" {
+		t.Fatalf("csrfTokenTTL = %v", oidc["csrfTokenTTL"])
 	}
 	// What must not be there. Each of these lets a request past the session
 	// filter without a session, or hands the token cookies to whoever can
