@@ -221,6 +221,9 @@ keycloakx:
     # a forwarder keeps fields rather than text, and the jboss-logging event
     # listener's success events at info, where they reach stdout at all. At
     # the default (debug) only errors were ever written.
+    # A successful CLIENT_LOGIN stays at debug (client-login-level, the
+    # extension's QuietClientLoginLoggingFactory): the operator and
+    # provider-keycloak take tokens dozens of times a minute.
     - name: KC_LOG_CONSOLE_OUTPUT
       value: json
     - name: KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL

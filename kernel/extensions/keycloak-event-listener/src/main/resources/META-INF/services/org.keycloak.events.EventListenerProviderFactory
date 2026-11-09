@@ -1,1 +1,2 @@
 io.gentianos.keycloak.events.DirectorEventListenerProviderFactory
+io.gentianos.keycloak.events.QuietClientLoginLoggingFactory
