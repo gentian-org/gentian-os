@@ -131,5 +131,5 @@ func concatObjects(lists ...[]client.Object) []client.Object {
 // recordSignInFramersReconcile runs the identity provider's route reconciler
 // as the operator does.
 func recordSignInFramersReconcile(ctx context.Context, c client.Client, kernel, mode string) error {
-	return reconcileKeycloakIDPGatewayRoute(ctx, c, kernel, mode)
+	return reconcileKeycloakIDPGatewayRoute(ctx, c, kernel, mode, "kernel")
 }

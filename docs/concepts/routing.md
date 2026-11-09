@@ -655,9 +655,11 @@ same registrable domain). So:
 - A cluster domain that is itself a public suffix makes every host a site of
   its own, and nothing can be framed. Use a domain below one.
 
-Keycloak's realm endpoints on `id.<kernelDomain>` carry a separate policy,
-reconciled from tenant and domain state, naming the hosts whose pages embed
-its session frames.
+Keycloak's realm endpoints on `id.<kernelDomain>` carry a separate policy:
+they may be framed by the platform's desktop, each tenant's desktop, and the
+hosts of a component that answers on more than one host, because such a
+component may frame one of its hosts in another and the inner host's sign-in
+then runs inside the outer one. No wildcard, and no other app host.
 
 **A frame on a tenant's own domain.** The desktop shows an app in a frame.
 The first time an app's address is opened, the frame is sent to the realm and
