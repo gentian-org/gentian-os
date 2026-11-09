@@ -6,9 +6,10 @@
 # that selects a pod denies every ingress it does not list, so two mistakes
 # are possible and neither shows until a cluster runs it:
 #
-#   - a port the operator serves is missing from the policy. The pod then
-#     fails its probes, or the API server cannot reach the admission webhook
-#     and every Tenant write is refused;
+#   - a port the operator serves is missing from the policy. The API server
+#     then cannot reach the admission webhook and every Tenant write is
+#     refused. The health port alone is listed nowhere: the kubelet's probes
+#     come from the pod's own node, which NetworkPolicy always admits;
 #   - the listener's port is listed with no source, or the policy selects
 #     more than the operator, and the control it exists for is not there;
 #   - the membership listener's port admits more than Keycloak's pods.

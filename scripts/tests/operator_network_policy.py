@@ -86,7 +86,10 @@ def main() -> int:
 
     # Every other port the pod serves stays reachable; the listener's is not
     # among the open ones.
-    others = {port for name, port in served.items() if name not in ("lifecycle", "membership")}
+    health = served.get("health")
+    if health is not None and (health in open_ports or any(health in g[0] for g in guarded)):
+        return fail("the health port is listed; the kubelet's probes need no rule")
+    others = {port for name, port in served.items() if name not in ("lifecycle", "membership", "health")}
     if open_ports != others:
         return fail(f"ports open to anybody are {sorted(open_ports)}; the operator serves {sorted(others)} beside its listener")
     if lifecycle in open_ports:

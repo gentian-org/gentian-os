@@ -12,13 +12,15 @@
   was with no policy -- a rule with ports and no `from` admits any source:
 
     metrics     scraped by whatever the cluster runs for that
-    health      the kubelet's probes
     webhook     the API server, for Tenant admission
 
-  Narrowing those is not done here. The API server and the kubelet do not
-  arrive from a pod, so a rule naming their source differs per CNI and per
-  cluster; a ports-only rule is what keeps admission and probes working
-  everywhere.
+  Narrowing those is not done here. The API server does not arrive from a
+  pod, so a rule naming its source differs per CNI and per cluster; a
+  ports-only rule is what keeps admission working everywhere.
+
+  The health port is listed nowhere. The kubelet's probes come from the
+  pod's own node, which NetworkPolicy admits whatever the policies say, and
+  nothing else calls it.
 
   The membership listener's port admits the Keycloak pods of the
   authentication namespace and no other source: Keycloak's event listener
@@ -84,12 +86,9 @@ spec:
           port: {{ .Values.membershipListener.port }}
     {{- end }}
     - ports:
-        # metrics and health: the manager's --metrics-bind-address and
-        # --health-probe-bind-address in deployment.yaml.
+        # metrics: the manager's --metrics-bind-address in deployment.yaml.
         - protocol: TCP
           port: 8080
-        - protocol: TCP
-          port: 8081
         {{- if ($webhook.enabled | default false) }}
         - protocol: TCP
           port: {{ $webhook.port | default 9443 }}
