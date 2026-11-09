@@ -1491,6 +1491,23 @@ spec:
                     starttls:
                       type: boolean
                       default: true
+                    listeners:
+                      type: object
+                      description: >
+                        Which ports the mail edge serves to mail clients when
+                        serviceMode is system. Port 25, where other servers
+                        deliver, is always served. Setting one to true approves
+                        serving it; the signed commit that sets it is the
+                        record. A claim the installer writes sets both to
+                        false. A claim that names neither keeps both served,
+                        as a cluster did before this setting existed.
+                      properties:
+                        submission:
+                          type: boolean
+                          description: Port 587, where mail clients send.
+                        imaps:
+                          type: boolean
+                          description: Port 993, where mail clients read.
 
             status:
               type: object

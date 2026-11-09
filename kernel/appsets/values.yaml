@@ -26,6 +26,10 @@ mailServiceMode: external
 llmEnabled: "false"
 relayHost: ""
 egressHost: ""
+# Whether the mail edge serves mail clients on 587 and 993: "true", "false",
+# or empty for a claim that names neither, which keeps both served.
+mailSubmission: ""
+mailImaps: ""
 storageClass: ""
 
 # Whether the four shared stores -- PostgreSQL, MariaDB, Redis, SeaweedFS -- each

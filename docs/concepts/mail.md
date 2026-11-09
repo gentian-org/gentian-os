@@ -26,7 +26,7 @@ its own (§5a). Neither has a load balancer. What the internet reaches is a
 proxy in `system-mail-dmz` (§9b). Services are named per stage:
 
 ```
-mail-edge-<stage>.system-mail-dmz                        # the load balancer: 25, 587, 993
+mail-edge-<stage>.system-mail-dmz                        # the load balancer: 25, and 587, 993 per mail.listeners
 postfix-<stage>.system-mail.svc.cluster.local:587        # submission, for pods of the cluster
 postfix-<stage>-edge.system-mail.svc.cluster.local       # 10025, 10587: the proxy only
 dovecot-<stage>.system-mail.svc.cluster.local:24         # LMTP, Postfix -> Dovecot
@@ -53,8 +53,12 @@ maildir on persistent storage at `/var/mail/<domain>/<local-part>`. A mail
 client authenticates over IMAP and reads it. Sending from a client inside the
 cluster is accepted for any domain in the map.
 
-Ports 25, 587 and 993 are published by a proxy in the mail DMZ, which passes each
-connection to Postfix or Dovecot with the client's address (§9b). Most providers refuse or bin outbound mail to external recipients until
+Port 25 is published by a proxy in the mail DMZ, which passes each
+connection to Postfix or Dovecot with the client's address (§9b). Mail clients'
+ports, 587 (submission) and 993 (imaps), are published only where the Cluster
+claim's `mail.listeners.submission` and `mail.listeners.imaps` say `true`; a
+claim the installer writes sets both to `false`, and one that names neither
+publishes both. Most providers refuse or bin outbound mail to external recipients until
 the DNS records in §10 exist.
 
 ## 1. Why Mail Is an Extension, Not Core Kernel
