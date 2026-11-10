@@ -247,7 +247,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.config.replicas` | integer (int32) |  | `Replicas` overrides the default replica count. |
 | `spec.exposures` | []object |  | `Exposures` are the entries of the profile a perimeter approver approved: the perimeter entries that are switched on, and the entries behind sign-in whose… |
 | `spec.exposures[].alias` | string |  | `Alias` is the label of a second address for this surface directly under the cluster's own domain, copied from the Tenant's entry. |
-| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the cluster's main address (the bare domain), copied from the Tenant's entry. |
+| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the tenant's bare name (the cluster's main address, or the tenant's own), copied from the Tenant's entry. |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` ends the exposure, for one that was published for a while: at expiry the operator treats the enablement as absent, and the entry stays in git as… |
 | `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of the profile's expose list that asks for approval. |
 | `spec.exposures[].kind` | string |  | `Kind` is what was approved, copied from the Tenant's entry; empty is a public address. |
@@ -385,7 +385,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `spec.expose` | []object |  | `Expose` declares entry points. |
 | `spec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
-| `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
+| `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on a bare name instead of a host under the zone's domain. |
 | `spec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `spec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
 | `spec.expose[].backend.component` | string |  | `Component` names another component whose Service this entry routes to. |
@@ -1178,7 +1178,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `status.profileSpec.expose` | []object |  | `Expose` declares entry points. |
 | `status.profileSpec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
-| `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
+| `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on a bare name instead of a host under the zone's domain. |
 | `status.profileSpec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `status.profileSpec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
 | `status.profileSpec.expose[].backend.component` | string |  | `Component` names another component whose Service this entry routes to. |
@@ -1668,9 +1668,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.exposures[].alias` | string |  | `Alias` is a second address for this surface, directly under the cluster's own domain: the one label of \<alias>.\<kernelDomain>. |
 | `spec.exposures[].aliasSetAt` | string (date-time) |  |  |
 | `spec.exposures[].aliasSetBy` | string |  | `AliasSetBy` is the subject that set the alias, and AliasSetAt when. |
-| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the cluster's main address: the bare domain. |
+| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the tenant's bare name: the cluster's main address for the one tenant that may hold it -- the one the… |
 | `spec.exposures[].apexAcknowledgedAt` | string (date-time) |  |  |
-| `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on the main address, and ApexAcknowledgedAt when: only a site whose scripts the… |
+| `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on a bare name, and ApexAcknowledgedAt when: only a site whose scripts the… |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` is when it stops answering, for a surface published for a while. |
 | `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of that component's profile that asks for approval: one whose surface is perimeter, or one behind sign-in that declares the… |
 | `spec.exposures[].install` | string | yes | `Install` names the Component this publishes from. |

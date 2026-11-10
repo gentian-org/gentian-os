@@ -874,7 +874,7 @@ exposures:
     owner: <keycloak subject>        # immutable: a renewal by someone else is a new enablement
     reviewAt: 2026-11-24T00:00:00Z   # always set
     expiresAt: 2026-12-24T00:00:00Z  # optional
-    apex: false                      # this surface is the cluster's main address
+    apex: false                      # this surface is the tenant's bare name
     alias: statistics                # a second name directly under the cluster's domain
 ```
 

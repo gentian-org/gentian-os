@@ -93,6 +93,8 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
                                                platformRoles.auditor=gentian:platform:auditor ...
+  kubectl gentian domains [--problems]         every domain the cluster serves, the DNS records it needs, and whether
+                                               the internet has them: present, pending, missing, or held by another record
 
   kubectl gentian apps list --tenant <tenant> [--available]
   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]

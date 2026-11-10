@@ -92,6 +92,8 @@
 #   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
 #                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
 #                                                platformRoles.auditor=gentian:platform:auditor ...
+#   kubectl gentian domains [--problems]         every domain the cluster serves, the DNS records it needs, and whether
+#                                                the internet has them: present, pending, missing, or held by another record
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
@@ -1620,6 +1622,40 @@ cmd_release() {
             ;;
         *) die "usage: kubectl gentian release show|set <vX.Y.Z> [--auto-upgrade none|patch|minor]|track <branch>" ;;
     esac
+}
+
+# domains: each domain the cluster serves and the DNS records it needs, as the
+# operator's DNS check last found them (routing.md §3a). --problems leaves out
+# what is present.
+cmd_domains() {
+    local problems=false answer
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --problems) problems=true; shift ;;
+            *) die "usage: kubectl gentian domains [--problems]" ;;
+        esac
+    done
+    need jq
+    _discover
+    answer="$(_call GET "/v1/clusters/${_CLUSTER}/domains")" || exit 1
+    printf '%s' "${answer}" | jq -r --argjson problems "${problems}" '
+        def says:
+            if .state == "present" then "present"
+            elif .state == "pending" then "pending: asked for, not served yet (since \(.since))"
+            elif .state == "missing" then "MISSING since \(.since): wants \(.want | join(", "))"
+            elif .state == "heldByOther" then "HELD BY ANOTHER RECORD since \(.since): serves \(.got | join(", ")); wants \(.want | join(", "))"
+            else "unknown: the lookup failed" end;
+        if (.checkedAt // "") == "" then "Not checked yet: the operator checks every few minutes."
+        else
+            "Checked \(.checkedAt).",
+            (.domains[] | . as $d
+             | [.records[] | select(($problems | not) or .state != "present")] as $rows
+             | if ($rows | length) == 0 and $problems then empty else
+                 "",
+                 "\($d.domain)" + (if ($d.tenant // "") != "" then " (tenant \($d.tenant))" else " (the cluster)" end),
+                 ($rows[] | "  \(.type | . + "     " | .[0:5]) \(.name)  \(says)")
+               end)
+        end'
 }
 
 # tenants mail-mode: what the operator provisions for a tenant's mail
@@ -3273,6 +3309,7 @@ main() {
         model|models) cmd_models "$@" ;;
         setting|settings) cmd_settings "$@" ;;
         release) cmd_release "$@" ;;
+        domain|domains) cmd_domains "$@" ;;
         platform-role|platform-roles) cmd_platform_roles "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
         approval|approvals) cmd_approvals "$@" ;;

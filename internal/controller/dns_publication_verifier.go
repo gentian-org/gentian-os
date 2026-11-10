@@ -87,6 +87,13 @@ type DNSPublicationVerifier struct {
 	// Nil means the real one; tests substitute their own.
 	Resolve func(ctx context.Context, name string) (dnsResolver, error)
 
+	// KernelDomain, TenancyMode and KernelRealm say which domains the
+	// cluster serves, so the result can be told by domain
+	// (dns_domain_status.go). Namespace is where that is written; empty
+	// writes nothing.
+	KernelDomain, TenancyMode, KernelRealm string
+	Namespace                              string
+
 	mu           sync.Mutex
 	missingSince map[string]time.Time
 	reported     map[string]bool
@@ -136,43 +143,66 @@ func (v *DNSPublicationVerifier) CheckOnce(ctx context.Context, now time.Time) {
 		grace = dnsPublicationGrace
 	}
 
+	var results []dnsRecordStatus
+	// check looks one record up and keeps its state; late is a record past
+	// the grace period that is still not served.
+	check := func(rec dnsRecord) (late bool) {
+		if !dnsCheckedType(rec.Type) {
+			// A CNAME, say: not looked up, and so not listed either.
+			return false
+		}
+		got, served, known := v.observe(ctx, rec)
+		status := dnsRecordStatus{record: rec, Got: got}
+		defer func() { results = append(results, status) }()
+		if !known {
+			status.State = dnsStateUnknown
+			return false
+		}
+		k := rec.key()
+		labels := prometheus.Labels{"namespace": rec.Namespace, "endpoint": rec.Endpoint, "name": rec.Name, "type": rec.Type}
+		if served {
+			status.State = dnsStatePresent
+			dnsRecordPublished.With(labels).Set(1)
+			if v.reported[k] {
+				logger.Info("DNS record is now published", "endpoint", rec.Endpoint, "name", rec.Name, "type", rec.Type)
+			}
+			delete(v.missingSince, k)
+			delete(v.reported, k)
+			return false
+		}
+		first, seen := v.missingSince[k]
+		if !seen {
+			v.missingSince[k] = now
+			first = now
+		}
+		status.Since = first
+		if now.Sub(first) < grace {
+			status.State = dnsStatePending
+			return false
+		}
+		status.State = dnsStateMissing
+		if heldByOther(rec, got) {
+			status.State = dnsStateHeldByOther
+		}
+		// Only past the grace period does a missing record count, and only
+		// then does the gauge go to 0: a gauge that dips on every new record
+		// while it propagates is an alert that teaches people to ignore it.
+		dnsRecordPublished.With(labels).Set(0)
+		if !v.reported[k] {
+			logger.Error(nil, "DNS record requested but not published",
+				"endpoint", rec.Namespace+"/"+rec.Endpoint, "name", rec.Name, "type", rec.Type,
+				"targets", rec.Targets, "served", got, "missingFor", now.Sub(first).Round(time.Second).String())
+			v.reported[k] = true
+		}
+		return true
+	}
+
 	for i := range list.Items {
 		ep := &list.Items[i]
 		var missing []string
 		for _, rec := range dnsRecordsOf(ep) {
-			served, known := v.served(ctx, rec)
-			if !known {
-				continue
-			}
-			k := rec.key()
-			labels := prometheus.Labels{"namespace": rec.Namespace, "endpoint": rec.Endpoint, "name": rec.Name, "type": rec.Type}
-			if served {
-				dnsRecordPublished.With(labels).Set(1)
-				if v.reported[k] {
-					logger.Info("DNS record is now published", "endpoint", rec.Endpoint, "name", rec.Name, "type", rec.Type)
-				}
-				delete(v.missingSince, k)
-				delete(v.reported, k)
-				continue
-			}
-			first, seen := v.missingSince[k]
-			if !seen {
-				v.missingSince[k] = now
-				continue
-			}
-			if now.Sub(first) < grace {
-				continue
-			}
-			// Only past the grace period does a missing record count, and only
-			// then does the gauge go to 0: a gauge that dips on every new record
-			// while it propagates is an alert that teaches people to ignore it.
-			dnsRecordPublished.With(labels).Set(0)
-			missing = append(missing, fmt.Sprintf("%s %s", rec.Type, rec.Name))
-			if !v.reported[k] {
-				logger.Error(nil, "DNS record requested but not published",
-					"endpoint", rec.Namespace+"/"+rec.Endpoint, "name", rec.Name, "type", rec.Type,
-					"targets", rec.Targets, "missingFor", now.Sub(first).Round(time.Second).String())
-				v.reported[k] = true
+			if check(rec) {
+				missing = append(missing, fmt.Sprintf("%s %s", rec.Type, rec.Name))
 			}
 		}
 		if len(missing) > 0 && v.Recorder != nil {
@@ -184,16 +214,25 @@ func (v *DNSPublicationVerifier) CheckOnce(ctx context.Context, now time.Time) {
 				grace, strings.Join(missing, ", "))
 		}
 	}
+
+	// The bare names and www hosts the cluster routes, which external-dns
+	// publishes from the routes rather than from a DNSEndpoint.
+	domains := v.servedDomains(ctx)
+	for _, rec := range v.webRecords(ctx, domains, results) {
+		check(rec)
+	}
+	v.writeDomainStatus(ctx, domains, results, now)
 }
 
-// served reports whether rec is published. known is false for record types this
-// does not check and for lookups that failed for reasons other than absence —
-// a resolver outage must not read as every record vanishing at once.
-func (v *DNSPublicationVerifier) served(ctx context.Context, rec dnsRecord) (served, known bool) {
-	switch rec.Type {
-	case "A", "AAAA", "TXT", "MX":
-	default:
-		return false, false
+// observe asks the zone's authoritative server for one record: what it
+// serves at that name and type, whether that includes every target asked
+// for, and whether the answer is known at all. known is false for record
+// types this does not check and for lookups that failed for reasons other
+// than absence -- a resolver outage must not read as every record vanishing
+// at once.
+func (v *DNSPublicationVerifier) observe(ctx context.Context, rec dnsRecord) (got []string, served, known bool) {
+	if !dnsCheckedType(rec.Type) {
+		return nil, false, false
 	}
 	resolve := v.Resolve
 	if resolve == nil {
@@ -203,37 +242,38 @@ func (v *DNSPublicationVerifier) served(ctx context.Context, rec dnsRecord) (ser
 	defer cancel()
 	res, err := resolve(ctx, rec.Name)
 	if err != nil {
-		return false, false
+		return nil, false, false
 	}
+	norm := normaliseHost
 	switch rec.Type {
 	case "A", "AAAA":
-		got, err := res.LookupHost(ctx, rec.Name)
-		if err != nil {
-			return false, isNotFound(err)
-		}
-		return containsAll(got, rec.Targets, normaliseHost), true
+		got, err = res.LookupHost(ctx, rec.Name)
 	case "TXT":
-		got, err := res.LookupTXT(ctx, rec.Name)
-		if err != nil {
-			return false, isNotFound(err)
-		}
-		return containsAll(got, rec.Targets, normaliseTXT), true
+		got, err = res.LookupTXT(ctx, rec.Name)
+		norm = normaliseTXT
 	case "MX":
-		mx, err := res.LookupMX(ctx, rec.Name)
-		if err != nil {
-			return false, isNotFound(err)
-		}
-		got := make([]string, 0, len(mx))
+		var mx []*net.MX
+		mx, err = res.LookupMX(ctx, rec.Name)
 		for _, m := range mx {
 			got = append(got, strconv.Itoa(int(m.Pref))+" "+m.Host)
 		}
-		return containsAll(got, rec.Targets, normaliseMX), true
+		norm = normaliseMX
 	}
-	return false, false
+	if err != nil {
+		return nil, false, isNotFound(err)
+	}
+	return got, containsAll(got, rec.Targets, norm), true
 }
 
-// isNotFound distinguishes "the name has no such record" — which is the answer
-// being checked for — from a lookup that could not be completed.
+// dnsCheckedType says whether records of a type are looked up.
+func dnsCheckedType(typ string) bool {
+	switch typ {
+	case "A", "AAAA", "TXT", "MX":
+		return true
+	}
+	return false
+}
+
 func isNotFound(err error) bool {
 	if dnsErr, ok := err.(*net.DNSError); ok {
 		return dnsErr.IsNotFound

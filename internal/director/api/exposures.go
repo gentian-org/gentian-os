@@ -21,7 +21,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // Publishing a surface to the internet (AD-6), and the one other thing a
@@ -59,13 +58,14 @@ type publishExposureRequest struct {
 	ExpiresAt string `json:"expiresAt,omitempty"`
 	// Reason is why this is public, in the approver's words.
 	Reason string `json:"reason,omitempty"`
-	// Apex asks for the cluster's main address, the bare domain. Only the
-	// user tenant of a single-tenancy cluster may, and for one surface at a
-	// time. The profile's entry has to be one declared for it (apex: true);
-	// the operator checks that and says so on the Component.
+	// Apex asks for the tenant's bare name: the cluster's main address for
+	// the tenant the cluster administrator names for it, the tenant's own
+	// domain (its zone, or a domain bound to it) for any other. One surface
+	// per tenant at a time. The profile's entry has to be one declared for it
+	// (apex: true); the operator checks that and says so on the Component.
 	Apex bool `json:"apex,omitempty"`
 	// AcknowledgeMainAddressRule is the approver saying they were told what
-	// a script on the main address can do to people's sign-in, and that the
+	// a script on a bare name can do to people's sign-in, and that the
 	// site is one whose scripts their organization controls. Required with
 	// apex, on a first publication and on every review; refused without
 	// (mainAddressWarning). It means nothing on any other surface.
@@ -172,21 +172,21 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	}
 
 	if body.Apex {
-		// The main address is the most visible page of the cluster and
-		// nobody is signed in on it. Whose it may be is the mode's.
-		settings, err := s.cfg.Repo.ClusterSettingValues(r.Context())
-		if err != nil && !errors.Is(err, gitops.ErrNoClusterClaim) {
+		// A bare name is the most visible page of its domain and nobody is
+		// signed in on it. Which one a tenant has is the addresses rule's:
+		// the cluster's main address only for the tenant the cluster
+		// administrator names, the tenant's own domain for everyone else.
+		host, err := s.bareNameOf(r.Context(), r.PathValue("t"))
+		if err != nil {
 			s.repoError(w, r, err)
 			return
 		}
-		// No claim is no word that the cluster is single, and so it is not;
-		// and no word on who holds the main address is the mode's default.
-		if tenancy.MainAddressTenant(settings["tenancyMode"], settings[mainAddressTenantSetting]) != r.PathValue("t") {
-			s.fail(w, r, http.StatusConflict, mainAddressRefused)
+		if host == "" {
+			s.fail(w, r, http.StatusConflict, bareNameRefused)
 			return
 		}
-		// Asked after the mode, so nobody is told to acknowledge a rule for
-		// something this cluster would refuse anyway.
+		// Asked after the bare name, so nobody is told to acknowledge a rule
+		// for something this cluster would refuse anyway.
 		if !body.AcknowledgeMainAddressRule {
 			s.fail(w, r, http.StatusBadRequest, mainAddressWarning)
 			return
@@ -267,25 +267,36 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 	s.written(w, r, res, err)
 }
 
-// mainAddressRefused is the answer to apex: true anywhere but the one tenant
-// the cluster lets hold its main address.
-const mainAddressRefused = "a website on the cluster's main address is for one tenant only: " +
-	"the one the cluster names for it (mainAddress.tenant on the Cluster claim, the cluster administrator's setting), " +
+// bareNameRefused is the answer to apex: true from a tenant with no bare name
+// of its own (addresses.Inputs.BareName).
+const bareNameRefused = "this tenant has no bare name a website could take: its address is the cluster's own domain, " +
+	"and the cluster's main address is for the one tenant the cluster administrator names (mainAddress.tenant on the Cluster claim), " +
 	"or, where it names none, the user tenant of a single-tenancy cluster. " +
-	"On a multi-tenancy cluster that names none the main address is the sign-in form, and the platform tenant's own page is published at install. " +
 	"Nothing was changed"
+
+// bareNameOf is the bare name a tenant's apex entry would answer on, from
+// what git says (addresses.Inputs.BareName), or "" where it has none.
+func (s *Server) bareNameOf(ctx context.Context, tenant string) (string, error) {
+	view, err := s.readExposureView(ctx, tenant)
+	if err != nil {
+		return "", err
+	}
+	in := view.inputs
+	in.Tenants = []gentianov1alpha1.Tenant{*view.subject}
+	return in.BareName(&in.Tenants[0]), nil
+}
 
 // mainAddressTenantSetting is the Cluster claim's word on who may hold the
 // main address, as ClusterSettingValues keys it.
 const mainAddressTenantSetting = "mainAddress.tenant"
 
 // mainAddressRule is what the approver has to know before a website goes on
-// the main address. The platform cannot check what a website loads, so the
+// a bare name. The platform cannot check what a website loads, so the
 // rule is the approver's to keep, and they are told it: in the refusal of a
 // request without the acknowledgement, and with the entry in the read, so
 // that whatever asks for the approval can show it first.
-const mainAddressRule = "Any script that runs in a page on the main address can set cookies for the whole domain, " +
-	"and browsers send those cookies to the desktop, the consoles and sign-in as well. " +
+const mainAddressRule = "Any script that runs in a page on a bare name can set cookies for the whole domain, " +
+	"and browsers send those cookies to every host under it: the desktop, the consoles and sign-in as well. " +
 	"Such a script cannot read anybody's session. " +
 	"It can stop people from signing in until they clear their cookies, " +
 	"and it can sign a person in to an account its author chose, without the person noticing, so that what they do there ends up in that account. " +
@@ -295,7 +306,7 @@ const mainAddressRule = "Any script that runs in a page on the main address can 
 
 // mainAddressWarning is the answer to apex: true without the acknowledgement:
 // the rule, and the field that says the approver knows it.
-const mainAddressWarning = "a website on the cluster's main address needs your acknowledgement (\"acknowledgeMainAddressRule\": true). " +
+const mainAddressWarning = "a website on a bare name needs your acknowledgement (\"acknowledgeMainAddressRule\": true). " +
 	mainAddressRule + " " +
 	"If that is true of this site, send the request again with \"acknowledgeMainAddressRule\": true; your name and the time are recorded with the entry. " +
 	"Nothing was changed"

@@ -115,9 +115,10 @@ type exposureEntry struct {
 	AnyoneWithoutSignIn bool `json:"anyoneWithoutSignIn"`
 	// Access is the same in a sentence, for a person.
 	Access string `json:"access,omitempty"`
-	// MainAddress says the entry is for the cluster's main address, the
-	// bare domain, and MainAddressRule is what the approver has to
-	// acknowledge to publish it there.
+	// MainAddress says the entry is for a bare name -- the cluster's main
+	// address, or the tenant's own domain (Host says which) -- and
+	// MainAddressRule is what the approver has to acknowledge to publish it
+	// there.
 	MainAddress     bool   `json:"mainAddress"`
 	MainAddressRule string `json:"mainAddressRule,omitempty"`
 	// Note is why the entry is published nowhere, or why it matches
@@ -564,10 +565,10 @@ func surfaceOf(profile *gentianov1alpha1.ComponentProfile, name string) gentiano
 	return ""
 }
 
-// mainAddressMismatch is why an approval's word on the main address is not
+// mainAddressMismatch is why an approval's word on a bare name is not
 // the profile's, or "".
 //
-// The main address takes two people saying so: the profile's author (apex on
+// A bare name takes two people saying so: the profile's author (apex on
 // the entry) and the approver (apex on the approval). The operator publishes
 // nothing for one without the other (addresses.PerimeterHost), and an
 // approval recorded that way lists as published something that is not. The
@@ -585,7 +586,7 @@ func (v *exposureView) mainAddressMismatch(install, name string, apex bool) stri
 	if entry.Surface != gentianov1alpha1.SurfacePerimeter {
 		if apex {
 			return fmt.Sprintf(
-				"the request asks for the cluster's main address (\"apex\": true), and entry %s of %s is not a public address: it is served behind sign-in. Send the request without \"apex\"",
+				"the request asks for a bare name (\"apex\": true), and entry %s of %s is not a public address: it is served behind sign-in. Send the request without \"apex\"",
 				name, install)
 		}
 		return ""
@@ -598,12 +599,12 @@ func (v *exposureView) mainAddressMismatch(install, name string, apex bool) stri
 	}
 	if apex {
 		return fmt.Sprintf(
-			"the request asks for the cluster's main address (\"apex\": true), and the profile of %s does not declare entry %s for the main address. "+
+			"the request asks for a bare name (\"apex\": true), and the profile of %s does not declare entry %s for a bare name. "+
 				"The platform would publish nothing for it. Send the request without \"apex\" to publish the entry at its own address",
 			install, name)
 	}
 	return fmt.Sprintf(
-		"the profile of %s declares entry %s for the cluster's main address, and the request does not ask for the main address (\"apex\": true is missing). "+
-			"The platform would publish nothing for it. Such an entry is approved only as one for the main address, with \"apex\": true and \"acknowledgeMainAddressRule\": true",
+		"the profile of %s declares entry %s for a bare name, and the request does not ask for one (\"apex\": true is missing). "+
+			"The platform would publish nothing for it. Such an entry is approved only as one for a bare name, with \"apex\": true and \"acknowledgeMainAddressRule\": true",
 		install, name)
 }

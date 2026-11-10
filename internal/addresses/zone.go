@@ -48,9 +48,9 @@ type Zone struct {
 	// realm's.
 	Kernel bool
 	// Apex is where an apex entry answers: the cluster's bare domain, for the
-	// platform tenant, and nowhere for anybody else -- the user tenant's
-	// website on a single-tenancy cluster is given that address one entry at
-	// a time, by Holder, and not through here.
+	// platform tenant, and nowhere for anybody else -- a tenant's website is
+	// given its bare name (Inputs.BareName) one entry at a time, by HolderOf,
+	// and not through here.
 	Apex string
 }
 
@@ -83,8 +83,8 @@ func ZoneOf(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode, kernelRe
 //
 // An apex entry answers on the cluster's bare domain, and only where the zone
 // has it (Zone.Apex). It has no host anywhere else, which is the empty string
-// here and "not published" to every caller: a tenant's bare domain is its own
-// to route.
+// here and "not published" to every caller: a tenant's bare name is given to
+// one entry at a time by HolderOf.
 func Host(zone Zone, component string, e *gentianov1alpha1.ExposureSpec) string {
 	if zone.Domain == "" {
 		return ""
@@ -103,19 +103,19 @@ func Host(zone Zone, component string, e *gentianov1alpha1.ExposureSpec) string 
 }
 
 // PerimeterHost is where one perimeter entry of a component is published once
-// it is approved, and whether it is there as a tenant's website on the
-// cluster's main address.
+// it is approved, and whether it is there as a tenant's website on a bare
+// name: the cluster's main address or the tenant's own.
 //
 // approvedForMain is the approver's own word (apex on the enablement).
-// mainEntry is the entry of this component that holds the main address, as
-// VerdictFor decided, and mainHost that address; both empty when none does.
+// mainEntry is the entry of this component that holds the tenant's bare name,
+// as VerdictFor decided, and mainHost that name; both empty when none does.
 //
-// The main address takes two people saying so: the profile's author (apex on
-// the entry) and the approver. One without the other publishes nothing, here
-// or under the tenant's own hosts. The platform tenant's zone is not asked:
-// its page is on the bare domain either way. An empty host is an entry with
-// nowhere to answer -- the bare domain, asked for by a tenant that does not
-// hold it.
+// A bare name takes two people saying so: the profile's author (apex on the
+// entry) and the approver. One without the other publishes nothing, here or
+// under the tenant's own hosts. The platform tenant's zone is not asked: its
+// page is on the bare domain either way. An empty host is an entry with
+// nowhere to answer -- a bare name, asked for by a tenant that does not hold
+// it.
 func PerimeterHost(
 	zone Zone, component string, e *gentianov1alpha1.ExposureSpec,
 	approvedForMain bool, mainEntry, mainHost string,
@@ -173,13 +173,13 @@ func ReservedZone(zone Zone, kernelDomain string) hostnames.Zone {
 //
 // It is the operator's decision in the operator's order, from the same parts:
 // a component held for an address name the platform keeps publishes nothing
-// (hostnames.Check); the main address is VerdictFor's; the host is
+// (hostnames.Check); the bare name is VerdictFor's; the host is
 // PerimeterHost's; and an entry with no paths publishes nothing (Prefixes).
 // The operator comes to it in two places -- the listener and the route -- and
 // a test holds this to both.
 //
-// Whether an approval has expired is not asked here, except for the main
-// address, where an expired approval no longer holds it.
+// Whether an approval has expired is not asked here, except for a bare name,
+// where an expired approval no longer holds it.
 func Resolve(
 	in Inputs, tenant *gentianov1alpha1.Tenant, install string,
 	entry *gentianov1alpha1.ExposureSpec, approvedForMain bool,
@@ -195,7 +195,7 @@ func Resolve(
 	if !zone.Kernel {
 		if verdict, applies := VerdictFor(in, tenant, install); applies {
 			if verdict.Entry != "" {
-				mainEntry, mainHost = verdict.Entry, in.KernelDomain
+				mainEntry, mainHost = verdict.Entry, verdict.Host
 			}
 			mainWhy = verdict.Message
 		}
@@ -208,11 +208,11 @@ func Resolve(
 	case zone.Domain == "":
 		return "", "this cluster declares no domain, so nothing has an address"
 	case entry.Apex && !approvedForMain:
-		return "", install + "/" + entry.Name + " is declared for the cluster's main address and is published only when the approver says so. Nothing is published"
+		return "", install + "/" + entry.Name + " is declared for a bare name and is published only when the approver says so. Nothing is published"
 	case !entry.Apex && approvedForMain:
-		return "", install + "/" + entry.Name + " was approved for the cluster's main address, but the profile does not declare it for that address. Nothing is published"
+		return "", install + "/" + entry.Name + " was approved for a bare name, but the profile does not declare it for one. Nothing is published"
 	case mainWhy != "":
 		return "", mainWhy
 	}
-	return "", install + "/" + entry.Name + " is for the cluster's main address, which this tenant does not hold. Nothing is published"
+	return "", install + "/" + entry.Name + " is for a bare name, which this tenant does not hold. Nothing is published"
 }

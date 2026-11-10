@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/addresses"
 )
 
 // The bare name of a tenant's address: what it answers with and where it
@@ -172,4 +174,87 @@ func ptrString[T ~string](p *T) string {
 		return ""
 	}
 	return string(*p)
+}
+
+// A tenant's website on its own bare name (routing.md §5): its zone under the
+// cluster's domain gets a listener with the cluster's certificate, a domain of
+// its own keeps the listener it has, and the tenant's apex redirect moves onto
+// that listener. Once the website's proxy serves, the redirect keeps /sign-in
+// alone; until then it leads where it led before.
+func TestATenantsWebsiteTakesItsOwnBareName(t *testing.T) {
+	now := time.Now()
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{"website": websiteProfile(t, "website")}
+	team := readyTenant(acmeTenantFixture())
+	team.Name = "team"
+	team.Spec.Exposures = []gentianov1alpha1.TenantExposure{approved("website", now)}
+	acme := readyTenant(acmeTenantFixture())
+	acme.Status.Domain = "acme.example"
+	acme.Spec.Exposures = []gentianov1alpha1.TenantExposure{approved("website", now)}
+	idle := readyTenant(acmeTenantFixture())
+	idle.Name = "idle"
+	tenants := []gentianov1alpha1.Tenant{*team, *acme, *idle}
+
+	in := mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi", Now: now,
+	}
+	holders := addresses.BareNameHolders(in)
+	if len(holders) != 2 || holders["team"].Host != "team.k.example" || holders["acme"].Host != "acme.example" {
+		t.Fatalf("bare-name holders = %v", holders)
+	}
+	if mainAddressHolder(in) != nil {
+		t.Fatal("a tenant's own bare name was taken for the cluster's main address")
+	}
+
+	gw := buildPerimeterGateway("k.example", "multi", "", "kernel", tenants, profiles)
+	listeners := map[string]gatewayv1.Listener{}
+	for _, l := range gw.Spec.Listeners {
+		if l.Hostname != nil {
+			listeners[string(*l.Hostname)] = l
+		}
+	}
+	zone, ok := listeners["team.k.example"]
+	if !ok {
+		t.Fatal("the zone's bare name, held by a website, has no listener on the perimeter")
+	}
+	// The cluster's certificate is in the Gateway's own namespace, so the
+	// reference names none.
+	if ref := zone.TLS.CertificateRefs[0]; string(ref.Name) != kernelWildcardTLSSecretName || ref.Namespace != nil {
+		t.Fatalf("the zone's bare name is served with %s/%s, want the cluster's certificate", ptrString(ref.Namespace), ref.Name)
+	}
+	if _, ok := listeners["idle.k.example"]; ok {
+		t.Fatal("a zone nobody's website holds got a listener: it would take the bare name off the catch-all")
+	}
+
+	domains, names := zonedTenantDomains(tenants, "k.example", "multi")
+	specs := kernelHTTPRouteSpecs("k.example", domains, nil, names, kernelConsoles{}, "c1", true, true, kernelFrontDoor{})
+	withTenantBareNames(specs, map[string]tenantBareName{
+		"team": {host: "team.k.example", serving: true},
+		"acme": {host: "acme.example", serving: false},
+	})
+	byName := map[string]kernelHTTPRouteSpec{}
+	for _, s := range specs {
+		byName[s.name] = s
+	}
+	for name, host := range map[string]string{"tenant-team-apex": "team.k.example", "tenant-acme-apex": "acme.example"} {
+		p := buildKernelHTTPRoute(byName[name]).Spec.ParentRefs[0]
+		if string(p.Name) != PerimeterGatewayName || p.SectionName == nil || string(*p.SectionName) != perimeterListenerName(host) {
+			t.Errorf("%s attaches to %+v, want the perimeter listener of %s", name, p, host)
+		}
+	}
+	served := buildKernelHTTPRoute(byName["tenant-team-apex"]).Spec.Rules
+	if len(served) != 1 || len(served[0].Matches) != 1 || served[0].Matches[0].Path == nil ||
+		*served[0].Matches[0].Path.Value != mainAddressSignInPrefix ||
+		string(*served[0].Filters[0].RequestRedirect.Hostname) != "desktop.team.k.example" {
+		t.Fatalf("with the website serving, the zone's apex route = %+v, want /sign-in to the desktop alone", served)
+	}
+	waiting := buildKernelHTTPRoute(byName["tenant-acme-apex"]).Spec.Rules
+	if len(waiting) != 1 || len(waiting[0].Matches) > 1 ||
+		string(*waiting[0].Filters[0].RequestRedirect.Hostname) != "desktop.acme.example" {
+		t.Fatalf("before the website serves, the own domain's apex route = %+v, want the redirect it had", waiting)
+	}
+	idleRoute := buildKernelHTTPRoute(byName["tenant-idle-apex"]).Spec.ParentRefs[0]
+	if string(idleRoute.Name) != AuthenticatedGatewayName {
+		t.Fatalf("a bare name nobody's website holds moved off the catch-all: %+v", idleRoute)
+	}
 }

@@ -456,6 +456,29 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kern
 			tenantApexSecretName(tenant.Name), tenantNamespaceName(tenant),
 		), true))
 	}
+	// A tenant's website on its own bare name: its zone under the cluster's
+	// domain, with the cluster's certificate (team.<kernel> is directly under
+	// it), or a domain of its own, whose listener is above. Only while a
+	// website holds it: an exact listener takes the name off the catch-all,
+	// where the tenant's apex redirect answers otherwise, and the kernel
+	// moves that redirect here for exactly as long (withTenantBareNames).
+	holders := addresses.BareNameHolders(inputs)
+	names := make([]string, 0, len(holders))
+	for name := range holders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		host := holders[name].Host
+		if _, dup := seen[host]; dup || !directlyUnder(host, kernelDomain) {
+			continue
+		}
+		seen[host] = struct{}{}
+		out = append(out, withAllowedRoutes(tlsListener(
+			perimeterListenerName(host), gatewayv1.Hostname(host),
+			kernelWildcardTLSSecretName, servicesNamespace,
+		), true))
+	}
 	// A tenant's website on the cluster's main address answers on the bare
 	// domain, with the cluster's own certificate. The platform's page is
 	// normally published there already and this adds nothing; where it is
