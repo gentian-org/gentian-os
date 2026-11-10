@@ -7,7 +7,7 @@ arbiter d: b0d57d7d42e211af
 arbiter e: 00139c7546ffa2cf
 arbiter f: 13a19abe824d79c5
 arbiter g: d00195c19f76a5f6
-keycloak: 0e333b9f6cf3aeff
+keycloak: 18579414cbbd90f9
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
 mariadb: 8f0a65c37ac12be6
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}

@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -41,8 +42,8 @@ const (
 	PostgresAdminSecret = "postgres-admin"
 	MariaDBAdminSecret  = "mariadb-admin"
 	// KeycloakAdminSecret holds the realm-export credentials, the same Secret
-	// the identity reconciler already authenticates with.
-	KeycloakAdminSecret = "keycloak-admin"
+	// the identity reconciler's Jobs authenticate with.
+	KeycloakAdminSecret = keycloak.ProvisionerSecret
 
 	// workDir is the scratch mount a dump is staged in before upload.
 	//
@@ -473,7 +474,7 @@ rm -f %[2]s/groups.json
 tar czf %[2]s/realm.tar.gz -C %[2]s realm.json users.ndjson memberships.ndjson
 echo "exported realm ${REALM} (${n} users)"`, quoted, workDir))
 	export.Env = keycloakAdminEnv()
-	return uploadJob(p, "realm.tar.gz", IdentityArtefact, []corev1.Container{export}, nil)
+	return keycloak.AsProvisioner(uploadJob(p, "realm.tar.gz", IdentityArtefact, []corev1.Container{export}, nil))
 }
 
 // realmScriptPrelude is what the realm export and the realm import begin
