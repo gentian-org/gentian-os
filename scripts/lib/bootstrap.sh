@@ -328,12 +328,14 @@ create_crossplane_secrets() {
             --rawfile b <(printf '%s' "$(_derive s3 root_password)") \
             '{root_user:$a,root_password:$b}')"
 
-    # ── identity/keycloak-bootstrap (Keycloak admin password) ──────────────────
+    # ── identity/keycloak-bootstrap (Keycloak admin, its service accounts) ─────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --rawfile a <(printf '%s' "$(_derive keycloak adminPassword)") \
             --rawfile b <(printf '%s' "$(_derive keycloak operatorClientSecret)") \
-            '{admin_password:$a,operator_client_secret:$b}')" \
+            --rawfile c <(printf '%s' "$(_derive keycloak provisionerClientSecret)") \
+            --rawfile d <(printf '%s' "$(_derive keycloak providerClientSecret)") \
+            '{admin_password:$a,operator_client_secret:$b,provisioner_client_secret:$c,provider_client_secret:$d}')" \
         "gentian-os/kernel/identity/keycloak-bootstrap"
 
     # ── authz/openfga ─────────────────────────────────────────────────────────

@@ -1069,11 +1069,11 @@ The way in is *Enter tenant* in the platform console, which is
 `https://desktop.acme.<kernel-domain>/?kc_idp_hint=kernel`; the tenant's own
 sign-in page shows no button for it.
 
-Keycloak master-realm admin:
+Keycloak master-realm admin (user `admin`, break glass):
 
 ```bash
-kubectl get secret keycloak-admin -n kernel-authentication \
-  -o jsonpath='{.data.password}' | base64 -d && echo
+kubectl get secret keycloak-idp-credentials -n kernel-authentication \
+  -o jsonpath='{.data.admin-password}' | base64 -d && echo
 ```
 
 ArgoCD has no local admin: D-03 sets `admin.enabled: "false"` and deletes

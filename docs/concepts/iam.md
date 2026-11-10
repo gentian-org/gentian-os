@@ -348,7 +348,8 @@ master password or on the vault.
 
 What does follow `secretMode` is the credential the link is issued with. The
 installer issues the platform admin's link as Keycloak's own bootstrap
-administrator (the `master` realm, Secret `keycloak-admin`, vault path
+administrator (user `admin` in the `master` realm, Secret
+`keycloak-idp-credentials`, vault path
 `gentian-os/kernel/identity/keycloak-bootstrap`). That password is a machine
 credential like every other kernel one: with `secretMode: derived` it is
 computed from the master password and the cluster's salt, and with
