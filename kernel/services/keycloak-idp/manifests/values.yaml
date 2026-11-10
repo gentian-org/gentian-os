@@ -202,8 +202,10 @@ keycloakx:
         secretKeyRef:
           name: keycloak-idp-credentials
           key: admin-password
-    # The service account every automated caller uses: the operator, its Jobs
-    # and provider-keycloak. Keycloak creates it at first start. The admin
+    # The operator's service account, made by Keycloak at first start as a
+    # temporary bootstrap administrator. The installer (D-03) replaces it with
+    # a permanent client under the same name and secret, beside the other
+    # automated callers' (keycloak-provisioner, provider-keycloak). The admin
     # account above is for the installer and for break-glass.
     - name: KC_BOOTSTRAP_ADMIN_CLIENT_ID
       value: gentian-operator
