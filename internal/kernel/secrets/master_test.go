@@ -75,6 +75,27 @@ func TestDerivedModeWaitsForTheMasterPassword(t *testing.T) {
 	}
 }
 
+// The check at start says what seeding would say, and makes nothing.
+func TestCheckDerivationSaysWhetherAValueCanBeMade(t *testing.T) {
+	ctx := context.Background()
+	srv := newFakeBao()
+	defer srv.Close()
+	kv := newClient(t, srv.URL)
+	derived := secrets.NewSeeder(kv, nil).WithMode(fixed(secrets.ModeDerived))
+	if err := derived.CheckDerivation(ctx); !errors.Is(err, secrets.ErrNoMasterPassword) {
+		t.Fatalf("derived, no master password: %v; want ErrNoMasterPassword", err)
+	}
+	if err := secrets.NewSeeder(kv, nil).WithMode(fixed(secrets.ModeRandom)).CheckDerivation(ctx); err != nil {
+		t.Fatalf("random mode needs no master password: %v", err)
+	}
+	if err := kv.Put(ctx, secrets.MasterPasswordPath, map[string]string{"value": goldenMaster, "salt": goldenSalt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := derived.CheckDerivation(ctx); err != nil {
+		t.Fatalf("derived, master password and salt stored: %v", err)
+	}
+}
+
 // A master password without a salt, or a salt without a master password, is
 // not derived from: the values would not be the cluster's.
 func TestAnIncompleteMasterRecordIsRefused(t *testing.T) {

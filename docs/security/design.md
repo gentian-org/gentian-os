@@ -1627,7 +1627,9 @@ Properties:
   value; while either is missing or unreadable it makes no credential, the
   reconcile fails with the reason and is tried again, and the first pass that
   reads both makes the derived value. A credential already stored is
-  returned without them.
+  returned without them. At start the operator tries the read once and logs
+  an error if it fails; it starts either way. The installer, too, refuses a
+  stored master password without a salt.
 - **A key a profile declares under `secrets.derived`** (Open WebUI's
   `WEBUI_SECRET_KEY` is the one in the catalog) is stored at
   `…/apps/<app>/derived/<key>` and delivered in the

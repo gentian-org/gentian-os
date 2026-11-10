@@ -119,6 +119,15 @@ func (s *Seeder) derivation(ctx context.Context) (*Deriver, error) {
 	}
 }
 
+// CheckDerivation reports whether a value made now could be made: in
+// ModeDerived, whether the master password and salt can be read. It changes
+// nothing; the operator asks it once at start so a missing master password
+// shows in the log before the first reconcile needs it.
+func (s *Seeder) CheckDerivation(ctx context.Context) error {
+	_, err := s.derivation(ctx)
+	return err
+}
+
 // deriver returns the Seeder's Deriver: the one it was built with, or else
 // one from the master password and salt at MasterPasswordPath, read when first
 // needed and kept once read. Until a master password and a salt can be read
