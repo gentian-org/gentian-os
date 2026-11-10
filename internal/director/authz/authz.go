@@ -164,6 +164,65 @@ func (c *OpenFGA) Check(ctx context.Context, requestID, user, relation, object s
 	return c.fga.Check(ctx, c.storeID, c.modelID, user, relation, object)
 }
 
+// Question is one authorization question: does User have Relation on Object.
+type Question struct {
+	User, Relation, Object string
+}
+
+// BatchChecker answers several questions in one round trip, in the order
+// asked. Like Check, an error is a denial of all of them.
+type BatchChecker interface {
+	BatchCheck(ctx context.Context, requestID string, questions []Question) ([]bool, error)
+}
+
+// CheckAll answers questions in the order asked: in batches where c can
+// answer them so, else one at a time. Either way an error answers nothing,
+// and the caller must refuse as it would on one failed Check.
+func CheckAll(ctx context.Context, c Checker, requestID string, questions []Question) ([]bool, error) {
+	if b, ok := c.(BatchChecker); ok {
+		return b.BatchCheck(ctx, requestID, questions)
+	}
+	out := make([]bool, len(questions))
+	for i, q := range questions {
+		ok, err := c.Check(ctx, requestID, q.User, q.Relation, q.Object)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = ok
+	}
+	return out, nil
+}
+
+// BatchCheck implements BatchChecker: the questions in requests of at most
+// openfga.MaxBatchCheck, each decision logged as Check logs it.
+func (c *OpenFGA) BatchCheck(ctx context.Context, requestID string, questions []Question) ([]bool, error) {
+	out := make([]bool, 0, len(questions))
+	for len(questions) > 0 {
+		n := min(len(questions), openfga.MaxBatchCheck)
+		chunk := questions[:n]
+		questions = questions[n:]
+		tuples := make([]openfga.Tuple, n)
+		for i, q := range chunk {
+			tuples[i] = openfga.Tuple{User: q.User, Relation: q.Relation, Object: q.Object}
+		}
+		start := c.now()
+		allowed, err := c.fga.BatchCheck(ctx, c.storeID, c.modelID, tuples)
+		ms := c.now().Sub(start).Milliseconds()
+		if err != nil {
+			c.log.ErrorContext(ctx, "authz decision failed",
+				"request_id", requestID, "checks", n, "model", c.modelID, "duration_ms", ms, "error", err.Error())
+			return nil, err
+		}
+		for i, q := range chunk {
+			c.log.InfoContext(ctx, "authz decision",
+				"request_id", requestID, "user", q.User, "relation", q.Relation, "object", q.Object,
+				"allowed", allowed[i], "model", c.modelID, "duration_ms", ms)
+		}
+		out = append(out, allowed...)
+	}
+	return out, nil
+}
+
 // Tuple is one stored relationship.
 type Tuple = openfga.Tuple
 

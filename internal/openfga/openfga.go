@@ -179,6 +179,82 @@ func (c *Client) Check(ctx context.Context, store, model, user, relation, object
 	return out.Allowed, nil
 }
 
+// MaxBatchCheck is OpenFGA's default limit on checks per batch-check request
+// (OPENFGA_MAX_CHECKS_PER_BATCH_CHECK).
+const MaxBatchCheck = 50
+
+// BatchCheck asks several checks in store, against model, in one request,
+// and answers them in the order asked. At most MaxBatchCheck per call.
+//
+// As strict as Check: only a 200 is an answer, and a check OpenFGA could not
+// answer -- an error in its result, or no result at all -- fails the whole
+// call rather than reading as a denial, so a caller that refuses on error
+// refuses here too.
+func (c *Client) BatchCheck(ctx context.Context, store, model string, checks []Tuple) ([]bool, error) {
+	if len(checks) == 0 {
+		return nil, nil
+	}
+	if len(checks) > MaxBatchCheck {
+		return nil, fmt.Errorf("openfga batch-check: %d checks, at most %d per request", len(checks), MaxBatchCheck)
+	}
+	type tupleKey struct {
+		User     string `json:"user"`
+		Relation string `json:"relation"`
+		Object   string `json:"object"`
+	}
+	type item struct {
+		TupleKey      tupleKey `json:"tuple_key"`
+		CorrelationID string   `json:"correlation_id"`
+	}
+	body := struct {
+		Checks               []item `json:"checks"`
+		AuthorizationModelID string `json:"authorization_model_id"`
+	}{AuthorizationModelID: model}
+	for i, t := range checks {
+		body.Checks = append(body.Checks, item{
+			TupleKey:      tupleKey{User: t.User, Relation: t.Relation, Object: t.Object},
+			CorrelationID: fmt.Sprint(i),
+		})
+	}
+	var out struct {
+		Result map[string]struct {
+			Allowed bool            `json:"allowed"`
+			Error   json.RawMessage `json:"error"`
+		} `json:"result"`
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.request(ctx, http.MethodPost, "/stores/"+store+"/batch-check", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openfga batch-check: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("openfga batch-check: status %d: %s", resp.StatusCode, readBody(resp))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("openfga batch-check: %w", err)
+	}
+	allowed := make([]bool, len(checks))
+	for i, t := range checks {
+		r, ok := out.Result[fmt.Sprint(i)]
+		if !ok {
+			return nil, fmt.Errorf("openfga batch-check: no answer for %s %s %s", t.User, t.Relation, t.Object)
+		}
+		if e := bytes.TrimSpace(r.Error); len(e) > 0 && !bytes.Equal(e, []byte("null")) {
+			return nil, fmt.Errorf("openfga batch-check: %s %s %s: %s", t.User, t.Relation, t.Object, e)
+		}
+		allowed[i] = r.Allowed
+	}
+	return allowed, nil
+}
+
 // Store is a store as OpenFGA lists it.
 type Store struct {
 	ID        string    `json:"id"`
