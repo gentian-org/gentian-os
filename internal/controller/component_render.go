@@ -132,6 +132,9 @@ func (r *ComponentReconciler) renderInput(
 		return nil, err
 	}
 	in.Addons = ids
+	if in.AdaptedAddons, err = r.adaptedAddonIDs(ctx, comp, profile); err != nil {
+		return nil, err
+	}
 	// A placed component's configuration is the platform's: it was never
 	// read from the Component, and is not now.
 	cfg := comp.Spec.Config

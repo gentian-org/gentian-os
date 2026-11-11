@@ -34,6 +34,17 @@ type AdapterSpec struct {
 	// and no app of the tenant.
 	// +optional
 	Adapts *AdaptedApp `json:"adapts,omitempty"`
+
+	// AddonsValuesPath is the dot-separated Helm values path at which the
+	// adapter is told which add-ons are selected into the app it adapts in
+	// its tenant: a list of their IDs (package.addon.id), empty while none is
+	// selected or the app is not installed. The adapter is rendered again
+	// when that selection changes. Absent, it is told nothing about them.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$`
+	AddonsValuesPath string `json:"addonsValuesPath,omitempty"`
 }
 
 // AdaptedApp names the app an adapter fits, and which of its versions.
