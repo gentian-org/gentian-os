@@ -37,5 +37,6 @@ check "the ApplicationSet hands the chart the claim the claims Application appli
 check "instances (with GPUs) and providers' models are offered under their names; none without a claim; a changed list replaces the pods" models
 check "a provider's token is a variable set from the mounted Secret, never in the file; no provider, no ExternalSecret" tokens
 check "the gateway starts with the file it mounts and takes models from nowhere else" gateway
+check "every model is in the access groups a tenant's team names; a fallback is held to the caller's models" groups
 
 finish

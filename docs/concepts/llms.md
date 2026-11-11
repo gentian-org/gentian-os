@@ -324,9 +324,12 @@ Two things to know before switching it on:
   gateway's whole API is on that host as well as its pages — for a signed-in
   platform administrator only, and LiteLLM's own key check still applies behind
   the session.
-- **The console signs in to LiteLLM by itself.** The kernel session opens the
-  host; LiteLLM then asks for its own administrator sign-in (the master key),
-  and its pages send the key that gives them in the `Authorization` header.
+- **The console signs in to LiteLLM through Keycloak.** The kernel session
+  opens the host; LiteLLM's pages then send the browser to the kernel realm's
+  `litellm-dashboard` client (`AUTO_REDIRECT_UI_LOGIN_TO_SSO`) and offer no
+  username and password form. The master key still authenticates the API.
+  The pages send the token LiteLLM gives them at sign-in in the `Authorization`
+  header.
   The edge leaves that header alone on this route, as it does on Keycloak's
   administration console, and passes no token of the platform's to LiteLLM
   ([routing.md §4.1](routing.md)).

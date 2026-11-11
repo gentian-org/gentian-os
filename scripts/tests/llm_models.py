@@ -12,6 +12,8 @@
 #   llm_models.py models     the configuration file, against a claim
 #   llm_models.py tokens     a provider's token: where it is and is not
 #   llm_models.py gateway    the gateway reads the file, and only the file
+#   llm_models.py groups     the access groups a tenant's team names, and no
+#                            fallback past them
 # =============================================================================
 import sys
 import tempfile
@@ -33,6 +35,11 @@ OFFERED = {
 CONFIG_MAP = "litellm-config"
 PROVIDER_SECRET = "llm-provider-credentials"
 KEY_VARIABLE = "LLM_PROVIDER_KEY_"
+# The access groups a tenant's team names (internal/modelgateway).
+EVERY_TENANT = "gentian:every-tenant"
+PROVIDER_GROUP = "gentian:provider:"
+# What a configuration file without models still says.
+SETTINGS = {"general_settings": {"enforce_fallback_model_access": True}}
 
 
 def one(docs, kind, name):
@@ -97,6 +104,8 @@ def check_models():
     if got != want or len(models) != len(want):
         raise Failure(f"for {CLAIM} the gateway offers {got}, want {want}")
     info = {m["model_name"]: m.get("model_info") or {} for m in models}
+    for described in info.values():
+        described.pop("access_groups", None)
     if info["infomaniak/gemma-4-31b"] != {"mode": "chat", "max_tokens": 8192}:
         raise Failure(f"a chat model with maxTokens is described as {info['infomaniak/gemma-4-31b']}")
     if info["infomaniak/bge-m3"] != {"mode": "embedding"}:
@@ -109,10 +118,10 @@ def check_models():
 
     # A claim that names no model: an empty list, and a gateway that starts.
     for text in ("spec:\n  llm:\n    enabled: true\n", "spec:\n  kernelDomain: example.org\n"):
-        if config(with_claim(text)) != {"model_list": []}:
+        if config(with_claim(text)) != {"model_list": [], **SETTINGS}:
             raise Failure(f"a claim without models gives the configuration {config(with_claim(text))}")
     # The mock model server is not a model.
-    if config(render(app)) != {"model_list": []}:
+    if config(render(app)) != {"model_list": [], **SETTINGS}:
         raise Failure("the chart's own defaults offer a model")
 
     # Removing an entry removes its model; changing the list replaces the pods.
@@ -212,8 +221,50 @@ def check_gateway():
         raise Failure(f"STORE_MODEL_IN_DB is {env.get('STORE_MODEL_IN_DB')!r}: a model could be added beside the claim's")
 
 
+def check_groups():
+    # An instance's model is every tenant's; a provider's is its provider's,
+    # and every tenant's only where the claim marks the provider so.
+    groups = {m["model_name"]: m["model_info"].get("access_groups") for m in config(render(application(), "-f", CLAIM))["model_list"]}
+    want = {
+        "qwen-qwen2.5-7b-instruct": [EVERY_TENANT],
+        "infomaniak/gemma-4-31b": [PROVIDER_GROUP + "infomaniak"],
+        "infomaniak/bge-m3": [PROVIDER_GROUP + "infomaniak"],
+    }
+    if groups != want:
+        raise Failure(f"for {CLAIM} the access groups are {groups}, want {want}")
+    marked = """spec:
+  llm:
+    enabled: true
+    providers:
+      - name: open-one
+        apiBase: https://open.example/v1
+        apiKeyProperty: open_one_api_key
+        defaultForTenants: true
+        models: [{name: any, model: any}]
+      - name: paid-one
+        apiBase: https://paid.example/v1
+        apiKeyProperty: paid_one_api_key
+        defaultForTenants: false
+        models: [{name: any, model: any}]
+"""
+    groups = {m["model_name"]: m["model_info"]["access_groups"] for m in config(with_claim(marked))["model_list"]}
+    want = {"open-one/any": [EVERY_TENANT, PROVIDER_GROUP + "open-one"], "paid-one/any": [PROVIDER_GROUP + "paid-one"]}
+    if groups != want:
+        raise Failure(f"with one provider marked defaultForTenants the access groups are {groups}, want {want}")
+    # A fallback is held to the caller's models, and the file names no
+    # fallback or alias of its own that the router would take after the
+    # caller's models were checked.
+    whole = config(render(application(), "-f", CLAIM))
+    if whole.get("general_settings", {}).get("enforce_fallback_model_access") is not True:
+        raise Failure(f"the gateway does not check a fallback against the caller's models: {whole.get('general_settings')}")
+    for section in ("router_settings", "litellm_settings"):
+        for key in ("fallbacks", "context_window_fallbacks", "content_policy_fallbacks", "model_group_alias", "default_fallbacks"):
+            if key in (whole.get(section) or {}):
+                raise Failure(f"the configuration names {section}.{key}")
+
+
 def main():
-    checks = {"claim": check_claim, "models": check_models, "tokens": check_tokens, "gateway": check_gateway}
+    checks = {"claim": check_claim, "models": check_models, "tokens": check_tokens, "gateway": check_gateway, "groups": check_groups}
     args = sys.argv[1:]
     if len(args) != 1 or args[0] not in checks:
         print(f"usage: {sys.argv[0]} {'|'.join(checks)}", file=sys.stderr)
