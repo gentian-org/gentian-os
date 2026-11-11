@@ -65,10 +65,26 @@ check() {
     # The director's private key. Asked of the vault, not of a Secret: the
     # Secret is External Secrets' to make, and a step that checked the Secret
     # would report satisfied for a vault that had lost the key.
+    #
+    # Only "not there" is MISSING: a 404, or a document without the key. Any
+    # other answer -- a 403 from an expired token, no answer at all -- says
+    # nothing about the key, and reporting it missing sent apply() off to
+    # rewrite a key the vault already held, with the same token, into the
+    # same 403. Undefined, with the reason, is what the check actually knows.
     [[ -n "${BAO_TOKEN:-}" && -n "${BAO_ADDR:-}" ]] || return "${CHECK_UNDEFINED}"
-    bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
-        "${BAO_ADDR}/v1/$(_signing_vault_path)" 2>/dev/null |
-        grep -q '"private"' || return "${CHECK_MISSING}"
+    local body code
+    body="$(bao_curl -s -w '\n%{http_code}' -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}") \
+        "${BAO_ADDR}/v1/$(_signing_vault_path)" 2>/dev/null)" || true
+    code="${body##*$'\n'}"
+    case "${code}" in
+        200) grep -q '"private"' <<<"${body}" || return "${CHECK_MISSING}" ;;
+        404) return "${CHECK_MISSING}" ;;
+        *)
+            warn "Could not read $(_signing_vault_path) to check the director's key (HTTP ${code:-none})."
+            warn "  An expired BAO_TOKEN answers 403: unset it and re-run to sign in afresh."
+            return "${CHECK_UNDEFINED}"
+            ;;
+    esac
 }
 
 apply() {

@@ -470,11 +470,26 @@ _provider_seed_pairs() {
 }
 
 # =============================================================================
+# _bao_token_alive <token> — false only when the vault says the token does not
+# sign in. Every token the installer handles carries the default policy, which
+# grants lookup-self, so a 403 there means expired, revoked or never valid.
+# No address, or no answer, is not a verdict: the token is kept, and the write
+# that needs it says what went wrong.
+_bao_token_alive() {
+    [[ -n "${BAO_ADDR:-}" ]] || return 0
+    local code
+    code="$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        -H @<(printf 'X-Vault-Token: %s\n' "$1") \
+        "${BAO_ADDR}/v1/auth/token/lookup-self" 2>/dev/null)" || true
+    [[ "${code}" != "403" ]]
+}
+
+# =============================================================================
 # _resolve_bao_token — get a working OpenBao token for a write, preferring the
 # least powerful option that will do it. Assumes BAO_ADDR is already exported
 # (every caller resolves it immediately before reaching here).
 #
-# Order: already exported, the bootstrap-only init file, an interactive OIDC
+# Order: already exported (and still signing in), the bootstrap-only init file, an interactive OIDC
 # sign-in as cluster-admin, and only then the raw root-token prompt.
 #
 # The OIDC tier exists for exactly one situation: a cluster that has been
@@ -494,7 +509,16 @@ _provider_seed_pairs() {
 # caller of this function writes to. Nothing new to configure; `bao login` is
 # a stock OpenBao feature this role was already shaped to support.
 _resolve_bao_token() {
-    [[ -n "${BAO_TOKEN:-}" ]] && return 0
+    # An exported token is the operator's choice and comes first, but only
+    # while it still signs in. One left in the shell from an earlier session
+    # has usually expired, and taking it unasked turned every later vault
+    # write into a bare 403 -- B-10 then reported a key it could not read as
+    # missing. Dropped, the order below gets a fresh one.
+    if [[ -n "${BAO_TOKEN:-}" ]]; then
+        _bao_token_alive "${BAO_TOKEN}" && return 0
+        warn "The exported BAO_TOKEN no longer signs in to the vault (expired or revoked); ignoring it."
+        unset BAO_TOKEN VAULT_TOKEN
+    fi
 
     if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
         BAO_TOKEN="$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)"
