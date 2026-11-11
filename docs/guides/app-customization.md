@@ -1613,10 +1613,12 @@ versioning policy.
 * `extraObjects`, `extraEnv`, `extraVolumeMounts`, `podAnnotations` — the standard L4-lite hooks, so
   packaging changes rarely need a chart fork.
 * A declared `conf.d` mount wired to a ConfigMap the composition can populate — L1 with no chart edit.
-* `podLabels` — the platform sets `gentianos.io/app` and `gentianos.io/tenant` in it for every chart
-  it does not place on tenants itself, and the tenant's network policies select the app's pods by
-  them. A chart without the key publishes them as pod annotations instead
-  (`kernel/security/kyverno/policies/gentian-app-labels.yaml` copies them onto labels).
+* Pod labels need nothing from the chart. The tenant's network policies select an app's pods by
+  `gentianos.io/app` and `gentianos.io/tenant`, and the platform sets both itself, after the chart
+  is rendered, on the pod template of every Deployment, StatefulSet and Job of a chart it does not
+  place; a value the chart writes under either key is replaced. A Helm hook is not part of what is
+  rendered then, so a hook's Job that needs the app's network access takes the two labels from
+  `podLabels`, which the platform also sets in the values.
 * Volumes need nothing from the chart to survive an uninstall. The platform installs an app as a
   Helm release in the tenant's namespace and marks every PersistentVolumeClaim the chart renders
   `helm.sh/resource-policy: keep`. Uninstalling leaves the claims in place and the next install of the app in that tenant takes them over; only a

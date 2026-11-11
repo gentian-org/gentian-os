@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"fmt"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -35,10 +36,58 @@ const valuesKeepPatch = `patches:
           helm.sh/resource-policy: keep
 `
 
-// keepVolumes is the ConfigMap the release reads its keep rule from.
+// valuesPodLabelKinds are the kinds with a pod template that the account a
+// tenant's chart is installed as may write (gentian-tenant-apps-helm).
+var valuesPodLabelKinds = []struct{ group, kind string }{
+	{"apps", "Deployment"},
+	{"apps", "StatefulSet"},
+	{"batch", "Job"},
+}
+
+// valuesPodLabelsPatch is the label rule: one patch per kind with a pod
+// template, run after the chart is rendered, that sets the app's and the
+// tenant's label on every pod template of the release. The tenant's network
+// policies select an app's pods by these labels, so which app a pod belongs
+// to is said here, by the operator, and not by the chart: whatever a chart
+// writes under either key is replaced. As in the keep rule, a target names
+// no object and so matches every one of its kind.
+func valuesPodLabelsPatch(app, tenant string) string {
+	var b strings.Builder
+	for _, k := range valuesPodLabelKinds {
+		fmt.Fprintf(&b, `  - target:
+      group: %[1]s
+      version: v1
+      kind: %[2]s
+    patch: |-
+      apiVersion: %[1]s/v1
+      kind: %[2]s
+      metadata:
+        name: every-%[3]s-of-the-release
+      spec:
+        template:
+          metadata:
+            labels:
+              gentianos.io/app: %[4]q
+              gentianos.io/tenant: %[5]q
+`, k.group, k.kind, strings.ToLower(k.kind), app, tenant)
+	}
+	return b.String()
+}
+
+// releasePatch is what the release's post-renderer applies: the keep rule,
+// and for a chart the platform does not place the label rule. A placed
+// chart's pods are selected by their release.
+func (r *valuesRender) releasePatch() string {
+	if r.in.Placed {
+		return valuesKeepPatch
+	}
+	return valuesKeepPatch + valuesPodLabelsPatch(r.in.App, r.tenant)
+}
+
+// keepVolumes is the ConfigMap the release reads its patch from.
 func (r *valuesRender) keepVolumes() *unstructured.Unstructured {
 	cm := valuesObject("v1", "ConfigMap", r.in.KeepVolumes, r.ns)
-	cm.Object["data"] = map[string]interface{}{"patch.yaml": valuesKeepPatch}
+	cm.Object["data"] = map[string]interface{}{"patch.yaml": r.releasePatch()}
 	return cm
 }
 

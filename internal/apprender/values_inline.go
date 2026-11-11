@@ -70,8 +70,10 @@ func (r *valuesRender) inlineValues() (map[string]interface{}, error) {
 			r.pullSecretValues(vals)
 		}
 	} else {
-		// The tenant's kernel-access NetworkPolicy selects the app's pods
-		// by these.
+		// The labels the tenant's network policies select the app's pods
+		// by. The release's label rule sets them on every pod template
+		// (values_release.go); the value is for the Job of a Helm hook,
+		// which the post-renderer is not given.
 		podLabels, _ := vals["podLabels"].(map[string]interface{})
 		if podLabels == nil {
 			podLabels = map[string]interface{}{}

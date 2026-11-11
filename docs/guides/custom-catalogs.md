@@ -626,11 +626,14 @@ cluster, and is installed into every user tenant for everyone at the build the i
 ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who
 asks to uninstall it.
 
-The operator renders every chart. Into the values of one it does not place it writes `podLabels`
-with `gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`, which the tenant's network
-policies select the app's pods by, so such a chart has to put `podLabels` on every pod template. A
-placed chart is told only what it declares: no `podLabels` (its pods are selected by their Helm
-release), no trust anchor, and pull secrets only where the tenant declared a repository.
+The operator renders every chart. The tenant's network policies select an app's pods by the labels
+`gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`. For a chart it does not place, the
+operator sets both on the pod template of every Deployment, StatefulSet and Job after the chart is
+rendered, replacing what the chart wrote under either key, so a chart needs no value for them. It
+also writes them into the values as `podLabels`, for the Job of a Helm hook, which is not rendered
+with the rest. A placed chart is told only what it declares: no `podLabels` (its pods are selected
+by their Helm release), no trust anchor, and pull secrets only where the tenant declared a
+repository.
 
 A profile of platform trust whose chart and images are private is placed in the platform tenant
 once that tenant holds a set credential for it, and stays when the credential goes, so it may own
