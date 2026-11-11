@@ -576,7 +576,7 @@ platform's administrator.
 
 **Who calls it, and whom it calls**
 
-- Called by: the desktop's backend (`…/me`), the admin console's backend, the
+- Called by: the admin console's backend, the
   App Store app's backend, and the command line tool (`kubectl gentian`,
   through a port-forward). It has no address on the Gateway.
 - Calls: Keycloak's public keys (to verify tokens), OpenFGA, the git host,
@@ -920,6 +920,8 @@ and asks OpenFGA before it answers.
 | Read | Permission |
 | --- | --- |
 | A tenant's tiles: the things this person may open, and whether the App Store is offered on this cluster | `can_enter` on the tenant; each tile is then checked separately |
+| Which permissions the caller holds on a tenant (`GET /v1/tenants/{t}/me`), and the platform's version line | `can_enter` on the tenant |
+| Which permissions the caller holds on the cluster (`GET /v1/clusters/{c}/me`) | none: a signed-in person asks about themselves |
 | The state of a tenant's apps; which uninstalled apps still hold data; what newer builds of one of its apps left behind | `can_view` on the tenant |
 | A tenant's resources, the plans it may move to, its usage and usage report | `can_view` on the tenant |
 | A tenant's backups and one backup, its backup policy, a restore's progress | `can_view` on the tenant |
@@ -929,7 +931,8 @@ and asks OpenFGA before it answers.
 | The platform security rules in force; the customization report; the usage statistics report | `can_audit` on the cluster |
 | What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
-The tiles come from a file the operator writes. All other answers are the
+The tiles come from a file the operator writes. Which permissions a caller
+holds is OpenFGA's answer, asked in one batch. All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
 itself: each answer is worked out inside the operator, and reading the
 objects behind it would mean giving the usher access to every tenant's
@@ -941,7 +944,8 @@ namespace.
   reads only.
 - Filter a list inside a handler instead of naming the permission on the
   route. Its routes are lists, and a list is where one tenant's data leaks to
-  another.
+  another. The caller's own permissions on the cluster are the one route
+  without one: the answer is about nobody else.
 
 **What it holds**
 

@@ -427,3 +427,69 @@ func TestAFailedBatchShowsNothing(t *testing.T) {
 		t.Errorf("status %d, tiles %v; want 503 and none", code, body["tiles"])
 	}
 }
+
+func TestACallerIsToldTheVerbsTheyHoldInOneBatch(t *testing.T) {
+	held := map[string]bool{
+		"user:pat can_enter tenant:acme":      true,
+		"user:pat can_administer tenant:acme": true,
+		"user:pat can_audit cluster:demo":     true,
+		"user:mel can_enter tenant:acme":      true,
+	}
+	store := &batchStore{fakeStore: fakeStore{held: held}}
+	s := New(Config{Authn: fakeAuthn{"pat": "pat", "mel": "mel"}, Authz: store, TilesPath: catalogueFile(t), Cluster: "demo"})
+
+	code, body := ask(t, s, "/v1/tenants/acme/me", "pat")
+	if code != http.StatusOK {
+		t.Fatalf("tenant me: %d %v", code, body)
+	}
+	rel, _ := body["relations"].(map[string]any)
+	if len(rel) != len(authz.TenantRelations) {
+		t.Errorf("%d relations answered, want %d: %v", len(rel), len(authz.TenantRelations), rel)
+	}
+	for _, r := range authz.TenantRelations {
+		want := r == "can_enter" || r == "can_administer"
+		if rel[r] != want {
+			t.Errorf("%s = %v, want %v", r, rel[r], want)
+		}
+	}
+	if body["tenant"] != "acme" || body["subject"] != "pat" || body["platformVersionLine"] == "" {
+		t.Errorf("tenant me body: %v", body)
+	}
+	if store.batches != 1 {
+		t.Errorf("%d batches, want 1", store.batches)
+	}
+
+	// The cluster asks nothing but a sign-in: a person who holds nothing
+	// there is told so.
+	for token, audit := range map[string]bool{"pat": true, "mel": false} {
+		code, body := ask(t, s, "/v1/clusters/demo/me", token)
+		rel, _ := body["relations"].(map[string]any)
+		if code != http.StatusOK || rel["can_audit"] != audit || len(rel) != len(authz.ClusterRelations) {
+			t.Errorf("%s: cluster me %d %v", token, code, body)
+		}
+	}
+	if code, _ := ask(t, s, "/v1/clusters/other/me", "pat"); code != http.StatusNotFound {
+		t.Errorf("another cluster: %d, want 404", code)
+	}
+}
+
+func TestAMeIsForThoseWhoMayEnter(t *testing.T) {
+	s := New(Config{Authn: fakeAuthn{"eve": "eve"}, Authz: &fakeStore{held: map[string]bool{}}, TilesPath: catalogueFile(t)})
+	if code, _ := ask(t, s, "/v1/tenants/acme/me", "eve"); code != http.StatusForbidden {
+		t.Errorf("a person who may not enter: %d, want 403", code)
+	}
+	if code, _ := ask(t, s, "/v1/clusters/demo/me", "eve"); code != http.StatusNotFound {
+		t.Errorf("an usher serving no cluster: %d, want 404", code)
+	}
+}
+
+func TestAMeWithoutAnAnswerIsRefused(t *testing.T) {
+	held := map[string]bool{"user:pat can_enter tenant:acme": true}
+	store := &batchStore{fakeStore: fakeStore{held: held}, batchErr: errors.New("store down")}
+	s := New(Config{Authn: fakeAuthn{"pat": "pat"}, Authz: store, TilesPath: catalogueFile(t), Cluster: "demo"})
+	for _, path := range []string{"/v1/tenants/acme/me", "/v1/clusters/demo/me"} {
+		if code, body := ask(t, s, path, "pat"); code != http.StatusServiceUnavailable || body["relations"] != nil {
+			t.Errorf("%s: %d %v, want 503 and no answer", path, code, body)
+		}
+	}
+}

@@ -28,7 +28,9 @@ SPDX-License-Identifier: MPL-2.0
 // Its routes are lists, and a list is where one tenant's objects leak to
 // another. So a route is registered only through guarded, which names the
 // object and the relation before the handler runs; a route that filtered in
-// its handler instead is the mistake to refuse in review.
+// its handler instead is the mistake to refuse in review. The one exception
+// is a caller asking which verbs they hold on the cluster (identified): the
+// answer is about nobody but them.
 package usher
 
 import (
@@ -48,6 +50,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/guard"
+	"github.com/gentian-org/gentian-os/internal/platformversion"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
@@ -102,6 +105,13 @@ func New(cfg Config) *Server {
 	// asked about on its own, so entering shows a person their tiles and not
 	// the tenant's.
 	s.guarded("GET /v1/tenants/{t}/tiles", "can_enter", tenantObject, s.tenantTiles)
+	// Which verbs a person holds, so that a console shows what they may do.
+	// Whoever may enter a tenant may ask about themselves in it; anyone signed
+	// in may ask about themselves on the cluster, where most hold nothing.
+	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
+	if cfg.Cluster != "" {
+		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
+	}
 	if cfg.Lifecycle != nil {
 		s.stateRoutes()
 	}
@@ -168,6 +178,19 @@ func (s *Server) guardedAny(pattern string, relations []string, obj object, h fu
 			return
 		}
 		h(w, r, call{user: g.User, holder: g.Holder, tenant: r.PathValue("t")})
+	})
+}
+
+// identified registers a route that needs a caller and no relation: the
+// caller asking about themselves. It lists nothing of anyone else's, which is
+// why it is the one exception to guarded.
+func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		c, ok := s.gate().Identify(w, r, pattern)
+		if !ok {
+			return
+		}
+		h(w, r, call{user: c.User, holder: c.Holder})
 	})
 }
 
@@ -270,6 +293,46 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore(catalogue.AppStore)})
+}
+
+// tenantMe answers which tenant verbs the caller holds, all asked together.
+func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
+	ctx := r.Context()
+	relations, err := authz.Holds(ctx, s.cfg.Authz, guard.ID(ctx), c.user, c.holder,
+		authz.Tenant(c.tenant), authz.TenantRelations)
+	if err != nil {
+		fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant":    c.tenant,
+		"subject":   strings.TrimPrefix(c.user, "user:"),
+		"relations": relations,
+		// The platform's version line, which is no secret and which a
+		// tenant's administrator restoring a bundle of an older one needs to
+		// know.
+		"platformVersionLine": platformversion.Line,
+	})
+}
+
+// clusterMe answers which cluster verbs the caller holds, all asked together.
+func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
+	ctx := r.Context()
+	if _, err := clusterObject(s, r); err != nil {
+		fail(w, r, http.StatusNotFound, "unknown cluster")
+		return
+	}
+	relations, err := authz.Holds(ctx, s.cfg.Authz, guard.ID(ctx), c.user, c.holder,
+		authz.Cluster(s.cfg.Cluster), authz.ClusterRelations)
+	if err != nil {
+		fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"cluster":   s.cfg.Cluster,
+		"subject":   strings.TrimPrefix(c.user, "user:"),
+		"relations": relations,
+	})
 }
 
 // appStoreReasonNoUsageStatistics is why a cluster that does not report offers

@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -242,3 +243,44 @@ func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
 
 // isNotFound reports OpenFGA saying that what was asked for does not exist.
 func isNotFound(err error) bool { return openfga.IsStatus(err, http.StatusNotFound) }
+
+// TenantRelations are the tenant verbs a person is told they hold, by the
+// usher's /me, so that a console shows what they may do and hides the rest.
+var TenantRelations = []string{
+	"can_enter", "can_view", "can_administer", "can_install_app", "can_manage_users",
+	"can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
+}
+
+// ClusterRelations are the cluster verbs a person is told they hold: the ones
+// that decide which screens a console shows them. Both lists are permissions
+// of the model, which verify-authz-vocabulary holds them to.
+var ClusterRelations = []string{
+	"can_configure", "can_deploy_tenant", "can_operate_system", "can_install_shared",
+	"can_grant_shared", "can_approve", "can_approve_perimeter", "can_set_admission", "can_edit_raw", "can_audit",
+}
+
+// Holds answers which of relations the caller holds on object, as the
+// account or as the realm's role holder (CheckAs), all asked together. An
+// error answers none of them.
+func Holds(ctx context.Context, c Checker, requestID, user, holder, object string, relations []string) (map[string]bool, error) {
+	questions := make([]Question, 0, 2*len(relations))
+	for _, rel := range relations {
+		questions = append(questions, Question{User: user, Relation: rel, Object: object})
+		if holder != "" {
+			questions = append(questions, Question{User: holder, Relation: rel, Object: object})
+		}
+	}
+	allowed, err := CheckAll(ctx, c, requestID, questions)
+	if err != nil {
+		return nil, err
+	}
+	per := 1
+	if holder != "" {
+		per = 2
+	}
+	out := make(map[string]bool, len(relations))
+	for i, rel := range relations {
+		out[rel] = slices.Contains(allowed[i*per:(i+1)*per], true)
+	}
+	return out, nil
+}
