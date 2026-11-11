@@ -31,6 +31,9 @@
   The mock model server (llm-mock-egress, without GPUs): nothing. It answers
   the gateway and calls nobody.
 
+  The cache (llm-cache-egress): nothing. Valkey answers the gateway and calls
+  nobody; it runs without replicas, so it has no peer to reach either.
+
   The budget Job (llm-person-budget-egress, where the claim states a budget
   per person): DNS, and the gateway on its port.
 
@@ -41,9 +44,8 @@
   gives a component that talks to a store (internal/controller/store_offer.go).
   No IPv6 block is named, so nothing is admitted over IPv6.
 
-  The gateway's PostgreSQL and its Redis are not selected: CloudNativePG's
-  instances talk to the Kubernetes API, whose address depends on the
-  cluster, and neither calls anything else.
+  The gateway's PostgreSQL is not selected: CloudNativePG's instances talk to
+  the Kubernetes API, whose address depends on the cluster.
 
   Sync wave -1, with the ingress policies: before the pods.
 */ -}}
@@ -152,6 +154,24 @@ spec:
         - protocol: TCP
           port: 443
 {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-cache-egress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: redis-llm
+  policyTypes:
+    - Egress
+  egress: []
 {{- if not $gpu }}
 ---
 apiVersion: networking.k8s.io/v1
