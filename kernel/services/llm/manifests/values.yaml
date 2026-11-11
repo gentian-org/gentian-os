@@ -97,7 +97,8 @@ vllm:
 servicesNamespace: system-llm
 
 # Who may connect to the pods of this namespace
-# (templates/networkpolicy.yaml): one NetworkPolicy per server pod set.
+# (templates/networkpolicy.yaml): one NetworkPolicy per server pod set; and
+# what the pods that call out may reach (templates/networkpolicy-egress.yaml).
 #
 # enabled is the cluster's one switch for the policies on the system tier's
 # servers (kernel/appsets/values.yaml storeNetworkPolicies), which the LLM
@@ -118,6 +119,19 @@ networkPolicy:
     mock: 8000
     # A vLLM instance (templates/vllm.yaml).
     vllm: 8000
+  # What the egress rules to the internet leave out of 0.0.0.0/0
+  # (templates/networkpolicy-egress.yaml): everything that is not a public
+  # IPv4 unicast address. The operator gives a component that talks to a
+  # store the same list (internal/controller/store_offer.go).
+  publicExcept:
+    - 0.0.0.0/8
+    - 10.0.0.0/8
+    - 100.64.0.0/10
+    - 127.0.0.0/8
+    - 169.254.0.0/16
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 224.0.0.0/3
   namespaces:
     # The operator's.
     control: kernel-control

@@ -1,0 +1,207 @@
+{{- /*
+  Where the pods of the model gateway's namespace may open a connection to.
+  networkpolicy.yaml says who may reach them; this says what they may reach,
+  one policy per pod set that calls out.
+
+  The gateway (llm-gateway-egress):
+
+    DNS                    53, UDP and TCP, to whichever resolver the cluster
+                           gives its pods.
+    its database           the CloudNativePG pods of litellm-db, on 5432.
+    its cache              redis-llm, on 6379.
+    the model servers      the vLLM instances and the mock model server, on
+                           8000.
+    the edge               the Gateway's Envoy pods in the edge namespace,
+                           where id.<kernelDomain> resolves inside the cluster
+                           (the CoreDNS hairpin): the console's sign-in asks
+                           Keycloak's token and userinfo endpoints there.
+    the providers          TCP 443 to public IPv4 addresses, only where the
+                           claim lists a provider (spec.llm.providers). A
+                           NetworkPolicy matches addresses, not names, so this
+                           is every public address on 443 and not the
+                           providers' alone; which host is called is the
+                           gateway's configuration file's. Without a provider
+                           there is no way out of the cluster, and prompts to
+                           the cluster's own models stay in it.
+
+  The vLLM instances (llm-vllm-egress, with gpuAcceleration and an
+  instance): DNS, and TCP 443 to public IPv4 addresses, which is where the
+  weights are downloaded from (Hugging Face and the hosts it redirects to).
+
+  The mock model server (llm-mock-egress, without GPUs): nothing. It answers
+  the gateway and calls nobody.
+
+  The budget Job (llm-person-budget-egress, where the claim states a budget
+  per person): DNS, and the gateway on its port.
+
+  The public address space is 0.0.0.0/0 without what is not a public IPv4
+  unicast address (networkPolicy.publicExcept): the cluster's pod, service
+  and node ranges, the loopback, the link-local range the cloud metadata
+  address is in, and multicast and reserved space -- the list the operator
+  gives a component that talks to a store (internal/controller/store_offer.go).
+  No IPv6 block is named, so nothing is admitted over IPv6.
+
+  The gateway's PostgreSQL and its Redis are not selected: CloudNativePG's
+  instances talk to the Kubernetes API, whose address depends on the
+  cluster, and neither calls anything else.
+
+  Sync wave -1, with the ingress policies: before the pods.
+*/ -}}
+{{- if ne (toString .Values.networkPolicy.enabled) "false" }}
+{{- $np := .Values.networkPolicy }}
+{{- $llm := .Values.spec.llm | default dict }}
+{{- $gpu := eq (toString $llm.gpuAcceleration) "true" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-gateway-egress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: litellm-proxy
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: litellm-db
+              cnpg.io/podRole: instance
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.postgresql }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis-llm
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.redis }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: vllm-instance
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.vllm }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: vllm-inference
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.mock }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.namespaces.edge | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: envoy
+    {{- if $llm.providers }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml $np.publicExcept | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+{{- if and $gpu $llm.instances }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-vllm-egress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: vllm-instance
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml $np.publicExcept | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}
+{{- if not $gpu }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-mock-egress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm-inference
+  policyTypes:
+    - Egress
+  egress: []
+{{- end }}
+{{- if and (eq (toString $llm.enabled) "true") (dig "personBudget" dict $llm) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-person-budget-egress
+  namespace: {{ .Values.servicesNamespace }}
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: llm
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels:
+      app: llm-person-budget
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: litellm-proxy
+      ports:
+        - protocol: TCP
+          port: {{ $np.ports.gateway }}
+{{- end }}
+{{- end }}
