@@ -1701,6 +1701,13 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.isolation.mode` | string |  | `Mode` selects the isolation strategy. |
 | `spec.isolation.namespace` | string |  | `Namespace` overrides the target namespace name. |
 | `spec.isolation.s3Prefix` | string |  | `S3Prefix` is the prefix for all S3 bucket names belonging to this tenant. |
+| `spec.llm` | object |  | `LLM` is what the tenant's apps may use at the platform's model gateway: which external providers' models, and how much. |
+| `spec.llm.budget` | object |  | `Budget` caps the tenant's use of the gateway, all its apps together. |
+| `spec.llm.budget.budgetDuration` | string |  | `BudgetDuration` is the period after which spend starts again from nothing, e.g. 30d or 1mo. |
+| `spec.llm.budget.maxBudget` | integer (int64) |  | `MaxBudget` is what the tenant may spend per period, in whole US dollars at the gateway's prices. |
+| `spec.llm.budget.rpmLimit` | integer (int64) |  | `RPMLimit` is the requests per minute. |
+| `spec.llm.budget.tpmLimit` | integer (int64) |  | `TPMLimit` is the tokens per minute. |
+| `spec.llm.providers` | []string |  | `Providers` are the external providers, by their name in the Cluster claim's spec.llm.providers, whose models this tenant's apps may use. |
 | `spec.locales` | []string |  | `Locales` are the languages this tenant's realm renders its login and account pages in, as ISO 639-1 codes (AD-15). |
 | `spec.mail` | object |  | `Mail` configures the mail mode and settings for this tenant. |
 | `spec.mail.mode` | string |  | `Mode` selects the mail delivery strategy. |

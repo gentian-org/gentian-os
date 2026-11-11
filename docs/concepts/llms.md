@@ -17,8 +17,9 @@ This document details the architecture for integrating Large Language Model (LLM
     model server (`vllm-inference`).
 *   **No request passes the edge.** The gateway has no public address unless the
     console is switched on (§5, "Operator access"). There is no token
-    validation in front of the gateway and no per-model check in OpenFGA: an app presents its key to LiteLLM, and that is the
-    whole check.
+    validation in front of the gateway and no per-model check in OpenFGA: an
+    app presents its key to LiteLLM, which checks the key and the tenant's
+    team, and that is the whole check.
 *   **A component gets access by declaring it** (`requires.services.llm` in its
     `ComponentProfile`). The operator then generates a key for that tenant and
     component, registers it at the gateway, writes the Secret
@@ -26,10 +27,17 @@ This document details the architecture for integrating Large Language Model (LLM
     `OPENAI_API_KEY`) in the tenant's namespace, and opens the component's
     network path to the gateway's port
     (`internal/controller/model_access_reconciler.go`, `internal/modelgateway`).
-    A component that does not declare it gets none of these.
-*   **One LiteLLM team per tenant**, created by the tenant reconciler
-    (`internal/controller/litellm_team.go`). The operator sets no budget and no
-    rate limit on a team or a key.
+    A component that does not declare it gets none of these. Uninstalling the
+    app takes its key off the gateway and removes the Secret; the vault keeps
+    the key, and installing the app again registers the same one.
+*   **One LiteLLM team per tenant**, kept by the tenant reconciler
+    (`internal/controller/litellm_team.go`). The team names the models the
+    tenant's apps may use and carries the tenant's budget, if it has one
+    (§5, "Which tenants use a provider"). Every key of the tenant belongs to
+    the team, names the same models, may call only the chat completions,
+    embeddings and model list routes, and carries the tenant and the app in
+    its metadata. Keys registered before are moved into the team in place,
+    with the key unchanged.
 *   **A budget per person**, when the claim states one
     (`spec.llm.personBudget`: spend per period, requests and tokens per
     minute). The gateway holds every person it is told about to it: the
@@ -67,8 +75,9 @@ This document details the architecture for integrating Large Language Model (LLM
 
 A cluster does not have to serve its own weights. `spec.llm.providers` on the
 Cluster claim declares external, OpenAI-compatible endpoints, and they route
-through the same LiteLLM gateway as the vLLM instances — so the keys and
-per-tenant teams apply to them unchanged. It is independent of
+through the same LiteLLM gateway as the vLLM instances; a tenant's apps use a
+provider's models only where the claim or the tenant says so (below). It is
+independent of
 `gpuAcceleration`: a CPU-only cluster with no `instances` is the case these
 exist for.
 
@@ -102,6 +111,39 @@ runs with `STORE_MODEL_IN_DB` off, so it loads no model from its database and
 refuses to store one — nothing typed into its console or sent to its API
 becomes a model. No step of the installer, no Job and no controller is
 involved; Argo CD syncs the claim and the chart together.
+
+### Which tenants use a provider
+
+Every tenant may use the models the cluster serves itself (`instances`).
+A provider's models leave the cluster with every prompt, so a tenant uses them
+only once it opts in to the provider on its Tenant; no provider is on for every
+tenant:
+
+```yaml
+spec:
+  llm:
+    providers: [infomaniak]   # providers of the Cluster claim, by name
+    budget:                   # optional; absent, nothing is capped
+      maxBudget: 50           # whole US dollars per period
+      budgetDuration: 30d
+      rpmLimit: 120
+      tpmLimit: 200000
+```
+
+The gateway's configuration puts each model in an access group:
+`gentian:every-tenant` for an instance's model, `gentian:provider:<name>` for a
+provider's. A tenant's team
+names `gentian:every-tenant` and the groups of the providers it opted in to,
+leaving out a group that holds no model on this cluster; a tenant left with
+none names `no-default-models`, which LiteLLM reads as no model at all. The
+key and the team are both checked, a model list (`/v1/models`) shows a key the
+team's models alone, and a fallback a request names is checked against them
+before it is tried (`enforce_fallback_model_access`). The budget is the team's:
+one cap for all the tenant's apps together, beside the budget per person.
+
+The cluster's administrator sets it, beside the models:
+`GET`/`PUT /v1/clusters/{c}/tenants/{t}/model-access` on the director, a
+commit of the tenant's manifest. A tenant's own administrator does not.
 
 ### Changing the models
 
@@ -295,7 +337,7 @@ Off, the default, there is no route and no published host for
 the gateway is reached from inside the cluster only, by the apps and desktops
 that declared it and by the operator. Nothing the platform does needs the
 console. Models come from the claim, an app's key and a tenant's team are
-registered by the operator, and a provider's token is entered in the
+registered by the operator from the Tenant, and a provider's token is entered in the
 administration console.
 
 On, `llm.<kernelDomain>` is routed to the gateway behind the kernel sign-in for

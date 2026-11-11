@@ -243,8 +243,9 @@ func isDefaultIssuer(claim clusterPartners, issuer string) bool {
 }
 
 // claimTenantFactsChanged lets a claim event through only when it can change
-// what a tenant's composite says: the store's address, or the partners'
-// bounds and defaults.
+// what a tenant's composite or its team at the model gateway says: the
+// store's address, the partners' bounds and defaults, or which model groups
+// hold a model.
 func claimTenantFactsChanged() predicate.Predicate {
 	facts := func(obj client.Object) string {
 		u, ok := obj.(*unstructured.Unstructured)
@@ -253,7 +254,9 @@ func claimTenantFactsChanged() predicate.Predicate {
 		}
 		raw, _, _ := unstructured.NestedString(u.Object, "spec", "catalogue", "storeUrl")
 		b, _ := json.Marshal(claimPartners(u))
-		return normaliseStoreAddress(raw) + "\n" + string(b)
+		// The model groups a tenant's team names (litellm_team.go).
+		groups, _ := json.Marshal(claimModels(u).ServedGroups())
+		return normaliseStoreAddress(raw) + "\n" + string(b) + "\n" + string(groups)
 	}
 	return predicate.Funcs{
 		CreateFunc:  func(event.CreateEvent) bool { return true },

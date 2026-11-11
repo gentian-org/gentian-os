@@ -531,8 +531,9 @@ type RightsRequirement struct {
 // Being present is the declaration.
 //
 // The gateway speaks the OpenAI API. The component receives its base address
-// and a key of its own -- random, per tenant and component, never derived
-// from their names -- in the Secret llm-credentials-<component> of the
+// and a key of its own -- made in the vault per tenant and component, derived
+// from the cluster's master password in derived mode and random otherwise, never
+// from their names alone -- in the Secret llm-credentials-<component> of the
 // tenant's namespace (OPENAI_API_BASE, OPENAI_API_BASE_URL, OPENAI_API_KEY),
 // and, where its chart takes them as values, through valueMapping.llm.
 //
