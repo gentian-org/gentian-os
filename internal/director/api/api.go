@@ -959,29 +959,18 @@ func (s *Server) routes() {
 	// them.
 }
 
-// clusterRelations are the cluster verbs a console asks about the caller: the
-// ones that decide which screens exist for them. They are the permissions of
-// type cluster in the model, and the vocabulary check keeps this list honest.
-var clusterRelations = []string{
-	"can_configure", "can_deploy_tenant", "can_operate_system", "can_install_shared",
-	"can_grant_shared", "can_approve", "can_approve_perimeter", "can_set_admission", "can_edit_raw", "can_audit",
-}
-
-// clusterMe answers which cluster verbs the caller holds.
+// clusterMe answers which cluster verbs the caller holds. The usher answers
+// the same.
 func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
 	if r.PathValue("c") != s.cfg.Cluster {
 		s.fail(w, r, http.StatusNotFound, "unknown cluster")
 		return
 	}
-	target := authz.Cluster(s.cfg.Cluster)
-	relations := make(map[string]bool, len(clusterRelations))
-	for _, rel := range clusterRelations {
-		ok, err := s.can(r.Context(), c, rel, target)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		relations[rel] = ok
+	relations, err := authz.Holds(r.Context(), s.cfg.Authz, guard.ID(r.Context()), c.user, c.holder,
+		authz.Cluster(s.cfg.Cluster), authz.ClusterRelations)
+	if err != nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"cluster":   s.cfg.Cluster,
@@ -990,26 +979,19 @@ func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
 	})
 }
 
-// tenantRelations are the tenant verbs the desktop asks about the caller.
-var tenantRelations = []string{
-	"can_enter", "can_view", "can_administer", "can_install_app", "can_manage_users",
-	"can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
-}
-
+// tenantMe answers which tenant verbs the caller holds. The usher answers the
+// same.
 func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 	target, err := tenantObject(r)
 	if err != nil {
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 		return
 	}
-	relations := make(map[string]bool, len(tenantRelations))
-	for _, rel := range tenantRelations {
-		ok, err := s.can(r.Context(), c, rel, target)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		relations[rel] = ok
+	relations, err := authz.Holds(r.Context(), s.cfg.Authz, guard.ID(r.Context()), c.user, c.holder,
+		target, authz.TenantRelations)
+	if err != nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant":    r.PathValue("t"),

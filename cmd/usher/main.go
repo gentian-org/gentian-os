@@ -71,7 +71,7 @@ func run(log *slog.Logger) error {
 	}
 
 	cfg := usher.Config{
-		Authn: verifier, Authz: store, Log: log,
+		Authn: verifier, Authz: store, Viewer: store, Log: log,
 		TilesPath: envvar.Or("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Cluster:   os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		// Whether the cluster reports what it runs, as the chart rendered it

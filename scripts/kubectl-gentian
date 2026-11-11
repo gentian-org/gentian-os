@@ -589,7 +589,7 @@ _try() {
 
 cmd_whoami() {
     _discover
-    _call GET "/v1/clusters/${_CLUSTER}/me" | jq .
+    _call_usher GET "/v1/clusters/${_CLUSTER}/me" | jq .
 }
 
 cmd_tenants_list() {
@@ -1637,7 +1637,7 @@ cmd_domains() {
     done
     need jq
     _discover
-    answer="$(_call GET "/v1/clusters/${_CLUSTER}/domains")" || exit 1
+    answer="$(_call_usher GET "/v1/clusters/${_CLUSTER}/domains")" || exit 1
     printf '%s' "${answer}" | jq -r --argjson problems "${problems}" '
         def says:
             if .state == "present" then "present"

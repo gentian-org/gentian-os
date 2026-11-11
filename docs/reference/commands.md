@@ -1537,7 +1537,7 @@ lists them (§12a). The director opens the manifest with the key first and refus
 bundle of another tenant with `422` (bringing one here is an import, §12a).
 The key goes to the operator in the request and into a Secret the restore
 owns, deleted when the restore ends; it is never committed or logged. The platform's version line, which
-a console compares a bundle's with, is in `GET /v1/tenants/{t}/me`
+a console compares a bundle's with, is in the usher's `GET /v1/tenants/{t}/me`
 (`platformVersionLine`) for whoever may enter the tenant.
 
 ### What it does, in order
