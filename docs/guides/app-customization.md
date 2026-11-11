@@ -1615,10 +1615,15 @@ versioning policy.
 * A declared `conf.d` mount wired to a ConfigMap the composition can populate — L1 with no chart edit.
 * Pod labels need nothing from the chart. The tenant's network policies select an app's pods by
   `gentianos.io/app` and `gentianos.io/tenant`, and the platform sets both itself, after the chart
-  is rendered, on the pod template of every Deployment, StatefulSet and Job of a chart it does not
-  place; a value the chart writes under either key is replaced. A Helm hook is not part of what is
-  rendered then, so a hook's Job that needs the app's network access takes the two labels from
-  `podLabels`, which the platform also sets in the values.
+  is rendered, on the pod template of every Deployment, StatefulSet and Job; a value the chart
+  writes under either key is replaced. A Helm hook is not part of what is rendered then, so a
+  hook's Job that needs the app's network access takes the two labels from `podLabels`, which the
+  platform also sets in the values of a chart it does not place.
+* A workload the app creates while it runs carries neither label. An account of the tenant's own,
+  such as the chart's ServiceAccount with a Role over Jobs, may create workloads but is refused one
+  whose pods carry `gentianos.io/app` or `gentianos.io/tenant`, so such a workload has the tenant's
+  baseline network access and not the app's. A ConfigMap named `<anything>-keep-volumes` is the
+  platform's; a chart ships none of that name.
 * Volumes need nothing from the chart to survive an uninstall. The platform installs an app as a
   Helm release in the tenant's namespace and marks every PersistentVolumeClaim the chart renders
   `helm.sh/resource-policy: keep`. Uninstalling leaves the claims in place and the next install of the app in that tenant takes them over; only a

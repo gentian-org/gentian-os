@@ -51,8 +51,7 @@ type Input struct {
 	ReleaseObject string
 	HelmRelease   string
 	// KeepVolumes names the ConfigMap the release reads its post-render patch
-	// from: the keep rule and, for a chart the platform does not place, the
-	// label rule.
+	// from: the keep rule and the label rule.
 	KeepVolumes string
 	// Composite names what the Composition named after the app's composite
 	// resource -- its OIDC clients' secrets in the provisioning namespace,

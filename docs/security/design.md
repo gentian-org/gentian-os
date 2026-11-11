@@ -2124,6 +2124,25 @@ its namespace, so a tenant's releases can be uninstalled while its namespace
 is deleted. Shown against an API server
 (`tenant_apps_helm_envtest_test.go`).
 
+Which app a pod of a tenant belongs to is the platform's to say. The
+tenant's network policies select an app's pods by `gentianos.io/app` and
+`gentianos.io/tenant`, and the operator sets both on the pod templates of a
+release after its chart is rendered, from a patch it keeps in the tenant's
+namespace (`internal/apprender`, the label rule; the ConfigMap
+`<release>-keep-volumes`). Two ValidatingAdmissionPolicies of the operator's
+chart hold that in the tenant and tenant-DMZ tiers. `gentian-app-labels`
+(`templates/app-label-guard.yaml`): a ServiceAccount that delivers nothing of
+the platform's may write a Pod, a Deployment, a StatefulSet, a DaemonSet, a
+ReplicaSet, a ReplicationController, a Job or a CronJob, and may neither put
+one of the two labels on its pods nor change one that is there. The accounts
+that may are the operator, provider-kubernetes and
+`provider-helm-tenant-apps`. `gentian-release-patches`
+(`templates/release-patch-guard.yaml`): a ConfigMap named
+`*-keep-volumes` is written and deleted by the operator and
+provider-kubernetes, and by no chart. The cluster's own controllers in
+`kube-system` and a person are not looked at. Shown against an API server
+(`internal/controller/app_label_guard_test.go`).
+
 What this does not close: provider-helm is one cluster-admin process,
 and which identity a Release gets is the ProviderConfig it names. A profile
 bundle's own Composition (`app-<profile>`, Element's in the catalog) names

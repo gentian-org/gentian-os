@@ -191,6 +191,16 @@ openbaoNamespace: "kernel-secrets"
 # namespaces.
 servicesNamespace: "kernel-edge"
 
+# The accounts, beside the operator, that deliver what the platform rendered
+# into a tenant's namespace, by the ServiceAccounts they act as in the
+# provisioning namespace (crossplane/providers/). The guard of the app labels
+# and the guard of a release's patch
+# (templates/app-label-guard.yaml, templates/release-patch-guard.yaml) name
+# them.
+appLabelGuard:
+  providerKubernetesServiceAccount: provider-kubernetes
+  tenantAppsHelmServiceAccount: provider-helm-tenant-apps
+
 # Where each kernel function runs, from kernel/namespaces.yaml. An install
 # passes every entry; empty means the operator answers from internal/layout's
 # own table, which is the same layout -- so a chart that forgot to set these
