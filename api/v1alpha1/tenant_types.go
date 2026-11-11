@@ -335,7 +335,8 @@ type TenantSpec struct {
 	// LLM is what the tenant's apps may use at the platform's model gateway:
 	// which external providers' models, and how much. Unset, they use the
 	// models every tenant may use, without a cap. Written by the director
-	// for the cluster's administrator.
+	// for the cluster's administrator, and for the tenant's own
+	// administrator while it delegates the providers to them.
 	// +optional
 	LLM *TenantLLM `json:"llm,omitempty"`
 
@@ -755,9 +756,16 @@ type TenantLLM struct {
 	Providers []string `json:"providers,omitempty"`
 
 	// Budget caps the tenant's use of the gateway, all its apps together.
-	// Unset, nothing is capped for the tenant as a whole.
+	// Unset, nothing is capped for the tenant as a whole. Set by the
+	// cluster's administrator only.
 	// +optional
 	Budget *TenantLLMBudget `json:"budget,omitempty"`
+
+	// Delegated says the tenant's own administrators may change Providers
+	// as well. Off unless the cluster's administrator turns it on; a
+	// tenant's administrator cannot, nor change Budget.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
 }
 
 // TenantLLMBudget is a tenant's cap at the model gateway. Each field is

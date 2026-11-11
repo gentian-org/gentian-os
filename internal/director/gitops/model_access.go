@@ -38,6 +38,27 @@ import (
 var ErrInvalidModelAccess = errors.New("invalid model access")
 
 var (
+	// ErrModelAccessNotDelegated is a tenant's administrator changing the
+	// providers of a tenant whose manifest does not say spec.llm.delegated.
+	ErrModelAccessNotDelegated = errors.New("changing the providers is not delegated to this tenant")
+	// ErrModelAccessClusterOnly is a tenant's administrator changing the
+	// budget or spec.llm.delegated, which only the cluster's administrator
+	// sets.
+	ErrModelAccessClusterOnly = errors.New("the budget and the delegation are the cluster administrator's")
+)
+
+// ModelAccessActor is who changes a tenant's model access.
+type ModelAccessActor string
+
+const (
+	// ModelAccessByCluster is the cluster's administrator: everything.
+	ModelAccessByCluster ModelAccessActor = "cluster"
+	// ModelAccessByTenant is the tenant's administrator: the providers,
+	// while delegated, with the budget and the delegation as they are.
+	ModelAccessByTenant ModelAccessActor = "tenant"
+)
+
+var (
 	providerName   = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	budgetDuration = regexp.MustCompile(`^[0-9]+(s|m|h|d|w|mo)$`)
 )
@@ -57,7 +78,7 @@ func normalisedModelAccess(a *gentianov1alpha1.TenantLLM) *gentianov1alpha1.Tena
 	if b := out.Budget; b != nil && b.MaxBudget == nil && b.BudgetDuration == "" && b.RPMLimit == nil && b.TPMLimit == nil {
 		out.Budget = nil
 	}
-	if out.Providers == nil && out.Budget == nil {
+	if out.Providers == nil && out.Budget == nil && !out.Delegated {
 		return nil
 	}
 	return out
@@ -131,8 +152,13 @@ func (g *GitOps) TenantModelAccess(ctx context.Context, tenant string) (*gentian
 
 // SetTenantModelAccess commits what a tenant's apps may use at the model
 // gateway; nil, or access that names nothing, removes spec.llm. A provider
-// has to be one the Cluster claim lists.
-func (g *GitOps) SetTenantModelAccess(ctx context.Context, tenant string, access *gentianov1alpha1.TenantLLM, meta Meta) (Result, error) {
+// has to be one the Cluster claim lists. By the tenant's administrator, the
+// manifest has to say spec.llm.delegated, and the budget and the delegation
+// have to stay as they are; both are read from the manifest the commit
+// edits.
+func (g *GitOps) SetTenantModelAccess(
+	ctx context.Context, tenant string, access *gentianov1alpha1.TenantLLM, by ModelAccessActor, meta Meta,
+) (Result, error) {
 	if !gentianov1alpha1.ValidTenantName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
@@ -159,6 +185,14 @@ func (g *GitOps) SetTenantModelAccess(ctx context.Context, tenant string, access
 		have, err := parseTenantModelAccess(text)
 		if err != nil {
 			return text, "", false, err
+		}
+		if by != ModelAccessByCluster {
+			if have == nil || !have.Delegated {
+				return text, "", false, ErrModelAccessNotDelegated
+			}
+			if want == nil || !want.Delegated || !reflect.DeepEqual(have.Budget, want.Budget) {
+				return text, "", false, ErrModelAccessClusterOnly
+			}
 		}
 		if reflect.DeepEqual(have, want) {
 			return text, "unchanged", false, nil
@@ -204,6 +238,9 @@ func renderModelAccess(a *gentianov1alpha1.TenantLLM) []string {
 		if b.TPMLimit != nil {
 			out = append(out, "      tpmLimit: "+strconv.FormatInt(*b.TPMLimit, 10))
 		}
+	}
+	if a.Delegated {
+		out = append(out, "    delegated: true")
 	}
 	return out
 }

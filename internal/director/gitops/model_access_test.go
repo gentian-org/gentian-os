@@ -70,7 +70,7 @@ func TestATenantsModelAccessIsDeclaredInItsManifest(t *testing.T) {
 		Providers: []string{"acme", "acme"},
 		Budget:    &gentianov1alpha1.TenantLLMBudget{MaxBudget: &budget, BudgetDuration: "30d", RPMLimit: &rpm},
 	}
-	if res, err := g.SetTenantModelAccess(ctx, "demo", want, tenantMeta()); err != nil || !res.Changed {
+	if res, err := g.SetTenantModelAccess(ctx, "demo", want, gitops.ModelAccessByCluster, tenantMeta()); err != nil || !res.Changed {
 		t.Fatalf("set: %+v, %v", res, err)
 	}
 	got, text := modelAccessOf(t, g)
@@ -81,12 +81,12 @@ func TestATenantsModelAccessIsDeclaredInItsManifest(t *testing.T) {
 	if read, err := g.TenantModelAccess(ctx, "demo"); err != nil || read == nil || read.Providers[0] != "acme" {
 		t.Fatalf("read back: %+v, %v", read, err)
 	}
-	if res, err := g.SetTenantModelAccess(ctx, "demo", want, tenantMeta()); err != nil || res.Changed {
+	if res, err := g.SetTenantModelAccess(ctx, "demo", want, gitops.ModelAccessByCluster, tenantMeta()); err != nil || res.Changed {
 		t.Fatalf("the same again is no commit: %+v, %v", res, err)
 	}
 
 	// The budget alone.
-	if _, err := g.SetTenantModelAccess(ctx, "demo", &gentianov1alpha1.TenantLLM{Budget: want.Budget}, tenantMeta()); err != nil {
+	if _, err := g.SetTenantModelAccess(ctx, "demo", &gentianov1alpha1.TenantLLM{Budget: want.Budget}, gitops.ModelAccessByCluster, tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := modelAccessOf(t, g); got == nil || got.Providers != nil || got.Budget == nil {
@@ -94,7 +94,7 @@ func TestATenantsModelAccessIsDeclaredInItsManifest(t *testing.T) {
 	}
 
 	// Nothing: spec.llm goes, and the manifest is what it was.
-	if _, err := g.SetTenantModelAccess(ctx, "demo", &gentianov1alpha1.TenantLLM{}, tenantMeta()); err != nil {
+	if _, err := g.SetTenantModelAccess(ctx, "demo", &gentianov1alpha1.TenantLLM{}, gitops.ModelAccessByCluster, tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 	if got, text := modelAccessOf(t, g); got != nil || text != before {
@@ -114,7 +114,7 @@ func TestModelAccessTheClusterDoesNotOfferIsRefused(t *testing.T) {
 		"period":           {Budget: &gentianov1alpha1.TenantLLMBudget{BudgetDuration: "a month"}},
 		"rpm":              {Budget: &gentianov1alpha1.TenantLLMBudget{RPMLimit: &zero}},
 	} {
-		if _, err := g.SetTenantModelAccess(ctx, "demo", access, tenantMeta()); !errors.Is(err, gitops.ErrInvalidModelAccess) {
+		if _, err := g.SetTenantModelAccess(ctx, "demo", access, gitops.ModelAccessByCluster, tenantMeta()); !errors.Is(err, gitops.ErrInvalidModelAccess) {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}

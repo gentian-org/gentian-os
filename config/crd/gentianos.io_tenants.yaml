@@ -804,12 +804,14 @@ spec:
                   LLM is what the tenant's apps may use at the platform's model gateway:
                   which external providers' models, and how much. Unset, they use the
                   models every tenant may use, without a cap. Written by the director
-                  for the cluster's administrator.
+                  for the cluster's administrator, and for the tenant's own
+                  administrator while it delegates the providers to them.
                 properties:
                   budget:
                     description: |-
                       Budget caps the tenant's use of the gateway, all its apps together.
-                      Unset, nothing is capped for the tenant as a whole.
+                      Unset, nothing is capped for the tenant as a whole. Set by the
+                      cluster's administrator only.
                     properties:
                       budgetDuration:
                         description: |-
@@ -836,6 +838,12 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
+                  delegated:
+                    description: |-
+                      Delegated says the tenant's own administrators may change Providers
+                      as well. Off unless the cluster's administrator turns it on; a
+                      tenant's administrator cannot, nor change Budget.
+                    type: boolean
                   providers:
                     description: |-
                       Providers are the external providers, by their name in the Cluster

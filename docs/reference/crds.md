@@ -1709,6 +1709,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.llm.budget.maxBudget` | integer (int64) |  | `MaxBudget` is what the tenant may spend per period, in whole US dollars at the gateway's prices. |
 | `spec.llm.budget.rpmLimit` | integer (int64) |  | `RPMLimit` is the requests per minute. |
 | `spec.llm.budget.tpmLimit` | integer (int64) |  | `TPMLimit` is the tokens per minute. |
+| `spec.llm.delegated` | boolean |  | `Delegated` says the tenant's own administrators may change Providers as well. |
 | `spec.llm.providers` | []string |  | `Providers` are the external providers, by their name in the Cluster claim's spec.llm.providers, whose models this tenant's apps may use. |
 | `spec.locales` | []string |  | `Locales` are the languages this tenant's realm renders its login and account pages in, as ISO 639-1 codes (AD-15). |
 | `spec.mail` | object |  | `Mail` configures the mail mode and settings for this tenant. |
