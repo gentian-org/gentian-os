@@ -493,3 +493,59 @@ func TestAMeWithoutAnAnswerIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// fakeViewer answers a view of the object asked, and records which.
+type fakeViewer struct {
+	asked []string
+	err   error
+}
+
+func (f *fakeViewer) ViewOf(_ context.Context, object string) (authz.View, error) {
+	f.asked = append(f.asked, object)
+	if f.err != nil {
+		return authz.View{}, f.err
+	}
+	return authz.View{Object: object, Bindings: []authz.Binding{}}, nil
+}
+
+func TestWhoHoldsWhatIsReadUnderTheObjectsReadRelation(t *testing.T) {
+	held := map[string]bool{
+		"user:ada can_view tenant:acme":   true,
+		"user:pat can_audit cluster:demo": true,
+		// A tenant's administrator of another tenant, and a cluster relation
+		// that is not can_audit, open neither view.
+		"user:mel can_view tenant:other":     true,
+		"user:mel can_configure tenant:acme": true,
+		"user:mel can_approve cluster:demo":  true,
+	}
+	viewer := &fakeViewer{}
+	s := New(Config{Authn: fakeAuthn{"ada": "ada", "pat": "pat", "mel": "mel"}, Authz: &fakeStore{held: held},
+		Viewer: viewer, TilesPath: catalogueFile(t), Cluster: "demo"})
+	for _, c := range []struct {
+		path, token string
+		code        int
+	}{
+		{"/v1/tenants/acme/authorization", "ada", http.StatusOK},
+		{"/v1/tenants/acme/authorization", "mel", http.StatusForbidden},
+		{"/v1/tenants/acme/authorization", "", http.StatusUnauthorized},
+		{"/v1/clusters/demo/authorization", "pat", http.StatusOK},
+		{"/v1/clusters/demo/authorization", "mel", http.StatusForbidden},
+		{"/v1/clusters/demo/authorization", "ada", http.StatusForbidden},
+	} {
+		code, body := ask(t, s, c.path, c.token)
+		if code != c.code {
+			t.Errorf("%s as %q: %d, want %d", c.path, c.token, code, c.code)
+		}
+		if code == http.StatusOK && body["object"] == "" {
+			t.Errorf("%s: no view: %v", c.path, body)
+		}
+	}
+	if strings.Join(viewer.asked, " ") != "tenant:acme cluster:demo" {
+		t.Errorf("the store was read for %v, and only after the relation held", viewer.asked)
+	}
+
+	viewer.err = errors.New("store down")
+	if code, _ := ask(t, s, "/v1/tenants/acme/authorization", "ada"); code != http.StatusBadGateway {
+		t.Errorf("an unreadable store: %d, want 502", code)
+	}
+}

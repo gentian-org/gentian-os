@@ -105,6 +105,9 @@ func (s *Server) stateRoutes() {
 		// where the director writes them under can_configure.
 		s.guarded("GET /v1/clusters/{c}/extensions/{group}/{resource}", "can_audit", clusterObject, s.clusterExtensionObjects)
 		s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", clusterObject, s.relayCluster("/v1/platform-security"))
+		// Every domain the cluster serves, the DNS records it needs and
+		// whether the internet has them: the operator's last DNS check.
+		s.guarded("GET /v1/clusters/{c}/domains", "can_audit", clusterObject, s.relayCluster("/v1/domains"))
 		s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", clusterObject, s.relayCluster("/v1/customizations"))
 		// What the cluster last reported about itself, exactly as sent, and
 		// what became of it; {"enabled":false} on a cluster that does not

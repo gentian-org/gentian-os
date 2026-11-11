@@ -370,7 +370,7 @@ asks for, and for the address of every bare name and `www` host it routes.
 It writes the answer per served domain to the ConfigMap `gentian-dns-status`
 in its namespace: each record is `present`, `pending` (within ten minutes of
 being asked for), `missing`, or `heldByOther`, with what is served instead.
-The director passes it on (`GET /v1/clusters/{c}/domains`, `can_audit`) to
+The usher passes it on (`GET /v1/clusters/{c}/domains`, `can_audit`) to
 the Operations Console and to `kubectl gentian domains`. A record held by
 another is never overwritten: whoever owns the zone removes it.
 

@@ -494,7 +494,7 @@ commit unless marked as a command.
 | Settings | Read and change the cluster's settings, its branding and its models; choose a tenant's resource plan; set a tenant's sign-in security policy; set a tenant's backup policy and the cluster's. |
 | Platform security and roles | Read and replace the list of exceptions to the cluster's default security rules, as git declares it; name and remove the holders of platform roles. |
 | Backup bundles | Upload or inspect a bundle; declare the storage outside the cluster an import may read from, or a tenant's own store its exports are written to, and fetch a bundle from either; restore (as part of an import). |
-| Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
+| Records | Read the history of changes to a tenant or the cluster (from the commits). |
 | Commands relayed to the operator | Take a backup; delete a backup; send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
@@ -929,10 +929,13 @@ and asks OpenFGA before it answers.
 | Every tenant's resources; the cluster's backup policy | `can_audit` on the cluster |
 | What awaits an approver | `can_approve`, `can_approve_perimeter` or `can_configure` on the cluster |
 | The platform security rules in force; the customization report; the usage statistics report | `can_audit` on the cluster |
+| Every domain the cluster serves, the DNS records it needs and whether the internet has them | `can_audit` on the cluster |
+| Who holds which role on a tenant, and what each role carries (`…/authorization`) | `can_view` on the tenant |
+| Who holds which role on the cluster | `can_audit` on the cluster |
 | What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
 The tiles come from a file the operator writes. Which permissions a caller
-holds is OpenFGA's answer, asked in one batch. All other answers are the
+holds, and who holds which role, are OpenFGA's answers. All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
 itself: each answer is worked out inside the operator, and reading the
 objects behind it would mean giving the usher access to every tenant's

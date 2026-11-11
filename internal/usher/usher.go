@@ -63,6 +63,10 @@ type Authenticator interface {
 type Config struct {
 	Authn Authenticator
 	Authz authz.Checker
+	// Viewer reads who holds what on a tenant or the cluster, for the
+	// console's read-only authorization view. Nil leaves that view
+	// unregistered.
+	Viewer authz.Viewer
 	// TilesPath is the file the operator's tile catalogue is mounted at.
 	TilesPath string
 	Log       *slog.Logger
@@ -111,6 +115,14 @@ func New(cfg Config) *Server {
 	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
 	if cfg.Cluster != "" {
 		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
+	}
+	// Who holds what, read-only: can_view on a tenant and can_audit on the
+	// cluster, the relations that govern reading each object.
+	if cfg.Viewer != nil {
+		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
+		if cfg.Cluster != "" {
+			s.guarded("GET /v1/clusters/{c}/authorization", "can_audit", clusterObject, s.clusterAuthorization)
+		}
 	}
 	if cfg.Lifecycle != nil {
 		s.stateRoutes()
