@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
@@ -362,5 +363,67 @@ func TestEveryDecisionCarriesTheRequestsID(t *testing.T) {
 				t.Errorf("sent %q: a decision was asked under %q, the request is %q", sent, id, answered)
 			}
 		}
+	}
+}
+
+// batchStore answers the tile questions as one batch, and only so: a tile
+// question asked one at a time, or a batch failing, shows in the answer.
+type batchStore struct {
+	fakeStore
+	batches  int
+	batchErr error
+}
+
+func (b *batchStore) BatchCheck(ctx context.Context, requestID string, qs []authz.Question) ([]bool, error) {
+	b.batches++
+	if b.batchErr != nil {
+		return nil, b.batchErr
+	}
+	out := make([]bool, len(qs))
+	for i, q := range qs {
+		out[i], _ = b.Check(ctx, requestID, q.User, q.Relation, q.Object)
+	}
+	return out, nil
+}
+
+// Where the store can answer in batches, a tile list is one batch, and it
+// says exactly what the questions asked one by one would have said.
+func TestATileListIsOneBatchWithTheSameAnswer(t *testing.T) {
+	held := map[string]bool{
+		"user:ada can_enter tenant:acme":      true,
+		"user:ada can_administer tenant:acme": true,
+		"user:mel can_enter tenant:acme":      true,
+		"user:mel can_launch app:acme/notes":  true,
+		"user:pat can_enter tenant:acme":      true,
+		"user:pat can_administer tenant:acme": true,
+		"user:pat can_audit cluster:demo":     true,
+	}
+	authn := fakeAuthn{"ada": "ada", "mel": "mel", "pat": "pat"}
+	one := New(Config{Authn: authn, Authz: &fakeStore{held: held}, TilesPath: catalogueFile(t)})
+	store := &batchStore{fakeStore: fakeStore{held: held}}
+	batched := New(Config{Authn: authn, Authz: store, TilesPath: catalogueFile(t)})
+	for _, token := range []string{"ada", "mel", "pat"} {
+		store.batches = 0
+		wantCode, want := ask(t, one, "/v1/tenants/acme/tiles", token)
+		code, got := ask(t, batched, "/v1/tenants/acme/tiles", token)
+		if code != wantCode || names(got) != names(want) {
+			t.Errorf("%s: batched %d %s, one by one %d %s", token, code, names(got), wantCode, names(want))
+		}
+		if store.batches != 1 {
+			t.Errorf("%s: %d batches for one list, want 1", token, store.batches)
+		}
+	}
+}
+
+// A batch that fails refuses the whole list, as one failed question does.
+func TestAFailedBatchShowsNothing(t *testing.T) {
+	store := &batchStore{
+		fakeStore: fakeStore{held: map[string]bool{"user:mel can_enter tenant:acme": true}},
+		batchErr:  errors.New("openfga unreachable"),
+	}
+	s := New(Config{Authn: fakeAuthn{"mel": "mel"}, Authz: store, TilesPath: catalogueFile(t)})
+	code, body := ask(t, s, "/v1/tenants/acme/tiles", "mel")
+	if code != http.StatusServiceUnavailable || body["tiles"] != nil {
+		t.Errorf("status %d, tiles %v; want 503 and none", code, body["tiles"])
 	}
 }

@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -228,25 +229,45 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 		fail(w, r, http.StatusServiceUnavailable, "the tile catalog cannot be read")
 		return
 	}
-	out := []tileOut{}
-	for _, t := range catalogue.Tiles {
+	// Every question for every tile, asked together: a tile is the caller's
+	// when any of its relations holds, as the caller or -- what CheckAs would
+	// ask next -- as the role holder of the token's realm. Asking both at
+	// once answers the same as asking the second only when the first is
+	// refused.
+	type asked struct{ tile, from, to int }
+	var questions []authz.Question
+	var spans []asked
+	for i, t := range catalogue.Tiles {
 		if !inTenant(t.Object, c.tenant) {
 			continue
 		}
+		from := len(questions)
 		for _, rel := range t.AnyOf {
-			ok, err := authz.CheckAs(ctx, s.cfg.Authz, guard.ID(ctx), c.user, c.holder, rel, t.Object)
-			if err != nil {
-				fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-				return
-			}
-			if ok {
-				out = append(out, tileOut{
-					Name: t.Name, DisplayName: t.DisplayName, DisplayNames: t.DisplayNames,
-					Description: t.Description, URL: t.URL, Icon: t.Icon, Preopen: t.Preopen,
-				})
-				break
+			questions = append(questions, authz.Question{User: c.user, Relation: rel, Object: t.Object})
+			if c.holder != "" {
+				questions = append(questions, authz.Question{User: c.holder, Relation: rel, Object: t.Object})
 			}
 		}
+		spans = append(spans, asked{tile: i, from: from, to: len(questions)})
+	}
+	allowed, err := authz.CheckAll(ctx, s.cfg.Authz, guard.ID(ctx), questions)
+	if err != nil {
+		// One unanswered question refuses the whole list, as it always did:
+		// a list missing a tile it should have, or holding one it should
+		// not, is worse than none.
+		fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return
+	}
+	out := []tileOut{}
+	for _, sp := range spans {
+		if !slices.Contains(allowed[sp.from:sp.to], true) {
+			continue
+		}
+		t := catalogue.Tiles[sp.tile]
+		out = append(out, tileOut{
+			Name: t.Name, DisplayName: t.DisplayName, DisplayNames: t.DisplayNames,
+			Description: t.Description, URL: t.URL, Icon: t.Icon, Preopen: t.Preopen,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore(catalogue.AppStore)})
 }
