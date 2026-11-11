@@ -227,7 +227,7 @@ namespace tier and the profile:
 
 | Tier | OpenBao prefix | Reach |
 | --- | --- | --- |
-| `system-<function>` | `gentian-os/kernel/<function>/*` | ingress from tenant namespaces on the contract port, and from its own `-dmz`; egress only to declared upstreams (LLM providers) |
+| `system-<function>` | `gentian-os/kernel/<function>/*` | ingress from tenant namespaces on the contract port, and from its own `-dmz`; egress unrestricted, except in `system-llm`: the model gateway reaches its database, cache and model servers, the edge, and public addresses on 443 only where the Cluster claim lists a provider; a vLLM instance reaches public addresses on 443 for its weights ([llms.md](llms.md)) |
 | `system-<function>-dmz` | one credential: the backend relay or proxy credential | ingress from the internet on the protocol's ports; egress to its backend in `system-<function>` and, for mail, to the internet on `:25` |
 | `tenant-<t>` | `gentian-os/tenants/<t>/apps/<app>/*`, per app | `requires.services` and granted integrations, nothing else |
 | `tenant-<t>-dmz` | one credential: the surface's app password or scoped token | ingress on the surface's paths; egress to one backend service and port |

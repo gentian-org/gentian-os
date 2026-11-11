@@ -308,17 +308,20 @@ authenticates and then refuses every AI endpoint.
 
 ### Where a provider can be reached from
 
-Only from the gateway. The policies on `system-llm` restrict who may connect to
-its pods and say nothing about egress, so LiteLLM reaches the internet; a tenant
-namespace is denied egress by default (`tenant-isolation`), so a tenant app
-configured to call a provider directly gets a timeout its UI usually renders as
-an empty model list. That asymmetry is the design: the gateway is what holds the
-credential.
+Only from the gateway. A tenant namespace is denied egress by default
+(`tenant-isolation`), so a tenant app configured to call a provider directly
+gets a timeout its UI usually renders as an empty model list. The gateway is
+what holds the credential.
 
-> Adding an egress NetworkPolicy to `system-llm` to "allow 443" would be a
-> regression, not a hardening: the namespace has no egress policy, and the
-> first one switches the selected pods to deny-by-default, breaking LiteLLM's
-> DNS, Postgres and Redis unless all of it is enumerated in the same policy.
+The gateway's own egress is restricted too
+(`kernel/services/llm/manifests/templates/networkpolicy-egress.yaml`): DNS,
+its PostgreSQL, its Redis, the model servers, the edge's Envoy pods (where
+`id.<kernelDomain>` resolves inside the cluster, for the console's sign-in),
+and TCP 443 to public IPv4 addresses only while the claim lists a provider. A
+NetworkPolicy matches addresses and not names, so that rule admits every
+public address on 443, not the providers' alone. Without a provider no
+connection of the gateway leaves the cluster. The mock model server reaches
+nothing; the budget Job reaches the gateway alone.
 
 ### Operator access
 
@@ -404,8 +407,9 @@ read from the same claim: per entry a Deployment on a node with
 `nvidia.com/gpu.present`, one `nvidia.com/gpu`, its Service, and a PVC for the
 weights that is kept when the entry is removed. The pod runs as a user that is
 not root with the kernel's admission baseline, its caches under the PVC
-(`HOME`, `HF_HOME`), and the NetworkPolicy `llm-vllm-ingress` admits the
-gateway alone. The optional Secret `vllm-hf-token`, which holds the Hugging
+(`HOME`, `HF_HOME`), the NetworkPolicy `llm-vllm-ingress` admits the
+gateway alone, and `llm-vllm-egress` lets the instance reach DNS and public
+IPv4 addresses on 443, where Hugging Face serves the weights. The optional Secret `vllm-hf-token`, which holds the Hugging
 Face token for gated models, is created by hand.
 
 With `gpuAcceleration` true the mock model server is not started. With it

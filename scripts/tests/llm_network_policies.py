@@ -17,7 +17,9 @@
 #   llm_network_policies.py off       the switch, and the mock
 #   llm_network_policies.py console   the gateway's console, off unless asked for
 #   llm_network_policies.py vllm      a model served on the cluster's GPUs
+#   llm_network_policies.py egress    what the pods that call out may reach
 # =============================================================================
+import re
 import sys
 import tempfile
 
@@ -60,6 +62,9 @@ CONSOLE_ON = ("--set", "spec.llm.console.enabled=true")
 # (internal/modelgateway Port; the Go test of the client table holds the
 # table's row to it).
 GATEWAY_PORT = 4000
+
+# A claim with an instance on GPUs and two providers (scripts/tests/llm_models.py).
+MODELS_CLAIM = "crossplane/tests/unit/schema/valid/cluster-llm-models.yaml"
 
 
 def application(*extra):
@@ -125,8 +130,67 @@ def pods(docs):
 
 
 def by_name(docs):
-    found = {p["metadata"]["name"]: p for p in policies_of(docs)}
-    return found
+    """The ingress policies, by name."""
+    return {p["metadata"]["name"]: p for p in policies_of(docs) if p["spec"].get("policyTypes") != ["Egress"]}
+
+
+def egress_by_name(docs):
+    """The egress policies, by name."""
+    return {p["metadata"]["name"]: p for p in policies_of(docs) if p["spec"].get("policyTypes") == ["Egress"]}
+
+
+# What the egress rules to the internet leave out: everything that is not a
+# public IPv4 unicast address, as the operator's rule for a component that
+# talks to a store (internal/controller/store_offer.go, storeEgressExcept).
+PUBLIC_EXCEPT = {"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+                 "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/3"}
+
+
+def egress_rules(policy):
+    """Each egress rule as (ports, peers); a rule without ports admits every
+    port, one without peers every destination."""
+    out = []
+    for rule in policy["spec"].get("egress") or []:
+        out.append(({(p.get("protocol", "TCP"), p["port"]) for p in rule.get("ports") or []}, rule.get("to") or []))
+    return out
+
+
+def reaches(policy, ns, ns_labels, pod_labels, port, own_ns):
+    """Whether the policy lets its pods open this port of this pod."""
+    for ports, peers in egress_rules(policy):
+        if ports and ("TCP", port) not in ports:
+            continue
+        if not peers:
+            return True
+        for peer in peers:
+            if "ipBlock" in peer:
+                continue
+            if "namespaceSelector" in peer:
+                if not matches(match_labels(peer["namespaceSelector"], "a peer's namespace"), ns_labels):
+                    continue
+            elif ns != own_ns:
+                continue
+            if "podSelector" in peer and not matches(match_labels(peer["podSelector"], "a peer's pods"), pod_labels):
+                continue
+            return True
+    return False
+
+
+def internet(policy):
+    """The ports the policy opens to public addresses, refusing a block that
+    is wider than the public IPv4 space."""
+    out = set()
+    for ports, peers in egress_rules(policy):
+        for peer in peers:
+            block = peer.get("ipBlock")
+            if block is None:
+                continue
+            if block.get("cidr") != "0.0.0.0/0" or set(block.get("except") or []) != PUBLIC_EXCEPT:
+                raise Failure(f"{policy['metadata']['name']} opens {block}, not the public IPv4 space")
+            if not ports:
+                raise Failure(f"{policy['metadata']['name']} opens every port to the internet")
+            out |= ports
+    return out
 
 
 def check_shape():
@@ -388,9 +452,87 @@ def check_vllm():
         raise Failure("a tenant's pod is admitted to the instance")
 
 
+def check_egress():
+    # The list is the operator's for a store's way out, read where it is kept.
+    go = (ROOT / "internal/controller/store_offer.go").read_text()
+    block = go[go.index("var storeEgressExcept = []string{"):]
+    block = block[:block.index("}")]
+    if set(re.findall(r'"([0-9./]+)"', block)) != PUBLIC_EXCEPT:
+        raise Failure("the public address space here and the operator's for a store differ (store_offer.go)")
+    app = application()
+    ns = app["namespace"]
+    own = {NAME_LABEL: ns}
+    edge = [name for name, labels in layout().items() if labels.get(FUNCTION) == "edge"][0]
+    for policy in policies_of(render(app, "-f", MODELS_CLAIM)) + policies_of(render(app)):
+        if (policy["metadata"].get("annotations") or {}).get("argocd.argoproj.io/sync-wave") != "-1":
+            raise Failure(f"{policy['metadata']['name']} is not synced before the pods (sync wave -1)")
+
+    # Without a provider and without GPUs: the gateway reaches its database,
+    # its cache, the model servers and the edge, and nothing outside the
+    # cluster; the mock reaches nothing.
+    docs = render(app)
+    workloads = pods(docs)
+    egress = egress_by_name(docs)
+    if set(egress) != {"llm-gateway-egress", "llm-mock-egress"}:
+        raise Failure(f"without GPUs and providers the egress policies are {sorted(egress)}")
+    gateway = egress["llm-gateway-egress"]
+    if not matches(match_labels(gateway["spec"]["podSelector"], "llm-gateway-egress"), workloads[WORKLOAD["gateway"]]["labels"]):
+        raise Failure("llm-gateway-egress does not select the gateway")
+    for key, other in workloads.items():
+        if key != WORKLOAD["gateway"] and matches(match_labels(gateway["spec"]["podSelector"], "x"), other["labels"]):
+            raise Failure(f"llm-gateway-egress also selects {key[1]}")
+    for server, port in (("database", 5432), ("cache", 6379), ("mock", 8000)):
+        if not reaches(gateway, ns, own, workloads[WORKLOAD[server]]["labels"], port, ns):
+            raise Failure(f"the gateway cannot reach its {server} on {port}")
+    if not reaches(gateway, edge, {NAME_LABEL: edge}, {"app.kubernetes.io/name": "envoy"}, 10443, ns):
+        raise Failure("the gateway cannot reach the edge's Envoy pods, where id.<kernelDomain> resolves inside the cluster")
+    for where, labels, pods_, port in (
+        (edge, {NAME_LABEL: edge}, {"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/component": "bouncer"}, 8080),
+        ("tenant-acme", {NAME_LABEL: "tenant-acme", "gentianos.io/tier": "tenant"}, {"app": "wiki"}, 8080),
+        ("kernel-control", {NAME_LABEL: "kernel-control"}, {"app.kubernetes.io/name": "gentian-os"}, 8443),
+        (ns, own, {"app": "something-else"}, 5432),
+    ):
+        if reaches(gateway, where, labels, pods_, port, ns):
+            raise Failure(f"the gateway reaches {pods_} in {where} on {port}")
+    if internet(gateway):
+        raise Failure("without a provider the gateway may reach the internet")
+    mock = egress["llm-mock-egress"]
+    if mock["spec"].get("egress") or not matches(match_labels(mock["spec"]["podSelector"], "llm-mock-egress"), workloads[WORKLOAD["mock"]]["labels"]):
+        raise Failure(f"the mock may call out, or the policy does not select it: {mock['spec']}")
+
+    # With providers and an instance on GPUs: the gateway reaches public
+    # addresses on 443 for the providers, the instances for the weights.
+    docs = render(app, "-f", MODELS_CLAIM)
+    egress = egress_by_name(docs)
+    if set(egress) != {"llm-gateway-egress", "llm-vllm-egress"}:
+        raise Failure(f"with GPUs and providers the egress policies are {sorted(egress)}")
+    if internet(egress["llm-gateway-egress"]) != {("TCP", 443)}:
+        raise Failure("with a provider the gateway does not reach public addresses on 443 alone")
+    vllm = egress["llm-vllm-egress"]
+    if internet(vllm) != {("TCP", 443)}:
+        raise Failure("an instance does not reach public addresses on 443 alone, where its weights are downloaded from")
+    instance = pods(docs)[("Deployment", "vllm-qwen-inference")]
+    if not matches(match_labels(vllm["spec"]["podSelector"], "llm-vllm-egress"), instance["labels"]):
+        raise Failure("llm-vllm-egress does not select the instance")
+    if not reaches(egress["llm-gateway-egress"], ns, own, instance["labels"], 8000, ns):
+        raise Failure("the gateway cannot reach the instance")
+
+    # The budget Job reaches the gateway's port and nothing else.
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml") as f:
+        f.write("spec:\n  llm:\n    enabled: true\n    personBudget:\n      maxBudget: 5\n")
+        f.flush()
+        docs = render(app, "-f", f.name)
+    job = egress_by_name(docs).get("llm-person-budget-egress")
+    if job is None:
+        raise Failure("the budget Job has no egress policy")
+    if not reaches(job, ns, own, pods(docs)[WORKLOAD["gateway"]]["labels"], GATEWAY_PORT, ns) or \
+            reaches(job, ns, own, {"app": "redis-llm"}, 6379, ns) or internet(job):
+        raise Failure("the budget Job reaches more, or other, than the gateway")
+
+
 def main():
     checks = {"shape": check_shape, "clients": check_clients, "wiring": check_wiring, "off": check_off,
-              "console": check_console, "vllm": check_vllm}
+              "console": check_console, "vllm": check_vllm, "egress": check_egress}
     args = sys.argv[1:]
     if len(args) != 1 or args[0] not in checks:
         print(f"usage: {sys.argv[0]} {'|'.join(checks)}", file=sys.stderr)
