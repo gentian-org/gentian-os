@@ -30,15 +30,21 @@ import (
 )
 
 func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
-	cidr := os.Getenv("KUBE_APISERVER_CIDR")
-	if cidr == "" {
-		cidr = "10.0.0.0/8"
-	}
 	return netpolicy.Config{
 		ServicesNamespace: servicesNamespace,
-		KubeAPIServerCIDR: cidr,
+		KubeAPIServerCIDR: KubeAPIServerCIDR(),
 		NarrowEdge:        kernelNetworkPoliciesEnabled(),
 	}
+}
+
+// KubeAPIServerCIDR is the range the API server is admitted in on 443, as the
+// operator is told it (KUBE_APISERVER_CIDR), beside the addresses of the
+// kubernetes Service's EndpointSlice (loadKubeAPIEndpointSlice).
+func KubeAPIServerCIDR() string {
+	if cidr := os.Getenv("KUBE_APISERVER_CIDR"); cidr != "" {
+		return cidr
+	}
+	return "10.0.0.0/8"
 }
 
 // kernelNetworkPoliciesEnabled reports the cluster's switch for the kernel's
@@ -53,32 +59,39 @@ func kernelNetworkPoliciesEnabled() bool {
 }
 
 // loadKubeAPIEndpointSlice returns the EndpointSlice backing the "kubernetes"
-// service so the baseline NetworkPolicy can allow egress to the real apiserver
-// addresses. Returning nil is only safe when the apiserver happens to sit inside
-// KUBE_APISERVER_CIDR; on clusters reached through a public IP it silently
-// leaves tenants unable to talk to the API. It used to swallow the error, so an
-// RBAC gap on endpointslices was indistinguishable from "no slices exist" —
-// both paths just returned nil. Log loudly instead: nil is still returned so a
-// genuinely absent slice degrades rather than blocking the reconcile.
-func (r *TenantReconciler) loadKubeAPIEndpointSlice(ctx context.Context) *discoveryv1.EndpointSlice {
+// service so a NetworkPolicy can allow egress to the real apiserver addresses
+// (netpolicy.BaselineEgress). Returning nil is only safe when the apiserver
+// happens to sit inside KUBE_APISERVER_CIDR; on clusters reached through a
+// public IP it leaves the selected pods unable to talk to the API. An error is
+// logged rather than swallowed, so an RBAC gap on endpointslices is told apart
+// from "no slices exist"; nil is still returned so a genuinely absent slice
+// degrades rather than blocking the reconcile.
+func loadKubeAPIEndpointSlice(ctx context.Context, c client.Reader) *discoveryv1.EndpointSlice {
 	logger := log.FromContext(ctx)
 	slices := &discoveryv1.EndpointSliceList{}
-	if err := r.List(ctx, slices, client.MatchingLabels{
-		"kubernetes.io/service-name": "kubernetes",
+	if err := c.List(ctx, slices, client.MatchingLabels{
+		kubeAPIServiceNameLabel: kubeAPIServiceName,
 	}); err != nil {
-		logger.Error(err, "list kube-apiserver EndpointSlices; tenant NetworkPolicies "+
+		logger.Error(err, "list kube-apiserver EndpointSlices; NetworkPolicies "+
 			"will only allow egress to KUBE_APISERVER_CIDR and may block the apiserver",
-			"cidr", r.tenantNetPolicyConfig().KubeAPIServerCIDR)
+			"cidr", KubeAPIServerCIDR())
 		return nil
 	}
 	if len(slices.Items) == 0 {
-		logger.Info("no EndpointSlice found for the kubernetes service; tenant "+
+		logger.Info("no EndpointSlice found for the kubernetes service; "+
 			"NetworkPolicies will only allow egress to KUBE_APISERVER_CIDR",
-			"cidr", r.tenantNetPolicyConfig().KubeAPIServerCIDR)
+			"cidr", KubeAPIServerCIDR())
 		return nil
 	}
 	return &slices.Items[0]
 }
+
+// The label an EndpointSlice names its Service by, and the API server's
+// Service.
+const (
+	kubeAPIServiceNameLabel = discoveryv1.LabelServiceName
+	kubeAPIServiceName      = "kubernetes"
+)
 
 func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
@@ -141,7 +154,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		Grants:        grants,
 		PodSelectors:  selectors,
 		Config:        r.tenantNetPolicyConfig(),
-		KubeAPIEndpts: r.loadKubeAPIEndpointSlice(ctx),
+		KubeAPIEndpts: loadKubeAPIEndpointSlice(ctx, r.Client),
 	}
 	desired := netpolicy.BuildDesired(in)
 	desiredNames := netpolicy.ManagedPolicyNames(in)

@@ -101,5 +101,6 @@ check_llm "storeNetworkPolicies=false: no policy; with GPUs no mock and no polic
 check_llm "the gateway's console is off unless the claim switches it on: only then is the edge admitted to the gateway" console
 check_llm "a model served on the cluster's GPUs: its instance is admitted from the gateway alone" vllm
 check_llm "the gateway reaches its servers and the edge, and the internet on 443 only with a provider; an instance reaches the internet on 443; the mock and the cache nothing" egress
+check_llm "the operator, which writes the database's egress policy, is told the switch the chart renders its policies by" operator
 
 finish

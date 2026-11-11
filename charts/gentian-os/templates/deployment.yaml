@@ -237,6 +237,12 @@ spec:
             # both as they were.
             - name: KERNEL_NETWORK_POLICIES
               value: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
+            # The switch for the policies on the system tier's servers
+            # (STORE_NETWORK_POLICIES). Anything but "false" is on: the
+            # operator then writes the egress policy of the model gateway's
+            # PostgreSQL, as the gateway's chart writes its other policies.
+            - name: STORE_NETWORK_POLICIES
+              value: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
             - name: CLOUDFLARE_ZONE_ID
               {{- if .Values.cloudflare.zoneID }}
               value: {{ .Values.cloudflare.zoneID | quote }}

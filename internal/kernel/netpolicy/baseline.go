@@ -31,7 +31,7 @@ const baselinePolicyName = "tenant-isolation"
 // their own instead (AdapterNetworkPolicies). Network rules only ever add, so
 // a pod this policy selects could not be closed again by another.
 func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice, excluded ...metav1.LabelSelectorRequirement) *networkingv1.NetworkPolicy {
-	egress := baselineEgress(cfg, kubeAPIEndpts)
+	egress := BaselineEgress(cfg, kubeAPIEndpts)
 
 	// The edge: the Gateways' data plane runs in the edge function's
 	// namespace, and it is what reaches a tenant's routed pods.
@@ -75,10 +75,11 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	}
 }
 
-// baselineEgress is what every pod of a tenant may reach without anybody
+// BaselineEgress is what every pod of a tenant may reach without anybody
 // having asked: the cluster's DNS and the API server. An adapter's pods are
-// given the same, by their own policy.
-func baselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []networkingv1.NetworkPolicyEgressRule {
+// given the same, by their own policy, and so are the instances of the model
+// gateway's PostgreSQL (internal/controller/model_gateway_database_egress.go).
+func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []networkingv1.NetworkPolicyEgressRule {
 	protocolTCP := corev1.ProtocolTCP
 	protocolUDP := corev1.ProtocolUDP
 	dnsPort := intstr.FromInt32(53)
