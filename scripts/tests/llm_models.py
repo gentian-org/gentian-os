@@ -222,8 +222,8 @@ def check_gateway():
 
 
 def check_groups():
-    # An instance's model is every tenant's; a provider's is its provider's,
-    # and every tenant's only where the claim marks the provider so.
+    # An instance's model is every tenant's; a provider's is its provider's
+    # alone, which a tenant's team names only once the tenant opted in.
     groups = {m["model_name"]: m["model_info"].get("access_groups") for m in config(render(application(), "-f", CLAIM))["model_list"]}
     want = {
         "qwen-qwen2.5-7b-instruct": [EVERY_TENANT],
@@ -232,25 +232,6 @@ def check_groups():
     }
     if groups != want:
         raise Failure(f"for {CLAIM} the access groups are {groups}, want {want}")
-    marked = """spec:
-  llm:
-    enabled: true
-    providers:
-      - name: open-one
-        apiBase: https://open.example/v1
-        apiKeyProperty: open_one_api_key
-        defaultForTenants: true
-        models: [{name: any, model: any}]
-      - name: paid-one
-        apiBase: https://paid.example/v1
-        apiKeyProperty: paid_one_api_key
-        defaultForTenants: false
-        models: [{name: any, model: any}]
-"""
-    groups = {m["model_name"]: m["model_info"]["access_groups"] for m in config(with_claim(marked))["model_list"]}
-    want = {"open-one/any": [EVERY_TENANT, PROVIDER_GROUP + "open-one"], "paid-one/any": [PROVIDER_GROUP + "paid-one"]}
-    if groups != want:
-        raise Failure(f"with one provider marked defaultForTenants the access groups are {groups}, want {want}")
     # A fallback is held to the caller's models, and the file names no
     # fallback or alias of its own that the router would take after the
     # caller's models were checked.

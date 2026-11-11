@@ -351,35 +351,3 @@ func TestTheConsoleSwitchIsWrittenOnlyWhenStated(t *testing.T) {
 		t.Fatal("the console stayed on")
 	}
 }
-
-// A provider marked defaultForTenants is written so, read back so, and its
-// models say every tenant may use them -- as an instance's do. A provider
-// that is not marked says nothing of it in the claim.
-func TestAProviderOfferedToEveryTenantIsWrittenAndReadBack(t *testing.T) {
-	g := claimWith(t, installedLLM)
-	ctx := context.Background()
-	want := someModels()
-	want.Providers[1].DefaultForTenants = true
-	want.Providers[1].Models = []gitops.ProviderModel{{Name: "open", Model: "open/model"}}
-	if _, err := g.SetClusterModels(ctx, want, tenantMeta()); err != nil {
-		t.Fatal(err)
-	}
-	text := claimText(t, g)
-	if strings.Count(text, "defaultForTenants: true") != 1 || strings.Contains(text, "defaultForTenants: false") {
-		t.Fatalf("the claim:\n%s", text)
-	}
-	got, err := g.ClusterModels(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Providers[0].DefaultForTenants || !got.Providers[1].DefaultForTenants {
-		t.Fatalf("read back: %+v", got.Providers)
-	}
-	every := map[string]bool{}
-	for _, m := range got.GatewayModels() {
-		every[m.Name] = m.EveryTenant
-	}
-	if !every["qwen-qwen2.5-7b-instruct"] || every["infomaniak/gemma-4-31b"] || !every["staged/open"] {
-		t.Fatalf("every tenant: %v", every)
-	}
-}

@@ -28,13 +28,12 @@ Cluster claim's spec.llm and from nothing else.
   been supplied yet is listed and answers an authentication error until it
   is.
 
-Every model is in access groups, which are what a tenant's team at the
+Every model is in an access group, which is what a tenant's team at the
 gateway names (internal/modelgateway): an instance's model is in
-gentian:every-tenant; a provider's model is in gentian:provider:<provider>,
-and in gentian:every-tenant as well when the provider is marked
-defaultForTenants. A team names gentian:every-tenant and the groups of the
-providers its tenant opted in to, so a provider's model reaches a tenant
-only when one of the two says so.
+gentian:every-tenant, a provider's model in gentian:provider:<provider>. A
+team names gentian:every-tenant and the groups of the providers its tenant
+opted in to, so a provider's model reaches a tenant only when the tenant
+opted in to that provider.
 
 A request may name other models to fall back to. The gateway checks each of
 them against the caller's team and key before it is tried
@@ -68,9 +67,7 @@ pods.
       "model" (printf "openai/%s" $m.model)
       "api_base" ($p.apiBase | trimSuffix "/")
       "api_key" (printf "os.environ/LLM_PROVIDER_KEY_%s" $p.apiKeyProperty) -}}
-{{- $groups := list (printf "gentian:provider:%s" $p.name) -}}
-{{- if eq (toString $p.defaultForTenants) "true" }}{{ $groups = prepend $groups "gentian:every-tenant" }}{{ end -}}
-{{- $info := dict "mode" ($m.mode | default "chat") "access_groups" $groups -}}
+{{- $info := dict "mode" ($m.mode | default "chat") "access_groups" (list (printf "gentian:provider:%s" $p.name)) -}}
 {{- if $m.maxTokens }}{{ $_ := set $info "max_tokens" (int $m.maxTokens) }}{{ end -}}
 {{- $models = append $models (dict "model_name" (printf "%s/%s" $p.name $m.name) "litellm_params" $params "model_info" $info) -}}
 {{- end -}}

@@ -1123,16 +1123,6 @@ spec:
                               authentication error. The gateway restarts by
                               itself when the token is supplied or changed.
                             pattern: '^[a-z0-9_]+$'
-                          defaultForTenants:
-                            type: boolean
-                            default: false
-                            description: >
-                              Whether every tenant may use this provider's
-                              models. False, a tenant uses them only once its
-                              Tenant names the provider in spec.llm.providers;
-                              true, every tenant does, as it does the models of
-                              spec.llm.instances. Prompts sent to a provider's
-                              model leave the cluster.
                           models:
                             type: array
                             description: >

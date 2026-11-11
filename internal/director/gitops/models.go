@@ -86,15 +86,11 @@ type ProviderModel struct {
 // ModelProvider is one entry of spec.llm.providers: an external,
 // OpenAI-compatible endpoint and the models of it the gateway offers.
 type ModelProvider struct {
-	Name           string `json:"name"`
-	DisplayName    string `json:"displayName,omitempty"`
-	APIBase        string `json:"apiBase"`
-	APIKeyProperty string `json:"apiKeyProperty"`
-	// DefaultForTenants offers the provider's models to every tenant. False,
-	// a tenant uses them once its Tenant names the provider
-	// (spec.llm.providers).
-	DefaultForTenants bool            `json:"defaultForTenants,omitempty"`
-	Models            []ProviderModel `json:"models"`
+	Name           string          `json:"name"`
+	DisplayName    string          `json:"displayName,omitempty"`
+	APIBase        string          `json:"apiBase"`
+	APIKeyProperty string          `json:"apiKeyProperty"`
+	Models         []ProviderModel `json:"models"`
 }
 
 // GatewayConsole is spec.llm.console: whether the gateway's own console has
@@ -141,10 +137,6 @@ type GatewayModel struct {
 	Credential     string `json:"credential,omitempty"`
 	APIKeyProperty string `json:"apiKeyProperty,omitempty"`
 	State          string `json:"state"`
-	// EveryTenant says every tenant may use it: an instance's model, or a
-	// model of a provider marked defaultForTenants. Otherwise only the
-	// tenants that name its provider do.
-	EveryTenant bool `json:"everyTenant"`
 	// Reason says why, for every state but declared.
 	Reason string `json:"reason,omitempty"`
 }
@@ -175,7 +167,7 @@ func (m ModelSettings) GatewayModels() []GatewayModel {
 	out := []GatewayModel{}
 	off := "This cluster serves no models: llm.enabled is false."
 	for _, i := range m.Instances {
-		g := GatewayModel{Name: instanceModelName(i.ModelID), Kind: "instance", Source: i.Name, State: ModelDeclared, EveryTenant: true}
+		g := GatewayModel{Name: instanceModelName(i.ModelID), Kind: "instance", Source: i.Name, State: ModelDeclared}
 		switch {
 		case !m.Enabled:
 			g.State, g.Reason = ModelNotOffered, off
@@ -189,7 +181,6 @@ func (m ModelSettings) GatewayModels() []GatewayModel {
 			g := GatewayModel{
 				Name: p.Name + "/" + pm.Name, Kind: "provider", Source: p.Name,
 				Credential: ProviderCredential(p.Name), APIKeyProperty: p.APIKeyProperty, State: ModelDeclared,
-				EveryTenant: p.DefaultForTenants,
 			}
 			switch {
 			case !m.Enabled:
@@ -485,9 +476,6 @@ func renderProviders(providers []ModelProvider) []string {
 			out = append(out, "        displayName: "+textScalar(p.DisplayName))
 		}
 		out = append(out, "        apiBase: "+textScalar(p.APIBase), "        apiKeyProperty: "+textScalar(p.APIKeyProperty))
-		if p.DefaultForTenants {
-			out = append(out, "        defaultForTenants: true")
-		}
 		if len(p.Models) == 0 {
 			out = append(out, "        models: []")
 			continue

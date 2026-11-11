@@ -1,6 +1,6 @@
 # A cluster with GPUs whose claim declares the models it serves: one instance
 # of its own and two external providers, one of them with a chat and an
-# embedding model, the other staged and offered to every tenant.
+# embedding model.
 #
 # Read twice: here, as a claim the schema accepts, and by
 # scripts/tests/llm_models.py, which hands this file to the model gateway's
@@ -33,5 +33,4 @@ spec:
       - name: staged
         apiBase: https://models.example.org/v1
         apiKeyProperty: staged_api_key
-        defaultForTenants: true
         models: []
