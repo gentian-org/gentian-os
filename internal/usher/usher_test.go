@@ -381,7 +381,7 @@ func (b *batchStore) BatchCheck(ctx context.Context, requestID string, qs []auth
 	}
 	out := make([]bool, len(qs))
 	for i, q := range qs {
-		out[i], _ = b.fakeStore.Check(ctx, requestID, q.User, q.Relation, q.Object)
+		out[i], _ = b.Check(ctx, requestID, q.User, q.Relation, q.Object)
 	}
 	return out, nil
 }

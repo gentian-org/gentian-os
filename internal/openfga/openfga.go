@@ -212,7 +212,7 @@ func (c *Client) BatchCheck(ctx context.Context, store, model string, checks []T
 	}{AuthorizationModelID: model}
 	for i, t := range checks {
 		body.Checks = append(body.Checks, item{
-			TupleKey:      tupleKey{User: t.User, Relation: t.Relation, Object: t.Object},
+			TupleKey:      tupleKey(t),
 			CorrelationID: fmt.Sprint(i),
 		})
 	}
