@@ -554,6 +554,12 @@ What the platform does with it, and nothing needs granting for:
   of the tenant and runs nothing in it, so the egress granted to it is given to the components that
   call it.
 
+An adapter whose tools depend on the app's add-ons names a chart value in
+`spec.adapter.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
+(`package.addon.id`) of the add-ons selected into the app it adapts in its tenant, as a list, and
+an empty list while there are none or the app is not installed. When that selection changes, the
+adapter is rendered again. It learns the IDs and nothing else of the tenant's configuration.
+
 An install is an adapter when its profile says so. One made before its profile was on the cluster
 is made as an app; once the profile arrives and says adapter, that instance is replaced, and it has
 rolled out nothing in the meantime.

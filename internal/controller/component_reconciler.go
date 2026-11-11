@@ -1979,6 +1979,7 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
+		Watches(&gentianov1alpha1.Component{}, adaptersOfApp(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
 		// A partner app's Secret arriving or changing rolls its pods
