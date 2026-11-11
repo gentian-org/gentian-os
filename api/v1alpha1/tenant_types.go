@@ -332,6 +332,13 @@ type TenantSpec struct {
 	// +optional
 	Quotas *TenantQuotas `json:"quotas,omitempty"`
 
+	// LLM is what the tenant's apps may use at the platform's model gateway:
+	// which external providers' models, and how much. Unset, they use the
+	// models every tenant may use, without a cap. Written by the director
+	// for the cluster's administrator.
+	// +optional
+	LLM *TenantLLM `json:"llm,omitempty"`
+
 	// Security is the realm policy this tenant runs under: how strong a
 	// password has to be, how long a session lasts, what happens after
 	// repeated failures. Unset leaves Keycloak's own defaults.
@@ -728,6 +735,57 @@ type TenantMail struct {
 	// The Secret must provide keys: host, port, username, password.
 	// +optional
 	SmtpCredentialsSecret string `json:"smtpCredentialsSecret,omitempty"`
+}
+
+// TenantLLM is what a tenant's apps may use at the model gateway.
+//
+// Every tenant may use the models the cluster serves itself (the Cluster
+// claim's spec.llm.instances). A provider's models are the tenant's only
+// when Providers names the provider: a prompt sent to one leaves the
+// cluster.
+type TenantLLM struct {
+	// Providers are the external providers, by their name in the Cluster
+	// claim's spec.llm.providers, whose models this tenant's apps may use. A
+	// name the claim does not list gives nothing.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:items:MaxLength=40
+	Providers []string `json:"providers,omitempty"`
+
+	// Budget caps the tenant's use of the gateway, all its apps together.
+	// Unset, nothing is capped for the tenant as a whole.
+	// +optional
+	Budget *TenantLLMBudget `json:"budget,omitempty"`
+}
+
+// TenantLLMBudget is a tenant's cap at the model gateway. Each field is
+// optional; a field left out caps nothing. The gateway refuses a request of
+// the tenant's apps once a limit is reached.
+type TenantLLMBudget struct {
+	// MaxBudget is what the tenant may spend per period, in whole US dollars
+	// at the gateway's prices. A model the cluster serves itself costs
+	// nothing; the limits per minute hold for it.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxBudget *int64 `json:"maxBudget,omitempty"`
+
+	// BudgetDuration is the period after which spend starts again from
+	// nothing, e.g. 30d or 1mo. Unset, it never does.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-9]+(s|m|h|d|w|mo)$`
+	BudgetDuration string `json:"budgetDuration,omitempty"`
+
+	// RPMLimit is the requests per minute.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	RPMLimit *int64 `json:"rpmLimit,omitempty"`
+
+	// TPMLimit is the tokens per minute.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	TPMLimit *int64 `json:"tpmLimit,omitempty"`
 }
 
 // TenantQuotas defines resource consumption limits for this tenant.

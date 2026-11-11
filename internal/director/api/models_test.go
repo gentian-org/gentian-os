@@ -216,3 +216,57 @@ func TestTheGatewaysConsoleSwitchIsSetWithTheModels(t *testing.T) {
 		t.Fatalf("the claim:\n%s", claim)
 	}
 }
+
+// Which providers' models a tenant's apps may use, and its budget, are the
+// cluster's administrator's: read and written under the cluster, a commit
+// of the tenant's manifest. The tenant's own administrator holds neither.
+func TestTheClustersAdministratorSetsATenantsModelAccess(t *testing.T) {
+	h := startSeeded(t, nil, nil, withFetcher(nil))
+	alice := h.token(t, "gentian", "alice")
+	tom := h.token(t, "tenant-demo", "tom")
+	access := "/v1/clusters/" + dt.Cluster + "/tenants/demo/model-access"
+	if code, out := h.do(t, "PUT", clusterModels, alice, modelsBody); code != http.StatusAccepted {
+		t.Fatalf("models: %d %v", code, out)
+	}
+
+	code, out := h.do(t, "GET", access, alice, "")
+	if code != http.StatusOK || len(out["providers"].([]any)) != 0 || out["budget"] != nil {
+		t.Fatalf("before: %d %v", code, out)
+	}
+	allowed := map[string]bool{}
+	for _, m := range out["models"].([]any) {
+		allowed[m.(map[string]any)["name"].(string)] = m.(map[string]any)["allowed"].(bool)
+	}
+	if !allowed["qwen-qwen2.5-7b-instruct"] || allowed["infomaniak/gemma-4-31b"] {
+		t.Fatalf("before opting in: %v", allowed)
+	}
+
+	if code, _ := h.do(t, "PUT", access, tom, `{"providers":["infomaniak"]}`); code != http.StatusForbidden {
+		t.Fatalf("the tenant's administrator opted the tenant in: %d", code)
+	}
+	if code, out := h.do(t, "PUT", access, alice, `{"providers":["elsewhere"]}`); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a provider the claim does not list: %d %v", code, out)
+	}
+	code, out = h.do(t, "PUT", access, alice, `{"providers":["infomaniak"],"budget":{"maxBudget":20,"budgetDuration":"1mo"}}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("set: %d %v", code, out)
+	}
+	manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	for _, want := range []string{"  llm:\n    providers:\n      - infomaniak\n", "      maxBudget: 20\n", "      budgetDuration: 1mo"} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("the manifest lacks %q:\n%s", want, manifest)
+		}
+	}
+	_, out = h.do(t, "GET", access, alice, "")
+	for _, m := range out["models"].([]any) {
+		if m.(map[string]any)["name"] == "infomaniak/gemma-4-31b" && m.(map[string]any)["allowed"] != true {
+			t.Errorf("after opting in: %v", m)
+		}
+	}
+	if code, _ := h.do(t, "PUT", access, alice, `{}`); code != http.StatusAccepted {
+		t.Fatalf("clear: %d", code)
+	}
+	if manifest := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")); strings.Contains(manifest, "  llm:") {
+		t.Errorf("cleared, the manifest still says:\n%s", manifest)
+	}
+}

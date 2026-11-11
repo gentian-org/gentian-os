@@ -14,6 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -109,4 +112,58 @@ func (s *Server) providerAddressesResolvePublicly(w http.ResponseWriter, r *http
 		}
 	}
 	return true
+}
+
+// tenantModelAccess answers what a tenant's apps may use at the model
+// gateway: what its manifest says (nothing is the models every tenant may
+// use, without a cap), and each model of the cluster with whether the
+// tenant's apps may use it.
+func (s *Server) tenantModelAccess(w http.ResponseWriter, r *http.Request, _ call) {
+	tenant := r.PathValue("t")
+	access, err := s.cfg.Repo.TenantModelAccess(r.Context(), tenant)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	settings, err := s.cfg.Repo.ClusterModels(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if access == nil {
+		access = &gentianov1alpha1.TenantLLM{}
+	}
+	type model struct {
+		gitops.GatewayModel
+		// Allowed says the tenant's apps may use the model.
+		Allowed bool `json:"allowed"`
+	}
+	models := []model{}
+	for _, m := range settings.GatewayModels() {
+		allowed := m.Kind == "instance" || slices.Contains(access.Providers, m.Source)
+		models = append(models, model{GatewayModel: m, Allowed: allowed})
+	}
+	providers := access.Providers
+	if providers == nil {
+		providers = []string{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": tenant, "providers": providers, "budget": access.Budget, "models": models})
+}
+
+// setTenantModelAccess commits what a tenant's apps may use at the model
+// gateway: the providers it opts in to and its budget, the whole of it. An
+// empty body object is the models every tenant may use, without a cap.
+func (s *Server) setTenantModelAccess(w http.ResponseWriter, r *http.Request, c call) {
+	var body gentianov1alpha1.TenantLLM
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest,
+			`body must be {"providers": ["<provider>", ...], "budget": {"maxBudget": <whole US dollars>, "budgetDuration": "30d", "rpmLimit": <n>, "tpmLimit": <n>}}, each part optional`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantModelAccess(r.Context(), r.PathValue("t"), &body, c.meta)
+	if errors.Is(err, gitops.ErrInvalidModelAccess) {
+		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
 }

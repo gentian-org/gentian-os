@@ -799,6 +799,56 @@ spec:
                     pattern: ^[a-z0-9\-]*$
                     type: string
                 type: object
+              llm:
+                description: |-
+                  LLM is what the tenant's apps may use at the platform's model gateway:
+                  which external providers' models, and how much. Unset, they use the
+                  models every tenant may use, without a cap. Written by the director
+                  for the cluster's administrator.
+                properties:
+                  budget:
+                    description: |-
+                      Budget caps the tenant's use of the gateway, all its apps together.
+                      Unset, nothing is capped for the tenant as a whole.
+                    properties:
+                      budgetDuration:
+                        description: |-
+                          BudgetDuration is the period after which spend starts again from
+                          nothing, e.g. 30d or 1mo. Unset, it never does.
+                        pattern: ^[0-9]+(s|m|h|d|w|mo)$
+                        type: string
+                      maxBudget:
+                        description: |-
+                          MaxBudget is what the tenant may spend per period, in whole US dollars
+                          at the gateway's prices. A model the cluster serves itself costs
+                          nothing; the limits per minute hold for it.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      rpmLimit:
+                        description: RPMLimit is the requests per minute.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      tpmLimit:
+                        description: TPMLimit is the tokens per minute.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                    type: object
+                  providers:
+                    description: |-
+                      Providers are the external providers, by their name in the Cluster
+                      claim's spec.llm.providers, whose models this tenant's apps may use. A
+                      name the claim does not list gives nothing.
+                    items:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
               locales:
                 description: |-
                   Locales are the languages this tenant's realm renders its login and
