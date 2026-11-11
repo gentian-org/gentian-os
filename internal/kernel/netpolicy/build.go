@@ -185,11 +185,11 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 }
 
 // forPods points one app's policy at the pods the app has: built for the app
-// label the operator gives the pods of every chart it does not place
-// (podLabels), and given the labels in PodSelectors instead for a chart the
-// platform places, whose pods carry its release's. Every selector in the policy
-// that names the app by its label is replaced, the peers of its in-app
-// policy included.
+// label the operator gives the pods of every chart it does not place (the
+// label rule of its release), and given the labels in PodSelectors instead
+// for a chart the platform places, whose pods carry its release's. Every
+// selector in the policy that names the app by its label is replaced, the
+// peers of its in-app policy included.
 func (in BuildInput) forPods(app string, np *networkingv1.NetworkPolicy) *networkingv1.NetworkPolicy {
 	labels := in.PodSelectors[app]
 	if len(labels) == 0 {
