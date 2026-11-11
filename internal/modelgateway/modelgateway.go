@@ -391,19 +391,6 @@ func (c *Client) registeredKeys(ctx context.Context, alias string) ([]registered
 	return out, nil
 }
 
-// keyHashes is the hashes of the keys registered under an alias.
-func (c *Client) keyHashes(ctx context.Context, alias string) ([]string, error) {
-	keys, err := c.registeredKeys(ctx, alias)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, k.Token)
-	}
-	return out, nil
-}
-
 func isKeyHash(s string) bool {
 	if len(s) != sha256.Size*2 {
 		return false
