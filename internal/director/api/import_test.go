@@ -499,7 +499,7 @@ func secondDirector(t *testing.T, h *harness, lc api.Lifecycle) (*api.Server, *h
 	repo := gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{})
 	decisions := &asked{Checker: checker(t)}
 	srv, err := api.New(api.Config{
-		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, Cluster: dt.Cluster,
+		Authn: v, Authz: decisions, Repo: repo, Cluster: dt.Cluster,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Lifecycle: lc,
 	})
 	if err != nil {

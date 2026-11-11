@@ -301,7 +301,7 @@ func run(log *slog.Logger) error {
 	go commissionKeys.Follow(context.Background(),
 		envvar.Or("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
-	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
+	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
 		Catalogue:      entries,
 		StoreURL:       storeURL,
 		Cluster:        cluster,

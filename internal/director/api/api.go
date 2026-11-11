@@ -204,12 +204,7 @@ type Config struct {
 	UpdaterOff bool
 	Authn      Authenticator
 	Authz      authz.Checker
-	// Viewer reads who holds what, for the console's read-only authorization
-	// view. Optional: without it the routes do not exist, which a console
-	// shows as the screen being unavailable rather than as an error on a
-	// screen that should have worked.
-	Viewer authz.Viewer
-	Repo   Repository
+	Repo       Repository
 	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
 	// catalogue's index when one is listed. Which catalogs there are is
 	// not its to know: they are read from git when they are needed, per
@@ -487,12 +482,6 @@ func (s *Server) routes() {
 	s.guarded("PUT /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.addTenantCatalogue)
 	s.guarded("DELETE /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.removeTenantCatalogue)
 
-	// What the caller holds on a tenant, for the desktop: it renders from
-	// the answer -- the admin tile by can_administer, the store by
-	// can_install_app -- and decides nothing itself (admin-console.md §1.2).
-	// Entered under can_enter, the relation that reaches the desktop at all.
-	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
-
 	// The App Store's terms, accepted once per version (spec.storeTerms):
 	// read by whoever sees the tenant, recorded by whoever may install apps
 	// in it -- the App Store asks that person before anything else.
@@ -526,9 +515,6 @@ func (s *Server) routes() {
 		// one write, which the auto-upgrade mover shares.
 		s.guarded("GET /v1/clusters/{c}/release", "can_audit", s.clusterObject, s.clusterRelease)
 		s.action("POST /v1/clusters/{c}/actions/set-release", "can_configure", s.clusterObject, s.setRelease)
-		// Each served domain's DNS records and whether the internet has them
-		// (domains.go), as the operator's DNS check last found them.
-		s.guarded("GET /v1/clusters/{c}/domains", "can_audit", s.clusterObject, s.clusterDomains)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/apps/{p}/update-mode", "can_configure", s.clusterObject, s.setAppUpdateMode)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
 		// The brand every page shows: read like a setting, written like one.
@@ -669,21 +655,6 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/bundle-fetches/{f}", "can_configure", s.clusterObject, s.bundleFetch)
 			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/download", "can_configure", s.clusterObject, s.importedBundleDownload)
 		}
-		// Who the caller is at cluster scope: which of the cluster's verbs
-		// they hold. Identified, not guarded: a person with no cluster
-		// relation at all is answered with every verb false, because "you
-		// hold nothing here" is the ordinary answer for almost everyone who
-		// signs in, and a console has to render that rather than an error.
-		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
-	}
-	// The authorization state, read-only. can_audit at cluster scope and
-	// can_view at tenant scope: the same relation that governs reading the
-	// object each one describes.
-	if s.cfg.Viewer != nil {
-		if s.cfg.Cluster != "" {
-			s.guarded("GET /v1/clusters/{c}/authorization", "can_audit", s.clusterObject, s.clusterAuthorization)
-		}
-		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
 
 	// A tenant's partners: read by whoever may see the tenant, written by its
@@ -957,51 +928,6 @@ func (s *Server) routes() {
 	// (internal/registrar), which holds the Keycloak credential they need;
 	// this process holds none, so there is nothing here that could serve
 	// them.
-}
-
-// clusterMe answers which cluster verbs the caller holds. The usher answers
-// the same.
-func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
-	if r.PathValue("c") != s.cfg.Cluster {
-		s.fail(w, r, http.StatusNotFound, "unknown cluster")
-		return
-	}
-	relations, err := authz.Holds(r.Context(), s.cfg.Authz, guard.ID(r.Context()), c.user, c.holder,
-		authz.Cluster(s.cfg.Cluster), authz.ClusterRelations)
-	if err != nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{
-		"cluster":   s.cfg.Cluster,
-		"subject":   c.meta.Subject,
-		"relations": relations,
-	})
-}
-
-// tenantMe answers which tenant verbs the caller holds. The usher answers the
-// same.
-func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
-	target, err := tenantObject(r)
-	if err != nil {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
-		return
-	}
-	relations, err := authz.Holds(r.Context(), s.cfg.Authz, guard.ID(r.Context()), c.user, c.holder,
-		target, authz.TenantRelations)
-	if err != nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{
-		"tenant":    r.PathValue("t"),
-		"subject":   c.meta.Subject,
-		"relations": relations,
-		// The platform's version line, which is no secret and which a
-		// tenant's administrator restoring a bundle of an older one needs to
-		// know: the cluster's settings carry it too, under can_audit.
-		"platformVersionLine": backup.PlatformVersionLine,
-	})
 }
 
 // tenantStoreTerms answers the tenant's acceptance of the store's terms:
