@@ -18,6 +18,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
@@ -147,23 +148,41 @@ func (s *Server) tenantModelAccess(w http.ResponseWriter, r *http.Request, _ cal
 	if providers == nil {
 		providers = []string{}
 	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": tenant, "providers": providers, "budget": access.Budget, "models": models})
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant": tenant, "providers": providers, "budget": access.Budget, "delegated": access.Delegated, "models": models,
+	})
 }
 
 // setTenantModelAccess commits what a tenant's apps may use at the model
-// gateway: the providers it opts in to and its budget, the whole of it. An
-// empty body object is the models every tenant may use, without a cap.
+// gateway: the providers it opts in to, its budget and whether its own
+// administrators may change the providers, the whole of it. An empty body
+// object is the models every tenant may use, without a cap.
+//
+// Whoever the cluster's relation did not let in came in as the tenant's
+// administrator: the write then holds them to the providers, and only while
+// they are delegated (gitops.SetTenantModelAccess).
 func (s *Server) setTenantModelAccess(w http.ResponseWriter, r *http.Request, c call) {
 	var body gentianov1alpha1.TenantLLM
 	if err := decode(r, &body); err != nil {
 		s.fail(w, r, http.StatusBadRequest,
-			`body must be {"providers": ["<provider>", ...], "budget": {"maxBudget": <whole US dollars>, "budgetDuration": "30d", "rpmLimit": <n>, "tpmLimit": <n>}}, each part optional`)
+			`body must be {"providers": ["<provider>", ...], "budget": {"maxBudget": <whole US dollars>, "budgetDuration": "30d", "rpmLimit": <n>, "tpmLimit": <n>}, "delegated": <bool>}, each part optional`)
 		return
 	}
-	res, err := s.cfg.Repo.SetTenantModelAccess(r.Context(), r.PathValue("t"), &body, c.meta)
-	if errors.Is(err, gitops.ErrInvalidModelAccess) {
+	by := gitops.ModelAccessByCluster
+	if c.held != "can_configure "+authz.Cluster(s.cfg.Cluster) {
+		by = gitops.ModelAccessByTenant
+	}
+	res, err := s.cfg.Repo.SetTenantModelAccess(r.Context(), r.PathValue("t"), &body, by, c.meta)
+	switch {
+	case errors.Is(err, gitops.ErrInvalidModelAccess):
 		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
-		return
+	case errors.Is(err, gitops.ErrModelAccessNotDelegated):
+		s.fail(w, r, http.StatusForbidden, "changing the providers is not delegated to this tenant's administrators; "+
+			"the cluster's administrator sets spec.llm.delegated")
+	case errors.Is(err, gitops.ErrModelAccessClusterOnly):
+		s.fail(w, r, http.StatusForbidden, "the budget and spec.llm.delegated are the cluster's administrator's; "+
+			"send them as they are and change only the providers")
+	default:
+		s.written(w, r, res, err)
 	}
-	s.written(w, r, res, err)
 }

@@ -140,15 +140,8 @@ func (g *Guard) Authorize(
 	w http.ResponseWriter, r *http.Request, route string,
 	relations func(*authn.Identity) []string, object func(*http.Request) (string, error),
 ) (c Caller, ok bool) {
-	ctx := r.Context()
-	ident, user, ok := g.authenticate(w, r, route)
+	ident, user, ok := g.admit(w, r, route)
 	if !ok {
-		return Caller{}, false
-	}
-	if g.Scoped && !ident.MayCall(route) {
-		g.Log.WarnContext(ctx, "delegated token refused outside its scopes", "request_id", ID(ctx),
-			"client", ident.Client, "route", route)
-		g.Fail(w, r, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
 		return Caller{}, false
 	}
 	target, err := object(r)
@@ -156,19 +149,74 @@ func (g *Guard) Authorize(
 		g.Fail(w, r, http.StatusBadRequest, "invalid name")
 		return Caller{}, false
 	}
+	asks := []Ask{}
+	for _, relation := range relations(ident) {
+		asks = append(asks, Ask{Relation: relation, Object: func(*http.Request) (string, error) { return target, nil }})
+	}
+	return g.decide(w, r, ident, user, asks)
+}
+
+// Ask is one relation on one object that opens a route.
+type Ask struct {
+	Relation string
+	Object   func(*http.Request) (string, error)
+}
+
+// AuthorizeAny is Authorize for a route that relations on different objects
+// open, such as one on the cluster or another on the tenant: the asks are
+// put in order, each as the account and, refused, as the realm's role
+// holder, and the first held answers. Every object is named before any is
+// asked, so a name that is not one is a 400 whoever calls.
+func (g *Guard) AuthorizeAny(w http.ResponseWriter, r *http.Request, route string, asks ...Ask) (c Caller, ok bool) {
+	ident, user, ok := g.admit(w, r, route)
+	if !ok {
+		return Caller{}, false
+	}
+	return g.decide(w, r, ident, user, asks)
+}
+
+// admit verifies the caller and, for a token obtained on a person's behalf,
+// that it reaches the route.
+func (g *Guard) admit(w http.ResponseWriter, r *http.Request, route string) (*authn.Identity, string, bool) {
+	ctx := r.Context()
+	ident, user, ok := g.authenticate(w, r, route)
+	if !ok {
+		return nil, "", false
+	}
+	if g.Scoped && !ident.MayCall(route) {
+		g.Log.WarnContext(ctx, "delegated token refused outside its scopes", "request_id", ID(ctx),
+			"client", ident.Client, "route", route)
+		g.Fail(w, r, http.StatusForbidden, "this token was obtained on the person's behalf and does not reach this route")
+		return nil, "", false
+	}
+	return ident, user, true
+}
+
+// decide puts the asks in order and answers with the first held.
+func (g *Guard) decide(w http.ResponseWriter, r *http.Request, ident *authn.Identity, user string, asks []Ask) (Caller, bool) {
+	ctx := r.Context()
+	targets := make([]string, len(asks))
+	for i, a := range asks {
+		target, err := a.Object(r)
+		if err != nil {
+			g.Fail(w, r, http.StatusBadRequest, "invalid name")
+			return Caller{}, false
+		}
+		targets[i] = target
+	}
 	// A cluster role the claim gives an account of a tenant's realm is held
 	// by that realm's account and asked as it; a token's realm is the one
 	// its signature was checked against.
 	holder, _ := authz.HolderUser(ident.Realm, ident.Subject)
-	for _, relation := range relations(ident) {
-		allowed, err := authz.CheckAs(ctx, g.Authz, ID(ctx), user, holder, relation, target)
+	for i, a := range asks {
+		allowed, err := authz.CheckAs(ctx, g.Authz, ID(ctx), user, holder, a.Relation, targets[i])
 		if err != nil {
 			// The decision point is unreachable: refuse, and say it is us.
 			g.Fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 			return Caller{}, false
 		}
 		if allowed {
-			return Caller{Ident: ident, User: user, Holder: holder, Relation: relation, Object: target}, true
+			return Caller{Ident: ident, User: user, Holder: holder, Relation: a.Relation, Object: targets[i]}, true
 		}
 	}
 	g.Fail(w, r, http.StatusForbidden, "forbidden")

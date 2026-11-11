@@ -128,6 +128,7 @@ spec:
       budgetDuration: 30d
       rpmLimit: 120
       tpmLimit: 200000
+    delegated: false          # true: the tenant's administrators set providers
 ```
 
 The gateway's configuration puts each model in an access group:
@@ -143,7 +144,16 @@ one cap for all the tenant's apps together, beside the budget per person.
 
 The cluster's administrator sets it, beside the models:
 `GET`/`PUT /v1/clusters/{c}/tenants/{t}/model-access` on the director, a
-commit of the tenant's manifest. A tenant's own administrator does not.
+commit of the tenant's manifest. The `PUT` carries the whole of `spec.llm`.
+
+| Who | Relation | `GET` | `PUT` |
+|---|---|---|---|
+| The cluster's administrator | `can_audit` / `can_configure` on the cluster | Yes | Everything, including `budget` and `delegated` |
+| The tenant's administrator | `can_administer` on the tenant | Yes | `providers` only, and only while `delegated` is true; a body that changes `budget` or `delegated` is refused with 403 |
+| Anyone else | | No | No |
+
+`delegated` is off unless the cluster's administrator turns it on. A tenant's
+administrator sends `budget` and `delegated` back as the `GET` answers them.
 
 ### Changing the models
 

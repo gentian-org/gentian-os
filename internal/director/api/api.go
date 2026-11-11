@@ -145,7 +145,7 @@ type Repository interface {
 	TenantCountry(ctx context.Context, tenant string) (string, error)
 	SetTenantCountry(ctx context.Context, tenant, country string, meta gitops.Meta) (gitops.Result, error)
 	TenantModelAccess(ctx context.Context, tenant string) (*gentianov1alpha1.TenantLLM, error)
-	SetTenantModelAccess(ctx context.Context, tenant string, access *gentianov1alpha1.TenantLLM, meta gitops.Meta) (gitops.Result, error)
+	SetTenantModelAccess(ctx context.Context, tenant string, access *gentianov1alpha1.TenantLLM, by gitops.ModelAccessActor, meta gitops.Meta) (gitops.Result, error)
 	TenantOrganization(ctx context.Context, tenant string) (gitops.Organization, error)
 	SetTenantOrganization(ctx context.Context, tenant, displayName string, org gentianov1alpha1.TenantOrganization, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
@@ -345,6 +345,9 @@ type call struct {
 	// (authz.HolderUser), asked when user is refused.
 	holder string
 	meta   gitops.Meta
+	// held is the relation and object that opened the route, as
+	// "<relation> <object>"; empty for a route that asks none.
+	held string
 }
 
 // can asks for the caller what authorize asked: as user, then as holder.
@@ -398,7 +401,13 @@ func tenantObject(r *http.Request) (string, error) {
 // may they do relation to the route's object. On refusal it has already
 // answered, and ok is false.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, relation string, obj object) (c call, ok bool) {
-	g, ok := s.gate().Authorize(w, r, pattern, guard.One(relation), obj)
+	return s.authorizeAny(w, r, pattern, guard.Ask{Relation: relation, Object: obj})
+}
+
+// authorizeAny is authorize for a route that relations on different objects
+// open; the first held answers, and the call says which (call.held).
+func (s *Server) authorizeAny(w http.ResponseWriter, r *http.Request, pattern string, asks ...guard.Ask) (c call, ok bool) {
+	g, ok := s.gate().AuthorizeAny(w, r, pattern, asks...)
 	if !ok {
 		return call{}, false
 	}
@@ -414,7 +423,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		meta.Via = g.Ident.Client
 		meta.Reason = r.Header.Get("X-Gentian-Reason")
 	}
-	return call{id: g.Ident, user: g.User, holder: g.Holder, meta: meta}, true
+	return call{id: g.Ident, user: g.User, holder: g.Holder, meta: meta, held: g.Decision()}, true
 }
 
 // guarded registers a route with the relation it requires. Together with
@@ -439,6 +448,17 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if c, ok := s.authorize(w, r, pattern, relation, obj); ok {
+			h(w, r, c)
+		}
+	})
+}
+
+// guardedAny registers a route that any one of several relations, each on
+// its own object, opens. The handler reads call.held when what it may do
+// depends on which.
+func (s *Server) guardedAny(pattern string, asks []guard.Ask, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if c, ok := s.authorizeAny(w, r, pattern, asks...); ok {
 			h(w, r, c)
 		}
 	})
@@ -558,9 +578,17 @@ func (s *Server) routes() {
 		// tenant may, and its budget there (Tenant.spec.llm): the cluster's
 		// administrator's, beside the models themselves, because a
 		// provider's model sends the tenant's prompts out of the cluster
-		// and spends the provider's account.
-		s.guarded("GET /v1/clusters/{c}/tenants/{t}/model-access", "can_audit", s.clusterObject, s.tenantModelAccess)
-		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/model-access", "can_configure", s.clusterObject, s.setTenantModelAccess)
+		// and spends the provider's account. The tenant's own administrator
+		// (can_administer on the tenant) reads it, and changes the
+		// providers only while the cluster's administrator delegates them
+		// (spec.llm.delegated); the budget and the delegation stay the
+		// cluster's administrator's, which setTenantModelAccess holds to.
+		s.guardedAny("GET /v1/clusters/{c}/tenants/{t}/model-access",
+			[]guard.Ask{{Relation: "can_audit", Object: s.clusterObject}, {Relation: "can_administer", Object: tenantObject}},
+			s.tenantModelAccess)
+		s.guardedAny("PUT /v1/clusters/{c}/tenants/{t}/model-access",
+			[]guard.Ask{{Relation: "can_configure", Object: s.clusterObject}, {Relation: "can_administer", Object: tenantObject}},
+			s.setTenantModelAccess)
 		// Bringing a tenant on is the errand the console exists for, and it
 		// is one commit. Listing is can_audit because seeing which customers
 		// a cluster carries is a read; creating and retiring are
