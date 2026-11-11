@@ -189,8 +189,9 @@ the cluster or a private network. When an address is new to the claim the
 director also resolves its host and refuses it unless every address it
 resolves to is public. An address the claim already carries is not resolved
 again. The gateway, not the director, connects to the provider and resolves
-the name each time; nothing checks that connection, and `system-llm` has no
-egress policy.
+the name each time; nothing checks that connection beyond the gateway's
+egress policy, which admits public addresses on 443 (see
+[Where a provider can be reached from](#where-a-provider-can-be-reached-from)).
 
 **A provider reads its own token.** All providers' tokens are properties of
 one credential path, and a provider's is `<name>_api_key`, with `-` in the
@@ -321,7 +322,8 @@ and TCP 443 to public IPv4 addresses only while the claim lists a provider. A
 NetworkPolicy matches addresses and not names, so that rule admits every
 public address on 443, not the providers' alone. Without a provider no
 connection of the gateway leaves the cluster. The mock model server reaches
-nothing; the budget Job reaches the gateway alone.
+nothing, and neither does the cache; the budget Job reaches the gateway
+alone.
 
 ### Operator access
 

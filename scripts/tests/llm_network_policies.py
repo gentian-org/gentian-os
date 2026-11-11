@@ -469,11 +469,11 @@ def check_egress():
 
     # Without a provider and without GPUs: the gateway reaches its database,
     # its cache, the model servers and the edge, and nothing outside the
-    # cluster; the mock reaches nothing.
+    # cluster; the mock and the cache reach nothing.
     docs = render(app)
     workloads = pods(docs)
     egress = egress_by_name(docs)
-    if set(egress) != {"llm-gateway-egress", "llm-mock-egress"}:
+    if set(egress) != {"llm-gateway-egress", "llm-mock-egress", "llm-cache-egress"}:
         raise Failure(f"without GPUs and providers the egress policies are {sorted(egress)}")
     gateway = egress["llm-gateway-egress"]
     if not matches(match_labels(gateway["spec"]["podSelector"], "llm-gateway-egress"), workloads[WORKLOAD["gateway"]]["labels"]):
@@ -499,12 +499,15 @@ def check_egress():
     mock = egress["llm-mock-egress"]
     if mock["spec"].get("egress") or not matches(match_labels(mock["spec"]["podSelector"], "llm-mock-egress"), workloads[WORKLOAD["mock"]]["labels"]):
         raise Failure(f"the mock may call out, or the policy does not select it: {mock['spec']}")
+    cache = egress["llm-cache-egress"]
+    if cache["spec"].get("egress") or not matches(match_labels(cache["spec"]["podSelector"], "llm-cache-egress"), workloads[WORKLOAD["cache"]]["labels"]):
+        raise Failure(f"the cache may call out, or the policy does not select it: {cache['spec']}")
 
     # With providers and an instance on GPUs: the gateway reaches public
     # addresses on 443 for the providers, the instances for the weights.
     docs = render(app, "-f", MODELS_CLAIM)
     egress = egress_by_name(docs)
-    if set(egress) != {"llm-gateway-egress", "llm-vllm-egress"}:
+    if set(egress) != {"llm-gateway-egress", "llm-vllm-egress", "llm-cache-egress"}:
         raise Failure(f"with GPUs and providers the egress policies are {sorted(egress)}")
     if internet(egress["llm-gateway-egress"]) != {("TCP", 443)}:
         raise Failure("with a provider the gateway does not reach public addresses on 443 alone")
