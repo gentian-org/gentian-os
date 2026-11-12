@@ -1,3 +1,8 @@
+---
+audience: app-author, architect
+type: reference
+---
+
 # Dispatcher API and the run contract
 
 What a component that starts runs calls, what a run's pod is told, and what
