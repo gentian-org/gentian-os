@@ -1,7 +1,7 @@
 apiVersion: v2
 name: llm
 description: >
-  LiteLLM proxy, its Postgres and Redis, and the mock inference backend.
+  LiteLLM proxy, its Postgres and its cache, and the mock inference backend.
 
   Delivered by the gentian-infra-llm ApplicationSet rather than applied by the
   installer. It used to be three kubectl applies from the local working tree, so

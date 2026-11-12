@@ -65,9 +65,9 @@ spec:
 gateway:
   image: ghcr.io/berriai/litellm:v1.104.2@sha256:3d88bd757134a00e8c00237b85a021ab1f6d54abb9c1df750f411dbe7256a500
 
-# The gateway's shared counters (redis-llm in templates/llm-services.yaml):
+# The gateway's shared counters (llm-cache in templates/llm-services.yaml):
 # rate limits, budgets and router state for every replica of the gateway.
-# Valkey, the release and digest the kernel cache runs (charts/infra/redis),
+# Valkey, the release and digest the kernel cache runs (charts/infra/cache),
 # in an instance of its own, so nothing else that uses a cache can fill or
 # slow the one the gateway's limits depend on. It moves with the kernel
 # cache's pin.
@@ -123,7 +123,7 @@ networkPolicy:
     # instance manager's.
     postgresql: 5432
     status: 8000
-    redis: 6379
+    cache: 6379
     # The mock model server.
     mock: 8000
     # A vLLM instance (templates/vllm.yaml).
