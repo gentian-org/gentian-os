@@ -2209,7 +2209,7 @@ spec:
     storeToken: false
     syncMode: IMPORT
     tokenUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/token
-    trustEmail: false
+    trustEmail: true
     userInfoUrl: https://id.abc.example/auth/realms/main/protocol/openid-connect/userinfo
     validateSignature: true
   managementPolicies:

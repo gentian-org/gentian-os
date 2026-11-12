@@ -2561,11 +2561,14 @@ spec:
                  realm signs, with the JWT authorization grant on, so the
                  partner's apps' assertions become the linked account here
                  (single use, at most two minutes old, ten seconds of clock
-                 skew). Hidden on the login page, trusts no address, maps
-                 nothing. What a first arrival becomes is accept.accounts:
-                 link (gentian-link-existing), create
-                 (gentian-create-account) or organization (a member of an
-                 organization with the domain given).
+                 skew). Hidden on the login page, maps nothing. What a
+                 first arrival becomes is accept.accounts: link
+                 (gentian-link-existing), create (gentian-create-account) or
+                 organization (a member of an organization with the domain
+                 given). Only organization trusts the partner's address
+                 (trustEmail): Keycloak grants membership by domain only to
+                 a verified address, and without the trust it would ask every
+                 partner's person to verify theirs here by mail first.
 
                  Delete and not Orphan: a partner taken away must stop, not
                  linger in the realm. */}}
@@ -3035,7 +3038,7 @@ spec:
                 displayName: {{ dig "accept" "displayName" $b.name $b | quote }}
                 providerId: oidc
                 enabled: true
-                trustEmail: false
+                trustEmail: {{ eq $accounts "organization" }}
                 storeToken: false
                 hideOnLoginPage: true
                 linkOnly: false

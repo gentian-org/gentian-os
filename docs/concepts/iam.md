@@ -360,8 +360,10 @@ Machines sign in to the `master` realm as service accounts of their own:
 configure realms) and `provider-keycloak` (Crossplane's provider). Only the
 installer makes and repairs them, as the bootstrap administrator: each holds
 the `admin` role, mapped into its token's scope rather than through "Full
-scope allowed", and its secret is kept beside that password, in the same
-vault path and under the same `secretMode`.
+scope allowed", and the `kc-admin-api` client scope, without which the Admin
+REST API refuses its token. Its secret is kept beside that password, in the
+same vault path and under the same `secretMode`. The registrar's client in a
+tenant realm carries `kc-admin-api` too; the operator assigns it.
 
 **Recovery** is a new link, never a recovered password:
 
@@ -586,7 +588,7 @@ Jobs of a tenant are listed with
 
 ### 1.10 Keycloak version, features and upgrades
 
-**Version.** Keycloak 26.8.0, from the `keycloakx` chart 7.3.2. The chart is
+**Version.** Keycloak 26.8.2, from the `keycloakx` chart 7.3.2. The chart is
 vendored under
 [kernel/services/keycloak-idp/manifests/charts/](../../kernel/services/keycloak-idp/manifests/UPSTREAM.md)
 and rendered by Argo CD from the identity ApplicationSet; the image tag in
