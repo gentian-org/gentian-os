@@ -48,7 +48,7 @@ keycloakx:
   # kernel/extensions/keycloak-event-listener/pom.xml) and the two move
   # together: the SPIs it implements are internal.
   image:
-    tag: "26.8.0"
+    tag: "26.8.2"
   command:
     - "/opt/keycloak/bin/kc.sh"
   args:

@@ -344,7 +344,7 @@ data:
   login__register.ftl: |-
     <#-- The registration page, when a tenant takes sign-ups (spec.signUp.enabled).
 
-         keycloak.v2's register.ftl of the Keycloak the platform runs (26.8.0), with
+         keycloak.v2's register.ftl of the Keycloak the platform runs (26.8.2), with
          one addition: the platform's proof-of-work check (gentian-pow-captcha) puts
          its challenge on the page, and js/pow-captcha.js has the browser solve it
          before the form can be sent. Nothing else is changed, so that a newer

@@ -129,7 +129,58 @@ func (c *KeycloakAdminClient) EnsureRegistrarRealmClient(ctx context.Context, re
 	if err := c.grantRegistrarRoles(ctx, token, realm, client.ID); err != nil {
 		return "", err
 	}
+	if err := c.ensureAdminAPIScope(ctx, token, realm, client.ID); err != nil {
+		return "", err
+	}
 	return c.clientSecret(ctx, token, realm, client.ID)
+}
+
+// AdminAPIScope is the client scope Keycloak's Admin REST API requires of a
+// token, from Keycloak 26.8.2 on: the token must carry it, and with it the
+// realm's Admin API address as its audience. Keycloak makes it in every realm
+// and gives it only to its own consoles.
+const AdminAPIScope = "kc-admin-api"
+
+// ensureAdminAPIScope makes AdminAPIScope a default scope of the client, so
+// the registrar's token for this realm is one the Admin API accepts.
+//
+// Read first and written only when missing: a write is an admin event, and
+// this runs on every reconcile. A realm without the scope is a Keycloak
+// before 26.8.2, which does not check, and is left alone.
+func (c *KeycloakAdminClient) ensureAdminAPIScope(ctx context.Context, token, realm, clientUUID string) error {
+	var scopes []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.getAdminJSON(ctx, token, "/admin/realms/"+url.PathEscape(realm)+"/client-scopes", &scopes); err != nil {
+		return fmt.Errorf("keycloak realm %s: client scopes: %w", realm, err)
+	}
+	scopeID := ""
+	for _, s := range scopes {
+		if s.Name == AdminAPIScope {
+			scopeID = s.ID
+			break
+		}
+	}
+	if scopeID == "" {
+		return nil
+	}
+	base := fmt.Sprintf("/admin/realms/%s/clients/%s/default-client-scopes",
+		url.PathEscape(realm), url.PathEscape(clientUUID))
+	var held []struct {
+		ID string `json:"id"`
+	}
+	if err := c.getAdminJSON(ctx, token, base, &held); err != nil {
+		return fmt.Errorf("keycloak realm %s: default scopes of %s: %w", realm, RegistrarClientID, err)
+	}
+	for _, s := range held {
+		if s.ID == scopeID {
+			return nil
+		}
+	}
+	_, err := c.doAdminExpect(ctx, token, http.MethodPut, base+"/"+url.PathEscape(scopeID), nil,
+		http.StatusNoContent, http.StatusOK)
+	return err
 }
 
 // findClient looks one client up by its clientId. Keycloak's list endpoint
