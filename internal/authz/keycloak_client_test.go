@@ -32,31 +32,65 @@ func testAdminClient(srv *httptest.Server, username, password string) *KeycloakA
 	return c
 }
 
+// The realm is written when it lacks a setting and left alone when it has them
+// all: this runs on every tenant reconcile, and each write is an admin event.
 func TestKeycloakAdminClient_UpdateRealmBrowserSecurityHeaders(t *testing.T) {
 	t.Parallel()
 
-	var gotMethod, gotPath string
+	// What Keycloak answers: more headers than are set, the locales in another
+	// order, and fields this does not touch.
+	stale := `{"realm":"demo","loginTheme":"keycloak","browserSecurityHeaders":{"xFrameOptions":"SAMEORIGIN"}}`
+	var realm string
+	var puts []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/realms/master/protocol/openid-connect/token":
+		switch {
+		case r.URL.Path == "/realms/master/protocol/openid-connect/token":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":300}`))
-		case "/admin/realms/demo":
-			gotMethod = r.Method
-			gotPath = r.URL.Path
+		case r.URL.Path == "/admin/realms/demo" && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(realm))
+		case r.URL.Path == "/admin/realms/demo" && r.Method == http.MethodPut:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			puts = append(puts, body)
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer srv.Close()
-
 	client := testAdminClient(srv, "admin", "secret")
-	if err := client.UpdateRealmBrowserSecurityHeaders(context.Background(), "demo", []string{"en", "de"}); err != nil {
+	ctx := context.Background()
+
+	realm = stale
+	if err := client.UpdateRealmBrowserSecurityHeaders(ctx, "demo", []string{"en", "de"}); err != nil {
 		t.Fatalf("UpdateRealmBrowserSecurityHeaders: %v", err)
 	}
-	if gotMethod != http.MethodPut || gotPath != "/admin/realms/demo" {
-		t.Fatalf("got %s %s, want PUT /admin/realms/demo", gotMethod, gotPath)
+	if len(puts) != 1 || puts[0]["loginTheme"] != GentianLoginTheme {
+		t.Fatalf("a realm missing the settings was not written: %v", puts)
+	}
+
+	// The realm as Keycloak keeps it after that write.
+	headers := map[string]any{"extra": "kept"}
+	for k, v := range DefaultBrowserSecurityHeaders {
+		headers[k] = v
+	}
+	current, _ := json.Marshal(map[string]any{
+		"realm": "demo", "enabled": true, "loginTheme": GentianLoginTheme,
+		"browserSecurityHeaders":      headers,
+		"internationalizationEnabled": true,
+		"supportedLocales":            []string{"de", "en"},
+		"defaultLocale":               "en",
+	})
+	realm = string(current)
+	if err := client.UpdateRealmBrowserSecurityHeaders(ctx, "demo", []string{"en", "de"}); err != nil || len(puts) != 1 {
+		t.Fatalf("an unchanged realm was written: %v, puts=%d", err, len(puts))
+	}
+
+	// A different language order is a different default, and is written.
+	if err := client.UpdateRealmBrowserSecurityHeaders(ctx, "demo", []string{"de", "en"}); err != nil || len(puts) != 2 {
+		t.Fatalf("a changed default locale was not written: %v, puts=%d", err, len(puts))
 	}
 }
 

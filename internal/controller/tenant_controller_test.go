@@ -227,7 +227,8 @@ func markJobSucceeded(job *batchv1.Job) {
 // group membership in the AppsAndEdge stage). Without a reachable endpoint the
 // SharedKernel stage requeues forever and tenants never reach Ready. The
 // handler issues admin tokens, accepts realm updates (204), and returns empty
-// arrays for group/member/user list queries.
+// arrays for group/member/user list queries. The realm itself reads as
+// an empty object, so its settings are always written.
 func startFakeKeycloak() *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/realms/master/protocol/openid-connect/token", func(w http.ResponseWriter, _ *http.Request) {
@@ -237,6 +238,12 @@ func startFakeKeycloak() *httptest.Server {
 	mux.HandleFunc("/admin/realms/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
+			// The realm itself is an object, read before its settings are
+			// written; everything below it here is a list.
+			if !strings.Contains(strings.TrimPrefix(r.URL.Path, "/admin/realms/"), "/") {
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			_, _ = io.WriteString(w, `[]`)
 			return
 		}
@@ -387,8 +394,8 @@ func TestMain(m *testing.M) {
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
 		Data: map[string][]byte{
-			"url":      []byte(fakeKC.URL),
-			"client_id": []byte("kcadmin"),
+			"url":           []byte(fakeKC.URL),
+			"client_id":     []byte("kcadmin"),
 			"client_secret": []byte("test-kc-password"),
 		},
 	}); err != nil {
