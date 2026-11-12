@@ -108,6 +108,10 @@ type exposureEntry struct {
 	// is. DenyPaths are refused even below one of them.
 	Paths     []string `json:"paths,omitempty"`
 	DenyPaths []string `json:"denyPaths,omitempty"`
+	// ClientRedirectURIs are, for a token entry, the addresses a program may
+	// be sent back to after the person signed in: approving the entry
+	// registers them at the tenant's sign-in service.
+	ClientRedirectURIs []string `json:"clientRedirectURIs,omitempty"`
 	// AuthMode is the profile's own word for who the app expects to call.
 	AuthMode string `json:"authMode,omitempty"`
 	// AnyoneWithoutSignIn says the profile declares that nobody signs in
@@ -398,6 +402,9 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 	out.PublicAddress = entry.Surface == gentianov1alpha1.SurfacePerimeter
 	out.PassesCredential = kind == kindPublicAppCredential || kind == kindSignInAppAuthorization || kind == kindTokenEntry
 	out.AuthMode = string(entry.AuthMode)
+	if kind == kindTokenEntry {
+		out.ClientRedirectURIs = append([]string{}, entry.ClientRedirectURIs...)
+	}
 	out.AnyoneWithoutSignIn = kind == kindPublic
 	out.Access, out.RateLimit = accessOf(kind), rateLimitOf(kind)
 	for _, p := range entry.DenyPaths {

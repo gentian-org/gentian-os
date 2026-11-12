@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -89,6 +90,97 @@ func tokenEntryPolicySpec(route, edgeNamespace, bouncerService string) map[strin
 	}
 }
 
+// tokenEntryMetadataName is the route, and the filter that answers it, of
+// the document that says where a token for the entry is had.
+func tokenEntryMetadataName(component, entry string) string {
+	return component + "-" + entry + "-metadata"
+}
+
+// tokenEntryMetadata is the entry's Protected Resource Metadata (RFC 9728):
+// the address tokens are made out to and the realm that issues them. It is
+// what the bouncer's 401 points a program at, and it says nothing a person
+// who knows the tenant's name could not work out.
+func tokenEntryMetadata(host, kernelDomain, realm string) (string, error) {
+	doc, err := json.Marshal(map[string]interface{}{
+		"resource":                 tokenEntryAudience(host),
+		"authorization_servers":    []string{fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, realm)},
+		"bearer_methods_supported": []string{"header"},
+	})
+	return string(doc), err
+}
+
+// tokenEntryMetadataFilterSpec answers with the document, from the Gateway:
+// no backend is asked, so the component behind the entry is not reachable
+// without a token on this path either.
+func tokenEntryMetadataFilterSpec(doc string) map[string]interface{} {
+	return map[string]interface{}{
+		"directResponse": map[string]interface{}{
+			"statusCode":  int64(200),
+			"contentType": "application/json",
+			"body":        map[string]interface{}{"type": "Inline", "inline": doc},
+			"header": map[string]interface{}{
+				"set": []interface{}{
+					map[string]interface{}{"name": "Cache-Control", "value": "no-store"},
+				},
+			},
+		},
+	}
+}
+
+// buildTokenEntryMetadataRoute is the one route of the entry's host that no
+// policy names and the bouncer has no line for: GET of one exact path,
+// answered by the filter and sent nowhere. An exact match wins over the
+// entry's own prefix, so the request never reaches the entry's route.
+func buildTokenEntryMetadataRoute(comp *gentianov1alpha1.Component, tenantName, name, host string, zone edgeZone, kernelDomain string) *gatewayv1.HTTPRoute {
+	parent := gatewayParentRef(AuthenticatedGatewayName)
+	ns := gatewayv1.Namespace(servicesNamespace)
+	parent.Namespace = &ns
+	section := gatewayv1.SectionName(zone.listenerFor(host, kernelDomain))
+	parent.SectionName = &section
+	match := pathMatch(gatewayv1.PathMatchExact, tokenEntryMetadataPath)
+	get := gatewayv1.HTTPMethodGet
+	match.Method = &get
+	labels := componentLabels(comp, tenantName)
+	labels[tokenEntryRouteLabel] = "true"
+	return &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: comp.Namespace, Labels: labels},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},
+			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(host)},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				Matches: []gatewayv1.HTTPRouteMatch{match},
+				Filters: []gatewayv1.HTTPRouteFilter{{
+					Type: gatewayv1.HTTPRouteFilterExtensionRef,
+					ExtensionRef: &gatewayv1.LocalObjectReference{
+						Group: gatewayv1.Group(httpRouteFilterGVK.Group),
+						Kind:  gatewayv1.Kind(httpRouteFilterGVK.Kind),
+						Name:  gatewayv1.ObjectName(name),
+					},
+				}},
+			}},
+		},
+	}
+}
+
+// tokenEntryApproved says whether the tenant's perimeter approver approved
+// the entry as a token entry, and the approval has not expired.
+func tokenEntryApproved(comp *gentianov1alpha1.Component, e *gentianov1alpha1.ExposureSpec, now time.Time) bool {
+	if e == nil {
+		return false
+	}
+	for i := range comp.Spec.Exposures {
+		on := &comp.Spec.Exposures[i]
+		if on.ExposureName != e.Name || !e.ApprovedAs(on.Kind) {
+			continue
+		}
+		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // servedTokenEntry says whether the component's token entry is served, and
 // writes the condition that says so (in memory: the caller's status update
 // carries it). It is served when the tenant's perimeter approver approved the
@@ -102,17 +194,7 @@ func servedTokenEntry(
 		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionTokenEntry)
 		return false
 	}
-	approved := false
-	for i := range comp.Spec.Exposures {
-		on := &comp.Spec.Exposures[i]
-		if on.ExposureName != e.Name || !e.ApprovedAs(on.Kind) {
-			continue
-		}
-		if on.ExpiresAt != nil && !now.Before(on.ExpiresAt.Time) {
-			continue
-		}
-		approved = true
-	}
+	approved := tokenEntryApproved(comp, e, now)
 	cond := metav1.Condition{
 		Type: ConditionTokenEntry, Status: metav1.ConditionTrue, Reason: "Approved",
 		Message: fmt.Sprintf(
@@ -152,9 +234,10 @@ func (r *ComponentReconciler) ensureTokenEntry(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant,
 	profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, served, held bool,
 ) error {
-	keep := ""
+	keep, metadata := "", ""
 	if served {
 		keep = tokenEntryRouteName(comp.Name, e.Name)
+		metadata = tokenEntryMetadataName(comp.Name, e.Name)
 		if err := r.ensureZoneGrant(ctx, comp, tenant.Name); err != nil {
 			return err
 		}
@@ -185,6 +268,33 @@ func (r *ComponentReconciler) ensureTokenEntry(
 		if err := ensureHTTPRouteResource(ctx, r.Client, route); err != nil {
 			return err
 		}
+		// Where a token is had, on the same host and without one. The filter
+		// first: a route whose filter is missing answers 500.
+		doc, err := tokenEntryMetadata(host, r.KernelDomain, zone.realm)
+		if err != nil {
+			return err
+		}
+		filter := &unstructured.Unstructured{}
+		filter.SetGroupVersionKind(httpRouteFilterGVK)
+		filter.SetName(metadata)
+		filter.SetNamespace(comp.Namespace)
+		filter.SetLabels(componentLabels(comp, tenant.Name))
+		if err := unstructured.SetNestedField(filter.Object, tokenEntryMetadataFilterSpec(doc), "spec"); err != nil {
+			return err
+		}
+		if err := controllerutil.SetControllerReference(comp, filter, r.Scheme); err != nil {
+			return err
+		}
+		if err := ensureSpec(ctx, r.Client, filter); err != nil {
+			return err
+		}
+		metadataRoute := buildTokenEntryMetadataRoute(comp, tenant.Name, metadata, host, zone, r.KernelDomain)
+		if err := controllerutil.SetControllerReference(comp, metadataRoute, r.Scheme); err != nil {
+			return err
+		}
+		if err := ensureHTTPRouteResource(ctx, r.Client, metadataRoute); err != nil {
+			return err
+		}
 	}
 	list := &gatewayv1.HTTPRouteList{}
 	if err := r.List(ctx, list, client.InNamespace(comp.Namespace),
@@ -192,7 +302,7 @@ func (r *ComponentReconciler) ensureTokenEntry(
 		return err
 	}
 	for i := range list.Items {
-		if list.Items[i].Name == keep {
+		if n := list.Items[i].Name; n == keep || n == metadata {
 			continue
 		}
 		if err := r.Delete(ctx, &list.Items[i]); err != nil && !apierrors.IsNotFound(err) {

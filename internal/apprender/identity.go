@@ -35,6 +35,7 @@ func renderIdentity(in *Input, out *Rendered) error {
 	}
 	out.add(id.appClient()...)
 	out.add(id.extensionClients()...)
+	out.add(id.tokenEntryClient()...)
 	out.add(id.signInSidecar()...)
 	return nil
 }

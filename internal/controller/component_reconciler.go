@@ -39,6 +39,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
+	"github.com/gentian-org/gentian-os/internal/apprender"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -752,6 +753,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		in.Placed = operatorPlaced(profile)
 		in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
+		// The realm client of the token entry, for as long as the entry is
+		// approved: without the approval the realm issues nobody a token
+		// for it.
+		if e := tokenEntryOf(comp, profile); tokenEntryApproved(comp, e, time.Now()) {
+			in.TokenEntry = &apprender.TokenEntry{Host: exposureHost(zone, comp, e), RedirectURIs: e.ClientRedirectURIs}
+		}
 		rendered, err := r.render(ctx, in)
 		if err != nil {
 			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", err.Error(), 0)

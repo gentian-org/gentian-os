@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -226,9 +227,48 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 		t.Fatalf("the policy names %v, the route is %s", targets, route.Name)
 	}
 
+	// Where a token is had: one exact path of the same host, answered by the
+	// Gateway. No policy names the route and the bouncer has no line for it,
+	// and it has no backend to reach.
+	doc := &gatewayv1.HTTPRoute{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: comp.Namespace, Name: "agent-door-mcp-metadata"}, doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Spec.Hostnames) != 1 || string(doc.Spec.Hostnames[0]) != host || doc.Labels[bouncerRouteLabel] != "" || len(doc.Spec.Rules) != 1 {
+		t.Fatalf("metadata route = %+v", doc)
+	}
+	rule := doc.Spec.Rules[0]
+	if len(rule.BackendRefs) != 0 || len(rule.Matches) != 1 || *rule.Matches[0].Path.Type != gatewayv1.PathMatchExact ||
+		*rule.Matches[0].Path.Value != "/.well-known/oauth-protected-resource" || *rule.Matches[0].Method != gatewayv1.HTTPMethodGet {
+		t.Fatalf("metadata rule = %+v", rule)
+	}
+	if ann[bouncerResourceMetadataAnnotation] != "https://"+host+*rule.Matches[0].Path.Value {
+		t.Fatalf("the 401 points at %q", ann[bouncerResourceMetadataAnnotation])
+	}
+	filter := &unstructured.Unstructured{}
+	filter.SetGroupVersionKind(httpRouteFilterGVK)
+	if err := c.Get(ctx, types.NamespacedName{Namespace: comp.Namespace, Name: string(rule.Filters[0].ExtensionRef.Name)}, filter); err != nil {
+		t.Fatal(err)
+	}
+	body, _, _ := unstructured.NestedString(filter.Object, "spec", "directResponse", "body", "inline")
+	var said struct {
+		Resource string   `json:"resource"`
+		Servers  []string `json:"authorization_servers"`
+	}
+	if err := json.Unmarshal([]byte(body), &said); err != nil {
+		t.Fatal(err)
+	}
+	if said.Resource != ann[bouncerTokenAudienceAnnotation] || len(said.Servers) != 1 ||
+		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm {
+		t.Fatalf("metadata = %s", body)
+	}
+
 	// The approval ends.
 	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, false, false); err != nil {
 		t.Fatal(err)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: comp.Namespace, Name: doc.Name}, doc); !apierrors.IsNotFound(err) {
+		t.Fatalf("the metadata route is still there: %v", err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: comp.Namespace, Name: "agent-door-mcp"}, route); !apierrors.IsNotFound(err) {
 		t.Fatalf("the route is still there: %v", err)

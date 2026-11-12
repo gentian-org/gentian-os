@@ -1001,6 +1001,28 @@ spec:
                           enum:
                           - app
                           type: string
+                        clientRedirectURIs:
+                          description: |-
+                            ClientRedirectURIs are, on a token entry, the addresses a program may
+                            be sent back to once the person has signed in: the redirect addresses
+                            of the realm client the platform registers for the entry. Each is
+                            exact, with no wildcard: an https address, or a loopback address
+                            (http://127.0.0.1 or http://localhost) for a program on the person's
+                            own computer. A loopback address written without a port admits any
+                            port, which is what a program that listens on a free one needs; its
+                            path is still exact, and 127.0.0.1 does not stand for localhost. The
+                            tenant's perimeter approver approves the entry with them, and a
+                            program sent anywhere else is refused by the realm.
+
+                            An entry that names none has no client, and nobody can obtain a token
+                            for it.
+                          items:
+                            maxLength: 200
+                            pattern: ^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*)$
+                            type: string
+                          maxItems: 8
+                          type: array
+                          x-kubernetes-list-type: set
                         denyPaths:
                           description: |-
                             DenyPaths are refused even where Paths admits them. Deny wins regardless
@@ -1239,6 +1261,11 @@ spec:
                         rule: self.surface != 'gateway' || self.authMode != 'bearer'
                           || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken)
                           || !self.exchangeToken) && !has(self.tile))
+                      - message: 'clientRedirectURIs is for a token entry (a gateway
+                          entry with authMode bearer): no other entry has a client
+                          of its own'
+                        rule: '!has(self.clientRedirectURIs) || (self.surface == ''gateway''
+                          && self.authMode == ''bearer'')'
                     maxItems: 32
                     type: array
                     x-kubernetes-list-map-keys:

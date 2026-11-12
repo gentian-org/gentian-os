@@ -790,6 +790,7 @@ func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode in ['oidc', 'bearer']",message="a gateway entry is behind the zone's session (authMode oidc) or takes a token the tenant's realm made out to it (authMode bearer). What needs neither is a perimeter surface"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || (has(self.subDomain) && self.subDomain.size() > 0)",message="a token entry (authMode bearer) names a subDomain: it answers on a host of its own, where no session's cookie is sent"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken) && !has(self.tile))",message="a token entry (authMode bearer) declares no forwardToken, exchangeToken or tile: there is no session whose token could be passed on, and nobody opens it in a browser"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientRedirectURIs) || (self.surface == 'gateway' && self.authMode == 'bearer')",message="clientRedirectURIs is for a token entry (a gateway entry with authMode bearer): no other entry has a client of its own"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
@@ -873,6 +874,26 @@ type ExposureSpec struct {
 	// holds for every entry of the component on the same host.
 	// +optional
 	ClientAuthorization ClientAuthorization `json:"clientAuthorization,omitempty"`
+
+	// ClientRedirectURIs are, on a token entry, the addresses a program may
+	// be sent back to once the person has signed in: the redirect addresses
+	// of the realm client the platform registers for the entry. Each is
+	// exact, with no wildcard: an https address, or a loopback address
+	// (http://127.0.0.1 or http://localhost) for a program on the person's
+	// own computer. A loopback address written without a port admits any
+	// port, which is what a program that listens on a free one needs; its
+	// path is still exact, and 127.0.0.1 does not stand for localhost. The
+	// tenant's perimeter approver approves the entry with them, and a
+	// program sent anywhere else is refused by the realm.
+	//
+	// An entry that names none has no client, and nobody can obtain a token
+	// for it.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=200
+	// +kubebuilder:validation:items:Pattern=`^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*)$`
+	ClientRedirectURIs []string `json:"clientRedirectURIs,omitempty"`
 
 	// Annotations are gateway policy for this host. The one key read is
 	// gentianos.io/gateway-escaped-slashes-action: KeepUnchanged passes

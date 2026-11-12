@@ -300,7 +300,8 @@ func TestAnEntryInAModeThePlatformDoesNotOfferIsNotApproved(t *testing.T) {
 func TestATokenEntryIsListedAndApprovedAsItsOwnKind(t *testing.T) {
 	profile := kindsProfile("nextcloud", "app", "") +
 		"    - name: mcp\n      surface: gateway\n      authMode: bearer\n      subDomain: mcp\n" +
-		"      backend:\n        service: nextcloud\n        port: 8765\n"
+		"      backend:\n        service: nextcloud\n        port: 8765\n" +
+		"      clientRedirectURIs:\n      - http://localhost/callback\n"
 	h := startSeeded(t, nil, func(remote string) {
 		dt.Commit(t, remote, map[string]string{dt.CataloguePath("nextcloud.yaml"): profile})
 	})
@@ -316,6 +317,10 @@ func TestATokenEntryIsListedAndApprovedAsItsOwnKind(t *testing.T) {
 	if entry["kind"] != "tokenEntry" || entry["publicAddress"] != false || entry["passesCredential"] != true ||
 		entry["anyoneWithoutSignIn"] == true || entry["state"] != "requested" {
 		t.Fatalf("mcp = %v", entry)
+	}
+	// Where a program may be sent back to is part of what is approved.
+	if back, _ := entry["clientRedirectURIs"].([]any); len(back) != 1 || back[0] != "http://localhost/callback" {
+		t.Fatalf("the approver is not shown where a program returns to: %v", entry["clientRedirectURIs"])
 	}
 	access, _ := entry["access"].(string)
 	for _, says := range []string{

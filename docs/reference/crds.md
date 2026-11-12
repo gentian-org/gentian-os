@@ -403,6 +403,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.expose[].backend.port` | integer (int32) | yes |  |
 | `spec.expose[].backend.service` | string | yes |  |
 | `spec.expose[].clientAuthorization` | string |  | `ClientAuthorization` says whose the Authorization header is on this entry. |
+| `spec.expose[].clientRedirectURIs` | []string |  | `ClientRedirectURIs` are, on a token entry, the addresses a program may be sent back to once the person has signed in: the redirect addresses of the realm… |
 | `spec.expose[].denyPaths` | []string |  | `DenyPaths` are refused even where Paths admits them. |
 | `spec.expose[].exchangeToken` | boolean |  | `ExchangeToken` asks the front door to hand this backend a token of the person that is valid at this app and nowhere else: the session's token exchanged at the… |
 | `spec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
@@ -1235,6 +1236,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.expose[].backend.port` | integer (int32) | yes |  |
 | `status.profileSpec.expose[].backend.service` | string | yes |  |
 | `status.profileSpec.expose[].clientAuthorization` | string |  | `ClientAuthorization` says whose the Authorization header is on this entry. |
+| `status.profileSpec.expose[].clientRedirectURIs` | []string |  | `ClientRedirectURIs` are, on a token entry, the addresses a program may be sent back to once the person has signed in: the redirect addresses of the realm… |
 | `status.profileSpec.expose[].denyPaths` | []string |  | `DenyPaths` are refused even where Paths admits them. |
 | `status.profileSpec.expose[].exchangeToken` | boolean |  | `ExchangeToken` asks the front door to hand this backend a token of the person that is valid at this app and nowhere else: the session's token exchanged at the… |
 | `status.profileSpec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
