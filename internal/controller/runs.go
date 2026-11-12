@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -195,6 +196,12 @@ type RunsReconciler struct {
 	// ProgramImage is the image the run program is taken from, which every
 	// run's pod names beside its own.
 	ProgramImage string
+	// DispatcherAccount is the dispatcher's ServiceAccount, in the
+	// namespace the operator runs in. Empty binds nothing: no dispatcher is
+	// deployed, and no pod is started in a namespace for runs.
+	DispatcherAccount string
+	// Namespace is the namespace the operator and the dispatcher run in.
+	Namespace string
 	// Now is the time grants are read at; nil means time.Now.
 	Now func() time.Time
 }
@@ -204,6 +211,8 @@ type RunsReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps;services;secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kyverno.io,resources=policies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=gentian-dispatcher-runs
 
 var runsRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: dispatcher.TableConfigMap}}
 
@@ -471,6 +480,10 @@ func (r *RunsReconciler) ensureRunNamespace(ctx context.Context, runs *tenantRun
 		return err
 	}
 
+	if err := r.ensureDispatcherBinding(ctx, namespace, labels); err != nil {
+		return err
+	}
+
 	quota, limits := runQuota(runs.tenant, namespace, labels)
 	if err := ensureObject(ctx, r.Client, quota, func(existing *corev1.ResourceQuota) bool {
 		if equality.Semantic.DeepEqual(existing.Spec.Hard, quota.Spec.Hard) {
@@ -503,6 +516,46 @@ func (r *RunsReconciler) ensureRunNamespace(ctx context.Context, runs *tenantRun
 	// The other end of a caller's rule: its pods admit its runs.
 	return r.applyPolicies(ctx, tenantNamespace, callerIngressPolicies(runs, namespace, tenantNamespace),
 		client.MatchingLabels{runsIngressLabel: "true"})
+}
+
+// dispatcherRunsRole is the ClusterRole the operator's chart defines for the
+// dispatcher (templates/dispatcher.yaml): pods and their logs.
+const dispatcherRunsRole = "gentian-dispatcher-runs"
+
+// ensureDispatcherBinding gives the dispatcher its rights in one namespace
+// for runs. They are bound here and nowhere else, so that what the
+// dispatcher may do at the Kubernetes API is pods where runs are.
+func (r *RunsReconciler) ensureDispatcherBinding(ctx context.Context, namespace string, labels map[string]string) error {
+	if r.DispatcherAccount == "" {
+		return nil
+	}
+	desired := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: dispatcherRunsRole, Namespace: namespace, Labels: labels},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: r.DispatcherAccount, Namespace: r.Namespace}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: dispatcherRunsRole},
+	}
+	existing := &rbacv1.RoleBinding{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	// A binding's role cannot be changed: one that names another is not
+	// this one, and is replaced.
+	if !equality.Semantic.DeepEqual(existing.RoleRef, desired.RoleRef) {
+		if err := r.Delete(ctx, existing); err != nil {
+			return err
+		}
+		return r.Create(ctx, desired)
+	}
+	if equality.Semantic.DeepEqual(existing.Subjects, desired.Subjects) {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Subjects = desired.Subjects
+	return r.Patch(ctx, existing, patch)
 }
 
 // applyPolicies writes the policies and deletes every other one the

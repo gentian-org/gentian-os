@@ -570,6 +570,8 @@ func main() {
 	// and the dispatcher's table.
 	if err := (&controller.RunsReconciler{
 		Definitions: held, Client: mgr.GetClient(), ProgramImage: os.Getenv("GENTIAN_IMAGE"),
+		Namespace:         envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		DispatcherAccount: os.Getenv("DISPATCHER_SA"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Runs")
 		os.Exit(1)

@@ -35,6 +35,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o bouncer ./cmd/boun
 # process that holds nothing but the two things the bouncer holds.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o usher ./cmd/usher
 
+# The dispatcher: what starts a run for a component that asks, as one pod in
+# the tenant's namespace for runs. And the run program, the first process of
+# such a pod, which an init container of this image copies into it.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o dispatcher ./cmd/dispatcher
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o run-program ./cmd/run
+
 # The custodian: what sets a credential in the vault for the person entitled
 # to. Its own process and ServiceAccount, so the identity that can write a
 # secret is not shared with anything that can read one.
@@ -68,6 +74,8 @@ COPY --from=builder /workspace/manager /manager
 COPY --from=builder /workspace/director /director
 COPY --from=builder /workspace/bouncer /bouncer
 COPY --from=builder /workspace/usher /usher
+COPY --from=builder /workspace/dispatcher /dispatcher
+COPY --from=builder /workspace/run-program /run-program
 COPY --from=builder /workspace/custodian /custodian
 COPY --from=builder /workspace/registrar /registrar
 COPY --from=builder /workspace/arbiter /arbiter

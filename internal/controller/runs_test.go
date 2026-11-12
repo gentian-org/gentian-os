@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,7 +88,7 @@ func runsHarness(t *testing.T, objects ...client.Object) (client.Client, *RunsRe
 	t.Helper()
 	c := fake.NewClientBuilder().WithScheme(rightsScheme(t)).WithObjects(objects...).
 		WithStatusSubresource(&gentianov1alpha1.Component{}).Build()
-	return c, &RunsReconciler{Client: c, ProgramImage: programImage}
+	return c, &RunsReconciler{Client: c, ProgramImage: programImage, Namespace: "kernel-control", DispatcherAccount: "gentian-os-dispatcher"}
 }
 
 func runsTable(t *testing.T, c client.Client) *dispatcher.Table {
@@ -272,6 +273,18 @@ func TestTheNamespaceForRunsAndItsRules(t *testing.T) {
 	}
 	if account.AutomountServiceAccountToken == nil || *account.AutomountServiceAccountToken {
 		t.Fatal("a run's account mounts a token")
+	}
+	// The dispatcher's rights are bound here, to its account and its role.
+	binding := &rbacv1.RoleBinding{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "gentian-dispatcher-runs", Namespace: ns.Name}, binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != "gentian-dispatcher-runs" || len(binding.Subjects) != 1 ||
+		binding.Subjects[0].Name != "gentian-os-dispatcher" || binding.Subjects[0].Namespace != "kernel-control" {
+		t.Fatalf("binding = %+v", binding)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: "gentian-dispatcher-runs", Namespace: "tenant-acme"}, &rbacv1.RoleBinding{}); !errors.IsNotFound(err) {
+		t.Fatalf("the dispatcher was given rights in the tenant's own namespace: %v", err)
 	}
 	quota := &corev1.ResourceQuota{}
 	if err := c.Get(ctx, types.NamespacedName{Name: runsQuotaName, Namespace: ns.Name}, quota); err != nil {

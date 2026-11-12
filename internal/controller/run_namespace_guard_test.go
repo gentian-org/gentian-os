@@ -17,6 +17,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	runs "github.com/gentian-org/gentian-os/internal/dispatcher"
 )
 
 const guardDispatcher = "system:serviceaccount:kernel-control:gentian-os-dispatcher"
@@ -30,9 +32,17 @@ func TestOnlyTheDispatcherStartsAPodInANamespaceForRuns(t *testing.T) {
 	admin := as("admin")
 	for name, tier := range map[string]string{"tenant-acme-runs": "tenant-runs", "tenant-acme": "tenant"} {
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"gentianos.io/tier": tier}}}
+		if tier == "tenant-runs" {
+			// As the operator labels it: the strictest pod security standard.
+			ns.Labels["pod-security.kubernetes.io/enforce"] = "restricted"
+		}
 		if err := admin.Create(ctx, ns); err != nil {
 			t.Fatal(err)
 		}
+	}
+	account := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: runs.ServiceAccount, Namespace: "tenant-acme-runs"}}
+	if err := admin.Create(ctx, account); err != nil {
+		t.Fatal(err)
 	}
 	pod := func(ns, name string) *corev1.Pod {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Spec: guardPodTemplate(nil).Spec}
@@ -46,8 +56,20 @@ func TestOnlyTheDispatcherStartsAPodInANamespaceForRuns(t *testing.T) {
 	untilRefused(t, "the operator starts a pod in a namespace for runs", func(n int) error {
 		return operator.Create(ctx, pod("tenant-acme-runs", "by-operator"))
 	})
-	if err := dispatcher.Create(ctx, pod("tenant-acme-runs", "run-1")); err != nil {
+	// The pod the dispatcher writes for a run, as it writes it: the
+	// namespace's pod security standard admits it.
+	caller := &runs.Caller{Callback: runs.Callback{Service: "flow", Namespace: "tenant-acme", Port: 80}}
+	caller.Tenant, caller.Component = "acme", "flow"
+	run := runs.Pod(&runs.Tenant{Tenant: "acme", Namespace: "tenant-acme-runs"}, caller, runs.Runnable{
+		Name: "ocr", Image: "registry.example.invalid/steps/ocr", Digest: stepDigest, Command: []string{"/ocr"},
+		CPU: "250m", Memory: "128Mi",
+	}, false, runs.Start{ID: "invoice 7", Deadline: 60, Token: "t", Attempt: 1}, programImage)
+	if err := dispatcher.Create(ctx, run); err != nil {
 		t.Fatalf("the dispatcher starts a run: %v", err)
+	}
+	// A pod that is not held to that standard is refused there, whoever asks.
+	if err := dispatcher.Create(ctx, pod("tenant-acme-runs", "unrestricted")); err == nil {
+		t.Fatal("a pod outside the restricted standard was admitted in a namespace for runs")
 	}
 	untilRefused(t, "an app's account starts a pod in a namespace for runs", func(n int) error {
 		return app.Create(ctx, pod("tenant-acme-runs", "by-app"))
@@ -59,7 +81,10 @@ func TestOnlyTheDispatcherStartsAPodInANamespaceForRuns(t *testing.T) {
 	}
 
 	// A person is break-glass, and another namespace is not this rule's.
-	if err := admin.Create(ctx, pod("tenant-acme-runs", "by-a-person")); err != nil {
+	person := runs.Pod(&runs.Tenant{Tenant: "acme", Namespace: "tenant-acme-runs"}, caller, runs.Runnable{
+		Name: "ocr", Image: "registry.example.invalid/steps/ocr", Digest: stepDigest, Command: []string{"/ocr"},
+	}, false, runs.Start{ID: "by a person", Deadline: 60, Token: "t", Attempt: 1}, programImage)
+	if err := admin.Create(ctx, person); err != nil {
 		t.Fatalf("a person with the right to: %v", err)
 	}
 	if err := operator.Create(ctx, pod("tenant-acme", "elsewhere")); err != nil {

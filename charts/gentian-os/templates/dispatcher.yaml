@@ -1,0 +1,142 @@
+{{- /*
+  The dispatcher: what a component asks to start a run (control-plane.md).
+
+  The operator follows git and keeps state, and a run is neither. A component
+  that declares requires.services.runs asks here, with the key the operator
+  gave it, for one run of an action installed in its tenant or of an image of
+  its own; the dispatcher starts one pod for it in the tenant's namespace for
+  runs. It runs in the control namespace from the operator's image with its
+  own command, so that the table the operator writes and the program that
+  reads it are one build.
+
+  Its rights at the Kubernetes API are the ClusterRole below, which the
+  operator binds in each tenant's namespace for runs and nowhere else: pods
+  and their logs. It reads no profile, no grant and no Secret. Who may start
+  what is the operator's table (ConfigMap dispatcher-runs), mounted as a
+  file. No Gateway routes to it, and its listener refuses every request
+  without a key that table names.
+*/ -}}
+{{- if .Values.dispatcher.enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $name := printf "%s-dispatcher" (include "gentian-os.fullname" .) }}
+{{- $imageDigest := .Values.image.digest | default "" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gentian-os.dispatcherServiceAccountName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gentian-dispatcher-runs
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+spec:
+  replicas: {{ .Values.dispatcher.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dispatcher
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.labels" . | nindent 8 }}
+        app.kubernetes.io/component: dispatcher
+    spec:
+      serviceAccountName: {{ include "gentian-os.dispatcherServiceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "gentian-os.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: dispatcher
+      containers:
+        - name: dispatcher
+          image: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{- end }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/dispatcher"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DISPATCHER_LISTEN
+              value: ":8080"
+            - name: DISPATCHER_TABLE
+              value: /etc/dispatcher/runs.json
+            # The image a run's pod takes the run program from: this one, so
+            # that what starts a run and what wraps it are one build. The
+            # operator admits exactly this name in a namespace for runs.
+            - name: DISPATCHER_PROGRAM_IMAGE
+              value: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{- end }}"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml .Values.dispatcher.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: table
+              mountPath: /etc/dispatcher
+              readOnly: true
+      volumes:
+        # The operator's table. Optional: before the first component declares
+        # runs there is none, and every key is refused.
+        - name: table
+          configMap:
+            name: dispatcher-runs
+            optional: true
+{{- end }}
