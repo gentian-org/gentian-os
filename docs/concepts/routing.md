@@ -494,9 +494,20 @@ The bouncer refuses any request on a session route that reaches it without a
 token it can verify, whatever its path. Nothing in the operator's policies
 lets a request past the OAuth2 filter without a session — no
 `passThroughAuthHeader`, no CORS or health path — and if something did, the
-answer would be `401`. `denyRedirect` passes nothing: a request a page makes in
-the background (`Sec-Fetch-Dest: empty`) stops at the filter with `401` rather
-than a redirect it cannot follow. The one path of an app that takes no
+answer would be `401`. `denyRedirect` passes nothing: only a navigation is sent
+to sign in, and every other request (`Sec-Fetch-Mode` other than `navigate`: a
+fetch, an image, a script, a web manifest) stops at the filter with `401`. A
+fetch cannot follow the redirect, and a favicon would start a login of its own
+beside the person's. A login the filter starts stays valid for 30 minutes
+(`csrfTokenTTL`), Keycloak's own login timeout, so a first sign-in that sets a
+password or enrolls a second factor does not come back to a filter that has
+dropped it. A callback the filter refuses anyway — a login page left open
+longer than that — gets a page instead of the filter's bare "OAuth flow
+failed.": it starts a new sign-in once, back to the page the person asked
+for on the same host, and offers a link if that sign-in fails again within
+two minutes (`responseOverride` on the session routes' BackendTrafficPolicy,
+for Envoy-generated `401`s in `text/plain` only; the bouncer's refusals keep
+their own page). The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
