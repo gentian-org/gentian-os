@@ -388,6 +388,42 @@ create_crossplane_secrets() {
 }
 
 # =============================================================================
+# derived_kv_paths — the vault paths create_crossplane_secrets adds missing
+# keys to: the third argument of its _kv_secret calls, read out of the
+# function itself so that a path added there is covered here without being
+# listed twice.
+# =============================================================================
+derived_kv_paths() {
+    sed -n '/^create_crossplane_secrets() {/,/^}/p' "${BASH_SOURCE[0]}" |
+        sed -nE 's/^[[:space:]]+"(gentian-os\/[^"]+)"[[:space:]]*$/\1/p'
+}
+
+# =============================================================================
+# external_secrets_missing_derived_keys — "<namespace>/<name>" of every
+# ExternalSecret that reads one of derived_kv_paths and is not Ready.
+#
+# A release that adds a key to one of those paths ships the ExternalSecret
+# that reads it, and Argo CD applies that on its own. The vault learns the key
+# only from create_crossplane_secrets, which B-07 runs -- and B-07 was
+# satisfied by the master-password Secret alone, so on an installed cluster
+# the key never arrived and the ExternalSecret failed until someone forced
+# the step. Not Ready is the signal rather than the reason given: the
+# condition says only "could not get secret data from provider", and the
+# event naming the missing key expires.
+# =============================================================================
+external_secrets_missing_derived_keys() {
+    local paths
+    paths="$(derived_kv_paths | jq -R . | jq -sc .)" || return 0
+    kubectl get externalsecrets.external-secrets.io -A -o json 2>/dev/null |
+        jq -r --argjson paths "${paths}" '.items[]
+               | select([(.status.conditions // [])[]
+                         | select(.type == "Ready" and .status == "True")] | length == 0)
+               | select([(.spec.data // [])[].remoteRef.key, (.spec.dataFrom // [])[].extract.key]
+                        | any(. as $k | $paths | index($k)))
+               | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null || true
+}
+
+# =============================================================================
 # report_unready_composed <xr-name> — which composed resources are holding it up
 #
 # Prints the kind, name and the provider's own message for anything not Ready
