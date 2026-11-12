@@ -44,8 +44,10 @@ spec:
           imagePullPolicy: {{ $image.pullPolicy }}
           command: ["/bin/sh", "-c"]
           # The users are the ones the operator's Jobs saved (ACL SAVE). The
-          # default user is left out of what is loaded: a file naming it wins
-          # over --requirepass, and a rotated password would never take.
+          # default user is written anew at every start, with the hash of the
+          # password in the Secret, so a rotated password takes at the next
+          # start. It goes into the file because, with an ACL file in use,
+          # Valkey takes every user from the file, the default user included.
           #
           # A directory of its own: a volume that served Redis 7.4 holds files
           # Valkey cannot read, and refuses to start on.
@@ -55,9 +57,10 @@ spec:
               mkdir -p /data/valkey
               touch /data/valkey/users.acl
               sed -i '/^user default /d' /data/valkey/users.acl
+              hash="$(printf '%s' "$VALKEYCLI_AUTH" | sha256sum | cut -d' ' -f1)"
+              printf 'user default on #%s ~* &* +@all\n' "$hash" >> /data/valkey/users.acl
               exec valkey-server --port {{ .Values.master.containerPorts.redis }} --dir /data/valkey \
                 --aclfile /data/valkey/users.acl \
-                --requirepass "$VALKEYCLI_AUTH" \
                 --appendonly yes --save ''
           env:
             - name: VALKEYCLI_AUTH
