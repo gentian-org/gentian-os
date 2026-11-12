@@ -840,9 +840,9 @@ func MariaDBAdminEnv() []corev1.EnvVar {
 // CacheAdminEnv addresses the shared cache as its administrator.
 func CacheAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		meta.SecretEnv("REDIS_HOST", RedisAdminSecret, "host"),
-		meta.SecretEnv("REDIS_PORT", RedisAdminSecret, "port"),
-		meta.SecretEnv("REDIS_PASSWORD", RedisAdminSecret, "password"),
+		meta.SecretEnv("CACHE_HOST", CacheAdminSecret, "host"),
+		meta.SecretEnv("CACHE_PORT", CacheAdminSecret, "port"),
+		meta.SecretEnv("CACHE_PASSWORD", CacheAdminSecret, "password"),
 	}
 }
 

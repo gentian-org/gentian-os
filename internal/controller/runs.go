@@ -127,7 +127,7 @@ func DispatcherPodLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/component": "dispatcher"}
 }
 
-// runsEgress is the way to the dispatcher: its pods, on its one port, and
+// runsEgress is the way to the dispatcher: its pods, on the port for runs, and
 // nothing else of the namespace the kernel's controllers run in.
 func runsEgress() networkingv1.NetworkPolicyEgressRule {
 	tcp := corev1.ProtocolTCP
@@ -236,6 +236,12 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 	// The Secrets a run's image is pulled with, by name: those of the
 	// repositories the tenant declared that the profile may be told about,
 	// as for the pods of an app (resolvePullSecrets).
+	// The cluster's own comes first, where the cluster has one: the run
+	// program is taken from the platform's image, which is pulled with it.
+	clusters, err := r.clusterPullSecret(ctx)
+	if err != nil {
+		return nil, err
+	}
 	declared := map[string][]pullRepository{}
 	pulledWith := func(tenant string, profile *gentianov1alpha1.ComponentProfile) ([]string, error) {
 		repos, ok := declared[tenant]
@@ -247,6 +253,9 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 			declared[tenant] = repos
 		}
 		var names []string
+		if clusters != nil {
+			names = append(names, clusters.Name)
+		}
 		for _, repo := range repositoriesOf(profile, repos) {
 			names = append(names, repo.secretName())
 		}
@@ -331,6 +340,20 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		sort.Slice(runs.actions, func(i, j int) bool { return runs.actions[i].runnable.Name < runs.actions[j].runnable.Name })
 	}
 	return out, nil
+}
+
+// clusterPullSecret is the credential the cluster pulls its own images with,
+// nil on a cluster that has none.
+func (r *RunsReconciler) clusterPullSecret(ctx context.Context) (*corev1.Secret, error) {
+	source := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: clusterPullSecretName, Namespace: servicesNamespace}, source)
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s in %s: %w", clusterPullSecretName, servicesNamespace, err)
+	}
+	return source, nil
 }
 
 // callbackPort is the port of the caller's pods its callback Service sends
@@ -509,6 +532,19 @@ func (r *RunsReconciler) ensureRunNamespace(ctx context.Context, runs *tenantRun
 
 	if err := r.ensureDispatcherBinding(ctx, namespace, labels); err != nil {
 		return err
+	}
+
+	// The cluster's own pull credential, as a tenant's namespace has it
+	// (ensureRegistryCredentials). A kubelet reads it; a run's pod holds no
+	// account that could.
+	clusters, err := r.clusterPullSecret(ctx)
+	if err != nil {
+		return err
+	}
+	if clusters != nil {
+		if err := ensureSecretCopy(ctx, r.Client, clusters, namespace, runs.tenant.Name); err != nil {
+			return err
+		}
 	}
 
 	quota, limits := runQuota(runs.tenant, namespace, labels)

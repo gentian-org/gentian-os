@@ -97,7 +97,7 @@ One engine opens nothing of the other. The ports are the ones the app is handed 
 
 ### 2.7 Who may reach a shared store
 
-Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on its server's pods. It is delivered by the engine's own chart (`templates/networkpolicy.yaml` in `kernel/data/tenant-postgres` and `kernel/services/infra-{mariadb,redis,seaweedfs}/manifests`), in the Argo CD sync that brings the values the server is installed from, so a server is never up without it. A connection is admitted from the sources below, on the port named, and from nowhere else.
+Each of the four shared stores carries one NetworkPolicy, `store-ingress`, on its server's pods. It is delivered by the engine's own chart (`templates/networkpolicy.yaml` in `kernel/data/tenant-postgres` and `kernel/services/infra-{cache,mariadb,seaweedfs}/manifests`), in the Argo CD sync that brings the values the server is installed from, so a server is never up without it. A connection is admitted from the sources below, on the port named, and from nowhere else.
 
 | Server | Port | Admitted |
 | --- | --- | --- |
@@ -200,7 +200,7 @@ On a cluster that serves models, `system-llm` holds four pod sets that listen, a
 | The gateway (LiteLLM) | `llm-gateway-ingress` | 4000 | tenant namespaces; the operator's pods in `kernel-control` (an app's or a desktop's key, a tenant's team, a purge); and, only where the claim switches the console on (`llm.console.enabled`), the Gateway's Envoy pods in the edge namespace (the console `llm.<kernelDomain>`, a kernel console behind the kernel session) |
 | Its PostgreSQL (CloudNativePG) | `llm-database-ingress` | 5432 | the gateway's pods; the cluster's own pods (a replica or join Job, when instances is raised) |
 | | | 8000 | CloudNativePG's operator in `kernel-data` |
-| Its Redis | `llm-cache-ingress` | 6379 | the gateway's pods |
+| Its cache (Valkey) | `llm-cache-ingress` | 6379 | the gateway's pods |
 | The mock model server (clusters without GPUs) | `llm-mock-ingress` | 8000 | the gateway's pods |
 
 **The console has a switch, and it is off by default.** `spec.llm.console.enabled` on the Cluster claim decides whether `llm.<kernelDomain>` exists. Off, there is no route, no published host and no rule for the edge in `llm-gateway-ingress`: the gateway is reachable by its in-cluster clients alone, which is what "system services have no public route" asks. On, the route is composed behind the kernel session for whoever may configure the cluster (`can_configure`, `kernel_gateway_routes.go`), the edge's Envoy pods are admitted to port 4000, and the route carries the gateway's whole API as well as its pages; that is a departure from the rule which the cluster's owner takes by writing the setting. The operator reads the setting from the claim and falls back to nothing: a cluster whose claim does not state it has no console, and the installer says so in one line. On this route the edge leaves the `Authorization` header to the console, whose pages send LiteLLM's own key there, and hands LiteLLM no token of the platform's; the session is shown to the bouncer by its ID token, as on Keycloak's administration console. The policy rule is rendered by the gateway's chart from the same field of the claim, which the chart is handed as a values file: a commit that changes the setting changes the route and the rule, each at its own sync and with no run of the install; in between, a route without the rule answers nothing ([llms.md](../concepts/llms.md)).
@@ -1427,8 +1427,9 @@ repository's path a prefix by whole segments), and in `imagePullSecrets` /
 
 The runs reconciler names it the same way in the dispatcher's table, and the
 dispatcher sets it as `imagePullSecrets` on a run's pod: the repositories of
-the whole tenant, or the one bound to the profile the run is of.
-`registry-credentials` is not in the namespace for runs.
+the whole tenant, or the one bound to the profile the run is of, after
+`registry-credentials`, which the operator copies into the namespace for runs
+as it does into the tenant's.
 
 The pull Secret is read through the tenant's own store,
 `openbao-tenant-{tenant}` (§5), whose role reads that tenant's

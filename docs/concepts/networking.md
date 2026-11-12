@@ -72,7 +72,7 @@ writes one by hand.
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
 | `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
-| the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared Valkey store through `kernel-access-<app>` instead |
+| the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared cache (Valkey) through `kernel-access-<app>` instead |
 
 A component that starts runs (`requires.services.runs`) has two more:
 `component-<app>` opens the way to the dispatcher's pods on its port, and

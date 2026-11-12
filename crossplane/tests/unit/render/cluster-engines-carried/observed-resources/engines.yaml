@@ -1,0 +1,12 @@
+# The cache's Release, composed on an earlier reconcile as redis-release.
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: dev-cluster-redis
+  annotations:
+    crossplane.io/composition-resource-name: redis-release
+status:
+  conditions:
+  - type: Ready
+    status: "True"

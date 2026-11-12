@@ -51,7 +51,7 @@ namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 | **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster currently holds of a tenant. | `kernel-control` | The consoles' backends and the command line tool, with the person's token. | An identity the operator admits to reads only. | Nothing. |
 | **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. Answers the same question, about one tenant, for a component that was given a key for it. | `kernel-edge` | The Gateway; and, on a second listener, a component whose profile declares the rights check. | Each realm's token-exchange client secret. | Nothing. It lets a request through or refuses it. |
 | **Arbiter** | The one way into the app instance of OpenFGA: answers each component that declares an authorization store, from that component's store and no other. | `system-authorization` | A component with a key for its store; the operator, on a path of its own. | The app instance's key. | The components' stores: it creates, mirrors into, exports, restores and purges them. |
-| **Dispatcher** | Starts a run for a component that asks: one pod of an installed action, or of an image of the component's own, in the tenant's namespace for runs. | `kernel-control` | A component whose profile declares `requires.services.runs`, with the key the operator gave it. | Nothing: no credential, and no data of a run. | Pods in the tenants' namespaces for runs, and nothing else. |
+| **Dispatcher** | Does what is asked for once and follows nothing declared. Starts a run for a component that asks: one pod of an installed action, or of an image of the component's own, in the tenant's namespace for runs. Carries out an act for the director: a backup taken or deleted. | `kernel-control` | A component whose profile declares `requires.services.runs`, with the key the operator gave it; and, on a listener of its own, the director with its workload token. | Nothing: no credential, and no data of a run. | Pods in the tenants' namespaces for runs, and the record a backup is taken from. |
 | **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published through the platform tenant's DMZ | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
 
 Six of the nine hold the key that opens the kernel's OpenFGA (all but the
@@ -209,7 +209,7 @@ How to read it:
   build the install named (§4.2, "checks before it acts").
 - Whether the app is running is a separate question, asked of the usher.
 
-### 3.3 A one-off action: take a backup, or purge an app
+### 3.3 A one-off action: take a backup
 
 ```mermaid
 sequenceDiagram
@@ -217,7 +217,7 @@ sequenceDiagram
   participant C as Admin console
   participant D as director
   participant F as OpenFGA
-  participant O as operator
+  participant O as dispatcher
   participant K as Kubernetes API server
 
   P->>C: Back up now
@@ -228,7 +228,7 @@ sequenceDiagram
   D->>O: The command, with the director's own workload token and the person's name
   O->>K: Whose token is this
   K-->>O: The director's service account
-  O->>O: Create the backup request
+  O->>K: Create the backup request
   O-->>D: Started
   D-->>C: Started
 ```
@@ -236,11 +236,17 @@ sequenceDiagram
 How to read it:
 
 - Some requests are not a state to declare but an act to perform once. They
-  produce no commit. §4.2 lists them.
-- The operator does not verify the person. It verifies that the caller is the
-  director, by asking the Kubernetes API server whose token was presented.
-- The operator records the name the director passes. It takes the director's
-  word for it.
+  produce no commit.
+- An act that follows nothing declared is the dispatcher's (§4.8): a backup
+  taken or deleted. The dispatcher writes the request; the operator, which
+  owns the stores a backup reads, takes the backup from it.
+- An act that brings the cluster in line with what is declared is the
+  operator's, whoever asks for it: purging what an uninstalled app left
+  behind, removing what a removed catalog left behind. §4.2 lists them, and
+  the director passes them to the operator in the same way.
+- Neither verifies the person. Each verifies that the caller is the
+  director, by asking the Kubernetes API server whose token was presented,
+  and records the name the director passes, on the director's word.
 - A backup answers when it has started. Purging an app is the exception: the
   operator answers when the purge is over, and the director waits up to five
   minutes for that.
@@ -496,7 +502,8 @@ commit unless marked as a command.
 | Platform security and roles | Read and replace the list of exceptions to the cluster's default security rules, as git declares it; name and remove the holders of platform roles. |
 | Backup bundles | Upload or inspect a bundle; declare the storage outside the cluster an import may read from, or a tenant's own store its exports are written to, and fetch a bundle from either; restore (as part of an import). |
 | Records | Read the history of changes to a tenant or the cluster (from the commits). |
-| Commands relayed to the operator | Take a backup; delete a backup; send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
+| Commands relayed to the dispatcher | Take a backup; delete a backup. |
+| Commands relayed to the operator | Send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
 When an app is installed from a catalog, the director fetches the app's
@@ -652,8 +659,6 @@ two kinds of route ([internal/applifecycle](../../internal/applifecycle/)).
 
 | Command | What the operator does |
 | --- | --- |
-| `backup` | Creates the request for one backup of a tenant. |
-| `delete-backup` | Deletes one backup and its bundle. |
 | `bundles`, `bundles/uploads`, `bundles/inspect` | Takes an uploaded backup bundle, in one piece or in parts, or says what one contains. |
 | `bundle-fetches`, `bundle-sources/…/retire` | Fetches a bundle from storage outside the cluster that the cluster declared as a source; retires a source. |
 | `restore` | Creates the request to restore a tenant from a bundle. |
@@ -1132,9 +1137,19 @@ programs ask the kernel's OpenFGA, which the arbiter does not stand before.
   caller's to decide, from its own record. It deletes a finished run's pod
   ten minutes after it ended.
 
+- Carries out the director's acts, on a second listener: `backup` writes
+  the request for one backup of a tenant (`TenantExport`), `delete-backup`
+  removes it. The operator takes the backup from the request and deletes the
+  bundle when the request goes. The listener admits the director alone, by a
+  token of its ServiceAccount issued for the dispatcher, which the API server
+  is asked about. An act is here only if it follows nothing declared; what
+  brings the cluster in line with git stays the operator's (§4.2).
+
 **What it may do at the Kubernetes API.** Create, read and delete pods, and
 read their logs, in the namespaces for runs: the operator binds that role in
-each of them and nowhere else. It reads no profile, no grant and no Secret.
+each of them and nowhere else. Read a `Tenant`, and create and delete a
+`TenantExport`, which it cannot read. Ask whose a token is. It reads no
+profile, no grant and no Secret.
 
 **Who a run is for** is the caller's claim. The dispatcher records it and
 verifies nothing, which holds only because nobody reaches its listener but

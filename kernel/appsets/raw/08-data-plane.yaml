@@ -50,8 +50,8 @@ spec:
           - app: infra-mariadb
             path: kernel/services/infra-mariadb/manifests
             namespace: sys.mariadb.placeholder
-          - app: infra-redis
-            path: kernel/services/infra-redis/manifests
+          - app: infra-cache
+            path: kernel/services/infra-cache/manifests
             namespace: sys.cache.placeholder
           - app: infra-seaweedfs
             path: kernel/services/infra-seaweedfs/manifests

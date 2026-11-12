@@ -118,7 +118,7 @@ PG_OPENFGA_PW=$(derive_password "postgres" "openfga_user")
 # --- MariaDB ---
 MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 
-# --- Redis ---
+# --- Cache (vault path cache/redis) ---
 REDIS_PW=$(derive_password "redis" "password")
 
 # --- The object store's administrator ---
@@ -264,7 +264,7 @@ kv_put_once "database/mariadb" "$(cat <<EOF
 EOF
 )"
 
-# --- Redis ---
+# --- Cache (vault path cache/redis) ---
 kv_put_once "cache/redis" "$(cat <<EOF
 {
   "auth_password": "${REDIS_PW}"

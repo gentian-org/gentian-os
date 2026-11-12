@@ -374,6 +374,10 @@ bouncer:
 dispatcher:
   enabled: true
   replicas: 2
+  # The audience of the token the director presents at the dispatcher's
+  # listener for acts. The one place it is named: the dispatcher requires it
+  # in the API server's answer, and the director's token is projected for it.
+  audience: gentian-os-dispatcher
   resources:
     requests:
       cpu: 20m
@@ -415,7 +419,7 @@ usher:
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
-  redisHost: ""
+  cacheHost: ""
   # Empty → http://gentian-idp-keycloak-keycloakx-http.<authentication namespace>.svc.cluster.local:8080
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
@@ -586,7 +590,7 @@ openbao:
 database:
   clusterName: postgres
 
-# Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
+# Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/cache).
 # The postgres client major must be >= the CNPG server major (pg_dump refuses
 # a newer server); CNPG's operator default is 17.x today.
 # The mariadb client is the server's own image (charts/infra/mariadb): a newer
@@ -594,7 +598,8 @@ database:
 provisioners:
   postgres: "postgres:17-alpine"
   mariadb: "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
-  redis: "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
+  # The cache's client, redis-cli: the cache's own image (charts/infra/cache).
+  cache: "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
   # The image of the Jobs that move a tenant's objects and of the identity
   # Jobs (realm provisioning, export, import). Empty:
   # ghcr.io/gentian-org/storage-tools at the operator's own image tag

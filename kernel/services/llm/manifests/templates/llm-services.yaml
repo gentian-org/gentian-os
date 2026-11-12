@@ -300,21 +300,21 @@ spec:
         # invalidation are per worker, so limits are enforced once per worker
         # and spend can overshoot" — with replicas: 2 above, that is every
         # tenant budget enforced twice and spend able to run to double what the
-        # claim allows. Redis was deployed and its password generated from the
-        # beginning; only these three lines were missing.
+        # claim allows. These three lines point it at its cache, llm-cache
+        # (Valkey) below.
         #
         # litellm/_redis.py takes REDIS_URL, or REDIS_HOST and REDIS_PORT with
         # an optional REDIS_PASSWORD, and builds redis://<password>@host:port
         # from them.
         - name: REDIS_HOST
-          value: redis-llm.{{ .Values.servicesNamespace }}.svc.cluster.local
+          value: llm-cache.{{ .Values.servicesNamespace }}.svc.cluster.local
         - name: REDIS_PORT
           value: "6379"
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: llm-sensitive-values
-              key: litellm_redis_password
+              key: litellm_cache_password
         - name: SSL_CERT_FILE
           value: /trust/ca-bundle.pem
         - name: REQUESTS_CA_BUNDLE
@@ -346,21 +346,21 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis-llm
+  name: llm-cache
   namespace: {{ .Values.servicesNamespace }}
   labels:
-    app.kubernetes.io/name: redis-llm
+    app.kubernetes.io/name: llm-cache
     app.kubernetes.io/component: llm-cache
     gentianos.io/component: kernel-llm
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis-llm
+      app: llm-cache
   template:
     metadata:
       labels:
-        app: redis-llm
+        app: llm-cache
     spec:
       # The kernel's admission baseline (gentian-baseline): a seccomp profile
       # and no privilege escalation, or Kyverno refuses the Pods and the
@@ -369,7 +369,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-      - name: redis
+      - name: cache
         image: {{ .Values.cache.image }}
         securityContext:
           allowPrivilegeEscalation: false
@@ -379,25 +379,25 @@ spec:
         # valkey-server with arguments that start with a dash.
         #
         # Through env rather than inline, so the value is not in the manifest.
-        args: ["--requirepass", "$(REDIS_PASSWORD)"]
+        args: ["--requirepass", "$(CACHE_PASSWORD)"]
         env:
-        - name: REDIS_PASSWORD
+        - name: CACHE_PASSWORD
           valueFrom:
             secretKeyRef:
               name: llm-sensitive-values
-              key: litellm_redis_password
+              key: litellm_cache_password
         ports:
         - containerPort: 6379
-          name: redis
+          name: cache
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-llm
+  name: llm-cache
   namespace: {{ .Values.servicesNamespace }}
 spec:
   ports:
   - port: 6379
     targetPort: 6379
   selector:
-    app: redis-llm
+    app: llm-cache

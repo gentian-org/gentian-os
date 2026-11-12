@@ -87,8 +87,8 @@ One pod in `tenant-<t>-runs`, deleted ten minutes after it ended:
   `restricted` pod security standard, with the action's `resources` as both
   request and limit;
 - the ServiceAccount `run`, which holds no right and mounts no token;
-- the image pulled with the credentials of the repositories the tenant
-  declared, as an app's images are
+- the image pulled with the cluster's own credential and those of the
+  repositories the tenant declared, as an app's images are
   ([store-contract.md §2](../concepts/store-contract.md)): those of the whole
   tenant, or the one bound to the action's profile. The kubelet reads them;
   the pod does not;

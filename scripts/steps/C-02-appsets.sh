@@ -19,7 +19,7 @@ source "${SCRIPT_DIR}/scripts/steps/B-01-bootstrap-apps.sh"
 _v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "gentian-definitions-${s} tenant-postgres-${s} keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
 
 # The system-tier engines, as Crossplane names their Releases: the object
-# store always, MariaDB and the cache (the redis Release, Valkey) only where
+# store always, MariaDB and the cache (the cache Release, Valkey) only where
 # the Composition has created them -- it does so once a component declares
 # one, or at once for those systemServices.always names. A fresh cluster has
 # neither, and waiting for them would wait for nothing.
@@ -36,7 +36,7 @@ _v5_engine_releases() {
     local composed e out="seaweedfs"
     composed="$(kubectl get release.helm.crossplane.io \
         -o jsonpath='{range .items[*]}{.metadata.annotations.crossplane\.io/external-name}{"\n"}{end}' 2>/dev/null || true)"
-    for e in mariadb redis; do
+    for e in mariadb cache; do
         grep -qx "${e}" <<<"${composed}" && out="${out} ${e}"
     done
     echo "${out}"

@@ -489,8 +489,8 @@ func InventoryOf(tenant *gentianov1alpha1.Tenant, app string, profile *gentianov
 	if inv.Stores.S3 {
 		inv.Bucket = S3Bucket(tenant, app)
 	}
-	if inv.Stores.Redis {
-		inv.CacheUser = RedisACLUser(tenant.Name, app)
+	if inv.Stores.Cache {
+		inv.CacheUser = CacheACLUser(tenant.Name, app)
 	}
 	if DeclaresModelAccess(profile) {
 		inv.ModelKey = modelgateway.KeyAlias(tenant.Name, app)
@@ -787,7 +787,7 @@ func ObjectStorageDestroyJobName(tenantName, app string) string {
 }
 
 func CacheDestroyJobName(tenantName, app string) string {
-	return fmt.Sprintf("redis-acl-delete-%s-%s", tenantName, app)
+	return fmt.Sprintf("cache-acl-delete-%s-%s", tenantName, app)
 }
 
 // Which databases are an app's.
@@ -895,7 +895,7 @@ echo "object storage for %[1]s purged"
 
 // cacheDestroyScript removes the app's ACL user.
 //
-// valkey-cli exits 0 when the server answers with an error, so the exit code
+// The client exits 0 when the server answers with an error, so the exit code
 // says nothing. The script asks for the user list afterwards and passes only
 // if the list could be read -- it always names the default user -- and the
 // app's user is not in it.
@@ -905,7 +905,7 @@ echo "object storage for %[1]s purged"
 // app's.
 func cacheDestroyScript(user string) string {
 	return fmt.Sprintf(`set -eu
-cli() { valkey-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
+`+CacheCLI+`
 cli ACL DELUSER '%[1]s'
 users="$(cli ACL LIST)"
 case "${users}" in
@@ -983,15 +983,21 @@ func CacheDestroyJob(tenant *gentianov1alpha1.Tenant, app string, deadline Destr
 	return destroyJob(layout.System("cache"), CacheDestroyJobName(tenant.Name, app), tenant.Name, app, deadline,
 		corev1.Container{
 			Name:    "del-acl-user",
-			Image:   kernel.RedisProvisionerImage(),
-			Command: []string{"/bin/sh", "-c", cacheDestroyScript(RedisACLUser(tenant.Name, app))},
+			Image:   kernel.CacheProvisionerImage(),
+			Command: []string{"/bin/sh", "-c", cacheDestroyScript(CacheACLUser(tenant.Name, app))},
 			Env:     CacheAdminEnv(),
 		})
 }
 
-// RedisAdminSecret holds the shared cache's admin credential, in its
-// namespace.
-const RedisAdminSecret = "redis-admin"
+// CacheAdminSecret holds the shared cache's admin credential, in its
+// namespace (kernel/services/infra-cache).
+const CacheAdminSecret = "cache-admin"
+
+// CacheCLI is the shell function the cache Jobs talk to the shared cache
+// through, as its administrator (CacheAdminEnv). redis-cli is the client's
+// name in the Valkey image and the Redis image alike, so the provisioner
+// image alone chooses the engine.
+const CacheCLI = `cli() { redis-cli -h "$CACHE_HOST" -p "${CACHE_PORT:-6379}" -a "$CACHE_PASSWORD" --no-auth-warning "$@"; }`
 
 // destroyJob wraps one destroy script as a Job.
 //
@@ -1043,7 +1049,7 @@ func StoreDestroyJobs(tenant *gentianov1alpha1.Tenant, app string, stores Stores
 	if stores.S3 {
 		jobs[KindObjectStorage] = ObjectStorageDestroyJob(tenant, app, deadline)
 	}
-	if stores.Redis {
+	if stores.Cache {
 		jobs[KindCache] = CacheDestroyJob(tenant, app, deadline)
 	}
 	return jobs

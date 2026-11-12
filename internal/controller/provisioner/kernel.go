@@ -38,7 +38,7 @@ const (
 	CollectForDelete    AppCollectionMode = "delete"
 )
 
-// JobWaitRequirement drives ReconcileJobWaitRequirement for MariaDB/S3/Redis paths.
+// JobWaitRequirement drives ReconcileJobWaitRequirement for MariaDB/S3/cache paths.
 type JobWaitRequirement struct {
 	ConditionType string
 	EmptyReason   string
@@ -53,7 +53,7 @@ type JobWaitRequirement struct {
 // keeps the two the same.
 //
 // The servers themselves are composed by the charts under kernel/services,
-// which also write the address the operator reads for Redis and the object
+// which also write the address the operator reads for the cache and the object
 // store; the test beside this file holds those to these numbers.
 //
 // Each of those charts also carries the NetworkPolicy that says who may
@@ -63,7 +63,7 @@ type JobWaitRequirement struct {
 const (
 	PostgresPort      int32 = 5432
 	MariaDBPort       int32 = 3306
-	RedisPort         int32 = 6379
+	CachePort         int32 = 6379
 	ObjectStoragePort int32 = 9000
 	// ObjectStoreMasterGRPCPort and ObjectStoreFilerGRPCPort are the object
 	// store's administration: weed shell reaches the master and the filer

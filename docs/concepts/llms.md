@@ -10,7 +10,7 @@ This document details the architecture for integrating Large Language Model (LLM
 ## What runs
 
 *   **The model gateway** is LiteLLM (`litellm-proxy`), with its own PostgreSQL
-    (`litellm-db`) and Redis (`redis-llm`), in the namespace `system-llm`, which
+    (`litellm-db`) and its cache, Valkey (`llm-cache`), in the namespace `system-llm`, which
     exists only where the Cluster claim sets `spec.llm.enabled`
     (`kernel/services/llm/manifests`, delivered by the `gentian-llm`
     ApplicationSet). On a cluster without GPUs the same chart runs a mock
@@ -326,7 +326,7 @@ what holds the credential.
 
 The gateway's own egress is restricted too
 (`kernel/services/llm/manifests/templates/networkpolicy-egress.yaml`): DNS,
-its PostgreSQL, its Redis, the model servers, the edge's Envoy pods (where
+its PostgreSQL, its cache, the model servers, the edge's Envoy pods (where
 `id.<kernelDomain>` resolves inside the cluster, for the console's sign-in),
 and TCP 443 to public IPv4 addresses only while the claim lists a provider. A
 NetworkPolicy matches addresses and not names, so that rule admits every

@@ -1,0 +1,27 @@
+global:
+  storageClass: ""
+  imagePullSecrets: []
+
+# The engine. Any server that speaks the Redis protocol and ships
+# redis-server and redis-cli under those names: Valkey's image and Redis's
+# both do.
+image:
+  registry: docker.io
+  repository: valkey/valkey
+  tag: 8.1.11-alpine
+  digest: sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a
+  pullPolicy: IfNotPresent
+
+auth:
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+# The port apps are handed (provisioner.CachePort).
+port: 6379
+podAnnotations: {}
+podSecurityContext:
+  fsGroup: 1001
+containerSecurityContext: {}
+persistence:
+  size: 1Gi
+resources: {}

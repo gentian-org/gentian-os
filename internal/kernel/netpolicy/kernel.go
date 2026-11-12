@@ -105,9 +105,9 @@ func tcpPort(p int32) networkingv1.NetworkPolicyPort {
 //   - A database: the server of the engine the profile names, on that
 //     engine's port. PostgreSQL and MariaDB are two servers in two
 //     namespaces, and naming one opens nothing of the other.
-//   - A cache: Redis is shared, in the system tier. Memcached is the
-//     tenant's own, in the tenant's namespace, and is opened by the
-//     tenant-cache policies, not here.
+//   - A cache: the redis engine is the shared cache of the system tier.
+//     Memcached is the tenant's own, in the tenant's namespace, and is
+//     opened by the tenant-cache policies, not here.
 //   - Object storage: the object store, when the profile asks for a bucket.
 //     A storage requirement that asks only for files is fulfilled by another
 //     app and opens nothing here.
@@ -160,7 +160,7 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 			add(layout.System("mariadb"), provisioner.MariaDBPort)
 		}
 		if provisioner.CacheEngineOf(profile) == gentianov1alpha1.CacheEngineRedis {
-			add(layout.System("cache"), provisioner.RedisPort)
+			add(layout.System("cache"), provisioner.CachePort)
 		}
 		if provisioner.MatchS3Profile(profile) {
 			add(layout.System("s3"), provisioner.ObjectStoragePort)

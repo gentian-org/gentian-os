@@ -9,12 +9,19 @@
   own command, so that the table the operator writes and the program that
   reads it are one build.
 
-  Its rights at the Kubernetes API are the ClusterRole below, which the
-  operator binds in each tenant's namespace for runs and nowhere else: pods
-  and their logs. It reads no profile, no grant and no Secret. Who may start
-  what is the operator's table (ConfigMap dispatcher-runs), mounted as a
-  file. No Gateway routes to it, and its listener refuses every request
-  without a key that table names.
+  Its rights at the Kubernetes API for runs are the ClusterRole
+  gentian-dispatcher-runs, which the operator binds in each tenant's
+  namespace for runs and nowhere else: pods and their logs. It reads no
+  profile, no grant and no Secret. Who may start what is the operator's table
+  (ConfigMap dispatcher-runs), mounted as a file. No Gateway routes to it,
+  and its listener refuses every request without a key that table names.
+
+  A second listener, on a port of its own, takes the acts the director asks
+  for: what is done once and follows nothing declared. It admits the
+  director alone, by a token of the director's ServiceAccount issued for
+  dispatcher.audience, which the API server is asked about. For those acts
+  it holds gentian-dispatcher-acts: it reads a Tenant, and creates and
+  deletes the record a backup is taken from. The operator takes the backup.
 */ -}}
 {{- if .Values.dispatcher.enabled }}
 {{- $ns := .Release.Namespace }}
@@ -44,6 +51,43 @@ rules:
     resources: ["pods/log"]
     verbs: ["get"]
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gentian-dispatcher-acts
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+rules:
+  # Whose a token presented at the listener for acts is.
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  # Which namespace a tenant's records are kept in.
+  - apiGroups: ["gentianos.io"]
+    resources: ["tenants"]
+    verbs: ["get"]
+  # The record a backup is taken from. Written and removed, never read.
+  - apiGroups: ["gentianos.io"]
+    resources: ["tenantexports"]
+    verbs: ["create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gentian-dispatcher-acts
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dispatcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gentian-dispatcher-acts
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gentian-os.dispatcherServiceAccountName" . }}
+    namespace: {{ $ns }}
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,6 +104,9 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    - name: acts
+      port: 8081
+      targetPort: acts
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -103,9 +150,26 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            - name: acts
+              containerPort: 8081
           env:
             - name: DISPATCHER_LISTEN
               value: ":8080"
+            # The listener for the director's acts, and who it admits: the
+            # director's ServiceAccount of this namespace, by a token issued
+            # for this audience.
+            - name: DISPATCHER_ACTS_LISTEN
+              value: ":8081"
+            - name: DISPATCHER_AUDIENCE
+              value: {{ required "dispatcher.audience must be set" .Values.dispatcher.audience | quote }}
+            {{- if .Values.director.enabled }}
+            - name: DISPATCHER_DIRECTOR_SERVICE_ACCOUNT
+              value: {{ include "gentian-os.directorServiceAccountName" . | quote }}
+            {{- end }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: DISPATCHER_TABLE
               value: /etc/dispatcher/runs.json
             # The image a run's pod takes the run program from: this one, so

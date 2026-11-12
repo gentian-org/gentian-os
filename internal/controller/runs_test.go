@@ -253,23 +253,51 @@ func TestARunIsPulledWithItsTenantsRepositories(t *testing.T) {
 		repositoryClaimFixture(repositoryClaimNamespace, "scan-only", bound),
 		repositoryClaimFixture(repositoryClaimNamespace, "theirs", ociRepositorySpec("other", "https://registry.example")),
 		repositoryClaimFixture(repositoryClaimNamespace, "cluster", ociRepositorySpec("", "https://registry.example")))
+	reconcileRuns := func() *dispatcher.Table {
+		t.Helper()
+		if _, err := r.Reconcile(ctx, runsRequest); err != nil {
+			t.Fatal(err)
+		}
+		return runsTable(t, c)
+	}
 	if err := (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).ensureRuns(ctx, flow, "acme", runsProfile("flow")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Reconcile(ctx, runsRequest); err != nil {
+	check := func(table *dispatcher.Table, first string) {
+		t.Helper()
+		caller := &table.Callers[0]
+		for name, want := range map[string]string{
+			"ocr":    "repository-vendor-pull",
+			"runner": "repository-vendor-pull",
+			"scan":   "repository-scan-only-pull",
+		} {
+			runnable, _, found := table.Runnable(caller, name)
+			if !found || strings.Join(runnable.PullSecrets, ",") != first+want {
+				t.Errorf("%s is pulled with %v, want %s", name, runnable.PullSecrets, first+want)
+			}
+		}
+	}
+	check(reconcileRuns(), "")
+	copied := types.NamespacedName{Name: clusterPullSecretName, Namespace: "tenant-acme-runs"}
+	if err := c.Get(ctx, copied, &corev1.Secret{}); !errors.IsNotFound(err) {
+		t.Fatalf("a cluster without a pull credential has one in the namespace for runs: %v", err)
+	}
+
+	// A cluster that pulls its own images with a credential: the namespace
+	// for runs holds a copy, and every run names it first.
+	source := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterPullSecretName, Namespace: servicesNamespace},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{}}`)},
+	}
+	if err := c.Create(ctx, source); err != nil {
 		t.Fatal(err)
 	}
-	table := runsTable(t, c)
-	caller := &table.Callers[0]
-	for name, want := range map[string]string{
-		"ocr":    "repository-vendor-pull",
-		"runner": "repository-vendor-pull",
-		"scan":   "repository-scan-only-pull",
-	} {
-		runnable, _, found := table.Runnable(caller, name)
-		if !found || strings.Join(runnable.PullSecrets, ",") != want {
-			t.Errorf("%s is pulled with %v, want %s", name, runnable.PullSecrets, want)
-		}
+	check(reconcileRuns(), clusterPullSecretName+",")
+	got := &corev1.Secret{}
+	if err := c.Get(ctx, copied, got); err != nil || got.Type != corev1.SecretTypeDockerConfigJson ||
+		string(got.Data[corev1.DockerConfigJsonKey]) != `{"auths":{}}` {
+		t.Fatalf("the copy in the namespace for runs: %v, %+v", err, got)
 	}
 }
 

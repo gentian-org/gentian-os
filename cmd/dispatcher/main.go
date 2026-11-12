@@ -16,8 +16,9 @@ SPDX-License-Identifier: MPL-2.0
 // dispatcher starts one pod for it in the tenant's namespace for runs. Who
 // may start what is the operator's table (dispatcher-runs), which this
 // program reads and never writes. Its rights at the Kubernetes API are pods
-// in those namespaces and nothing else: it reads no profile, no grant and no
-// Secret, and a run's data never passes through it.
+// in those namespaces and, for the director's acts on its second listener
+// (internal/dispatcher/acts.go), the record of a backup: it reads no
+// profile, no grant and no Secret, and a run's data never passes through it.
 package main
 
 import (
@@ -30,11 +31,15 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/envvar"
+	"github.com/gentian-org/gentian-os/internal/tokenreview"
 )
 
 func main() {
@@ -73,9 +78,36 @@ func run(log *slog.Logger) error {
 		Addr: envvar.Or("DISPATCHER_LISTEN", ":8080"), Handler: srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second,
 	}
-	done := make(chan error, 1)
+	// The director's acts, on a listener of their own. Its caller is known
+	// by a token of the director's ServiceAccount issued for this audience;
+	// without the two settings the listener refuses every request.
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		return err
+	}
+	records, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	director := ""
+	if namespace, account := os.Getenv("POD_NAMESPACE"), os.Getenv("DISPATCHER_DIRECTOR_SERVICE_ACCOUNT"); namespace != "" && account != "" {
+		director = "system:serviceaccount:" + namespace + ":" + account
+	}
+	review := tokenreview.New(kube.AuthenticationV1().TokenReviews(), os.Getenv("DISPATCHER_AUDIENCE"))
+	if director == "" || !review.Ready() {
+		log.Warn("the listener for the director's acts refuses every request: no audience or no director configured",
+			"settings", "DISPATCHER_AUDIENCE, DISPATCHER_DIRECTOR_SERVICE_ACCOUNT, POD_NAMESPACE")
+	}
+	acts := &http.Server{
+		Addr:              envvar.Or("DISPATCHER_ACTS_LISTEN", ":8081"),
+		Handler:           dispatcher.NewActs(dispatcher.ClusterExports{Client: records}, review, director, log).Handler(),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second,
+	}
+
+	done := make(chan error, 2)
 	go func() { done <- api.ListenAndServe() }()
-	log.Info("dispatcher listening", "addr", api.Addr)
+	go func() { done <- acts.ListenAndServe() }()
+	log.Info("dispatcher listening", "addr", api.Addr, "acts", acts.Addr)
 	select {
 	case err := <-done:
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -85,5 +117,5 @@ func run(log *slog.Logger) error {
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return api.Shutdown(shutdown)
+	return errors.Join(api.Shutdown(shutdown), acts.Shutdown(shutdown))
 }

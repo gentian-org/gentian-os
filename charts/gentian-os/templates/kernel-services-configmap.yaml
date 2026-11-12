@@ -13,13 +13,12 @@
 */ -}}
 {{- $infraNS := .Values.infraNamespace | default "kernel-authentication" -}}
 {{- /* The composition names this release gentian-mariadb-<stage>, same as
-       gentian-postgresql-<stage>.
-       The default here used to omit the "gentian-" prefix, so MYSQL_HOST pointed at
-       a Service that does not exist — silently, since nothing resolves it until an
-       app tries to connect. redis-<stage>-master below carries no
-       prefix, which is why the inconsistency was easy to miss. */ -}}
+       gentian-postgresql-<stage>. */ -}}
 {{- $mysqlHost := $ks.mysqlHost | default (printf "gentian-mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
-{{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
+{{- /* The shared cache's Service cache in its system namespace
+       (kernel/services/infra-cache), the address the operator also records
+       in the cache-admin Secret. */ -}}
+{{- $cacheHost := $ks.cacheHost | default "cache.system-cache.svc.cluster.local" -}}
 {{- /* The object store's Service s3 in its system namespace
        (kernel/services/infra-seaweedfs), the address the operator also
        records in the s3-admin Secret. */ -}}
@@ -30,7 +29,7 @@
        to nothing. The operator's own fallback, mailSharedPostfixHost() in the
        mail reconciler, names the same Service as this line. */ -}}
 {{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage (.Values.mailNamespace | default "system-mail")) -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $keycloakInternal }}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.cacheHost $ks.smtpHost $keycloakInternal }}
 {{- /*
   A pod's configMapKeyRef reads its own namespace only. keycloak-idp reads
   this ConfigMap in the authentication namespace, so it is rendered there.
@@ -62,8 +61,8 @@ data:
   {{- with $mysqlHost }}
   MYSQL_HOST: {{ . | quote }}
   {{- end }}
-  {{- with $redisHost }}
-  REDIS_HOST: {{ . | quote }}
+  {{- with $cacheHost }}
+  CACHE_HOST: {{ . | quote }}
   {{- end }}
   {{- /* Cluster-supplied passthrough entries. Kept last and rendered verbatim so
          a cluster can publish a value an app profile needs without gentian-os

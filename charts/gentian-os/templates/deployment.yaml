@@ -340,8 +340,8 @@ spec:
               value: {{ .Values.provisioners.postgres | quote }}
             - name: MARIADB_PROVISIONER_IMAGE
               value: {{ .Values.provisioners.mariadb | quote }}
-            - name: REDIS_PROVISIONER_IMAGE
-              value: {{ .Values.provisioners.redis | quote }}
+            - name: CACHE_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.cache | quote }}
             # The tools the Jobs that move a tenant's objects and talk to the
             # identity provider run, from the same CI run as this operator:
             # its own tag, unless set.

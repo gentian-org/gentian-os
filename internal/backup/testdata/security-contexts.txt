@@ -1,4 +1,4 @@
-cache destroy: d7a6ebda1780ee72
+cache destroy: fba887a81565408f
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
 hardened, already set: 6b4d1a5c1f7e484f
   [0].securityContext {"allowPrivilegeEscalation":false,"privileged":false,"seccompProfile":{"type":"RuntimeDefault"}}

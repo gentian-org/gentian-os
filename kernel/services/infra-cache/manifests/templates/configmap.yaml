@@ -1,4 +1,4 @@
-# Shared kernel Redis — plain values ConfigMaps
+# The shared kernel cache — plain values ConfigMaps
 #
 # Merged by the InfraData Crossplane composition (provider-helm valuesFrom).
 # Source of truth: kernel/values/env/{env}.yaml and this template.
@@ -6,7 +6,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: redis-env-values
+  name: cache-env-values
   namespace: {{ .Values.namespace | default "system-cache" }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
@@ -30,27 +30,26 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: redis-base-values
+  name: cache-base-values
   namespace: {{ .Values.namespace | default "system-cache" }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   values.yaml: |
-    master:
-      podAnnotations:
-        reloader.stakater.com/auto: "true"
-      containerSecurityContext:
-        privileged: false
-        readOnlyRootFilesystem: true
-        runAsUser: 1001
-        runAsGroup: 1001
-        runAsNonRoot: true
-        allowPrivilegeEscalation: false
-        seccompProfile:
-          type: RuntimeDefault
-        capabilities:
-          drop:
-            - ALL
+    podAnnotations:
+      reloader.stakater.com/auto: "true"
+    containerSecurityContext:
+      privileged: false
+      readOnlyRootFilesystem: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      seccompProfile:
+        type: RuntimeDefault
+      capabilities:
+        drop:
+          - ALL
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -58,22 +57,21 @@ metadata:
   {{- /* The cluster's own values, stage-less: a cluster has one stage
        (kernel.md §6.2), and the Cluster composition names this ConfigMap
        in the Release's valuesFrom without knowing it. */}}
-  name: redis-cluster-values
+  name: cache-cluster-values
   namespace: {{ .Values.namespace | default "system-cache" }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   values.yaml: |
     auth:
-      existingSecret: redis-credentials
-      existingSecretPasswordKey: redis-password
-    master:
-      persistence:
-        size: 1Gi
-      resources:
-        limits:
-          cpu: "4"
-          memory: 256Mi
-        requests:
-          cpu: 100m
-          memory: 32Mi
+      existingSecret: cache-credentials
+      existingSecretPasswordKey: password
+    persistence:
+      size: 1Gi
+    resources:
+      limits:
+        cpu: "4"
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 32Mi

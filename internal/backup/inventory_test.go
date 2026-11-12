@@ -100,12 +100,12 @@ func TestBackupBucketCannotCollideWithAnAppBucket(t *testing.T) {
 
 func TestProfileStoresReadsOnlyKernelRequirements(t *testing.T) {
 	none := ProfileStores(nil)
-	if none.Database != "" || none.S3 || none.Redis {
+	if none.Database != "" || none.S3 || none.Cache {
 		t.Errorf("nil profile yielded stores %+v, want zero", none)
 	}
 
 	bare := ProfileStores(&gentianov1alpha1.ComponentProfile{})
-	if bare.Database != "" || bare.S3 || bare.Redis {
+	if bare.Database != "" || bare.S3 || bare.Cache {
 		t.Errorf("profile without kernelRequirements yielded %+v, want zero", bare)
 	}
 
@@ -128,8 +128,8 @@ func TestProfileStoresReadsOnlyKernelRequirements(t *testing.T) {
 	if full.Database != gentianov1alpha1.DatabaseEnginePostgreSQL {
 		t.Errorf("Database = %q", full.Database)
 	}
-	if !full.S3 || !full.Redis {
-		t.Errorf("stores = %+v, want S3 and Redis set", full)
+	if !full.S3 || !full.Cache {
+		t.Errorf("stores = %+v, want S3 and Cache set", full)
 	}
 }
 

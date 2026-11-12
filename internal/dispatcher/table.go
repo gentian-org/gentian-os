@@ -29,7 +29,8 @@ const (
 	TableConfigMap = "dispatcher-runs"
 	TableKey       = "runs.json"
 
-	// Port is the dispatcher's one listener: the API components call.
+	// Port is the listener components call. The director's acts are on
+	// ActsPort (acts.go).
 	Port = int32(8080)
 
 	// ServiceAccount is the ServiceAccount a run's pod runs under, in the
