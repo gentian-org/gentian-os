@@ -501,7 +501,13 @@ fetch cannot follow the redirect, and a favicon would start a login of its own
 beside the person's. A login the filter starts stays valid for 30 minutes
 (`csrfTokenTTL`), Keycloak's own login timeout, so a first sign-in that sets a
 password or enrolls a second factor does not come back to a filter that has
-dropped it. The one path of an app that takes no
+dropped it. A callback the filter refuses anyway — a login page left open
+longer than that — gets a page instead of the filter's bare "OAuth flow
+failed.": it starts a new sign-in once, back to the page the person asked
+for on the same host, and offers a link if that sign-in fails again within
+two minutes (`responseOverride` on the session routes' BackendTrafficPolicy,
+for Envoy-generated `401`s in `text/plain` only; the bouncer's refusals keep
+their own page). The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
