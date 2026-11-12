@@ -311,7 +311,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Jo
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
 		corev1.EnvVar{Name: "BROWSER_SECURITY_HEADERS", Value: authz.BrowserSecurityHeadersJSON()})
-	return newKernelProvisioningJob(realmJobName(tenant.Name), identityNamespace, tenant, "", c)
+	return newKeycloakJob(realmJobName(tenant.Name), tenant, "", c)
 }
 
 // makeClientJob creates a Job that makes or updates an app's OIDC client in
@@ -329,12 +329,12 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 	if withSecret {
 		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
-	return newKernelProvisioningJob(jobName, identityNamespace, tenant, appName, container)
+	return newKeycloakJob(jobName, tenant, appName, container)
 }
 
 func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, entityID, acsURL string) *batchv1.Job {
 	container := keycloakContainer("provision-saml-client", buildSAMLClientScript(realmName, entityID, acsURL))
-	return newKernelProvisioningJob(clientJobName(tenant.Name, appName), identityNamespace, tenant, appName, container)
+	return newKeycloakJob(clientJobName(tenant.Name, appName), tenant, appName, container)
 }
 
 // makeAdminJob builds the tenant-admin provisioning Job.
@@ -358,23 +358,30 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *
 		corev1.EnvVar{Name: "TENANT_SIGN_UP", Value: strconv.FormatBool(tenant.SignUpEnabled())},
 		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
-	return newKernelProvisioningJob(adminJobName(tenant.Name), identityNamespace, tenant, "", container)
+	return newKeycloakJob(adminJobName(tenant.Name), tenant, "", container)
 }
 
 func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	return newKernelProvisioningJob(realmDisableJobName(tenant.Name), identityNamespace, tenant, "",
+	return newKeycloakJob(realmDisableJobName(tenant.Name), tenant, "",
 		keycloakContainer("disable-realm", buildRealmDisableScript(realmName)))
 }
 
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
-	return newKernelProvisioningJob(realmDeleteJobName(tenant.Name), identityNamespace, tenant, "",
+	return newKeycloakJob(realmDeleteJobName(tenant.Name), tenant, "",
 		keycloakContainer("delete-realm", buildRealmDeleteScript(realmName, kernelRealm)))
+}
+
+// newKeycloakJob is a tenant's provisioning Job that runs a keycloakContainer:
+// beside Keycloak, as keycloak.ProvisionerAccount.
+func newKeycloakJob(name string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
+	return keycloak.AsProvisioner(newKernelProvisioningJob(name, identityNamespace, tenant, appName, container))
 }
 
 // keycloakContainer returns a Container spec that runs a shell script in the
 // platform's storage tools image, which carries curl and jq, as that image's
 // unprivileged user under the restricted security context. Credentials are
-// injected from the well-known keycloak-admin Secret in the kernel namespace.
+// injected from keycloak.ProvisionerSecret, the Jobs' own service account,
+// beside Keycloak. A Job that runs one is made by newKeycloakJob.
 // A script writes only below /tmp (mktemp), which the image keeps writable by
 // anyone.
 func keycloakContainer(name, script string) corev1.Container {
@@ -388,7 +395,7 @@ func keycloakContainer(name, script string) corev1.Container {
 				Name: "KEYCLOAK_URL",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: keycloakAdminSecret},
+						LocalObjectReference: corev1.LocalObjectReference{Name: keycloak.ProvisionerSecret},
 						Key:                  "url",
 					},
 				},
@@ -397,7 +404,7 @@ func keycloakContainer(name, script string) corev1.Container {
 				Name: "KEYCLOAK_CLIENT_SECRET",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: keycloakAdminSecret},
+						LocalObjectReference: corev1.LocalObjectReference{Name: keycloak.ProvisionerSecret},
 						Key:                  "client_secret",
 					},
 				},
@@ -406,7 +413,7 @@ func keycloakContainer(name, script string) corev1.Container {
 				Name: "KEYCLOAK_CLIENT_ID",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{Name: keycloakAdminSecret},
+						LocalObjectReference: corev1.LocalObjectReference{Name: keycloak.ProvisionerSecret},
 						Key:                  "client_id",
 					},
 				},

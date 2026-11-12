@@ -355,6 +355,14 @@ credential like every other kernel one: with `secretMode: derived` it is
 computed from the master password and the cluster's salt, and with
 `secretMode: random` it is drawn once and the vault holds the only copy.
 
+Machines sign in to the `master` realm as service accounts of their own:
+`gentian-operator` (the operator), `keycloak-provisioner` (the Jobs that
+configure realms) and `provider-keycloak` (Crossplane's provider). Only the
+installer makes and repairs them, as the bootstrap administrator: each holds
+the `admin` role, mapped into its token's scope rather than through "Full
+scope allowed", and its secret is kept beside that password, in the same
+vault path and under the same `secretMode`.
+
 **Recovery** is a new link, never a recovered password:
 
 - The platform admin: `./install.sh --activate-admin`, run on a host with
