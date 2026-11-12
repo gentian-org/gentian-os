@@ -1123,13 +1123,15 @@ func keycloakRealmBackendTrafficPolicySpec(clientAddressHeader string) map[strin
 
 // keycloakAdminBackendTrafficPolicySpec is the policy of the identity
 // provider's administration route: the proxy's, and the allowance of a route
-// behind a session (edge_rate_limit.go). The route is on the perimeter
-// Gateway, so it does not inherit the authenticated Gateway's.
+// behind a session (edge_rate_limit.go), and its sign-in restart
+// (edge_sign_in_restart.go). The route is on the perimeter Gateway, so it
+// does not inherit the authenticated Gateway's.
 func keycloakAdminBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
 	spec := keycloakProxyBackendTrafficPolicySpec()
 	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
 		spec["rateLimit"] = limit
 	}
+	spec["responseOverride"] = edgeSignInRestart()
 	return spec
 }
 
