@@ -54,7 +54,7 @@ func main() {
 
 func run(args []string, env func(string) string, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "run: "+format+"\n", a...)
+		_, _ = fmt.Fprintf(stderr, "run: "+format+"\n", a...)
 		return 70
 	}
 	if len(args) == 2 && args[0] == "--install" {
@@ -125,7 +125,7 @@ func run(args []string, env func(string) string, stderr io.Writer) int {
 		code = exit.ExitCode()
 	}
 	if outputs.over {
-		fmt.Fprintf(stderr, "run: the command wrote more than %d bytes of outputs; the rest is dropped\n", maxOutputs)
+		_, _ = fmt.Fprintf(stderr, "run: the command wrote more than %d bytes of outputs; the rest is dropped\n", maxOutputs)
 		if code == 0 {
 			code = 70
 		}
