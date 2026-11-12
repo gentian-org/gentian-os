@@ -60,6 +60,7 @@ func TestATableThatIsNotOneIsRefused(t *testing.T) {
 		"an action named twice":              func(t *Table) { t.Tenants[0].Actions = append(t.Tenants[0].Actions, step("ocr")) },
 		"an own run at a tag":                func(t *Table) { t.Callers[0].Own[0].Digest = "" },
 		"a tenant named twice":               func(t *Table) { t.Tenants = append(t.Tenants, t.Tenants[0]) },
+		"a pull Secret that is not a name":   func(t *Table) { t.Tenants[0].Actions[0].PullSecrets = []string{"../other"} },
 	} {
 		changed := table()
 		change(&changed)

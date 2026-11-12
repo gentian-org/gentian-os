@@ -233,6 +233,26 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		return out[tenant.Name]
 	}
 
+	// The Secrets a run's image is pulled with, by name: those of the
+	// repositories the tenant declared that the profile may be told about,
+	// as for the pods of an app (resolvePullSecrets).
+	declared := map[string][]pullRepository{}
+	pulledWith := func(tenant string, profile *gentianov1alpha1.ComponentProfile) ([]string, error) {
+		repos, ok := declared[tenant]
+		if !ok {
+			var err error
+			if repos, err = tenantPullRepositories(ctx, r.Client, tenant); err != nil {
+				return nil, err
+			}
+			declared[tenant] = repos
+		}
+		var names []string
+		for _, repo := range repositoriesOf(profile, repos) {
+			names = append(names, repo.secretName())
+		}
+		return names, nil
+	}
+
 	keys, err := componentKeys(ctx, r.Client, runsKeys, wantsRuns)
 	if err != nil {
 		return nil, err
@@ -254,10 +274,16 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		if caller.entry.Concurrency == 0 {
 			caller.entry.Concurrency = 4
 		}
+		pull, err := pulledWith(k.Tenant, k.profile)
+		if err != nil {
+			return nil, err
+		}
 		for _, own := range requirement.Own {
-			caller.entry.Own = append(caller.entry.Own, runnableOf(
+			runnable := runnableOf(
 				own.Name, k.profile.Spec.Version, own.Image, pinned(k.profile, own.Image),
-				own.Command, own.DeadlineSeconds, own.Resources))
+				own.Command, own.DeadlineSeconds, own.Resources)
+			runnable.PullSecrets = pull
+			caller.entry.Own = append(caller.entry.Own, runnable)
 		}
 		if caller.port, err = r.callbackPort(ctx, caller.entry.Callback); err != nil {
 			return nil, err
@@ -294,11 +320,12 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 			continue
 		}
 		image := profile.Spec.Package.Images[0]
-		of(holder).actions = append(of(holder).actions, installedAction{
-			comp: comp, profile: profile,
-			runnable: runnableOf(comp.Name, profile.Spec.Version, image.Repository, image.Digest,
-				profile.Spec.Action.Command, profile.Spec.Action.DeadlineSeconds, profile.Spec.Action.Resources),
-		})
+		runnable := runnableOf(comp.Name, profile.Spec.Version, image.Repository, image.Digest,
+			profile.Spec.Action.Command, profile.Spec.Action.DeadlineSeconds, profile.Spec.Action.Resources)
+		if runnable.PullSecrets, err = pulledWith(holder.Name, profile); err != nil {
+			return nil, err
+		}
+		of(holder).actions = append(of(holder).actions, installedAction{comp: comp, profile: profile, runnable: runnable})
 	}
 	for _, runs := range out {
 		sort.Slice(runs.actions, func(i, j int) bool { return runs.actions[i].runnable.Name < runs.actions[j].runnable.Name })

@@ -113,6 +113,10 @@ func Pod(tenant *Tenant, caller *Caller, runnable Runnable, own bool, start Star
 		resources.Requests, resources.Limits = list, list
 	}
 	program := corev1.VolumeMount{Name: "run-program", MountPath: ProgramVolume}
+	var pull []corev1.LocalObjectReference
+	for _, secret := range runnable.PullSecrets {
+		pull = append(pull, corev1.LocalObjectReference{Name: secret})
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: PodName(hash, start.Attempt), Namespace: tenant.Namespace, Labels: labels, Annotations: annotations,
@@ -123,6 +127,8 @@ func Pod(tenant *Tenant, caller *Caller, runnable Runnable, own bool, start Star
 			ServiceAccountName:           ServiceAccount,
 			AutomountServiceAccountToken: &no,
 			EnableServiceLinks:           &no,
+			// Read by the kubelet that pulls the images, never by the pod.
+			ImagePullSecrets: pull,
 			SecurityContext: &corev1.PodSecurityContext{
 				// One user without rights for every run, whatever the
 				// image would have run as.
