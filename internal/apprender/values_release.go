@@ -74,13 +74,10 @@ func valuesPodLabelsPatch(app, tenant string) string {
 	return b.String()
 }
 
-// releasePatch is what the release's post-renderer applies: the keep rule,
-// and for a chart the platform does not place the label rule. A placed
-// chart's pods are selected by their release.
+// releasePatch is what the release's post-renderer applies: the keep rule
+// and the label rule, for every chart. A chart the platform places is told
+// nothing of the labels in its values; its pods carry them all the same.
 func (r *valuesRender) releasePatch() string {
-	if r.in.Placed {
-		return valuesKeepPatch
-	}
 	return valuesKeepPatch + valuesPodLabelsPatch(r.in.App, r.tenant)
 }
 

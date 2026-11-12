@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -57,16 +58,14 @@ func TestTheLabelRuleNamesTheAppAndTheTenantOnEveryPodTemplate(t *testing.T) {
 	}
 }
 
-// A chart the platform places keeps the keep rule alone: its pods are
-// selected by their release.
-func TestAPlacedChartHasNoLabelRule(t *testing.T) {
-	placed := &valuesRender{in: &Input{App: "admin-console", Placed: true}, tenant: "acme"}
-	if got := placed.releasePatch(); got != valuesKeepPatch {
-		t.Errorf("a placed chart's patch:\n%s", got)
-	}
-	installed := &valuesRender{in: &Input{App: "wiki"}, tenant: "acme"}
-	if got := installed.releasePatch(); !strings.HasPrefix(got, valuesKeepPatch) || !strings.Contains(got, `gentianos.io/app: "wiki"`) {
-		t.Errorf("an installed chart's patch:\n%s", got)
+// Every release carries both rules, a placed chart's too: its values say
+// nothing of the labels, and its pods carry them.
+func TestEveryReleaseCarriesTheKeepRuleAndTheLabelRule(t *testing.T) {
+	for _, in := range []*Input{{App: "admin-console", Placed: true}, {App: "wiki"}} {
+		got := (&valuesRender{in: in, tenant: "acme"}).releasePatch()
+		if !strings.HasPrefix(got, valuesKeepPatch) || !strings.Contains(got, fmt.Sprintf("gentianos.io/app: %q", in.App)) {
+			t.Errorf("the patch of %s:\n%s", in.App, got)
+		}
 	}
 }
 
