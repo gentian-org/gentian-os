@@ -374,6 +374,10 @@ bouncer:
 dispatcher:
   enabled: true
   replicas: 2
+  # The audience of the token the director presents at the dispatcher's
+  # listener for acts. The one place it is named: the dispatcher requires it
+  # in the API server's answer, and the director's token is projected for it.
+  audience: gentian-os-dispatcher
   resources:
     requests:
       cpu: 20m

@@ -177,6 +177,10 @@ func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts 
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Lifecycle: lc,
 	}
+	// The stand-in for the operator answers the dispatcher's acts as well.
+	if lc != nil {
+		cfg.Acts = lc
+	}
 	for _, opt := range opts {
 		opt(&cfg)
 	}

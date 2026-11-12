@@ -128,6 +128,17 @@ func (s *Server) lifecycleError(w http.ResponseWriter, r *http.Request, err erro
 	s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
 
+// actsError answers a call the dispatcher did not answer.
+func (s *Server) actsError(w http.ResponseWriter, r *http.Request, err error) {
+	var upstream *lifecycle.UpstreamError
+	if errors.As(err, &upstream) {
+		s.fail(w, r, upstream.Status, upstream.Message)
+		return
+	}
+	s.cfg.Log.ErrorContext(r.Context(), "dispatcher unreachable", "request_id", guard.ID(r.Context()), "error", err.Error())
+	s.fail(w, r, http.StatusBadGateway, "the dispatcher did not answer")
+}
+
 func backupsPath(r *http.Request, suffix string) string {
 	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + suffix
 }
@@ -185,16 +196,20 @@ func (s *Server) setClusterBackupPolicy(w http.ResponseWriter, r *http.Request, 
 	s.written(w, r, res, err)
 }
 
-// startBackup asks the cluster to take one now.
+// startBackup asks the dispatcher to have one taken now.
 func (s *Server) startBackup(w http.ResponseWriter, r *http.Request, c call) {
 	var body map[string]any
 	if err := decode(r, &body); err != nil {
 		body = map[string]any{}
 	}
-	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+	if s.cfg.Acts == nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "this cluster runs no dispatcher, which takes backups on request")
+		return
+	}
+	status, answer, err := s.cfg.Acts.Do(r.Context(),
 		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/backup", c.meta.ActorName(), body)
 	if err != nil {
-		s.lifecycleError(w, r, err)
+		s.actsError(w, r, err)
 		return
 	}
 	s.started(w, r, status, answer)
@@ -210,11 +225,15 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<backup>"}`)
 		return
 	}
-	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+	if s.cfg.Acts == nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "this cluster runs no dispatcher, which deletes backups on request")
+		return
+	}
+	status, answer, err := s.cfg.Acts.Do(r.Context(),
 		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/delete-backup",
 		c.meta.ActorName(), map[string]string{"name": body.Name})
 	if err != nil {
-		s.lifecycleError(w, r, err)
+		s.actsError(w, r, err)
 		return
 	}
 	s.started(w, r, status, answer)
