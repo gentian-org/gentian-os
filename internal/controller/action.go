@@ -27,6 +27,6 @@ func actionInstalled(profile *gentianov1alpha1.ComponentProfile) string {
 		return "action installed; its package does not name exactly one image, so nothing can run it"
 	}
 	image := profile.Spec.Package.Images[0]
-	return fmt.Sprintf("action %s@%s installed; nothing is deployed for an action",
+	return fmt.Sprintf("action %s@%s installed; nothing is deployed, and a run of it is started through the dispatcher",
 		image.Repository, image.Digest)
 }

@@ -220,6 +220,11 @@ func TenantQuotasOf(quotas map[string]string) *gentianov1alpha1.TenantQuotas {
 	if n, err := strconv.ParseInt(quotas["maxPods"], 10, 32); err == nil && n > 0 {
 		out.MaxPods = int32(n)
 	}
+	out.RunsCPU = parse("runsCpu")
+	out.RunsMemory = parse("runsMemory")
+	if n, err := strconv.ParseInt(quotas["runsMaxPods"], 10, 32); err == nil && n > 0 {
+		out.RunsMaxPods = int32(n)
+	}
 	return out
 }
 
@@ -237,6 +242,11 @@ func quotasOf(q *gentianov1alpha1.TenantQuotas) map[string]string {
 	set("storage", q.Storage)
 	if q.MaxPods > 0 {
 		out["maxPods"] = strconv.Itoa(int(q.MaxPods))
+	}
+	set("runsCpu", q.RunsCPU)
+	set("runsMemory", q.RunsMemory)
+	if q.RunsMaxPods > 0 {
+		out["runsMaxPods"] = strconv.Itoa(int(q.RunsMaxPods))
 	}
 	return out
 }

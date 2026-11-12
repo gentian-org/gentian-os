@@ -481,6 +481,16 @@ placed, and asks for no privilege but egress. Installing it deploys nothing:
 the Component is `Ready` once its profile is the one the install names, and
 its status names the image.
 
+A component runs an action through the dispatcher, and declares that it does:
+`requires.services.runs`, at trust tier `certified` or `platform`, with the
+Service and port its runs call back to, how many it has under way at once, and
+any runs of its own images (`own`, each an image `package.images` pins). It is
+given the Secret `runs-<component>` with `RUNS_URL` and `RUNS_KEY`. Every
+caller of a tenant may run every action installed in that tenant; a run of a
+caller's own is that caller's alone
+([control-plane.md §4.8](control-plane.md),
+[reference/dispatcher-api.md](../reference/dispatcher-api.md)).
+
 *Class `service` is an option that exists in the schema and is not
 implemented.* Engines are delivered as Argo CD applications from
 `kernel/appsets` and started on demand ([kernel.md §7](kernel.md)); the

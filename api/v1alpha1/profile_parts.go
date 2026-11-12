@@ -252,6 +252,95 @@ type ServiceRequirements struct {
 	// through the platform's TURN edge. See TURNRequirement.
 	// +optional
 	TURN *TURNRequirement `json:"turn,omitempty"`
+
+	// Runs declares that the component starts runs: of the actions installed
+	// in its tenant, and of images of its own. See RunsRequirement.
+	// +optional
+	Runs *RunsRequirement `json:"runs,omitempty"`
+}
+
+// RunsRequirement declares that the component starts runs through the
+// dispatcher. It is given a key of its own for that (Secret runs-<component>,
+// RUNS_URL and RUNS_KEY), good for its tenant's runs and nothing else.
+//
+// A run is one pod in the tenant's namespace for runs. It reaches the
+// component that started it, at Callback, and nothing else of the platform:
+// its inputs and outputs, a question to a person and a call to an adapter all
+// go through the component, with a credential the component made for that
+// run.
+type RunsRequirement struct {
+	// Callback is where a run reaches this component.
+	Callback RunsCallback `json:"callback"`
+
+	// Concurrency is the most runs the component has under way at once.
+	// +optional
+	// +kubebuilder:default=4
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=64
+	Concurrency int32 `json:"concurrency,omitempty"`
+
+	// Own are runs of the component's own images, such as a runner that is
+	// not an action of a catalog. Each is started like an action, by this
+	// component alone.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=8
+	Own []OwnRun `json:"own,omitempty"`
+}
+
+// RunsCallback is the Service of the component a run calls back to. A run's
+// pod is let through to the component's pods on that port and to nothing else.
+type RunsCallback struct {
+	// Service is the name of the Service, in the component's namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Service string `json:"service"`
+
+	// Port is the Service's port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Path is put before the paths a run calls. Empty means none.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^(/[A-Za-z0-9._~-]+)*$`
+	Path string `json:"path,omitempty"`
+}
+
+// OwnRun is one run of the component's own.
+type OwnRun struct {
+	// Name is what the component asks for.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// Image is the repository of the image, which package.images pins.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Image string `json:"image"`
+
+	// Command is what a run starts in the image, as an action's is.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=1024
+	// +listType=atomic
+	Command []string `json:"command"`
+
+	// DeadlineSeconds is the longest one attempt may take.
+	// +optional
+	// +kubebuilder:default=600
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=86400
+	DeadlineSeconds int32 `json:"deadlineSeconds,omitempty"`
+
+	// Resources is what one attempt is given.
+	// +optional
+	Resources *ActionResources `json:"resources,omitempty"`
 }
 
 // TURNRequirement declares that the component's clients relay real-time

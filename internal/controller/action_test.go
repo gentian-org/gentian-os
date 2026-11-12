@@ -53,7 +53,7 @@ func TestAnActionIsInstalledWithoutAWorkload(t *testing.T) {
 	if ready == nil || ready.Status != "True" || ready.Reason != "Ready" {
 		t.Fatalf("condition = %+v, want Ready", ready)
 	}
-	for _, said := range []string{"registry.example.invalid/steps/ocr@sha256:0000", "nothing is deployed"} {
+	for _, said := range []string{"registry.example.invalid/steps/ocr@sha256:0000", "nothing is deployed", "dispatcher"} {
 		if !strings.Contains(ready.Message, said) {
 			t.Errorf("message %q does not say %q", ready.Message, said)
 		}

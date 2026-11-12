@@ -74,6 +74,11 @@ writes one by hand.
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
 | the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared Valkey store through `kernel-access-<app>` instead |
 
+A component that starts runs (`requires.services.runs`) has two more:
+`component-<app>` opens the way to the dispatcher's pods on its port, and
+`runs-<app>` admits that component's own runs, from the tenant's namespace
+for runs, on the port its callback Service sends to (§2.1).
+
 Network rules only ever add: a pod the baseline selects cannot be closed again
 by another policy, which is why an adapter's pods are left out of the baseline
 instead of being narrowed afterwards.
@@ -83,6 +88,30 @@ same tenant reaches it only where an integration between the two was granted,
 and a pod of another tenant never. The rule holds only on a cluster whose
 network plugin enforces NetworkPolicy; the installer refuses a cluster whose
 plugin does not (§3).
+
+### 2.1 The namespace for runs
+
+A tenant with a component that starts runs has a second namespace,
+`tenant-<t>-runs`, of tier `tenant-runs`. The operator makes it and writes
+every rule in it; the dispatcher starts every pod in it, and admission refuses
+a pod from any other account (`gentian-run-pods`).
+
+| Policy | Selects | Opens |
+| --- | --- | --- |
+| `runs-default-deny` | every pod of the namespace | Nothing in. Out, the cluster's DNS and nothing else |
+| `action-<name>` | the pods of runs of that installed action | the egress rules of the action's `requires.privileges.egress` that were granted on its install |
+| `caller-<app>` | the pods of runs that component started | the component's pods in `tenant-<t>`, on the port its callback Service sends to |
+
+No rule reaches an adapter, an engine, a store or the kernel: what a run needs
+of them it asks of the component that started it. A run of a component's own
+image is selected by no `action-<name>` policy and has no egress beyond its
+caller.
+
+The namespace enforces the `restricted` pod security standard, holds a quota
+and a default of its own (`runsMaxPods`, `runsCpu`, `runsMemory` of the
+tenant's quotas), and admits only the pinned builds of the tenant's installed
+actions, its callers' own runs and the platform's run program (`run-images`).
+It goes with its tenant.
 
 ## 3. The kernel's rules
 

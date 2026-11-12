@@ -16,7 +16,6 @@ limitations under the License.
 SPDX-License-Identifier: Apache-2.0
 */
 
-
 // An action is a step another component runs: one image at one build, started
 // for one call and gone when the call ends. It is a component of its own and a
 // class of its own, so that a tenant's administrator installs, pins and

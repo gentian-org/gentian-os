@@ -368,6 +368,19 @@ bouncer:
     limits:
       memory: 128Mi
 
+# The dispatcher: what a component that declares requires.services.runs asks
+# to start a run. It runs in the control namespace from this image, and its
+# rights at the Kubernetes API are pods in the tenants' namespaces for runs.
+dispatcher:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
 # The usher: the reads a signed-in person's desktop asks for -- what is here
 # and what they may open -- run in the control namespace from this image,
 # beside the director. It holds no git credential and no Kubernetes access.

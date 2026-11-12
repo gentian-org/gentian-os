@@ -102,6 +102,9 @@ spec:
               An action is run and never deployed, opened or reached: it is one image at
               one build, and a run of it speaks to the component that started it and to
               nothing the platform provides.
+              Runs are started for a component whose entry was reviewed. That a run of
+              its own names an image the entry pins is held at reconcile (runsRefusal):
+              the rule costs more than a schema may spend.
             properties:
               action:
                 description: |-
@@ -1795,6 +1798,115 @@ spec:
                                 honored for a component of the platform tenant only: anywhere else
                                 the key asks the app question alone.
                               type: boolean
+                          type: object
+                        runs:
+                          description: |-
+                            Runs declares that the component starts runs: of the actions installed
+                            in its tenant, and of images of its own. See RunsRequirement.
+                          properties:
+                            callback:
+                              description: Callback is where a run reaches this component.
+                              properties:
+                                path:
+                                  description: Path is put before the paths a run
+                                    calls. Empty means none.
+                                  maxLength: 253
+                                  pattern: ^(/[A-Za-z0-9._~-]+)*$
+                                  type: string
+                                port:
+                                  description: Port is the Service's port.
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                service:
+                                  description: Service is the name of the Service,
+                                    in the component's namespace.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - port
+                              - service
+                              type: object
+                            concurrency:
+                              default: 4
+                              description: Concurrency is the most runs the component
+                                has under way at once.
+                              format: int32
+                              maximum: 64
+                              minimum: 1
+                              type: integer
+                            own:
+                              description: |-
+                                Own are runs of the component's own images, such as a runner that is
+                                not an action of a catalog. Each is started like an action, by this
+                                component alone.
+                              items:
+                                description: OwnRun is one run of the component's
+                                  own.
+                                properties:
+                                  command:
+                                    description: Command is what a run starts in the
+                                      image, as an action's is.
+                                    items:
+                                      maxLength: 1024
+                                      minLength: 1
+                                      type: string
+                                    maxItems: 32
+                                    minItems: 1
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  deadlineSeconds:
+                                    default: 600
+                                    description: DeadlineSeconds is the longest one
+                                      attempt may take.
+                                    format: int32
+                                    maximum: 86400
+                                    minimum: 1
+                                    type: integer
+                                  image:
+                                    description: Image is the repository of the image,
+                                      which package.images pins.
+                                    maxLength: 253
+                                    minLength: 1
+                                    type: string
+                                  name:
+                                    description: Name is what the component asks for.
+                                    maxLength: 63
+                                    minLength: 1
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                  resources:
+                                    description: Resources is what one attempt is
+                                      given.
+                                    properties:
+                                      cpu:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                        x-kubernetes-int-or-string: true
+                                      memory:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                        x-kubernetes-int-or-string: true
+                                    type: object
+                                required:
+                                - command
+                                - image
+                                - name
+                                type: object
+                              maxItems: 8
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                          required:
+                          - callback
                           type: object
                         storage:
                           description: Storage specifies object storage (S3) and/or
@@ -3987,6 +4099,113 @@ spec:
                               the key asks the app question alone.
                             type: boolean
                         type: object
+                      runs:
+                        description: |-
+                          Runs declares that the component starts runs: of the actions installed
+                          in its tenant, and of images of its own. See RunsRequirement.
+                        properties:
+                          callback:
+                            description: Callback is where a run reaches this component.
+                            properties:
+                              path:
+                                description: Path is put before the paths a run calls.
+                                  Empty means none.
+                                maxLength: 253
+                                pattern: ^(/[A-Za-z0-9._~-]+)*$
+                                type: string
+                              port:
+                                description: Port is the Service's port.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              service:
+                                description: Service is the name of the Service, in
+                                  the component's namespace.
+                                maxLength: 63
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - port
+                            - service
+                            type: object
+                          concurrency:
+                            default: 4
+                            description: Concurrency is the most runs the component
+                              has under way at once.
+                            format: int32
+                            maximum: 64
+                            minimum: 1
+                            type: integer
+                          own:
+                            description: |-
+                              Own are runs of the component's own images, such as a runner that is
+                              not an action of a catalog. Each is started like an action, by this
+                              component alone.
+                            items:
+                              description: OwnRun is one run of the component's own.
+                              properties:
+                                command:
+                                  description: Command is what a run starts in the
+                                    image, as an action's is.
+                                  items:
+                                    maxLength: 1024
+                                    minLength: 1
+                                    type: string
+                                  maxItems: 32
+                                  minItems: 1
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                deadlineSeconds:
+                                  default: 600
+                                  description: DeadlineSeconds is the longest one
+                                    attempt may take.
+                                  format: int32
+                                  maximum: 86400
+                                  minimum: 1
+                                  type: integer
+                                image:
+                                  description: Image is the repository of the image,
+                                    which package.images pins.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  description: Name is what the component asks for.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                resources:
+                                  description: Resources is what one attempt is given.
+                                  properties:
+                                    cpu:
+                                      anyOf:
+                                      - type: integer
+                                      - type: string
+                                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                      x-kubernetes-int-or-string: true
+                                    memory:
+                                      anyOf:
+                                      - type: integer
+                                      - type: string
+                                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                      x-kubernetes-int-or-string: true
+                                  type: object
+                              required:
+                              - command
+                              - image
+                              - name
+                              type: object
+                            maxItems: 8
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                        required:
+                        - callback
+                        type: object
                       storage:
                         description: Storage specifies object storage (S3) and/or
                           filesystem (WebDAV) requirements.
@@ -4493,6 +4712,10 @@ spec:
               rule: '!has(self.action) || (!has(self.placement) && !((has(self.defaultForTenants)
                 && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform)
                 || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)))'
+            - message: 'requires.services.runs requires trustTier certified or platform:
+                an entry nobody reviewed starts no runs'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.runs)
+                || self.trustTier in [''certified'', ''platform'']'
             - message: 'placement is for class app: a service and a shared-app have
                 one instance'
               rule: '!has(self.placement) || !has(self.classes) || (''app'' in self.classes)'

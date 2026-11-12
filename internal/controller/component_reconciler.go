@@ -40,6 +40,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -74,6 +75,9 @@ type ComponentReconciler struct {
 	// UsherURL is where a desktop asks what a person may open; empty derives
 	// it from the edge namespace.
 	UsherURL string
+	// DispatcherURL overrides where a component that starts runs is told
+	// the dispatcher is. Empty derives it from the layout.
+	DispatcherURL string
 	// CustodianURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
 	CustodianURL string
@@ -546,6 +550,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonAuthorizationModelInvalid, refusal, 0)
 	}
+	// Runs of its own that name an image the profile does not pin are
+	// refused whole, for the reason the pins exist.
+	if refusal := runsRefusal(profile); refusal != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonRunsInvalid, refusal, 0)
+	}
 	// The system engines it declares, before anything that needs one: a
 	// component's first install is what asks for an engine that was not
 	// running, and until the engine answers the component waits under a
@@ -615,6 +624,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// one, for the same reason and in the same way.
 	if err := r.ensureAuthorization(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("authorization: %w", err)
+	}
+	// The key for the dispatcher, for a component that starts runs, for the
+	// same reason and in the same way.
+	if err := r.ensureRuns(ctx, comp, tenant.Name, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("runs: %w", err)
 	}
 	// The TURN edge's address and secret, for a component that declares it
 	// or activates an addon that does, for the same reason and in the same
@@ -1935,6 +1949,16 @@ func (r *ComponentReconciler) usherURL() string {
 		return r.UsherURL
 	}
 	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Control))
+}
+
+// dispatcherURL is where the dispatcher answers inside the cluster: the
+// Service the operator's chart puts in the control namespace
+// (templates/dispatcher.yaml).
+func (r *ComponentReconciler) dispatcherURL() string {
+	if r.DispatcherURL != "" {
+		return r.DispatcherURL
+	}
+	return fmt.Sprintf("http://gentian-os-dispatcher.%s.svc.cluster.local:%d", layout.Namespace(layout.Control), dispatcher.Port)
 }
 
 // custodianPort is charts/gentian-os/values.yaml's
