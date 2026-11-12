@@ -895,13 +895,17 @@ func (r *TenantReconciler) deleteOwnedResourcesInNamespace(ctx context.Context, 
 	return nil
 }
 
+// clusterPullSecretName is the Secret the cluster's own pull credential is
+// kept in, in the services namespace, and under which each copy of it is.
+const clusterPullSecretName = "registry-credentials"
+
 // ensureRegistryCredentials replicates the kernel-managed `registry-credentials`
 // Secret from the services namespace into the tenant namespace. That is the
 // cluster's own pull credential and nothing more: whether an app from a
 // private repository arrives is decided by the credential the tenant holds
 // for that repository, not here.
 func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	const defaultSecretName = "registry-credentials"
+	const defaultSecretName = clusterPullSecretName
 
 	source := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: defaultSecretName, Namespace: servicesNamespace}, source); err != nil {
