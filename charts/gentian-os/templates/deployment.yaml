@@ -401,6 +401,15 @@ spec:
             # reads it cannot come from different commits.
             - name: GENTIAN_IMAGE
               value: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ $imageTag }}{{- end }}"
+            {{- if .Values.dispatcher.enabled }}
+            # The dispatcher of this release: the account the operator binds
+            # in each tenant's namespace for runs, and the address a component
+            # that starts runs is told.
+            - name: DISPATCHER_SA
+              value: {{ include "gentian-os.dispatcherServiceAccountName" . | quote }}
+            - name: DISPATCHER_URL
+              value: {{ printf "http://%s-dispatcher.%s.svc.cluster.local:8080" (include "gentian-os.fullname" .) .Release.Namespace | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080

@@ -1148,6 +1148,18 @@ func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q.MaxPods > 0 {
 		quotas["maxPods"] = int64(q.MaxPods)
 	}
+	// The quota of the namespace for runs is applied by the operator
+	// (run_namespace.go), which makes that namespace; the XTenant carries it
+	// so that what a tenant is given is in one place.
+	if q.RunsMaxPods > 0 {
+		quotas["runsMaxPods"] = int64(q.RunsMaxPods)
+	}
+	if q.RunsCPU != nil {
+		quotas["runsCpu"] = q.RunsCPU.String()
+	}
+	if q.RunsMemory != nil {
+		quotas["runsMemory"] = q.RunsMemory.String()
+	}
 	return quotas
 }
 

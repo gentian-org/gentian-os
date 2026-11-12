@@ -17,11 +17,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 
-	"github.com/gentian-org/gentian-os/internal/locales"
 	"sync"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/locales"
 )
 
 const (
@@ -206,8 +208,70 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		// that asks for neither.
 		body["defaultLocale"] = langs[0]
 	}
+	// Written only when something differs. This runs on every tenant
+	// reconcile, and every write is an admin event: unconditional, it was
+	// most of what Keycloak logged, enough to push a user's sign-in out of
+	// the log within the hour.
+	var current map[string]any
+	if err := c.getAdminJSON(ctx, token, "/admin/realms/"+url.PathEscape(realm), &current); err != nil {
+		return err
+	}
+	if realmAlreadyHas(current, body) {
+		return nil
+	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err
+}
+
+// realmAlreadyHas reports whether the realm representation current already
+// holds every field of want. A map is compared on want's keys only, since a
+// realm carries more of everything than this sets; a list is compared as a
+// set, since Keycloak does not keep the order of supportedLocales.
+func realmAlreadyHas(current, want map[string]any) bool {
+	raw, err := json.Marshal(want)
+	if err != nil {
+		return false
+	}
+	var normal map[string]any
+	if err := json.Unmarshal(raw, &normal); err != nil {
+		return false
+	}
+	return holds(current, normal)
+}
+
+func holds(have, want any) bool {
+	switch w := want.(type) {
+	case map[string]any:
+		h, ok := have.(map[string]any)
+		if !ok {
+			return false
+		}
+		for k, v := range w {
+			if !holds(h[k], v) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		h, ok := have.([]any)
+		if !ok || len(h) != len(w) {
+			return false
+		}
+		seen := make(map[string]int, len(h))
+		for _, v := range h {
+			seen[fmt.Sprint(v)]++
+		}
+		for _, v := range w {
+			k := fmt.Sprint(v)
+			if seen[k] == 0 {
+				return false
+			}
+			seen[k]--
+		}
+		return true
+	default:
+		return reflect.DeepEqual(have, want)
+	}
 }
 
 // UpdateRealmMailSender sets the name a realm's mail says it is from, and

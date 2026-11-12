@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,12 +64,24 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheBouncer(t *testing.T) {
 	if oidc["refreshToken"] != true {
 		t.Fatalf("refreshToken = %v", oidc["refreshToken"])
 	}
-	// A background request gets 401 and nothing else does: a navigation must
-	// still be sent to sign in.
+	// Only a navigation is sent to sign in; every other request gets 401.
 	deny := oidc["denyRedirect"].(map[string]interface{})["headers"].([]interface{})
-	if len(deny) != 1 || deny[0].(map[string]interface{})["name"] != "Sec-Fetch-Dest" ||
-		deny[0].(map[string]interface{})["value"] != "empty" {
+	if len(deny) != 1 || deny[0].(map[string]interface{})["name"] != "Sec-Fetch-Mode" ||
+		deny[0].(map[string]interface{})["type"] != "RegularExpression" {
 		t.Fatalf("denyRedirect = %v", oidc["denyRedirect"])
+	}
+	re := regexp.MustCompile("^(?:" + deny[0].(map[string]interface{})["value"].(string) + ")$")
+	for _, mode := range []string{"cors", "no-cors", "same-origin", "websocket"} {
+		if !re.MatchString(mode) {
+			t.Errorf("Sec-Fetch-Mode %q would start a login", mode)
+		}
+	}
+	if re.MatchString("navigate") {
+		t.Errorf("a navigation would be answered 401 instead of sent to sign in")
+	}
+	// As long as Keycloak keeps its login page open.
+	if oidc["csrfTokenTTL"] != "30m" {
+		t.Fatalf("csrfTokenTTL = %v", oidc["csrfTokenTTL"])
 	}
 	// What must not be there. Each of these lets a request past the session
 	// filter without a session, or hands the token cookies to whoever can
@@ -234,5 +247,29 @@ func TestTheRouteTableNamesTheSessionsCookiesOfEveryRouteWithASession(t *testing
 	}
 	if r := parsed.Match("wiki-api.acme.k.example"); r == nil || len(r.SessionCookies) != 0 || len(r.SessionCookiePrefixes) != 0 {
 		t.Fatalf("a bearer route names no session cookie: %+v", r)
+	}
+	// What a token on that route is held against: the entry's own address
+	// and the zone's realm, and the challenge names the entry's metadata.
+	r := parsed.Match("wiki-api.acme.k.example")
+	if r.Audience != "https://wiki-api.acme.k.example" || r.Realm != acme.realm || r.Realm == "" ||
+		r.ResourceMetadata != "https://wiki-api.acme.k.example/.well-known/oauth-protected-resource" {
+		t.Fatalf("a token route is held against %+v", r)
+	}
+	if r := parsed.Match("wiki.acme.k.example"); r.Audience != "" || r.Realm != "" || r.ResourceMetadata != "" {
+		t.Fatalf("a session route names what a token is held against: %+v", r)
+	}
+	// A token route with nothing to hold a token against is no route: its
+	// host is refused, and the rest of the table still loads.
+	delete(api.Annotations, bouncerTokenAudienceAnnotation)
+	extra, err = componentRouteTableEntries(context.Background(), fake.NewClientBuilder().WithScheme(scheme).WithObjects(web, api).Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+	table, err = bouncerRouteTable(nil, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed, err = bouncer.ParseTable([]byte(table)); err != nil || parsed.Match("wiki-api.acme.k.example") != nil || parsed.Match("wiki.acme.k.example") == nil {
+		t.Fatalf("err %v, table\n%s", err, table)
 	}
 }

@@ -205,7 +205,7 @@ tenant name is at most 38 characters: its desktop's Helm release,
 one stage, so no name carries a stage suffix.
 
 **Labels.** Every namespace carries `gentianos.io/tier: kernel | system |
-system-dmz | shared | tenant | tenant-dmz` and `gentianos.io/function:
+system-dmz | shared | tenant | tenant-dmz | tenant-runs` and `gentianos.io/function:
 <function>`; a tenant namespace carries `gentianos.io/tenant: <t>`. Most
 policies select on the labels; some kernel network policies select on names
 (`kernel/security/network-policies/kernel-network-policies.yaml`). The two

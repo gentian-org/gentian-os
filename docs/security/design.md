@@ -1348,10 +1348,13 @@ Who may read what:
     with a role and a policy of its own, `eso-tenant-<tenant>`. The policy
     reads that tenant's `apps/`, `repositories/` and `contracts/`. It denies
     every kernel path and the tenant's `backup/`, and grants nothing of
-    another tenant. The store admits the one namespace that carries
-    `gentianos.io/tier: tenant` and `gentianos.io/tenant: <tenant>`. Every
-    `ExternalSecret` the Compositions and the operator put in a tenant's
-    namespace names it.
+    another tenant. The store admits the namespaces that carry
+    `gentianos.io/tenant: <tenant>` and `gentianos.io/tier` `tenant` or
+    `tenant-runs`: the one the tenant's apps run in and the one its runs are
+    started in. Every `ExternalSecret` the Compositions and the operator put
+    in a tenant's namespace names it. In the namespace for runs the only one
+    is a repository's pull Secret (§5.1); a tenant applies nothing there, and
+    a run's pod holds no account that reads a Secret.
 
   The platform tenant is no exception. Its desktop keeps its data on the
   kernel's PostgreSQL, in a database of its own (`portal_shell`) under a role
@@ -1406,9 +1409,10 @@ A tenant's registry repository (`Repository`, `type: oci`, `spec.tenant` set
 by the director from the authorized route) has its credential at
 `gentian-os/tenants/{tenant}/repositories/{name}`. `repository-default`
 materializes it as one Secret, `repository-{name}-pull`, through a
-`ClusterExternalSecret` whose selector is exactly
-`gentianos.io/tenant: {tenant}` and `gentianos.io/tier: tenant` — the
-namespace that tenant's apps run in, not its DMZ and no other tenant's. The
+`ClusterExternalSecret` whose selectors are exactly
+`gentianos.io/tenant: {tenant}` with `gentianos.io/tier: tenant` and with
+`gentianos.io/tier: tenant-runs` — the namespace that tenant's apps run in
+and the one its runs are started in, not its DMZ and no other tenant's. The
 Secret is a `dockerconfigjson` that also carries `username` and `password`,
 so a kubelet and provider-helm read the same object.
 
@@ -1418,6 +1422,11 @@ exactly one repository the tenant declared (same host and port, the
 repository's path a prefix by whole segments), and in `imagePullSecrets` /
 `global.imagePullSecrets` of every chart the tenant installs, after
 `registry-credentials`.
+
+The runs reconciler names it the same way in the dispatcher's table, and the
+dispatcher sets it as `imagePullSecrets` on a run's pod: the repositories of
+the whole tenant, or the one bound to the profile the run is of.
+`registry-credentials` is not in the namespace for runs.
 
 The pull Secret is read through the tenant's own store,
 `openbao-tenant-{tenant}` (§5), whose role reads that tenant's

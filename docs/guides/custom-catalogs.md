@@ -573,6 +573,33 @@ server. On a cluster that does not run its own mail server, or for a tenant with
 there, the declaration is accepted and grants nothing
 ([app-customization.md §1.1](app-customization.md)).
 
+**An action** is a step another component runs: one image at one build, started for one call. It
+is an entry of its own with `classes: [action]` (exclusive), a package of exactly one pinned image,
+and a block `spec.action`:
+
+```yaml
+spec:
+  classes: [action]
+  launch: none
+  trustTier: certified
+  package:
+    images:
+    - repository: registry.example/steps/ocr
+      digest: sha256:…                  # the one build a run starts
+  action:
+    command: ["/ocr"]                   # reads the inputs on stdin, writes the outputs to stdout
+    deadlineSeconds: 120                # the longest one attempt may take
+    resources: {cpu: 500m, memory: 256Mi}
+    inputs: {type: object, properties: {file: {type: string}}}
+    outputs: {type: object}
+    adapters: [nextcloud-files]         # what the caller may call on its behalf
+```
+
+Installing it deploys nothing. A component that declares `requires.services.runs` starts a run of
+it through the dispatcher; the run's pod reaches that component and, where the action's
+`requires.privileges.egress` was granted, what that names. The command's contract and what a run is
+told are in [reference/dispatcher-api.md](../reference/dispatcher-api.md).
+
 ### 4.1a An app with no single sign-on: declare the sign-in sidecar
 
 For an app that, in the edition you publish, can do neither OIDC nor SAML. Only in a catalog of
@@ -1153,7 +1180,7 @@ kubectl gentian repositories declare acme --tenant demo --url oci://registry.exa
 
 The token is set in the Admin Console of the tenant, under Credentials, as the name the command prints
 (`repository-acme`); it is kept in the vault, as every repository's is, and becomes a pull Secret in that
-tenant's namespace only. A chart whose address lies inside the declared registry
+tenant's namespace and its namespace for runs only. A chart whose address lies inside the declared registry
 is pulled with it. The App Store app does both steps itself for what it sells; for your own registry
 they are done once by the tenant's administrator.
 

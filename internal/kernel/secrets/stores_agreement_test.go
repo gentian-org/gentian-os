@@ -180,8 +180,11 @@ func TestEveryRenderedExternalSecretNamesTheStoreOfItsNamespace(t *testing.T) {
 					labels, _ := dig(sel, "matchLabels").(object)
 					tenant, _ := labels[layout.LabelTenant].(string)
 					tier, _ := labels[layout.LabelTier].(string)
-					if tenant != "" && tier != string(layout.TierTenant) {
-						t.Errorf("%s selects tenant %q without the tier, which also matches its DMZ", where, tenant)
+					// A tenant's apps and its runs, and nothing else of it:
+					// a selector without one of the two tiers also matches
+					// the tenant's DMZ.
+					if tenant != "" && tier != string(layout.TierTenant) && tier != string(layout.TierTenantRuns) {
+						t.Errorf("%s selects tenant %q without the tier of its apps or of its runs, which also matches its DMZ", where, tenant)
 					}
 					tenants[tenant] = true
 				}
@@ -296,10 +299,15 @@ func TestATenantStoreIsItsTenantsAlone(t *testing.T) {
 			t.Errorf("store %q is not named as secrets.TenantStore names one", name)
 			continue
 		}
-		wantConditions := []interface{}{object{"namespaceSelector": object{"matchLabels": object{
-			layout.LabelTier:   string(layout.TierTenant),
-			layout.LabelTenant: tenant,
-		}}}}
+		// The namespace the tenant's apps run in and the one its runs are
+		// started in, each by tier and tenant, and no third.
+		admits := func(tier layout.Tier) object {
+			return object{"namespaceSelector": object{"matchLabels": object{
+				layout.LabelTier:   string(tier),
+				layout.LabelTenant: tenant,
+			}}}
+		}
+		wantConditions := []interface{}{admits(layout.TierTenant), admits(layout.TierTenantRuns)}
 		if got := dig(store, "spec", "conditions"); !reflect.DeepEqual(got, wantConditions) {
 			t.Errorf("store %s has conditions %v, want %v", name, got, wantConditions)
 		}

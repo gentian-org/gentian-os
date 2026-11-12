@@ -644,6 +644,7 @@ func authenticatedGatewayBackendTrafficPolicySpec(streamDuration, clientAddressH
 	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
 		spec["rateLimit"] = limit
 	}
+	spec["responseOverride"] = edgeSignInRestart()
 	return spec
 }
 

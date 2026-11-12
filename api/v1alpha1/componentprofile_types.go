@@ -32,7 +32,7 @@ import (
 // description -- serves contracts to other components, serves no human -- is
 // the definition of a service.
 //
-// +kubebuilder:validation:Enum=service;app;shared-app;adapter
+// +kubebuilder:validation:Enum=service;app;shared-app;adapter;action
 type ComponentClass string
 
 const (
@@ -51,6 +51,9 @@ const (
 	// nobody opens it, and only a component of the tenant that may speak as
 	// a person reaches it (adapter_types.go).
 	ComponentClassAdapter ComponentClass = "adapter"
+	// ComponentClassAction is a step another component runs: one pinned
+	// image, started per run by the dispatcher. Installing it deploys nothing.
+	ComponentClassAction ComponentClass = "action"
 )
 
 // ComponentLaunch is how a person reaches a component. It exists because the
@@ -196,7 +199,7 @@ type ComponentPlacement struct {
 //
 // Every other pairing is still refused, and composition alone is still a
 // delivery of its own: a component the Composition creates entirely.
-// +kubebuilder:validation:XValidation:rule="[has(self.__package__.chart) || (has(self.__package__.composition) && self.__package__.composition.size() > 0), has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is a chart, a composition, the two together, an api, or an addon -- and nothing else beside them"
+// +kubebuilder:validation:XValidation:rule="has(self.action) || [has(self.__package__.chart) || (has(self.__package__.composition) && self.__package__.composition.size() > 0), has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is a chart, a composition, the two together, an api, or an addon -- and nothing else beside them"
 // +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
 // A tile is on an exposure, or on package.api for a component that is only a
 // link to a service hosted elsewhere -- it has no exposure to carry one, and
@@ -219,6 +222,21 @@ type ComponentPlacement struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, adapts none"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
+// An action is run and never deployed, opened or reached: it is one image at
+// one build, and a run of it speaks to the component that started it and to
+// nothing the platform provides.
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('action' in self.classes) || self.classes.size() == 1",message="action is exclusive: an action is a component of its own, never also the app that runs it"
+// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'action' in self.classes) == has(self.action)",message="spec.action is for class action, and class action needs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.action) || self.launch == 'none'",message="an action has launch none: nobody opens it"
+// +kubebuilder:validation:XValidation:rule="!has(self.action) || ((!has(self.expose) || self.expose.size() == 0) && (!has(self.provides) || self.provides.size() == 0) && (!has(self.integrations) || self.integrations.size() == 0))",message="an action exposes, provides and integrates nothing: a run reaches the component that started it and nothing else"
+// +kubebuilder:validation:XValidation:rule="!has(self.action) || (!has(self.__package__.chart) && !has(self.__package__.composition) && !has(self.__package__.api) && !has(self.__package__.addon) && has(self.__package__.images) && self.__package__.images.size() == 1)",message="an action's package is exactly one pinned image (package.images) and nothing else: no chart, composition, api or addon"
+// +kubebuilder:validation:XValidation:rule="!has(self.action) || !has(self.requires) || !has(self.requires.services)",message="an action requires no service: what a run needs it asks of the component that started it"
+// +kubebuilder:validation:XValidation:rule="!has(self.action) || !has(self.requires) || !has(self.requires.privileges) || ((!has(self.requires.privileges.podSecurity) || self.requires.privileges.podSecurity.size() == 0) && (!has(self.requires.privileges.clusterRoles) || self.requires.privileges.clusterRoles.size() == 0) && (!has(self.requires.privileges.apiExtensions) || self.requires.privileges.apiExtensions.size() == 0))",message="an action asks for egress and no other privilege: a run holds no right at the Kubernetes API and runs under the restricted pod security standard"
+// +kubebuilder:validation:XValidation:rule="!has(self.action) || (!has(self.placement) && !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)))",message="an action is never placed: a tenant's administrator installs it"
+// Runs are started for a component whose entry was reviewed. That a run of
+// its own names an image the entry pins is held at reconcile (runsRefusal):
+// the rule costs more than a schema may spend.
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.runs) || self.trustTier in ['certified', 'platform']",message="requires.services.runs requires trustTier certified or platform: an entry nobody reviewed starts no runs"
 // +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.classes) || ('app' in self.classes)",message="placement is for class app: a service and a shared-app have one instance"
 // +kubebuilder:validation:XValidation:rule="!has(self.placement) || !has(self.placement.while) || self.placement.while != 'credentialSet' || (self.placement.tenants == 'platform' && self.trustTier == 'platform' && has(self.__package__.images) && self.__package__.images.size() > 0)",message="placement while credentialSet is for the platform tenant, at trustTier platform, with package.images naming what may be pulled"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.llm) || !has(self.placement) || (has(self.placement.while) && self.placement.while == 'llm') || self.trustTier == 'platform'",message="a component the platform places on tenants declares requires.services.llm only at trustTier platform: it is given a key at the model gateway without a tenant having installed it"
@@ -272,6 +290,11 @@ type ComponentProfileSpec struct {
 	// adapter.
 	// +optional
 	Adapter *AdapterSpec `json:"adapter,omitempty"`
+
+	// Action is what an action takes, returns and runs. Present exactly when
+	// the class is action.
+	// +optional
+	Action *ActionSpec `json:"action,omitempty"`
 
 	// Secrets are values the platform generates and holds that have no external
 	// counterparty. Credentials that arrive with a granted requirement are not

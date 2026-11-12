@@ -73,10 +73,10 @@ digest (§4).
 cluster's side chooses (for a store's repository the App Store app computes
 it, §6.4), and sets its user name and password at the custodian. From that
 the platform makes one Secret,
-`repository-<name>-pull`, in that tenant's app namespace and in no other. The
-namespace is selected by an exact match on the tenant the director recorded
-from the route the caller was authorized on, not by anything a declaration
-can carry.
+`repository-<name>-pull`, in that tenant's app namespace and its namespace
+for runs, and in no other. The namespaces are selected by an exact match on
+the tenant the director recorded from the route the caller was authorized
+on, not by anything a declaration can carry.
 
 | The chart's address | What happens |
 |---|---|
@@ -85,7 +85,8 @@ can carry.
 | lies inside none | the chart is pulled without a credential |
 
 The tenant's apps are given all of the tenant's pull Secrets for their
-images, after the cluster's own.
+images, after the cluster's own. A run is given the same Secrets for its
+image, without the cluster's own.
 
 **What this does not guarantee.** Holding the credential is what makes a
 private app arrive. It is not a guarantee that the app cannot be run

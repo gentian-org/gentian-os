@@ -138,6 +138,7 @@ spec:
                 - app
                 - shared-app
                 - adapter
+                - action
                 type: string
               config:
                 description: |-

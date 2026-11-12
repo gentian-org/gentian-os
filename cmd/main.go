@@ -438,6 +438,7 @@ func main() {
 		BouncerService:    envvar.Or("BOUNCER_SERVICE", "gentian-os-bouncer"),
 		DirectorURL:       os.Getenv("DIRECTOR_URL"),
 		UsherURL:          os.Getenv("USHER_URL"),
+		DispatcherURL:     os.Getenv("DISPATCHER_URL"),
 		Seeder:            buildSeeder(),
 		// Runs a profile's verification command in the app's pod after a
 		// move, the way the restore does; nil skips the verification.
@@ -562,6 +563,17 @@ func main() {
 	// store, and the model each is decided against.
 	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationTable")
+		os.Exit(1)
+	}
+
+	// What a run needs before it starts: each tenant's namespace for runs
+	// and the dispatcher's table.
+	if err := (&controller.RunsReconciler{
+		Definitions: held, Client: mgr.GetClient(), ProgramImage: os.Getenv("GENTIAN_IMAGE"),
+		Namespace:         envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		DispatcherAccount: os.Getenv("DISPATCHER_SA"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Runs")
 		os.Exit(1)
 	}
 

@@ -31,6 +31,8 @@ import (
 type Verifier interface {
 	// Verify checks an access token.
 	Verify(ctx context.Context, raw string) (*authn.Identity, error)
+	// VerifyFor checks an access token made out to the named audience.
+	VerifyFor(ctx context.Context, raw, audience string) (*authn.Identity, error)
 	// VerifyIDToken checks an ID token issued to the named client.
 	VerifyIDToken(ctx context.Context, raw, client string) (*authn.Identity, error)
 }
@@ -79,11 +81,16 @@ type Decision struct {
 	// that sends refused browsers home (Route.DeniedRedirect). The request
 	// is answered here and never reaches a backend.
 	Redirect string
+	// Challenge is the WWW-Authenticate header of a 401 on a route that
+	// takes a token: what a program needs to find where to get one.
+	Challenge string
 
 	// What the audit record names, set where it is known: the verified
 	// subject, the store question, and whether a cached allow answered.
 	subject, relation, object string
 	cached                    bool
+	// client is the client a token on a bearer route was issued to.
+	client string
 }
 
 type identity struct {
@@ -224,10 +231,15 @@ func (d *Decider) record(ctx context.Context, req Request, dec Decision) {
 	if dec.Allow {
 		outcome = audit.Allowed
 	}
+	detail := map[string]any{"reason": reason, "status": dec.Status, "host": req.Host, "cached": dec.cached}
+	// On a route that takes a token, which program presented it.
+	if dec.client != "" {
+		detail["client"] = dec.client
+	}
 	audit.Write(ctx, d.log, audit.Record{
 		Source: "bouncer", Kind: audit.KindDecision, RequestID: req.ID,
 		Subject: dec.subject, Object: dec.object, Action: dec.relation, Outcome: outcome,
-		Detail: map[string]any{"reason": reason, "status": dec.Status, "host": req.Host, "cached": dec.cached},
+		Detail: detail,
 	})
 }
 
@@ -272,11 +284,21 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 		// runs first and would have sent such a request to sign in; one that
 		// arrives here without a token it set is a request the filter did
 		// not vouch for, and the only safe answer is no.
-		return about(route, "", browserRefusal(route, deny(http.StatusUnauthorized, err.Error())))
+		return about(route, "", challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error()))))
 	}
 	if id.SessionID == "" {
-		return about(route, id.Subject, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session")))
+		return about(route, id.Subject, challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session"))))
 	}
+	if route.AuthMode == AuthModeBearer {
+		dec := d.decideFor(ctx, route, req, id)
+		dec.client = id.Client
+		return dec
+	}
+	return d.decideFor(ctx, route, req, id)
+}
+
+// decideFor asks the route's question for a verified caller.
+func (d *Decider) decideFor(ctx context.Context, route *Route, req Request, id *authn.Identity) Decision {
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
 	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
 		dec := about(route, id.Subject, d.finish(ctx, route, req, cached))
@@ -376,7 +398,8 @@ func isIdentityHeader(name string) bool {
 // request that lacks the token its route calls for is refused, not searched
 // for something else that might do.
 //
-//   - bearer: the caller's Authorization header, an access token.
+//   - bearer: the caller's Authorization header, an access token made out to
+//     this entry (Route.Audience) by the tenant's own realm (Route.Realm).
 //   - oidc: the Authorization header, which on these routes the OAuth2
 //     filter cleared and then set from the session it validated. A bearer the
 //     client sent never reaches this service there.
@@ -404,11 +427,45 @@ func (d *Decider) session(ctx context.Context, route *Route, req Request) (*auth
 	if raw == "" {
 		return nil, errors.New("no token")
 	}
+	if route.AuthMode == AuthModeBearer {
+		// A token made out to this entry, by the tenant's own realm. The
+		// table refuses a bearer route that names neither, and so does this.
+		if route.Audience == "" || route.Realm == "" {
+			return nil, errors.New("route names nothing to hold a token against")
+		}
+		id, err := d.verify.VerifyFor(ctx, raw, route.Audience)
+		if err != nil {
+			return nil, fmt.Errorf("token refused: %w", err)
+		}
+		if id.Realm != route.Realm {
+			return nil, errors.New("token refused: issued by another realm")
+		}
+		return id, nil
+	}
 	id, err := d.verify.Verify(ctx, raw)
 	if err != nil {
 		return nil, fmt.Errorf("token refused: %w", err)
 	}
 	return id, nil
+}
+
+// challenge puts on a 401 of a route that takes a token what RFC 6750 and
+// RFC 9728 have a program expect: that a bearer token is called for, where
+// the entry's metadata is, and, when a token was presented, that it was not
+// accepted. Why it was not is in the log and never in the answer.
+func challenge(route *Route, req Request, dec Decision) Decision {
+	if route == nil || route.AuthMode != AuthModeBearer || dec.Status != http.StatusUnauthorized {
+		return dec
+	}
+	parts := []string{}
+	if bearer(req.Authorization) != "" {
+		parts = append(parts, `error="invalid_token"`)
+	}
+	if route.ResourceMetadata != "" {
+		parts = append(parts, `resource_metadata="`+route.ResourceMetadata+`"`)
+	}
+	dec.Challenge = strings.TrimSpace("Bearer " + strings.Join(parts, ", "))
+	return dec
 }
 
 func bearer(h string) string {
@@ -469,8 +526,19 @@ func allow(route *Route, req Request, who identity) Decision {
 	// authenticates the bearer the page already holds. On such a route the
 	// header never held the edge's token, so nothing of the platform's goes
 	// with it.
-	if !route.ForwardToken && !route.KeepClientToken {
+	//
+	// A route that takes a token keeps it as well. The token was made out to
+	// this entry and to nothing else, so its backend is the one place it is
+	// for: the backend exchanges it for what it calls on the person's behalf,
+	// and the director and every app refuse it.
+	if !route.ForwardToken && !route.KeepClientToken && route.AuthMode != AuthModeBearer {
 		dec.RemoveHeaders = append(dec.RemoveHeaders, "authorization")
+	}
+	// No cookie is a credential on a route that takes a token, and none goes
+	// on to its backend: a browser that holds a session elsewhere on the
+	// tenant's domain sends nothing of it through here.
+	if route.AuthMode == AuthModeBearer {
+		dec.RemoveHeaders = append(dec.RemoveHeaders, HeaderCookie)
 	}
 	// The Gateway's filter decrypted the session's token cookies into this
 	// request, and the backend has no use for them: it is told who is asking

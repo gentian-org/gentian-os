@@ -30,14 +30,16 @@ import (
 // A tenant declares where it installs from as a Repository, and sets that
 // repository's password at the custodian. The repository's Composition turns
 // the two into one Secret per registry repository, in that tenant's namespace
-// and in no other: repository-<name>-pull, holding the credential both as a
+// and its namespace for runs and in no other: repository-<name>-pull, holding
+// the credential both as a
 // dockerconfigjson, which is what a kubelet reads, and as username and
 // password, which is what provider-helm reads.
 //
 // This file is the other half: which of those Secrets a component's chart and
 // pods are told about. Only the names are handled here. Nothing in this
 // reconciler reads a pull Secret, and nothing it writes names one outside the
-// component's own namespace.
+// component's own namespace. A run is told the same names by the table the
+// dispatcher starts it from (runs.go).
 //
 // Whose repository one is is read from the Repository's spec.tenant, which
 // the director writes from the route the caller was authorized on, and is
@@ -187,6 +189,10 @@ func matchChartRepository(chartRepository string, repos []pullRepository) []pull
 // tenant and are never returned: what the cluster pulls with reaches a
 // tenant's namespace as registry-credentials and by no other way.
 func (r *ComponentReconciler) tenantPullRepositories(ctx context.Context, tenant string) ([]pullRepository, error) {
+	return tenantPullRepositories(ctx, r.Client, tenant)
+}
+
+func tenantPullRepositories(ctx context.Context, r client.Reader, tenant string) ([]pullRepository, error) {
 	if tenant == "" {
 		return nil, nil
 	}

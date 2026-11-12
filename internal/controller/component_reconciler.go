@@ -40,6 +40,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -74,6 +75,9 @@ type ComponentReconciler struct {
 	// UsherURL is where a desktop asks what a person may open; empty derives
 	// it from the edge namespace.
 	UsherURL string
+	// DispatcherURL overrides where a component that starts runs is told
+	// the dispatcher is. Empty derives it from the layout.
+	DispatcherURL string
 	// CustodianURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
 	CustodianURL string
@@ -163,6 +167,12 @@ const (
 	// app the token's audience.
 	bouncerExchangeScopeAnnotation = "gentianos.io/bouncer-exchange-scope"
 	bouncerAuthModeAnnotation      = "gentianos.io/bouncer-mode"
+	// On a route that takes a token in place of a session: the audience
+	// and the realm the bouncer holds the token against, and where the
+	// entry's protected resource metadata is (RFC 9728).
+	bouncerTokenAudienceAnnotation    = "gentianos.io/bouncer-token-audience"
+	bouncerTokenRealmAnnotation       = "gentianos.io/bouncer-token-realm"
+	bouncerResourceMetadataAnnotation = "gentianos.io/bouncer-resource-metadata"
 	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
 	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
@@ -275,9 +285,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// reach, and who may reach it, is the tenant's network rules' to say
 	// (netpolicy.AdapterNetworkPolicies), because it depends on what else the
 	// tenant has installed.
-	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp && comp.Spec.Class != gentianov1alpha1.ComponentClassAdapter {
+	//
+	// An action is installed and never deployed: it is held and let through
+	// by the same checks, and stops where a release would begin
+	// (actionInstalled).
+	switch comp.Spec.Class {
+	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction:
+	default:
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps and adapters are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters and actions are", comp.Spec.Class), 0)
 	}
 	// The instance runs under one of the modes its profile is certified for.
 	// A Component written before its profile was on the cluster was given
@@ -477,6 +493,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if noExtension != "" {
 		return r.status(ctx, comp, metav1.ConditionFalse, "APIExtensionRefused", noExtension, componentRequeue)
 	}
+	// An action ends here. Its profile is the one the install names, usable
+	// on this cluster, and what it asked for is answered; there is nothing
+	// to roll out. A run of it is the dispatcher's.
+	if comp.Spec.Class == gentianov1alpha1.ComponentClassAction {
+		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
+	}
 
 	zone := r.zoneOf(tenant)
 	// An address name the platform depends on -- the desktop's, the
@@ -533,6 +555,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			r.Recorder.Event(comp, corev1.EventTypeWarning, reasonAuthorizationModelInvalid, refusal)
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonAuthorizationModelInvalid, refusal, 0)
+	}
+	// Runs of its own that name an image the profile does not pin are
+	// refused whole, for the reason the pins exist.
+	if refusal := runsRefusal(profile); refusal != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonRunsInvalid, refusal, 0)
 	}
 	// The system engines it declares, before anything that needs one: a
 	// component's first install is what asks for an engine that was not
@@ -603,6 +630,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// one, for the same reason and in the same way.
 	if err := r.ensureAuthorization(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("authorization: %w", err)
+	}
+	// The key for the dispatcher, for a component that starts runs, for the
+	// same reason and in the same way.
+	if err := r.ensureRuns(ctx, comp, tenant.Name, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("runs: %w", err)
 	}
 	// The TURN edge's address and secret, for a component that declares it
 	// or activates an addon that does, for the same reason and in the same
@@ -1750,6 +1782,14 @@ func componentOwnHosts(zone zoneNames, comp *gentianov1alpha1.Component, profile
 // has to admit exactly that and no more. It is not the component's to choose:
 // a component that answered X-Frame-Options: DENY would silently break its
 // own tile.
+// tokenEntryMetadataPath is where an entry that takes a token publishes its
+// protected resource metadata (RFC 9728 §3).
+const tokenEntryMetadataPath = "/.well-known/oauth-protected-resource"
+
+// tokenEntryAudience is what a token for the entry on a host names as its
+// audience: the entry's address, without a path.
+func tokenEntryAudience(host string) string { return "https://" + host }
+
 func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string, framers []string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
@@ -1782,6 +1822,15 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host
 		bouncerObjectAnnotation:   authz.object,
 		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
 		bouncerAuthModeAnnotation: mode,
+	}
+	// A token is held against the entry's own address and the zone's realm:
+	// one made out to anything else, or issued by another tenant's realm, is
+	// refused. Only this reconciler knows both.
+	if mode == "bearer" {
+		annotations[bouncerForwardAnnotation] = "false"
+		annotations[bouncerTokenAudienceAnnotation] = tokenEntryAudience(host)
+		annotations[bouncerTokenRealmAnnotation] = zone.realm
+		annotations[bouncerResourceMetadataAnnotation] = tokenEntryAudience(host) + tokenEntryMetadataPath
 	}
 	if e.ExchangeToken && e.AuthMode == gentianov1alpha1.AuthModeOIDC && !authz.forwardToken && !authz.sessionByIDToken() {
 		annotations[bouncerExchangeScopeAnnotation] = AppTokenScope(comp.Spec.ProfileRef.Name)
@@ -1923,6 +1972,16 @@ func (r *ComponentReconciler) usherURL() string {
 		return r.UsherURL
 	}
 	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Control))
+}
+
+// dispatcherURL is where the dispatcher answers inside the cluster: the
+// Service the operator's chart puts in the control namespace
+// (templates/dispatcher.yaml).
+func (r *ComponentReconciler) dispatcherURL() string {
+	if r.DispatcherURL != "" {
+		return r.DispatcherURL
+	}
+	return fmt.Sprintf("http://gentian-os-dispatcher.%s.svc.cluster.local:%d", layout.Namespace(layout.Control), dispatcher.Port)
 }
 
 // custodianPort is charts/gentian-os/values.yaml's

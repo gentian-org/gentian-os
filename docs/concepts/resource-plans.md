@@ -249,6 +249,11 @@ spec:
     maxPods: null          # ← deliberate
 ```
 
+The three keys `runsMaxPods`, `runsCpu` and `runsMemory` are the quota of the
+tenant's namespace for runs, which the operator applies there
+([networking.md §2.1](networking.md)). Unset, a tenant's runs are given ten
+pods, two CPUs and 4Gi.
+
 **Every quota key is emitted, and keys the plan does not set are emitted as
 `null`** — which is how a strategic merge *removes* a key. Omitting them instead
 would leave the `tenant-defaults` value in place, and the tenant would run on a

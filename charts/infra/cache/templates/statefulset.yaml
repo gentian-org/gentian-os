@@ -41,8 +41,10 @@ spec:
           imagePullPolicy: {{ $image.pullPolicy }}
           command: ["/bin/sh", "-c"]
           # The users are the ones the operator's Jobs saved (ACL SAVE). The
-          # default user is left out of what is loaded: a file naming it wins
-          # over --requirepass, and a rotated password would never take.
+          # default user is written anew at every start, with the hash of the
+          # password in the Secret, so a rotated password takes at the next
+          # start. It goes into the file because, with an ACL file in use,
+          # Valkey takes every user from the file, the default user included.
           #
           # redis-server and redis-cli are the names the Valkey and the Redis
           # images both ship, so the image alone chooses the engine.
@@ -51,9 +53,10 @@ spec:
               set -eu
               touch /data/users.acl
               sed -i '/^user default /d' /data/users.acl
+              hash="$(printf '%s' "$REDISCLI_AUTH" | sha256sum | cut -d' ' -f1)"
+              printf 'user default on #%s ~* &* +@all\n' "$hash" >> /data/users.acl
               exec redis-server --port {{ .Values.port }} --dir /data \
                 --aclfile /data/users.acl \
-                --requirepass "$REDISCLI_AUTH" \
                 --appendonly yes --save ''
           env:
             # The password, under the name redis-cli reads it by, so the

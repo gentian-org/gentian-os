@@ -339,6 +339,32 @@ metadata:
     gentianos.io/function: control
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
+  name: kernel-ingress-dispatcher
+  namespace: kernel-control
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 8080
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: dispatcher
+      app.kubernetes.io/name: gentian-os
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: control
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
   name: kernel-ingress-usher
   namespace: kernel-control
 spec:

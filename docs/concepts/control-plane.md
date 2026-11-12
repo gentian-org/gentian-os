@@ -40,7 +40,7 @@ them.
 A *namespace* is a separate compartment of the cluster. The full list of
 namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 
-### The eight programs
+### The nine programs
 
 | Program | Its job in one sentence | Runs in | Who may call it | What it holds | What it can change |
 | --- | --- | --- | --- | --- | --- |
@@ -51,10 +51,11 @@ namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 | **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster currently holds of a tenant. | `kernel-control` | The consoles' backends and the command line tool, with the person's token. | An identity the operator admits to reads only. | Nothing. |
 | **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. Answers the same question, about one tenant, for a component that was given a key for it. | `kernel-edge` | The Gateway; and, on a second listener, a component whose profile declares the rights check. | Each realm's token-exchange client secret. | Nothing. It lets a request through or refuses it. |
 | **Arbiter** | The one way into the app instance of OpenFGA: answers each component that declares an authorization store, from that component's store and no other. | `system-authorization` | A component with a key for its store; the operator, on a path of its own. | The app instance's key. | The components' stores: it creates, mirrors into, exports, restores and purges them. |
+| **Dispatcher** | Starts a run for a component that asks: one pod of an installed action, or of an image of the component's own, in the tenant's namespace for runs. | `kernel-control` | A component whose profile declares `requires.services.runs`, with the key the operator gave it. | Nothing: no credential, and no data of a run. | Pods in the tenants' namespaces for runs, and nothing else. |
 | **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published through the platform tenant's DMZ | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
 
-Six of the eight hold the key that opens the kernel's OpenFGA (all but the
-arbiter and the concierge). That is a known weakness, described in §6.
+Six of the nine hold the key that opens the kernel's OpenFGA (all but the
+arbiter, the dispatcher and the concierge). That is a known weakness, described in §6.
 
 ### What they stand between
 
@@ -1106,7 +1107,43 @@ An app that keeps its rights in a store cannot check or change them. The
 platform's own questions are unaffected: the bouncer and the kernel's
 programs ask the kernel's OpenFGA, which the arbiter does not stand before.
 
-### 4.8 Concierge
+### 4.8 Dispatcher
+
+**What it does**
+
+- Starts runs. The operator follows git and keeps state, and a run is
+  neither: it is asked for by a call and gone when it ends. A component that
+  declares `requires.services.runs` asks the dispatcher, and the dispatcher
+  starts one pod in the tenant's namespace for runs
+  ([reference/dispatcher-api.md](../reference/dispatcher-api.md)).
+- Knows a caller by its key alone. The operator gives the component the key
+  once (Secret `runs-<component>`) and writes its hash into a table
+  (ConfigMap `dispatcher-runs`) with what may run in each tenant: the
+  installed actions that are Ready, and each caller's own runs, every one an
+  image at its pinned build. The dispatcher re-reads the table every five
+  seconds. The tenant and the component are the table's for that key, never
+  anything a request says.
+- Carries nothing of a run. Inputs, outputs, progress, a question to a
+  person and a call to an adapter go between the run's pod and the component
+  that started it, with a credential the component made for that run. The
+  dispatcher passes that credential into the pod and keeps neither it nor
+  anything else: a restarted dispatcher answers from the pods it finds.
+- Makes one attempt per run and never retries; whether to run again is the
+  caller's to decide, from its own record. It deletes a finished run's pod
+  ten minutes after it ended.
+
+**What it may do at the Kubernetes API.** Create, read and delete pods, and
+read their logs, in the namespaces for runs: the operator binds that role in
+each of them and nowhere else. It reads no profile, no grant and no Secret.
+
+**Who a run is for** is the caller's claim. The dispatcher records it and
+verifies nothing, which holds only because nobody reaches its listener but
+the components the table names: every request without such a key is refused,
+no Gateway routes to it, and the kernel's network rules admit tenants'
+namespaces alone, of which each component's own policy lets through only one
+that declares the requirement.
+
+### 4.9 Concierge
 
 **What it does**
 
@@ -1415,7 +1452,7 @@ separates tenants.
 
 | Term | Meaning |
 | --- | --- |
-| Director, operator, custodian, registrar, usher, bouncer, arbiter, concierge | The eight programs; §2. |
+| Director, operator, custodian, registrar, usher, bouncer, arbiter, dispatcher, concierge | The nine programs; §2. |
 | Platform admin | A person who administers the cluster. Lives in the kernel realm. |
 | Tenant admin, user admin | A person who administers one tenant. Called tenant admin on a multi-tenancy cluster and user admin on a single-tenancy one. |
 | Tenant | One organization's separate part of the cluster: its own people, namespaces, data and addresses. |

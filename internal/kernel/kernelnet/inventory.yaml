@@ -580,6 +580,22 @@ namespaces:
                   - internal/controller/component_reconciler.go:1527
                   - charts/gentian-os/templates/componentprofile-desktop.yaml:45
                   - charts/gentian-os/templates/componentprofile-admin-console.yaml:44
+      - name: dispatcher
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: dispatcher}
+        ports:
+          - port: 8080
+            what: starts a run for a component that declares requires.services.runs
+            from:
+              - peer: tenants
+                why: >-
+                  a tenant's component that starts runs; its own policy opens
+                  the way for that component alone, and the listener refuses a
+                  request without a key the operator's table names
+                evidence:
+                  - internal/controller/runs.go:132
+                  - charts/gentian-os/templates/dispatcher.yaml:105
       - name: usher
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os

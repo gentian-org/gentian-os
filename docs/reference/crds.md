@@ -304,6 +304,16 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
+| `spec.action` | object |  | `Action` is what an action takes, returns and runs. |
+| `spec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `spec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
+| `spec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
+| `spec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
+| `spec.action.outputs` | object |  | `Outputs` is the JSON Schema of what a run returns. |
+| `spec.action.resources` | object |  | `Resources` is what one attempt of a run is given. |
+| `spec.action.resources.cpu` | int-or-string |  |  |
+| `spec.action.resources.memory` | int-or-string |  |  |
+| `spec.action.runtime` | string |  | `Runtime` is what runs the action. |
 | `spec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
@@ -481,6 +491,20 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `spec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `spec.extensions[].kernelRequirements.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `spec.extensions[].kernelRequirements.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `spec.extensions[].kernelRequirements.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `spec.extensions[].kernelRequirements.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `spec.extensions[].kernelRequirements.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `spec.extensions[].kernelRequirements.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `spec.extensions[].kernelRequirements.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `spec.extensions[].kernelRequirements.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `spec.extensions[].kernelRequirements.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `spec.extensions[].kernelRequirements.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `spec.extensions[].kernelRequirements.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `spec.extensions[].kernelRequirements.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `spec.extensions[].kernelRequirements.runs.own[].resources.cpu` | int-or-string |  |  |
+| `spec.extensions[].kernelRequirements.runs.own[].resources.memory` | int-or-string |  |  |
 | `spec.extensions[].kernelRequirements.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `spec.extensions[].kernelRequirements.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `spec.extensions[].kernelRequirements.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -747,6 +771,20 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `spec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `spec.requires.services.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `spec.requires.services.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `spec.requires.services.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `spec.requires.services.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `spec.requires.services.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `spec.requires.services.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `spec.requires.services.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `spec.requires.services.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `spec.requires.services.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `spec.requires.services.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `spec.requires.services.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `spec.requires.services.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `spec.requires.services.runs.own[].resources.cpu` | int-or-string |  |  |
+| `spec.requires.services.runs.own[].resources.memory` | int-or-string |  |  |
 | `spec.requires.services.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `spec.requires.services.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `spec.requires.services.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -1098,6 +1136,16 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
+| `status.profileSpec.action` | object |  | `Action` is what an action takes, returns and runs. |
+| `status.profileSpec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `status.profileSpec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
+| `status.profileSpec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
+| `status.profileSpec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
+| `status.profileSpec.action.outputs` | object |  | `Outputs` is the JSON Schema of what a run returns. |
+| `status.profileSpec.action.resources` | object |  | `Resources` is what one attempt of a run is given. |
+| `status.profileSpec.action.resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.action.resources.memory` | int-or-string |  |  |
+| `status.profileSpec.action.runtime` | string |  | `Runtime` is what runs the action. |
 | `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
@@ -1275,6 +1323,20 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `status.profileSpec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `status.profileSpec.extensions[].kernelRequirements.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].resources.memory` | int-or-string |  |  |
 | `status.profileSpec.extensions[].kernelRequirements.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -1541,6 +1603,20 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `status.profileSpec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `status.profileSpec.requires.services.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `status.profileSpec.requires.services.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `status.profileSpec.requires.services.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `status.profileSpec.requires.services.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `status.profileSpec.requires.services.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `status.profileSpec.requires.services.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `status.profileSpec.requires.services.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `status.profileSpec.requires.services.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `status.profileSpec.requires.services.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `status.profileSpec.requires.services.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `status.profileSpec.requires.services.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `status.profileSpec.requires.services.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `status.profileSpec.requires.services.runs.own[].resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.requires.services.runs.own[].resources.memory` | int-or-string |  |  |
 | `status.profileSpec.requires.services.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `status.profileSpec.requires.services.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `status.profileSpec.requires.services.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -1600,6 +1676,9 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
 | `spec.quotas.requestsMemory` | int-or-string |  | `RequestsMemory` caps the sum of container memory **requests** in the namespace — reserved capacity, priced, as RequestsCPU is. |
+| `spec.quotas.runsCpu` | int-or-string |  | `RunsCPU` caps the sum of container CPU in the tenant's namespace for runs. |
+| `spec.quotas.runsMaxPods` | integer (int32) |  | `RunsMaxPods` caps the number of pods in the tenant's namespace for runs. |
+| `spec.quotas.runsMemory` | int-or-string |  | `RunsMemory` caps the sum of container memory in the tenant's namespace for runs. |
 | `spec.quotas.storage` | int-or-string |  | `Storage` is the total storage quota (PVCs + S3 buckets). |
 | `spec.retired` | boolean |  | `Retired` withholds the plan from every new choice and keeps it for the tenants already on it. |
 | `spec.tier` | integer (int32) | yes | `Tier` orders plans from smallest to largest. |
@@ -1759,6 +1838,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
 | `spec.quotas.requestsMemory` | int-or-string |  | `RequestsMemory` caps the sum of container memory **requests** in the namespace — reserved capacity, priced, as RequestsCPU is. |
+| `spec.quotas.runsCpu` | int-or-string |  | `RunsCPU` caps the sum of container CPU in the tenant's namespace for runs. |
+| `spec.quotas.runsMaxPods` | integer (int32) |  | `RunsMaxPods` caps the number of pods in the tenant's namespace for runs. |
+| `spec.quotas.runsMemory` | int-or-string |  | `RunsMemory` caps the sum of container memory in the tenant's namespace for runs. |
 | `spec.quotas.storage` | int-or-string |  | `Storage` is the total storage quota (PVCs + S3 buckets). |
 | `spec.security` | object |  | `Security` is the realm policy this tenant runs under: how strong a password has to be, how long a session lasts, what happens after repeated failures. |
 | `spec.security.bruteForce` | object |  | `BruteForce` is what happens after repeated failures. |
