@@ -86,8 +86,8 @@ func (h *actsHarness) post(token, path, body string) (int, string) {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	defer resp.Body.Close()
 	answer, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	return resp.StatusCode, string(answer)
 }
 
