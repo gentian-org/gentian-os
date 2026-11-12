@@ -86,7 +86,7 @@ on, not by anything a declaration can carry.
 
 The tenant's apps are given all of the tenant's pull Secrets for their
 images, after the cluster's own. A run is given the same Secrets for its
-image, without the cluster's own.
+image.
 
 **What this does not guarantee.** Holding the credential is what makes a
 private app arrive. It is not a guarantee that the app cannot be run

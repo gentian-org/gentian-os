@@ -1425,8 +1425,9 @@ repository's path a prefix by whole segments), and in `imagePullSecrets` /
 
 The runs reconciler names it the same way in the dispatcher's table, and the
 dispatcher sets it as `imagePullSecrets` on a run's pod: the repositories of
-the whole tenant, or the one bound to the profile the run is of.
-`registry-credentials` is not in the namespace for runs.
+the whole tenant, or the one bound to the profile the run is of, after
+`registry-credentials`, which the operator copies into the namespace for runs
+as it does into the tenant's.
 
 The pull Secret is read through the tenant's own store,
 `openbao-tenant-{tenant}` (§5), whose role reads that tenant's
