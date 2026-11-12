@@ -145,3 +145,93 @@ func TestSessionMaxAgeCapsEveryClientOfTheApp(t *testing.T) {
 		}
 	}
 }
+
+// The client of a token entry exists while the operator says the entry is
+// served, and is one a program on a person's computer can use and nothing
+// more: public with PKCE, consent, no other grant, no role in its tokens, no
+// token that outlives the session, and tokens made out to the entry.
+func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
+	in := &Input{
+		App:         "agent-door",
+		Namespace:   "tenant-demo",
+		TenantName:  "demo",
+		ProfileName: "agent-door",
+		Profile: &gentianov1alpha1.ComponentProfileSpec{
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "agent-door", AccessType: "CONFIDENTIAL"}},
+			}},
+		},
+		Observed: map[string]*unstructured.Unstructured{},
+	}
+	render := func() map[string]*unstructured.Unstructured {
+		out := &Rendered{}
+		if err := renderIdentity(in, out); err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]*unstructured.Unstructured{}
+		for _, o := range out.Objects {
+			m[o.GetName()] = o
+		}
+		return m
+	}
+	const client = "demo-agent-door-token-entry-client"
+	if _, has := render()[client]; has {
+		t.Fatal("a client is rendered for an entry that is not served")
+	}
+	// Served, with nowhere to send a program back to: nothing to register.
+	in.TokenEntry = &TokenEntry{Host: "mcp.demo.example.org"}
+	if _, has := render()[client]; has {
+		t.Fatal("a client with no redirect address is rendered")
+	}
+	in.TokenEntry.RedirectURIs = []string{"http://localhost/callback"}
+	objs := render()
+	fp, _, _ := unstructured.NestedMap(objs[client].Object, "spec", "forProvider")
+	want := map[string]interface{}{
+		"clientId":                  "token-entry-agent-door",
+		"name":                      "Programs connecting to mcp.demo.example.org",
+		"realmId":                   "demo",
+		"extraConfig":               map[string]interface{}{"gentianos.io/managed-by": "platform"},
+		"accessType":                "PUBLIC",
+		"pkceCodeChallengeMethod":   "S256",
+		"standardFlowEnabled":       true,
+		"implicitFlowEnabled":       false,
+		"directAccessGrantsEnabled": false,
+		"serviceAccountsEnabled":    false,
+		"fullScopeAllowed":          false,
+		"consentRequired":           true,
+		"displayOnConsentScreen":    true,
+		"validRedirectUris":         []interface{}{"http://localhost/callback"},
+		"clientSessionMaxLifespan":  "4h0m0s",
+	}
+	if diff := cmp.Diff(want, fp); diff != "" {
+		t.Fatalf("client (-want +got):\n%s", diff)
+	}
+	for name, aud := range map[string]string{
+		"demo-agent-door-token-entry-audience":     "https://mcp.demo.example.org",
+		"demo-agent-door-token-entry-audience-own": "agent-door",
+	} {
+		got, _, _ := unstructured.NestedString(objs[name].Object, "spec", "forProvider", "config", "included.custom.audience")
+		if got != aud {
+			t.Errorf("%s names %q, want %q", name, got, aud)
+		}
+	}
+	// A profile's own cap holds where it is the shorter one, and never
+	// lengthens the entry's.
+	for age, want := range map[time.Duration]string{time.Hour: "1h0m0s", 8 * time.Hour: "4h0m0s"} {
+		in.Profile.SessionMaxAge = &metav1.Duration{Duration: age}
+		got, _, _ := unstructured.NestedString(render()[client].Object, "spec", "forProvider", "clientSessionMaxLifespan")
+		if got != want {
+			t.Errorf("a profile capped at %s: the entry's sessions last %s, want %s", age, got, want)
+		}
+	}
+	in.Profile.SessionMaxAge = nil
+	scopes, _, _ := unstructured.NestedStringSlice(objs["demo-agent-door-token-entry-optional-scopes"].Object, "spec", "forProvider", "optionalScopes")
+	for _, s := range scopes {
+		if s == "offline_access" {
+			t.Fatal("the client may ask for a token that outlives the session")
+		}
+	}
+	if len(scopes) == 0 {
+		t.Fatal("no optional scopes are declared, which leaves the realm's, offline_access among them")
+	}
+}

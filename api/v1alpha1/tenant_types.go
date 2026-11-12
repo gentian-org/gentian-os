@@ -367,6 +367,12 @@ type TenantSpec struct {
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
 
+	// TokenEntries is how this tenant's token entries come to be served: a
+	// component's address that takes a token of the tenant's realm in place
+	// of a session. Unset, each waits for the perimeter approver's approval.
+	// +optional
+	TokenEntries *TenantTokenEntries `json:"tokenEntries,omitempty"`
+
 	// Catalogue is where this tenant may install from beside the catalogs
 	// the whole cluster offers: the catalogs only this tenant sees, and
 	// whether its own administrators may add them.
@@ -963,6 +969,24 @@ type TenantPlatformAccess struct {
 func (t *Tenant) PlatformAdminsEnter() bool {
 	return t.Spec.PlatformAccess != nil && t.Spec.PlatformAccess.AdminsEnter
 }
+
+// TenantTokenEntries is a tenant's choice for its token entries.
+type TenantTokenEntries struct {
+	// Approval says whether a token entry needs the perimeter approver's
+	// approval before it is served. "required", and unset, it does. "waived"
+	// serves a token entry as soon as its component is installed, and takes
+	// effect only on a cluster whose claim allows tenants the choice
+	// (spec.tokenEntries.tenantsMayWaiveApproval); elsewhere it changes
+	// nothing. Only a profile of trustTier platform declares a token entry,
+	// and a person still needs the right to use the component.
+	// +optional
+	// +kubebuilder:validation:Enum=required;waived
+	Approval string `json:"approval,omitempty"`
+}
+
+// TokenEntryApprovalWaived is spec.tokenEntries.approval of a tenant whose
+// token entries need no approval.
+const TokenEntryApprovalWaived = "waived"
 
 // TenantCatalogue is a tenant's own catalogs and who may add them.
 type TenantCatalogue struct {

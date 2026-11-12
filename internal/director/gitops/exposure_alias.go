@@ -185,6 +185,8 @@ func (g *GitOps) SetExposureAlias(ctx context.Context, tenant, install, exposure
 		return Result{}, fmt.Errorf("%w: the approval of %s of tenant %s has expired", ErrNotPublished, what, tenant)
 	case have[at].Kind == KindSignInAppAuthorization:
 		return Result{}, fmt.Errorf("%w: %s of tenant %s is behind sign-in and has no public address", ErrNotPublished, what, tenant)
+	case have[at].Kind == KindTokenEntry:
+		return Result{}, fmt.Errorf("%w: %s of tenant %s takes a token on a host of its own and has no public address", ErrNotPublished, what, tenant)
 	case have[at].Apex:
 		return Result{}, fmt.Errorf("%w: %s of tenant %s is on the cluster's main address", ErrAliasInvalid, what, tenant)
 	}

@@ -111,12 +111,13 @@ const (
 	KindPublic                 = "public"
 	KindPublicAppCredential    = "publicAppCredential"
 	KindSignInAppAuthorization = "signInAppAuthorization"
+	KindTokenEntry             = "tokenEntry"
 )
 
 // validKind reports a kind the registry records; empty is a public address.
 func validKind(k string) bool {
 	switch k {
-	case "", KindPublic, KindPublicAppCredential, KindSignInAppAuthorization:
+	case "", KindPublic, KindPublicAppCredential, KindSignInAppAuthorization, KindTokenEntry:
 		return true
 	}
 	return false
@@ -268,7 +269,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 			// what takes it away. Only a surface that stays a public address
 			// off a bare name keeps one.
 			e.Owner, e.PublishedAt = h.Owner, h.PublishedAt
-			if e.Kind != KindSignInAppAuthorization && !e.Apex {
+			if e.Kind != KindSignInAppAuthorization && e.Kind != KindTokenEntry && !e.Apex {
 				e.Alias, e.AliasSetBy, e.AliasSetAt = h.Alias, h.AliasSetBy, h.AliasSetAt
 			}
 			next = append(next, e)
@@ -296,6 +297,11 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 			verb = "Approve"
 		}
 		what += " (behind sign-in, keeping the app's own Authorization header; not a public address)"
+	case KindTokenEntry:
+		if verb == "Publish" {
+			verb = "Approve"
+		}
+		what += " (takes a token of the tenant's realm in place of a session; not a public address)"
 	}
 	return g.writeTenantFileLocked(ctx, tenant, ExposuresFile, renderExposures(tenant, next), listPatch,
 		fmt.Sprintf("%s %s for tenant %s", verb, what, tenant), meta)
@@ -357,7 +363,9 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	b.WriteString("# passes the caller's Authorization header to the app, which alone\n")
 	b.WriteString("# checks it. signInAppAuthorization: NOT a public address -- an entry\n")
 	b.WriteString("# behind sign-in on which the Authorization header is left as the\n")
-	b.WriteString("# app's own page sent it. An approval holds only while the app's\n")
+	b.WriteString("# app's own page sent it. tokenEntry: NOT a public address -- an entry\n")
+	b.WriteString("# on a host of its own that takes a token the tenant's realm made out\n")
+	b.WriteString("# to it, in place of a session. An approval holds only while the app's\n")
 	b.WriteString("# catalogue entry still declares that kind.\n")
 	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
 	b.WriteString("kind: Tenant\n")

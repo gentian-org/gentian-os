@@ -88,6 +88,9 @@ type Input struct {
 	// What the component asks of its install beyond its profile.
 	PullSecrets        PullSecrets
 	MailboxTokenSignIn bool
+	// TokenEntry is the component's token entry while it is served, nil
+	// otherwise.
+	TokenEntry *TokenEntry
 	// SignInSidecar is the sign-in sidecar the operator runs beside the app,
 	// as the reconciler describes it; nil when the profile declares none.
 	SignInSidecar map[string]interface{}

@@ -39,6 +39,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
+	"github.com/gentian-org/gentian-os/internal/apprender"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -752,6 +753,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		in.Placed = operatorPlaced(profile)
 		in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
+		// The realm client of the token entry, for as long as the entry is
+		// approved: without the approval the realm issues nobody a token
+		// for it.
+		if e := tokenEntryOf(comp, profile); e != nil && (tokenEntryApproved(comp, e, time.Now()) ||
+			tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))) {
+			in.TokenEntry = &apprender.TokenEntry{Host: exposureHost(zone, comp, e), RedirectURIs: e.ClientRedirectURIs}
+		}
 		rendered, err := r.render(ctx, in)
 		if err != nil {
 			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", err.Error(), 0)
@@ -885,6 +893,34 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
 			}
 		}
+	}
+	// The token entry: a host of its own that takes a token of the tenant's
+	// realm in place of a session, served once the tenant's perimeter
+	// approver approved it and removed when that ends. Asked of every
+	// component, so the condition and the route go when the declaration does.
+	tokenEntry := tokenEntryOf(comp, profile)
+	tokenHost := ""
+	sessionHosts := map[string]bool{}
+	if tokenEntry != nil {
+		tokenHost = exposureHost(zone, comp, tokenEntry)
+		for _, e := range routable {
+			sessionHosts[exposureHost(zone, comp, e)] = true
+		}
+	}
+	// A component that declares none, never did and routes nothing has no
+	// such route to look for: an API entry, an addon. One whose profile
+	// stopped declaring it still carries the condition, and is asked once
+	// more so that the route goes.
+	hadTokenEntry := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil
+	tokenWaived := tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	if tokenEntry != nil || hadTokenEntry || len(routable) > 0 {
+		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, tokenServed, held); err != nil {
+			return ctrl.Result{}, fmt.Errorf("token entry: %w", err)
+		}
+	}
+	if tokenServed {
+		exposed++
 	}
 	// The one route that takes no session, for the realm's answer to the
 	// sidecar -- and its removal, where the profile no longer declares one.
@@ -1209,7 +1245,7 @@ func (z edgeZone) listenerFor(host, kernelDomain string) string {
 // routableExposures are the entries of a profile this component routes on the
 // authenticated Gateway, and the ones it refuses to.
 //
-// A gateway entry is behind the zone's session or it is not routed. The
+// A gateway entry is behind the zone's session or it is not routed here. The
 // policy that puts a session and the authorization question in front of a
 // route is written for oidc entries only, so an entry with any other mode
 // would be a route on the authenticated Gateway with nothing in front of it
@@ -1225,6 +1261,11 @@ func routableExposures(comp *gentianov1alpha1.Component, profile *gentianov1alph
 		// An entry that routes into another component is not this one's to
 		// route: the named component already serves that host.
 		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+			continue
+		}
+		// A token entry has a route and a policy of its own, and only once
+		// it is approved (token_entry.go). It is not one of these.
+		if tokenEntryOf(comp, profile) == e {
 			continue
 		}
 		if e.AuthMode != gentianov1alpha1.AuthModeOIDC {
@@ -1516,7 +1557,9 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 		return err
 	}
 	for i := range list.Items {
-		if list.Items[i].GetName() == policy.GetName() {
+		// The token entry's policy carries no session and is not this one's
+		// to remove (token_entry.go).
+		if name := list.Items[i].GetName(); name == policy.GetName() || name == tokenEntryPolicyName(comp.Name) {
 			continue
 		}
 		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
