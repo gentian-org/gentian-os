@@ -846,6 +846,23 @@ type TenantQuotas struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxPods int32 `json:"maxPods,omitempty"`
+
+	// RunsMaxPods caps the number of pods in the tenant's namespace for
+	// runs. Runs have a quota of their own, so that they cannot take the
+	// capacity of the tenant's apps, nor the apps theirs.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	RunsMaxPods int32 `json:"runsMaxPods,omitempty"`
+
+	// RunsCPU caps the sum of container CPU in the tenant's namespace for
+	// runs. A run reserves what it may use, so this is both.
+	// +optional
+	RunsCPU *resource.Quantity `json:"runsCpu,omitempty"`
+
+	// RunsMemory caps the sum of container memory in the tenant's namespace
+	// for runs.
+	// +optional
+	RunsMemory *resource.Quantity `json:"runsMemory,omitempty"`
 }
 
 // TenantOrganization is who a tenant is, as its apps are told it. Its

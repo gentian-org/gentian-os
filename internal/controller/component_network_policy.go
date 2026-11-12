@@ -192,6 +192,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsAuthorization(profile) {
 		outside = append(outside, authorizationEgress())
 	}
+	// The dispatcher, for a component that starts runs: its pods on its one
+	// port.
+	if wantsRuns(profile) {
+		outside = append(outside, runsEgress())
+	}
 	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is

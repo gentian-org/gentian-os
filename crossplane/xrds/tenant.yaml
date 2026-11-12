@@ -344,6 +344,21 @@ spec:
                     maxPods:
                       type: integer
                       description: Maximum number of pods in the tenant namespace.
+                    runsMaxPods:
+                      type: integer
+                      description: >
+                        Maximum number of pods in the tenant's namespace for
+                        runs. The operator applies it there.
+                    runsCpu:
+                      type: string
+                      description: >
+                        Ceiling on container CPU in the tenant's namespace for
+                        runs (e.g. "2"). The operator applies it there.
+                    runsMemory:
+                      type: string
+                      description: >
+                        Ceiling on container memory in the tenant's namespace
+                        for runs (e.g. "4Gi"). The operator applies it there.
                 deletionPolicy:
                   type: string
                   description: >
