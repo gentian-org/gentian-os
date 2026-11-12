@@ -622,8 +622,12 @@ or a loopback address for a program on the person's computer. Where to obtain
 a token is published on the entry's host at
 `/.well-known/oauth-protected-resource` (RFC 9728), answered by the Gateway
 on a route that has no backend. The component behind the entry passes the
-token on to no app: it exchanges it at the realm for a token of the one app
-it calls.
+token on to no app. Where the entry names a component that exchanges
+(`exchangedBy`, a profile that declares
+`requires.services.vouching.exchange`), the entry's tokens name that
+component's client, and it exchanges one at the realm for a token of the one
+app it calls. No other client can exchange them, and that component can
+exchange no token that did not come in through such an entry.
 
 A token entry is served once the tenant's perimeter approver approved it
 (§7). A tenant may waive that approval for its token entries

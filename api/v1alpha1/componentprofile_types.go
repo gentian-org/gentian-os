@@ -791,6 +791,7 @@ func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || (has(self.subDomain) && self.subDomain.size() > 0)",message="a token entry (authMode bearer) names a subDomain: it answers on a host of its own, where no session's cookie is sent"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken) && !has(self.tile))",message="a token entry (authMode bearer) declares no forwardToken, exchangeToken or tile: there is no session whose token could be passed on, and nobody opens it in a browser"
 // +kubebuilder:validation:XValidation:rule="!has(self.clientRedirectURIs) || (self.surface == 'gateway' && self.authMode == 'bearer')",message="clientRedirectURIs is for a token entry (a gateway entry with authMode bearer): no other entry has a client of its own"
+// +kubebuilder:validation:XValidation:rule="!has(self.exchangedBy) || (self.surface == 'gateway' && self.authMode == 'bearer')",message="exchangedBy is for a token entry (a gateway entry with authMode bearer): no other entry's tokens are made out by a client of its own"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
@@ -894,6 +895,18 @@ type ExposureSpec struct {
 	// +kubebuilder:validation:items:MaxLength=200
 	// +kubebuilder:validation:items:Pattern=`^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*)$`
 	ClientRedirectURIs []string `json:"clientRedirectURIs,omitempty"`
+
+	// ExchangedBy names, on a token entry, the profiles of the components
+	// that exchange the entry's tokens for one per app
+	// (requires.services.vouching.exchange): the entry's tokens then name
+	// each one's client, which is what lets the realm exchange them for it.
+	// A component not named here can exchange none of them.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	ExchangedBy []string `json:"exchangedBy,omitempty"`
 
 	// Annotations are gateway policy for this host. The one key read is
 	// gentianos.io/gateway-escaped-slashes-action: KeepUnchanged passes

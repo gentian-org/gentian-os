@@ -279,6 +279,8 @@ func TestComponentProfileRules(t *testing.T) {
 		{"a return address in the clear that is not the person's own computer", tokenEntry(`, clientRedirectURIs: ["http://example.org/callback"]`), "clientRedirectURIs"},
 		{"a return address of a scheme of the program's own", tokenEntry(`, clientRedirectURIs: ["cursor://callback"]`), "clientRedirectURIs"},
 		{"return addresses on an entry behind sign-in", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, clientRedirectURIs: [\"https://example.org/cb\"]}\n", "clientRedirectURIs is for a token entry"},
+		{"a token entry whose tokens a vouching component exchanges", tokenEntry(`, exchangedBy: [chaperone-ee]`), ""},
+		{"exchangers on an entry behind sign-in", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, exchangedBy: [chaperone-ee]}\n", "exchangedBy is for a token entry"},
 		{"two token entries", tokenEntry("") + "  - {name: mcp2, surface: gateway, authMode: bearer, subDomain: mcp2, backend: {service: x, port: 80}}\n", "at most one token entry"},
 		{"a token entry of a service", strings.Replace(tokenEntry(""), "classes: [app]", "classes: [service]", 1), "a token entry is for class app"},
 		{"a gateway entry with a signed token and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: jwt, backend: {service: x, port: 80}}\n", "behind the zone's session"},

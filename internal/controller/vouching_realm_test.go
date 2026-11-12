@@ -256,10 +256,13 @@ func TestTheVouchingClientAsRendered(t *testing.T) {
 					t.Errorf("%s: %s does not state %s false: it has a way to a token besides vouching", c.fixture, alias, flow)
 				}
 			}
-			// Vouching is not exchanging: this client holds no token of the
-			// person to trade.
-			if on, _, _ := unstructured.NestedBool(client, "spec", "forProvider", "standardTokenExchangeEnabled"); on {
-				t.Errorf("%s: %s may exchange tokens as well", c.fixture, alias)
+			// Vouching is not exchanging: a client may trade a person's own
+			// token only where its profile says so
+			// (requires.services.vouching.exchange), which in these fixtures
+			// is tenant-default's steward and nobody else.
+			exchanges := c.fixture == "tenant-default" && comp.profile == "steward"
+			if on, _, _ := unstructured.NestedBool(client, "spec", "forProvider", "standardTokenExchangeEnabled"); on != exchanges {
+				t.Errorf("%s: %s exchanges tokens: %v, want %v", c.fixture, alias, on, exchanges)
 			}
 			if full, has, _ := unstructured.NestedBool(client, "spec", "forProvider", "fullScopeAllowed"); !has || full {
 				t.Errorf("%s: %s does not state fullScopeAllowed false: its tokens would carry every role of the person", c.fixture, alias)

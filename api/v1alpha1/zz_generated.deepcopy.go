@@ -2660,6 +2660,11 @@ func (in *ExposureSpec) DeepCopyInto(out *ExposureSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.ExchangedBy != nil {
+		in, out := &in.ExchangedBy, &out.ExchangedBy
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Annotations != nil {
 		in, out := &in.Annotations, &out.Annotations
 		*out = make(map[string]string, len(*in))

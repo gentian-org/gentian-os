@@ -497,6 +497,14 @@ component's to decide:
 So the people a component can speak for are the people who said so, for as long as nobody took it
 back.
 
+**A person who is present.** A component that also declares
+`spec.requires.services.vouching.exchange: true` may exchange a person's own
+token for one valid at a single app, with the same client and for the same
+scopes. The realm exchanges a token only for a client the token names, and
+only a token entry that lists the component's profile under `exchangedBy`
+makes its tokens out to it ([routing.md §4.1](../concepts/routing.md)). The
+person need not be linked: the token is theirs.
+
 **A component of the platform tenant may also obtain a token for the director** — a cluster
 administrator's, for the platform's own API — by naming what it may do there in
 `spec.requires.services.vouching.director`: `plans-read` (the cluster's plans, every tenant's plan
