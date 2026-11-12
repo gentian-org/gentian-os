@@ -304,6 +304,16 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
+| `spec.action` | object |  | `Action` is what an action takes, returns and runs. |
+| `spec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `spec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
+| `spec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
+| `spec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
+| `spec.action.outputs` | object |  | `Outputs` is the JSON Schema of what a run returns. |
+| `spec.action.resources` | object |  | `Resources` is what one attempt of a run is given. |
+| `spec.action.resources.cpu` | int-or-string |  |  |
+| `spec.action.resources.memory` | int-or-string |  |  |
+| `spec.action.runtime` | string |  | `Runtime` is what runs the action. |
 | `spec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
@@ -1098,6 +1108,16 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
+| `status.profileSpec.action` | object |  | `Action` is what an action takes, returns and runs. |
+| `status.profileSpec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `status.profileSpec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
+| `status.profileSpec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
+| `status.profileSpec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
+| `status.profileSpec.action.outputs` | object |  | `Outputs` is the JSON Schema of what a run returns. |
+| `status.profileSpec.action.resources` | object |  | `Resources` is what one attempt of a run is given. |
+| `status.profileSpec.action.resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.action.resources.memory` | int-or-string |  |  |
+| `status.profileSpec.action.runtime` | string |  | `Runtime` is what runs the action. |
 | `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |

@@ -275,9 +275,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// reach, and who may reach it, is the tenant's network rules' to say
 	// (netpolicy.AdapterNetworkPolicies), because it depends on what else the
 	// tenant has installed.
-	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp && comp.Spec.Class != gentianov1alpha1.ComponentClassAdapter {
+	//
+	// An action is installed and never deployed: it is held and let through
+	// by the same checks, and stops where a release would begin
+	// (actionInstalled).
+	switch comp.Spec.Class {
+	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction:
+	default:
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps and adapters are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters and actions are", comp.Spec.Class), 0)
 	}
 	// The instance runs under one of the modes its profile is certified for.
 	// A Component written before its profile was on the cluster was given
@@ -476,6 +482,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// fails on its first read of them.
 	if noExtension != "" {
 		return r.status(ctx, comp, metav1.ConditionFalse, "APIExtensionRefused", noExtension, componentRequeue)
+	}
+	// An action ends here. Its profile is the one the install names, usable
+	// on this cluster, and what it asked for is answered; there is nothing
+	// to roll out. A run of it is the dispatcher's.
+	if comp.Spec.Class == gentianov1alpha1.ComponentClassAction {
+		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
 	}
 
 	zone := r.zoneOf(tenant)

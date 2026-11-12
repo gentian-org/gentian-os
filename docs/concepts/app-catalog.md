@@ -461,13 +461,25 @@ a service outside it.
 |---|---|---|---|---|
 | `app` | the people of one tenant | tenant administrator, via the director | `tenant-<t>` (+ `-dmz`) | one per tenant |
 | `adapter` | a program acting for a person, by turning one app's abilities into tools | tenant administrator, via the director | `tenant-<t>`, beside the app it adapts | one per tenant |
+| `action` | a component that runs it as one step of its work | tenant administrator, via the director | none: installing it deploys nothing | one per tenant |
 | `service` | other components over contracts, and operators at its own console | platform administrator | `system-<function>` | one |
 | `shared-app` | the people of several tenants, from one backend | platform administrator, via the director | `shared-<app>` | one |
 
-`service` and `adapter` are each exclusive: a profile that lists one lists
-nothing else. An adapter has `launch: none`, exposes nothing, provides and
+`service`, `adapter` and `action` are each exclusive: a profile that lists one
+lists nothing else. An adapter has `launch: none`, exposes nothing, provides and
 integrates nothing, is never placed, and carries `spec.adapter`, which names
 the app it adapts ([agentic-ai.md](agentic-ai.md)).
+
+An action is one image at one build that another component runs as a step.
+Its package is exactly one entry of `package.images` and nothing else, and
+`spec.action` says what a run starts (`command`), what it takes and returns
+(`inputs`, `outputs`, as JSON Schema), the longest one attempt may take
+(`deadlineSeconds`), what it is given (`resources`) and which adapters the
+calling component may call on its behalf (`adapters`). It has `launch: none`,
+exposes, provides and integrates nothing, requires no service, is never
+placed, and asks for no privilege but egress. Installing it deploys nothing:
+the Component is `Ready` once its profile is the one the install names, and
+its status names the image.
 
 *Class `service` is an option that exists in the schema and is not
 implemented.* Engines are delivered as Argo CD applications from
@@ -911,10 +923,11 @@ another object, and no admission path can be relied on at every write.
 
 On the profile (`api/v1alpha1/componentprofile_types.go`):
 
-- `service` and `adapter` are each exclusive within `classes`; `shared-app`
-  requires `trustTier: platform`;
+- `service`, `adapter` and `action` are each exclusive within `classes`;
+  `shared-app` requires `trustTier: platform`;
 - the package is a chart, a composition, the two together, an `api` or an
-  `addon`, and nothing else; `customization.addon` is refused;
+  `addon`, and nothing else; an action's is exactly one pinned image
+  (`package.images`) and none of these; `customization.addon` is refused;
 - `launch` is required; `tile` needs a tile on an exposure or on
   `package.api`, and a tile means `launch: tile`;
 - `forwardToken`, `requires.services.rights`, `.vouching`, `.logDestination`,
@@ -925,6 +938,9 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
 - `placement` and the default-placement booleans are for class `app`;
 - an adapter has `launch: none`, no `expose`, `provides`, `integrations`,
   `vouching`, `placement` or `package.addon`, and carries `spec.adapter`;
+- an action has `launch: none`, no `expose`, `provides`, `integrations`,
+  `requires.services` or `placement`, no privilege but `egress`, and carries
+  `spec.action`;
 - on an entry: a perimeter entry is `none` or `app`, never `oidc`, and the
   four modes nothing checks (`jwt`, `bearer`, `basic`, `signature`) are refused
   there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
@@ -949,7 +965,7 @@ immutable.
   (`internal/webhook/tenant_validator.go`) refuses an entry whose profile is
   not on the cluster and more apps than `spec.quotas.maxApps`.
 - At reconcile the operator refuses a class it does not run
-  (`ClassUnsupported`: only `app` and `adapter` are reconciled) and an
+  (`ClassUnsupported`: only `app`, `adapter` and `action` are reconciled) and an
   instance whose class its profile does not list (`ClassMismatch`); nothing is
   rolled out from either (`internal/controller/component_reconciler.go`).
 - Enablements and grants are written only by the director, from the token of
@@ -970,7 +986,8 @@ name.
 ### 18.4 Why the model closes
 
 A tenant administrator cannot create a service: the only classes the operator
-runs in a tenant namespace are `app` and `adapter`. They never need to: what a
+runs in a tenant namespace are `app` and `adapter`, and an `action` runs
+nothing there. They never need to: what a
 component requires arrives through `requires.services`, fulfilled by somebody
 else. When something needs what no contract covers, it ships as an extension
 inside the component's own pod (`spec.extensions`), in the tenant namespace,
