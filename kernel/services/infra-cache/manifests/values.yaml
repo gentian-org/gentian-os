@@ -24,5 +24,5 @@ imagePullSecrets: []
 networkPolicy:
   enabled: true
   ports:
-    # The port apps are handed (provisioner.RedisPort).
-    redis: 6379
+    # The port apps are handed (provisioner.CachePort).
+    cache: 6379

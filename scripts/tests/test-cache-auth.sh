@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/tests/test-cache-auth.sh
 # =============================================================================
-# The kernel cache's start script (charts/infra/redis), run in the image the
+# The kernel cache's start script (charts/infra/cache), run in the image the
 # chart pins, against a data directory kept across starts:
 #
 #   - a client without the password is refused, and one with it is let in;
@@ -45,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-helm template cache charts/infra/redis --set auth.existingSecret=cache-test \
+helm template cache charts/infra/cache --set auth.existingSecret=cache-test \
     > "${SANDBOX}/rendered.yaml" || { echo "FAIL: helm template"; exit 1; }
 python3 - "${SANDBOX}" <<'EOF' || { echo "FAIL: no StatefulSet container in the render"; exit 1; }
 import sys, yaml
@@ -64,11 +64,11 @@ IMAGE="$(cat "${SANDBOX}/image")"
 # start <password> — the server, on the kept volume, as the chart starts it.
 start() {
     docker rm -f "${NAME}" >/dev/null 2>&1
-    docker run -d --name "${NAME}" -v "${VOLUME}:/data" -e "VALKEYCLI_AUTH=$1" \
+    docker run -d --name "${NAME}" -v "${VOLUME}:/data" -e "REDISCLI_AUTH=$1" \
         -v "${SANDBOX}/start.sh:/start.sh:ro" --entrypoint /bin/sh "${IMAGE}" /start.sh >/dev/null \
         || { echo "FAIL: the server did not start"; exit 1; }
     for _ in $(seq 1 50); do
-        docker exec "${NAME}" valkey-cli -a "$1" --no-auth-warning ping 2>/dev/null | grep -q PONG && return 0
+        docker exec "${NAME}" redis-cli -a "$1" --no-auth-warning ping 2>/dev/null | grep -q PONG && return 0
         sleep 0.2
     done
     echo "FAIL: the server does not answer with its password"
@@ -80,9 +80,9 @@ start() {
 cli() {
     local pass="$1"; shift 2
     if [ -n "${pass}" ]; then
-        docker exec "${NAME}" valkey-cli -a "${pass}" --no-auth-warning "$@" 2>&1
+        docker exec "${NAME}" redis-cli -a "${pass}" --no-auth-warning "$@" 2>&1
     else
-        docker exec -e VALKEYCLI_AUTH= "${NAME}" valkey-cli "$@" 2>&1
+        docker exec -e REDISCLI_AUTH= "${NAME}" redis-cli "$@" 2>&1
     fi
 }
 

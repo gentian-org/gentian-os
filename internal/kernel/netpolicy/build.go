@@ -114,7 +114,7 @@ func cacheAppNames(in BuildInput) []string {
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
 		// Memcached only: it is the cache that lives in the tenant's own
-		// namespace. A Redis app has no business with it.
+		// namespace. An app on the shared cache has no business with it.
 		if provisioner.CacheEngineOf(profile) != gentianov1alpha1.CacheEngineMemcached {
 			continue
 		}

@@ -95,9 +95,9 @@ func TestAnUnreadableRecordIsAnError(t *testing.T) {
 // What a purge works on: the record says what was made, and wins on the
 // engine; the profile adds what it declares.
 func TestMergeStores(t *testing.T) {
-	declared := Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, Redis: true}
+	declared := Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, Cache: true}
 	recorded := Provisioned{DatabaseEngine: gentianov1alpha1.DatabaseEngineMariaDB, Database: "d", Bucket: "b"}
-	want := Stores{Database: gentianov1alpha1.DatabaseEngineMariaDB, S3: true, Redis: true}
+	want := Stores{Database: gentianov1alpha1.DatabaseEngineMariaDB, S3: true, Cache: true}
 	if got := MergeStores(declared, recorded); got != want {
 		t.Errorf("merged = %+v, want %+v", got, want)
 	}

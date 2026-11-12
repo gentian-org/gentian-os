@@ -8,7 +8,7 @@
     DNS                    53, UDP and TCP, to whichever resolver the cluster
                            gives its pods.
     its database           the CloudNativePG pods of litellm-db, on 5432.
-    its cache              redis-llm, on 6379.
+    its cache              llm-cache, on 6379.
     the model servers      the vLLM instances and the mock model server, on
                            8000.
     the edge               the Gateway's Envoy pods in the edge namespace,
@@ -89,10 +89,10 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: redis-llm
+              app: llm-cache
       ports:
         - protocol: TCP
-          port: {{ $np.ports.redis }}
+          port: {{ $np.ports.cache }}
     - to:
         - podSelector:
             matchLabels:
@@ -171,7 +171,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: redis-llm
+      app: llm-cache
   policyTypes:
     - Egress
   egress: []

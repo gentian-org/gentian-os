@@ -72,7 +72,7 @@ func seedAll(t *testing.T, s *secrets.Seeder) map[string]string {
 		t.Fatalf("s3: %v", err)
 	}
 	out["s3 access-key"], out["s3 secret-key"] = s3.AccessKey, s3.SecretKey
-	cache, err := s.SeedCache(ctx, "acme", "wiki", secrets.CacheCreds{Host: "redis", Port: "6379", User: "acme-wiki"})
+	cache, err := s.SeedCache(ctx, "acme", "wiki", secrets.CacheCreds{Host: "cache", Port: "6379", User: "acme-wiki"})
 	if err != nil {
 		t.Fatalf("cache: %v", err)
 	}

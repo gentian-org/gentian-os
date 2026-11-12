@@ -144,8 +144,8 @@ func TestAPurgedEngineLosesItsVolumesOnlyOnceItsReleaseIsGone(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: systemEnginesConfigMap, Namespace: "kernel-control"},
 		Data:       map[string]string{EngineCache: enginePurge},
 	}
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "redis-data-0", Namespace: "system-cache"}}
-	rel := engineReleaseObject("dev-redis", "system-cache", true)
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "cache-data-cache-0", Namespace: "system-cache"}}
+	rel := engineReleaseObject("dev-cache", "system-cache", true)
 	c := fake.NewClientBuilder().WithScheme(systemEnginesScheme(t)).WithObjects(set, pvc, rel).Build()
 	r := &SystemEnginesReconciler{Client: c, Namespace: "kernel-control"}
 	res, err := r.Reconcile(ctx, systemEnginesRequest)

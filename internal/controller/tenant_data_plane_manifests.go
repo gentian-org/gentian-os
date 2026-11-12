@@ -130,24 +130,25 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	for _, appName := range redisApps {
 		userPassword := ""
 		if r.Seeder != nil {
-			redisHost, redisPort, hostErr := r.redisCacheEndpoint(ctx)
+			host, port, hostErr := r.cacheEndpoint(ctx)
 			if hostErr != nil {
 				return nil, nil, hostErr
 			}
 			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
-				Host: redisHost,
-				Port: redisPort,
-				User: redisACLUsername(tenant.Name, appName),
+				Host: host,
+				Port: port,
+				User: cacheACLUsername(tenant.Name, appName),
 			})
 			if seedErr != nil {
-				return nil, nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)
+				return nil, nil, fmt.Errorf("seed the cache for %s: %w", appName, seedErr)
 			}
 			userPassword = creds.Password
+			r.refreshCacheReaders(ctx, nsName, secrets.CategoryPath(tenant.Name, appName, "cache"), host+":"+port)
 		}
 		if userPassword != "" {
-			keys[types.NamespacedName{Namespace: cacheNamespace, Name: redisACLJobName(tenant.Name, appName)}] = passwordSecretData(userPassword)
+			keys[types.NamespacedName{Namespace: cacheNamespace, Name: cacheACLJobName(tenant.Name, appName)}] = passwordSecretData(userPassword)
 		}
-		jobs = append(jobs, *makeRedisACLJob(tenant, appName, userPassword != ""))
+		jobs = append(jobs, *makeCacheACLJob(tenant, appName, userPassword != ""))
 	}
 	_ = memcachedApps // memcached workload is emitted via buildDataPlaneObjects
 

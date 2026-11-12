@@ -1,0 +1,29 @@
+# The cache is latched by its Release under the resource name redis-release
+# as well as cache-release. The set (required-resources) names nothing, as
+# before the operator has written it: the cache stays composed, as the
+# Release cache-release, and the one observed as redis-release is dropped.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  compositeDeletePolicy: Background
+  resourceRefs: []

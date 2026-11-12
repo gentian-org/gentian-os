@@ -1733,7 +1733,7 @@ cleanup_orphaned_kyverno_webhooks() {
 # Globbing committed kernel/services/*/manifests/${env}/release.yaml files
 # (as the deleted update.sh --reconcile-releases did) misses most Release
 # CRs in this cluster: they are Crossplane-composition-generated (owned by
-# XApp/XCluster, e.g. the system tier's mariadb, redis and seaweedfs), which
+# XApp/XCluster, e.g. the system tier's mariadb, cache and seaweedfs), which
 # a file-globbing approach can't see at all.
 # This checks live Release objects directly instead, regardless of how
 # they were created, and force-reconciles (annotate + let Crossplane retry)

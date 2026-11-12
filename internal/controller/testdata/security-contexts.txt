@@ -7,6 +7,8 @@ arbiter d: b0d57d7d42e211af
 arbiter e: 00139c7546ffa2cf
 arbiter f: 13a19abe824d79c5
 arbiter g: d00195c19f76a5f6
+cache: 889a0c7e53873a71
+  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
 keycloak: 18579414cbbd90f9
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
 mariadb: 8f0a65c37ac12be6
@@ -15,8 +17,6 @@ perimeter: 090ca6d0b79d2ff6
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsNonRoot":true}
   .spec.template.spec.securityContext {"runAsNonRoot":true,"runAsUser":101,"seccompProfile":{"type":"RuntimeDefault"}}
 psql: bda87b1359fe9ade
-  .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
-redis: afab15bbd98b4158
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
 sign-in: 7581427327a4d12b
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsNonRoot":true}

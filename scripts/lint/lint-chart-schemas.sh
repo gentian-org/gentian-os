@@ -40,7 +40,7 @@ trap 'rm -rf "${TMP}"' EXIT
 # Values a chart requires and its defaults leave empty, by chart directory.
 chart_args() {
     case "$1" in
-        charts/infra/redis) echo "--set-string auth.existingSecret=placeholder" ;;
+        charts/infra/cache) echo "--set-string auth.existingSecret=placeholder" ;;
     esac
 }
 

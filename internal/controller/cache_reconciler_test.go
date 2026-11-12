@@ -99,7 +99,7 @@ func TestCache_NoCacheApps(t *testing.T) {
 }
 
 // TestCache_CreatesRedisACLJob verifies that a Tenant with a Redis-requiring app
-// creates the valkey-cli ACL SETUSER Job in the kernel namespace with correct labels.
+// creates the ACL SETUSER Job in the cache namespace with correct labels.
 func TestCache_CreatesRedisACLJob(t *testing.T) {
 	t.Parallel()
 	profile := newRedisProfile("redis-app1")
@@ -123,7 +123,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "system-cache"}, job) == nil
+			types.NamespacedName{Name: "cache-acl-rediscreate-redis-app1", Namespace: "system-cache"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "rediscreate" {
@@ -136,20 +136,20 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 		t.Fatal("expected at least one container in Redis ACL Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != kernel.DefaultRedisProvisionerImage {
+	if container.Image != kernel.DefaultCacheProvisionerImage {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 
-	// Credentials must come from the redis-admin Secret.
+	// Credentials must come from the cache-admin Secret.
 	secretEnvs := make(map[string]string)
 	for _, e := range container.Env {
 		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
 			secretEnvs[e.Name] = e.ValueFrom.SecretKeyRef.Name
 		}
 	}
-	for _, required := range []string{"REDIS_HOST", "REDIS_PASSWORD"} {
-		if secretEnvs[required] != "redis-admin" {
-			t.Errorf("expected %s sourced from redis-admin Secret, got %q", required, secretEnvs[required])
+	for _, required := range []string{"CACHE_HOST", "CACHE_PASSWORD"} {
+		if secretEnvs[required] != "cache-admin" {
+			t.Errorf("expected %s sourced from cache-admin Secret, got %q", required, secretEnvs[required])
 		}
 	}
 }
@@ -231,9 +231,9 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "system-cache"}, job) == nil
+			types.NamespacedName{Name: "cache-acl-cacheready-redis-app2", Namespace: "system-cache"}, job) == nil
 	})
-	markJobComplete(t, "redis-acl-cacheready-redis-app2", "system-cache")
+	markJobComplete(t, "cache-acl-cacheready-redis-app2", "system-cache")
 
 	// Phase=Ready and CacheReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -289,7 +289,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "system-cache"}, job) == nil
+			types.NamespacedName{Name: "cache-acl-cachedelete-redis-app3", Namespace: "system-cache"}, job) == nil
 	})
 	waitFor(t, jobAppearTimeout, func() bool {
 		dep := &appsv1.Deployment{}
@@ -303,10 +303,10 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	}
 	// The cache is first in the teardown order (backup.TeardownOrder); its
 	// Job has to finish before the rest of the cache's cleanup follows.
-	go markJobCompleteWhenReady("redis-acl-delete-cachedelete-redis-app3", "system-cache")
+	go markJobCompleteWhenReady("cache-acl-delete-cachedelete-redis-app3", "system-cache")
 
 	// Redis delete Job should appear.
-	deleteJob := waitForKernelJob(t, "redis-acl-delete-cachedelete-redis-app3", "cachedelete")
+	deleteJob := waitForKernelJob(t, "cache-acl-delete-cachedelete-redis-app3", "cachedelete")
 	if deleteJob.Labels["gentianos.io/tenant"] != "cachedelete" {
 		t.Errorf("expected tenant label 'cachedelete', got %q", deleteJob.Labels["gentianos.io/tenant"])
 	}

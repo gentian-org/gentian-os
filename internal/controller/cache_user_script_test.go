@@ -18,7 +18,7 @@ import (
 // An app's cache user reaches its own prefix and nothing else: the key pattern
 // does not hold the commands that take no key, so they are refused by name.
 func TestCacheUserIsHeldToItsPrefix(t *testing.T) {
-	script := redisSetUserScript("demo-wiki", redisKeyPrefix("demo", "wiki"))
+	script := cacheSetUserScript("demo-wiki", cacheKeyPrefix("demo", "wiki"))
 	for _, want := range []string{
 		`reset on ">$USER_PW"`,
 		`"~demo:wiki:*"`,
@@ -42,7 +42,7 @@ func TestCacheUserIsHeldToItsPrefix(t *testing.T) {
 // A user that is not saved is gone at the next restart of the server, and the
 // script fails where the server cannot save, before it has changed anything.
 func TestCacheUserIsSavedBeforeAndAfter(t *testing.T) {
-	script := redisSetUserScript("demo-wiki", redisKeyPrefix("demo", "wiki"))
+	script := cacheSetUserScript("demo-wiki", cacheKeyPrefix("demo", "wiki"))
 	set := strings.Index(script, "expect_ok ACL SETUSER")
 	if first := strings.Index(script, "expect_ok ACL SAVE"); first < 0 || first > set {
 		t.Errorf("no ACL SAVE before the user is changed:\n%s", script)

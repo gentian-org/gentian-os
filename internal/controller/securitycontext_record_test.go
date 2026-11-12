@@ -25,7 +25,7 @@ func TestSecurityContextTranscript(t *testing.T) {
 	s := &signInSidecar{service: "wiki-sign-in", host: "wiki.example", handlerDigest: "d"}
 	objs := map[string]any{
 		"psql":      psqlContainer("c", "true"),
-		"redis":     redisContainer("c", "u", "p", "true"),
+		"cache":     cacheContainer("c", "u", "p", "true"),
 		"mariadb":   mariadbContainer("c", "true"),
 		"keycloak":  keycloakContainer("c", "true"),
 		"perimeter": perimeterDeployment("p", "dmz", map[string]string{"a": "b"}, "h"),

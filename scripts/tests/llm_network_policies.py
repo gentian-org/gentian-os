@@ -4,7 +4,7 @@
 # to what store_network_policies.py holds the four stores to.
 #
 # The namespace is not one server but four pod sets -- the gateway, its
-# PostgreSQL, its Redis and the mock model server -- and each carries a
+# PostgreSQL, its cache and the mock model server -- and each carries a
 # NetworkPolicy of its own. Rendered with helm, no cluster: the LLM
 # ApplicationSet (for the parameters Argo CD passes the chart) and the chart
 # (for the pods and the policies). The clients are the rows of
@@ -46,7 +46,7 @@ POLICY = {
 WORKLOAD = {
     "gateway": ("Deployment", "litellm-proxy"),
     "database": ("Cluster", "litellm-db"),
-    "cache": ("Deployment", "redis-llm"),
+    "cache": ("Deployment", "llm-cache"),
     "mock": ("Deployment", "vllm-inference"),
 }
 
@@ -486,7 +486,7 @@ def check_vllm():
     own = {NAME_LABEL: ns}
     if not admitted(policy, ns, own, gateway, 8000):
         raise Failure("the gateway is not admitted to the instance")
-    if admitted(policy, ns, own, {"app": "redis-llm"}, 8000):
+    if admitted(policy, ns, own, {"app": "llm-cache"}, 8000):
         raise Failure("a pod of the namespace other than the gateway is admitted to the instance")
     if admitted(policy, "tenant-acme", {NAME_LABEL: "tenant-acme", "gentianos.io/tier": "tenant"}, gateway, 8000):
         raise Failure("a tenant's pod is admitted to the instance")
@@ -569,7 +569,7 @@ def check_egress():
     if job is None:
         raise Failure("the budget Job has no egress policy")
     if not reaches(job, ns, own, pods(docs)[WORKLOAD["gateway"]]["labels"], GATEWAY_PORT, ns) or \
-            reaches(job, ns, own, {"app": "redis-llm"}, 6379, ns) or internet(job):
+            reaches(job, ns, own, {"app": "llm-cache"}, 6379, ns) or internet(job):
         raise Failure("the budget Job reaches more, or other, than the gateway")
 
 

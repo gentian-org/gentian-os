@@ -1,6 +1,6 @@
 # Who connects to the four shared stores of the system tier, and who must not.
 #
-# Every legitimate client of PostgreSQL, MariaDB, Redis and SeaweedFS, as the code
+# Every legitimate client of PostgreSQL, MariaDB, the cache and SeaweedFS, as the code
 # builds it: the namespace its pod runs in, the labels that pod carries and
 # the port it dials. Two tests read this file and neither is enough alone:
 #
@@ -143,9 +143,9 @@ clients:
     built: restore-mariadb
     proof: internal/controller/tenantrestore_controller.go restoreUnits, tenantexport_placement.go, internal/backup/restore_jobs.go MariaDBRestoreJob
 
-  # ── Redis (system-cache) ───────────────────────────────────────────────
+  # ── The cache (system-cache) ───────────────────────────────────────────
   - store: cache
-    client: a tenant's app that declared a Redis cache
+    client: a tenant's app that declared a cache on the redis engine
     namespace: *tenant
     podLabels: {gentianos.io/app: wiki}
     port: 6379
@@ -156,8 +156,8 @@ clients:
     namespace: system-cache
     podLabels: {}
     port: 6379
-    built: redis-acl-job
-    proof: internal/controller/cache_reconciler.go makeRedisACLJob
+    built: cache-acl-job
+    proof: internal/controller/cache_reconciler.go makeCacheACLJob
   - store: cache
     client: the destroy Job that removes an app's user and keys
     namespace: system-cache
@@ -463,7 +463,7 @@ clients:
       the port is CloudNativePG 1.25.0 pkg/management/url StatusPort
   - store: llm
     server: cache
-    client: the gateway, on its own Redis
+    client: the gateway, on its own cache
     namespace: system-llm
     podLabels: {app: litellm-proxy}
     port: 6379
@@ -590,7 +590,7 @@ denied:
     podLabels: {gentianos.io/component: tenant-export}
     port: 6379
   - store: cache
-    client: the operator, which reaches Redis through its Jobs only
+    client: the operator, which reaches the cache through its Jobs only
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/instance: gentian-os, app.kubernetes.io/component: operator}
     port: 6379
@@ -734,7 +734,7 @@ denied:
     port: 5432
   - store: llm
     server: cache
-    client: a tenant's desktop, on the gateway's Redis
+    client: a tenant's desktop, on the gateway's cache
     namespace: *tenant
     podLabels: {app.kubernetes.io/instance: tenant-acme-desktop}
     port: 6379
@@ -776,7 +776,7 @@ denied:
     port: 9187
   - store: llm
     server: cache
-    client: a tenant's app that declared the model gateway, on the gateway's Redis
+    client: a tenant's app that declared the model gateway, on the gateway's cache
     namespace: *tenant
     podLabels: {gentianos.io/app: chat}
     port: 6379

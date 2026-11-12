@@ -14,9 +14,9 @@ status:
 apiVersion: helm.crossplane.io/v1beta1
 kind: Release
 metadata:
-  name: dev-cluster-redis
+  name: dev-cluster-cache
   annotations:
-    crossplane.io/composition-resource-name: redis-release
+    crossplane.io/composition-resource-name: cache-release
 status:
   conditions:
   - type: Ready
