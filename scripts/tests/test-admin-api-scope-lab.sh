@@ -100,36 +100,33 @@ scopes_named() { # how many client scopes of the master realm are called kc-admi
         jq '[.[] | select(.name == "kc-admin-api")] | length'
 }
 
-# installer — the bootstrap Job's part that makes the accounts: the same
-# shell, with the variables the Job sets before it.
-installer() (
-    KEYCLOAK_BASE="${KC}"
-    AUTH="Authorization: Bearer $(admin_token)"
-    MASTER="${KEYCLOAK_BASE}/admin/realms/master"
-    ADMIN_ROLE="$(curl -sf -H "${AUTH}" "${MASTER}/roles/admin")"
+# job <commands> — the bootstrap Job's part that makes the accounts: the same
+# shell, run by sh -e as the Job runs it, with the variables the Job sets
+# before it, then the commands given.
+job() (
+    export KEYCLOAK_BASE="${KC}" OPERATOR_SECRET PROVISIONER_SECRET BARE_SECRET
+    AUTH="Authorization: Bearer $(admin_token)"; export AUTH
+    export MASTER="${KEYCLOAK_BASE}/admin/realms/master"
+    ADMIN_ROLE="$(curl -sf -H "${AUTH}" "${MASTER}/roles/admin")"; export ADMIN_ROLE
     eval "$(sed -n '/^_keycloak_admin_clients_shell() {/,/^}/p' scripts/lib/portal-login-bootstrap.sh)"
-    eval "$(_keycloak_admin_clients_shell)"
-    set -e
-    ensure_admin_api_scope
-    ensure_admin_client gentian-operator "${OPERATOR_SECRET}"
-    ensure_admin_client keycloak-provisioner "${PROVISIONER_SECRET}"
+    sh -ec "$(_keycloak_admin_clients_shell)
+$1"
 )
 
-# The accounts as the installer leaves them, beside one that is the same but
-# for the scope.
-bare_account() (
-    KEYCLOAK_BASE="${KC}"
-    AUTH="Authorization: Bearer $(admin_token)"
-    MASTER="${KEYCLOAK_BASE}/admin/realms/master"
-    ADMIN_ROLE="$(curl -sf -H "${AUTH}" "${MASTER}/roles/admin")"
-    eval "$(sed -n '/^_keycloak_admin_clients_shell() {/,/^}/p' scripts/lib/portal-login-bootstrap.sh)"
-    eval "$(_keycloak_admin_clients_shell)"
-    set -e
-    ensure_admin_api_scope
-    ensure_admin_client lab-without-scope "${BARE_SECRET}"
-    id="$(curl -sf -H "${AUTH}" "${MASTER}/clients?clientId=lab-without-scope" | jq -r '.[0].id')"
-    curl -sf -X DELETE -H "${AUTH}" "${MASTER}/clients/${id}/default-client-scopes/${ADMIN_API_SCOPE_ID}" >/dev/null
-)
+# The installer's accounts.
+installer() {
+    job 'ensure_admin_api_scope
+ensure_admin_client gentian-operator "${OPERATOR_SECRET}"
+ensure_admin_client keycloak-provisioner "${PROVISIONER_SECRET}"'
+}
+
+# One that is the same but for the scope.
+bare_account() {
+    job 'ensure_admin_api_scope
+ensure_admin_client lab-without-scope "${BARE_SECRET}"
+id=$(curl -sf -H "${AUTH}" "${MASTER}/clients?clientId=lab-without-scope" | jq -r ".[0].id")
+curl -sf -X DELETE -H "${AUTH}" "${MASTER}/clients/${id}/default-client-scopes/${ADMIN_API_SCOPE_ID}" >/dev/null'
+}
 
 expect_status() { # <what> <client> <secret> <status>
     local token got want="$4"
