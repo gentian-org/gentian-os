@@ -723,7 +723,7 @@ func (r *ComponentReconciler) mainAddressFor(
 	status := metav1.ConditionFalse
 	if verdict.Entry != "" {
 		status = metav1.ConditionTrue
-		main.entry, main.host = verdict.Entry, r.KernelDomain
+		main.entry, main.host = verdict.Entry, verdict.Host
 	}
 	apimeta.SetStatusCondition(&comp.Status.Conditions, metav1.Condition{
 		Type: ConditionMainAddress, Status: status, Reason: verdict.Reason, Message: verdict.Message,

@@ -972,7 +972,7 @@ func TestHeadlampIsRoutedForWhoRunsTheCluster(t *testing.T) {
 // person makes behind it: a purge, which the director waits PurgeDeadline for.
 func TestAuthenticatedGatewayOutlastsAPurge(t *testing.T) {
 	t.Parallel()
-	spec := authenticatedGatewayBackendTrafficPolicySpec("12h")
+	spec := authenticatedGatewayBackendTrafficPolicySpec("12h", "")
 	ref := spec["targetRefs"].([]interface{})[0].(map[string]interface{})
 	if ref["kind"] != "Gateway" || ref["name"] != AuthenticatedGatewayName {
 		t.Fatalf("target = %v", ref)

@@ -956,23 +956,27 @@ the entry and the label), and a Component that exists anyway is held by the
 operator with `HostReserved`; stating `trustTier: platform` changes nothing
 ([routing.md §3.1](../concepts/routing.md)).
 
-"For the main address" is the same entry with `apex: true` (and no
-`subDomain`). It asks for the cluster's bare domain and needs all of this:
+"For a bare name" is the same entry with `apex: true` (and no
+`subDomain`). It asks for the tenant's bare name and needs all of this:
 
-- the cluster's tenancy mode is `single`, the tenant is its user tenant, and
-  that tenant is not on a domain of its own;
+- the tenant has one: the cluster's main address if the cluster
+  administrator names the tenant for it (`mainAddress.tenant`) or it is the
+  user tenant of a single-tenancy cluster, otherwise the tenant's own zone
+  (`<tenant>.<kernelDomain>`) or a domain bound to it. The platform tenant
+  and a tenant on the cluster's domain that the cluster does not name have
+  none;
 - the approver sends `{"apex": true, "acknowledgeMainAddressRule": true}`
   with the request (the CLI: `--acknowledge-main-address-rule`, which `--yes`
   does not imply) -- an entry that says `apex` is not published at all
   without `apex`, and the director refuses `apex` without the acknowledgement
   (`400`, with the warning below);
-- no other surface holds the main address;
+- no other surface of the tenant holds that bare name;
 - the entry declares no path inside `/branding/`, `/sign-in`,
   `/.well-known/acme-challenge/` or `/.well-known/pki-validation/`. Those stay
   the platform's.
 
-**Before you approve a website for the main address.** A script in a page on
-the main address can set cookies that browsers also send to the desktop, the
+**Before you approve a website for a bare name.** A script in a page on a
+bare name can set cookies that browsers also send to the desktop, the
 consoles and sign-in. It cannot read anybody's session. It can stop people
 from signing in until they clear their cookies, and it can sign a person in
 to an account the script's author chose, without the person noticing. The
@@ -1609,10 +1613,17 @@ versioning policy.
 * `extraObjects`, `extraEnv`, `extraVolumeMounts`, `podAnnotations` — the standard L4-lite hooks, so
   packaging changes rarely need a chart fork.
 * A declared `conf.d` mount wired to a ConfigMap the composition can populate — L1 with no chart edit.
-* `podLabels` — the platform sets `gentianos.io/app` and `gentianos.io/tenant` in it for every chart
-  it does not place on tenants itself, and the tenant's network policies select the app's pods by
-  them. A chart without the key publishes them as pod annotations instead
-  (`kernel/security/kyverno/policies/gentian-app-labels.yaml` copies them onto labels).
+* Pod labels need nothing from the chart. The tenant's network policies select an app's pods by
+  `gentianos.io/app` and `gentianos.io/tenant`, and the platform sets both itself, after the chart
+  is rendered, on the pod template of every Deployment, StatefulSet and Job; a value the chart
+  writes under either key is replaced. A Helm hook is not part of what is rendered then, so a
+  hook's Job that needs the app's network access takes the two labels from `podLabels`, which the
+  platform also sets in the values of a chart it does not place.
+* A workload the app creates while it runs carries neither label. An account of the tenant's own,
+  such as the chart's ServiceAccount with a Role over Jobs, may create workloads but is refused one
+  whose pods carry `gentianos.io/app` or `gentianos.io/tenant`, so such a workload has the tenant's
+  baseline network access and not the app's. A ConfigMap named `<anything>-keep-volumes` is the
+  platform's; a chart ships none of that name.
 * Volumes need nothing from the chart to survive an uninstall. The platform installs an app as a
   Helm release in the tenant's namespace and marks every PersistentVolumeClaim the chart renders
   `helm.sh/resource-policy: keep`. Uninstalling leaves the claims in place and the next install of the app in that tenant takes them over; only a

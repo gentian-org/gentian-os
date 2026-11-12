@@ -50,6 +50,7 @@ type ReleaseView struct {
 
 func (h *HTTPServer) registerReleaseRoutes(mux router) {
 	mux.Read("GET "+ReleasePath, h.handleRelease)
+	mux.Read("GET "+DomainsPath, h.handleDomains)
 }
 
 func (h *HTTPServer) handleRelease(w http.ResponseWriter, r *http.Request) {

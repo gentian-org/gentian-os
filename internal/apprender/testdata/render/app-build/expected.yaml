@@ -165,6 +165,51 @@ spec:
                   name: every-claim-of-the-release
                   annotations:
                     helm.sh/resource-policy: keep
+            - target:
+                group: apps
+                version: v1
+                kind: Deployment
+              patch: |-
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: every-deployment-of-the-release
+                spec:
+                  template:
+                    metadata:
+                      labels:
+                        gentianos.io/app: "demo-app"
+                        gentianos.io/tenant: "demo"
+            - target:
+                group: apps
+                version: v1
+                kind: StatefulSet
+              patch: |-
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: every-statefulset-of-the-release
+                spec:
+                  template:
+                    metadata:
+                      labels:
+                        gentianos.io/app: "demo-app"
+                        gentianos.io/tenant: "demo"
+            - target:
+                group: batch
+                version: v1
+                kind: Job
+              patch: |-
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: every-job-of-the-release
+                spec:
+                  template:
+                    metadata:
+                      labels:
+                        gentianos.io/app: "demo-app"
+                        gentianos.io/tenant: "demo"
       kind: ConfigMap
       metadata:
         name: demo-app-release-keep-volumes

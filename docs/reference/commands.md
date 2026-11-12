@@ -933,6 +933,14 @@ kubectl gentian settings set "certificates.dnsRecords=docs.gentian.org CNAME gen
 kubectl gentian settings set logForwarding.destination.endpoint=https://evidence.example.org/ingest   # empty removes the forwarder
 ```
 
+Whether each domain the cluster serves has the DNS records it needs, as the
+operator last found them ([routing.md §3a](../concepts/routing.md)):
+
+```bash
+kubectl gentian domains              # every record: present, pending, missing, or held by another record
+kubectl gentian domains --problems   # only what is not present
+```
+
 The director holds the list of what may be set and refuses anything else, and
 refuses `tenancyMode=single` on a cluster carrying more than the one user
 tenant a single-tenancy cluster admits. A change of `tenancyMode` moves the
@@ -1061,11 +1069,11 @@ The way in is *Enter tenant* in the platform console, which is
 `https://desktop.acme.<kernel-domain>/?kc_idp_hint=kernel`; the tenant's own
 sign-in page shows no button for it.
 
-Keycloak master-realm admin:
+Keycloak master-realm admin (user `admin`, break glass):
 
 ```bash
-kubectl get secret keycloak-admin -n kernel-authentication \
-  -o jsonpath='{.data.password}' | base64 -d && echo
+kubectl get secret keycloak-idp-credentials -n kernel-authentication \
+  -o jsonpath='{.data.admin-password}' | base64 -d && echo
 ```
 
 ArgoCD has no local admin: D-03 sets `admin.enabled: "false"` and deletes
@@ -1529,7 +1537,7 @@ lists them (§12a). The director opens the manifest with the key first and refus
 bundle of another tenant with `422` (bringing one here is an import, §12a).
 The key goes to the operator in the request and into a Secret the restore
 owns, deleted when the restore ends; it is never committed or logged. The platform's version line, which
-a console compares a bundle's with, is in `GET /v1/tenants/{t}/me`
+a console compares a bundle's with, is in the usher's `GET /v1/tenants/{t}/me`
 (`platformVersionLine`) for whoever may enter the tenant.
 
 ### What it does, in order

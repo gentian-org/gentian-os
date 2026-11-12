@@ -554,6 +554,12 @@ What the platform does with it, and nothing needs granting for:
   of the tenant and runs nothing in it, so the egress granted to it is given to the components that
   call it.
 
+An adapter whose tools depend on the app's add-ons names a chart value in
+`spec.adapter.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
+(`package.addon.id`) of the add-ons selected into the app it adapts in its tenant, as a list, and
+an empty list while there are none or the app is not installed. When that selection changes, the
+adapter is rendered again. It learns the IDs and nothing else of the tenant's configuration.
+
 An install is an adapter when its profile says so. One made before its profile was on the cluster
 is made as an app; once the profile arrives and says adapter, that instance is replaced, and it has
 rolled out nothing in the meantime.
@@ -626,11 +632,14 @@ cluster, and is installed into every user tenant for everyone at the build the i
 ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who
 asks to uninstall it.
 
-The operator renders every chart. Into the values of one it does not place it writes `podLabels`
-with `gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`, which the tenant's network
-policies select the app's pods by, so such a chart has to put `podLabels` on every pod template. A
-placed chart is told only what it declares: no `podLabels` (its pods are selected by their Helm
-release), no trust anchor, and pull secrets only where the tenant declared a repository.
+The operator renders every chart. The tenant's network policies select an app's pods by the labels
+`gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`. The operator sets both on the pod
+template of every Deployment, StatefulSet and Job after the chart is rendered, replacing what the
+chart wrote under either key, so a chart needs no value for them. Into the values of a chart it
+does not place it also writes them as `podLabels`, for the Job of a Helm hook, which is not
+rendered with the rest. A placed chart is told only what it declares: no `podLabels`, no trust
+anchor, and pull secrets only where the tenant declared a repository; its pods are selected by
+their Helm release.
 
 A profile of platform trust whose chart and images are private is placed in the platform tenant
 once that tenant holds a set credential for it, and stays when the credential goes, so it may own

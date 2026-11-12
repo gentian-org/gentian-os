@@ -100,7 +100,7 @@ func recordStreamDurationPolicies(ctx context.Context, c client.Client, scheme *
 		return nil, err
 	}
 	return []recordedPolicy{
-		{"authenticated-gateway", authenticatedGatewayBackendTrafficPolicySpec(d)},
+		{"authenticated-gateway", authenticatedGatewayBackendTrafficPolicySpec(d, "")},
 		{"identity-provider-proxy", withMaxStreamDuration(keycloakProxyBackendTrafficPolicySpec(), d)},
 		{"identity-provider-realm", withMaxStreamDuration(keycloakRealmBackendTrafficPolicySpec(""), d)},
 		{"sign-in-sidecar-assertion", sidecarSpec},

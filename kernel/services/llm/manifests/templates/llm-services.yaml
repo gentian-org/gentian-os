@@ -370,14 +370,13 @@ spec:
           type: RuntimeDefault
       containers:
       - name: redis
-        image: redis:alpine
+        image: {{ .Values.cache.image }}
         securityContext:
           allowPrivilegeEscalation: false
-        # requirepass, from the credential that has existed since this file was
-        # written and was never used. redis:alpine with no arguments listens
-        # unauthenticated, and the namespace has no NetworkPolicy, so every
-        # pod in the kernel namespace could read and write the proxy's rate
-        # limit and budget state.
+        # requirepass: with no arguments the server listens unauthenticated,
+        # and every pod in the kernel namespace could read and write the
+        # proxy's rate limit and budget state. The image's entrypoint runs
+        # valkey-server with arguments that start with a dash.
         #
         # Through env rather than inline, so the value is not in the manifest.
         args: ["--requirepass", "$(REDIS_PASSWORD)"]

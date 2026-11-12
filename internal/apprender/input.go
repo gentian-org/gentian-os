@@ -50,7 +50,8 @@ type Input struct {
 	// installed.
 	ReleaseObject string
 	HelmRelease   string
-	// KeepVolumes names the ConfigMap the release reads its keep rule from.
+	// KeepVolumes names the ConfigMap the release reads its post-render patch
+	// from: the keep rule and the label rule.
 	KeepVolumes string
 	// Composite names what the Composition named after the app's composite
 	// resource -- its OIDC clients' secrets in the provisioning namespace,
@@ -92,9 +93,13 @@ type Input struct {
 	SignInSidecar map[string]interface{}
 	// Addons are the addons selected into this app, by the names the app
 	// knows them by.
-	Addons      []string
-	Replicas    *int64
-	ExtraValues map[string]interface{}
+	Addons []string
+	// AdaptedAddons are, for an adapter whose profile names
+	// spec.adapter.addonsValuesPath, the IDs of the add-ons selected into the
+	// app it adapts; empty when there are none.
+	AdaptedAddons []string
+	Replicas      *int64
+	ExtraValues   map[string]interface{}
 
 	// The cluster's facts: gentian-cluster-config and its namespace, and
 	// gentian-kernel-services.

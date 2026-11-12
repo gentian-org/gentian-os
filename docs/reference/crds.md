@@ -247,7 +247,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.config.replicas` | integer (int32) |  | `Replicas` overrides the default replica count. |
 | `spec.exposures` | []object |  | `Exposures` are the entries of the profile a perimeter approver approved: the perimeter entries that are switched on, and the entries behind sign-in whose… |
 | `spec.exposures[].alias` | string |  | `Alias` is the label of a second address for this surface directly under the cluster's own domain, copied from the Tenant's entry. |
-| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the cluster's main address (the bare domain), copied from the Tenant's entry. |
+| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the tenant's bare name (the cluster's main address, or the tenant's own), copied from the Tenant's entry. |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` ends the exposure, for one that was published for a while: at expiry the operator treats the enablement as absent, and the entry stays in git as… |
 | `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of the profile's expose list that asks for approval. |
 | `spec.exposures[].kind` | string |  | `Kind` is what was approved, copied from the Tenant's entry; empty is a public address. |
@@ -308,6 +308,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `spec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
+| `spec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
 | `spec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -385,7 +386,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `spec.expose` | []object |  | `Expose` declares entry points. |
 | `spec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
-| `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
+| `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on a bare name instead of a host under the zone's domain. |
 | `spec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `spec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
 | `spec.expose[].backend.component` | string |  | `Component` names another component whose Service this entry routes to. |
@@ -1101,6 +1102,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `status.profileSpec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
+| `status.profileSpec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
 | `status.profileSpec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -1178,7 +1180,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `status.profileSpec.expose` | []object |  | `Expose` declares entry points. |
 | `status.profileSpec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
-| `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
+| `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on a bare name instead of a host under the zone's domain. |
 | `status.profileSpec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `status.profileSpec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
 | `status.profileSpec.expose[].backend.component` | string |  | `Component` names another component whose Service this entry routes to. |
@@ -1668,9 +1670,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.exposures[].alias` | string |  | `Alias` is a second address for this surface, directly under the cluster's own domain: the one label of \<alias>.\<kernelDomain>. |
 | `spec.exposures[].aliasSetAt` | string (date-time) |  |  |
 | `spec.exposures[].aliasSetBy` | string |  | `AliasSetBy` is the subject that set the alias, and AliasSetAt when. |
-| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the cluster's main address: the bare domain. |
+| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the tenant's bare name: the cluster's main address for the one tenant that may hold it -- the one the… |
 | `spec.exposures[].apexAcknowledgedAt` | string (date-time) |  |  |
-| `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on the main address, and ApexAcknowledgedAt when: only a site whose scripts the… |
+| `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on a bare name, and ApexAcknowledgedAt when: only a site whose scripts the… |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` is when it stops answering, for a surface published for a while. |
 | `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of that component's profile that asks for approval: one whose surface is perimeter, or one behind sign-in that declares the… |
 | `spec.exposures[].install` | string | yes | `Install` names the Component this publishes from. |
@@ -1701,6 +1703,14 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.isolation.mode` | string |  | `Mode` selects the isolation strategy. |
 | `spec.isolation.namespace` | string |  | `Namespace` overrides the target namespace name. |
 | `spec.isolation.s3Prefix` | string |  | `S3Prefix` is the prefix for all S3 bucket names belonging to this tenant. |
+| `spec.llm` | object |  | `LLM` is what the tenant's apps may use at the platform's model gateway: which external providers' models, and how much. |
+| `spec.llm.budget` | object |  | `Budget` caps the tenant's use of the gateway, all its apps together. |
+| `spec.llm.budget.budgetDuration` | string |  | `BudgetDuration` is the period after which spend starts again from nothing, e.g. 30d or 1mo. |
+| `spec.llm.budget.maxBudget` | integer (int64) |  | `MaxBudget` is what the tenant may spend per period, in whole US dollars at the gateway's prices. |
+| `spec.llm.budget.rpmLimit` | integer (int64) |  | `RPMLimit` is the requests per minute. |
+| `spec.llm.budget.tpmLimit` | integer (int64) |  | `TPMLimit` is the tokens per minute. |
+| `spec.llm.delegated` | boolean |  | `Delegated` says the tenant's own administrators may change Providers as well. |
+| `spec.llm.providers` | []string |  | `Providers` are the external providers, by their name in the Cluster claim's spec.llm.providers, whose models this tenant's apps may use. |
 | `spec.locales` | []string |  | `Locales` are the languages this tenant's realm renders its login and account pages in, as ISO 639-1 codes (AD-15). |
 | `spec.mail` | object |  | `Mail` configures the mail mode and settings for this tenant. |
 | `spec.mail.mode` | string |  | `Mode` selects the mail delivery strategy. |

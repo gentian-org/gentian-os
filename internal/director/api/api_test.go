@@ -173,7 +173,7 @@ func startSeeded(t *testing.T, lc api.Lifecycle, seed func(remote string), opts 
 	repo := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, gitops.Person{})
 	decisions := &asked{Checker: checker(t)}
 	cfg := api.Config{
-		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, Cluster: dt.Cluster,
+		Authn: v, Authz: decisions, Repo: repo, Cluster: dt.Cluster,
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Lifecycle: lc,
 	}
@@ -675,78 +675,6 @@ func checker(t *testing.T) authz.Checker {
 	return dt.Checker(t, facts)
 }
 
-// The desktop renders from what the director says the caller holds, and
-// decides nothing itself: a member sees no admin tile because can_administer
-// is false, not because a flag in the desktop hid it.
-func TestTheDesktopReadsTheCallersRelations(t *testing.T) {
-	h := start(t)
-	code, body := h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "mia"), "")
-	if code != http.StatusOK {
-		t.Fatalf("mia: %d %v", code, body)
-	}
-	rel, _ := body["relations"].(map[string]any)
-	if rel["can_enter"] != true || rel["can_administer"] != false || rel["can_install_app"] != false {
-		t.Fatalf("mia's relations = %v", rel)
-	}
-	if body["subject"] != "mia" {
-		t.Fatalf("subject = %v", body["subject"])
-	}
-	code, body = h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "tom"), "")
-	rel, _ = body["relations"].(map[string]any)
-	if code != http.StatusOK || rel["can_administer"] != true || rel["can_install_app"] != true {
-		t.Fatalf("tom: %d %v", code, rel)
-	}
-	// A stranger cannot even ask.
-	if code, _ := h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "olaf"), ""); code != http.StatusForbidden {
-		t.Fatalf("olaf: %d", code)
-	}
-}
-
-// Who a caller is at cluster scope is answered for anyone who can be
-// identified, with every verb false for a person who holds nothing here.
-// That is the ordinary answer for almost everyone who signs in, and a console
-// renders it as "no platform screens" rather than as a failure.
-func TestClusterMeAnswersAnyIdentifiedCaller(t *testing.T) {
-	h := start(t)
-	path := "/v1/clusters/" + dt.Cluster + "/me"
-
-	code, body := h.do(t, "GET", path, h.token(t, "gentian", "alice"), "")
-	if code != http.StatusOK {
-		t.Fatalf("alice: %d %v", code, body)
-	}
-	rel := body["relations"].(map[string]any)
-	if rel["can_configure"] != true || rel["can_audit"] != true || rel["can_operate_system"] != false {
-		t.Fatalf("alice holds %v", rel)
-	}
-	if body["subject"] != "alice" || body["cluster"] != dt.Cluster {
-		t.Fatalf("body = %v", body)
-	}
-
-	code, body = h.do(t, "GET", path, h.token(t, "gentian", "serge"), "")
-	rel = body["relations"].(map[string]any)
-	if code != http.StatusOK || rel["can_operate_system"] != true || rel["can_configure"] != false {
-		t.Fatalf("serge: %d %v", code, rel)
-	}
-
-	// Nothing at all, and still an answer.
-	code, body = h.do(t, "GET", path, h.token(t, "gentian", "nobody"), "")
-	if code != http.StatusOK {
-		t.Fatalf("nobody: %d %v", code, body)
-	}
-	for verb, held := range body["relations"].(map[string]any) {
-		if held != false {
-			t.Fatalf("nobody holds %s", verb)
-		}
-	}
-
-	if code, _ := h.do(t, "GET", path, "", ""); code != http.StatusUnauthorized {
-		t.Fatalf("no token: %d, want 401", code)
-	}
-	if code, _ := h.do(t, "GET", "/v1/clusters/elsewhere/me", h.token(t, "gentian", "alice"), ""); code != http.StatusNotFound {
-		t.Fatalf("another cluster: %d, want 404", code)
-	}
-}
-
 // The cluster's settings are read by whoever may audit the cluster and
 // changed by whoever may configure it, which is what model v1 defines
 // can_configure as: the Cluster claim, plans, ceilings and network.
@@ -844,57 +772,5 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", tina,
 		`{"settings":{"mail.serviceMode":"system"}}`); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin changed the cluster's settings: %d", code)
-	}
-}
-
-// fixedViewer stands in for OpenFGA's read side. What the API test is about is
-// who may reach the view and that it has no write surface; what it answers is
-// the authz package's own test.
-type fixedViewer struct{}
-
-func (fixedViewer) ViewOf(_ context.Context, object string) (authz.View, error) {
-	return authz.View{
-		Object: object,
-		Bindings: []authz.Binding{
-			{Relation: "admin", Groups: []string{"gentian:platform:admins"}, Grants: []string{"can_configure"}},
-			{Relation: "break_glass", Groups: nil, Grants: []string{"can_edit_raw"}},
-		},
-		Unheld: 1,
-	}, nil
-}
-
-// The authorization view is read-only and guarded by the relation that governs
-// reading the object it describes. It exists instead of OpenFGA's playground,
-// which is a development tool with a write surface.
-func TestTheAuthorizationViewIsReadOnlyAndGuarded(t *testing.T) {
-	h := start(t)
-	tom := h.token(t, "tenant-demo", "tom")
-	// tina belongs to another tenant: she holds can_view on solo and nothing
-	// at all on demo, which is what makes her the right refusal to assert.
-	tina := h.token(t, "tenant-solo", "tina")
-
-	// A tenant admin may read their own tenant's bindings.
-	code, body := h.do(t, http.MethodGet, "/v1/tenants/demo/authorization", tom, "")
-	if code != http.StatusOK {
-		t.Fatalf("tom: %d %v", code, body)
-	}
-	if body["object"] != "tenant:demo" {
-		t.Fatalf("object = %v", body["object"])
-	}
-	// Another tenant's administrator may not: a tenant's bindings are the
-	// tenant's, and who holds what is not public within a cluster.
-	if code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/authorization", tina, ""); code != http.StatusForbidden {
-		t.Fatalf("tina reached another tenant's view: %d", code)
-	}
-	// And neither may an unauthenticated caller.
-	if code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/authorization", "", ""); code != http.StatusUnauthorized {
-		t.Fatalf("anonymous reached the view: %d", code)
-	}
-	// No write surface: every other method is refused by the mux, not by a
-	// handler that might one day grow one.
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		if code, _ := h.do(t, method, "/v1/tenants/demo/authorization", tom, "{}"); code != http.StatusMethodNotAllowed {
-			t.Fatalf("%s on the view answered %d, want 405", method, code)
-		}
 	}
 }

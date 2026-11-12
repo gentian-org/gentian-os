@@ -37,7 +37,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 		// One protocol mapper per attribute the installed profiles actually declare.
 		corev1.EnvVar{Name: "GENTIAN_GROUP_ATTR_NAMES", Value: strings.Join(groupAttributeNames(groupsJSON), " ")},
 	)
-	job := newKernelProvisioningJob(gentianGroupsJobName(tenant.Name), identityNamespace, tenant, "", container)
+	job := newKeycloakJob(gentianGroupsJobName(tenant.Name), tenant, "", container)
 	job.Spec.BackoffLimit = &backoff
 	return job
 }

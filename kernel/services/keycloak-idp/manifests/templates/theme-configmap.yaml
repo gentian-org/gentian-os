@@ -102,7 +102,7 @@ data:
   account__theme.properties: |-
     # Gentian account console theme. Same reasoning as the admin one beside it:
     # restyle what Keycloak draws, do not redraw it.
-    parent=keycloak.v2
+    parent=keycloak.v3
     import=common/keycloak
 
     styles=css/gentian-account.css

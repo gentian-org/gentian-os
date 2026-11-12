@@ -331,6 +331,12 @@ func main() {
 	if os.Getenv("DNS_PUBLICATION_VERIFY") != "false" {
 		if err := mgr.Add(&controller.DNSPublicationVerifier{
 			Client: mgr.GetClient(),
+			// The status by domain (gentian-dns-status), which the director
+			// reads for the Operations Console and kubectl gentian domains.
+			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			TenancyMode:  tenancyMode,
+			KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+			Namespace:    envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 			// The core-API recorder, deliberately. Its replacement writes
 			// events.k8s.io/v1 Events, which the operator's RBAC does not grant;
 			// the existing rule covers core Events. controller-runtime marks its
@@ -538,6 +544,17 @@ func main() {
 		ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TURNEdge")
+		os.Exit(1)
+	}
+
+	// The egress policy of the model gateway's PostgreSQL, which names the
+	// API server's addresses.
+	if err := (&controller.ModelGatewayDatabaseEgressReconciler{
+		Client:            mgr.GetClient(),
+		NetworkPolicies:   controller.StoreNetworkPoliciesEnabled(),
+		KubeAPIServerCIDR: controller.KubeAPIServerCIDR(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ModelGatewayDatabaseEgress")
 		os.Exit(1)
 	}
 
@@ -879,13 +896,14 @@ func kernelRealmOrDefault(realm string) string {
 //	BAO_ADDR  — OpenBao address (e.g. http://openbao.openbao.svc.cluster.local:8200)
 //	BAO_ROLE  — Kubernetes auth role name (default: gentian-os-operator)
 //
-// The platform master password is read once at startup from
-// secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that,
-// on a cluster whose claim says secretMode: derived, every (tenant, app,
-// category) credential the operator generates is fully deterministic —
-// uninstalling and reinstalling an app yields the same credentials. With
-// secretMode: random the deriver is not used and each credential is drawn
-// from crypto/rand once and kept in OpenBao.
+// On a cluster whose claim says secretMode: derived, every (tenant, app,
+// category) credential the operator generates is computed with HKDF-SHA256
+// from the platform master password and salt at secrets.MasterPasswordPath,
+// so uninstalling and reinstalling an app yields the same credentials. The
+// Seeder reads them when it first derives a value, not here: while they
+// cannot be read, no credential is made and the reconcile that asked is
+// retried. With secretMode: random the master password is not read and each
+// credential is drawn from crypto/rand once and kept in OpenBao.
 //
 // Returns nil (with a warning) when BAO_ADDR is unset — in that mode
 // reconcilers skip the seeding step and behave as they did pre-Inc 21a.
@@ -910,36 +928,27 @@ func buildSeeder() *secrets.Seeder {
 	}
 	kv := secrets.NewKVClient(baoAddr, role, "")
 
-	// Fetch the master password once at startup. If it isn't there yet the
-	// seeder still functions (falls back to crypto/rand), but credentials
-	// will not be deterministic — log loudly so the operator notices the
-	// missing bootstrap step.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	master, err := kv.Get(ctx, secrets.MasterPasswordPath)
-	var deriver *secrets.Deriver
-	switch {
-	case err != nil:
-		setupLog.Error(err, "failed to read master password from OpenBao; credentials will be random",
-			"path", secrets.MasterPasswordPath)
-	case master["value"] == "":
-		setupLog.Info("master password not found at expected path; credentials will be random",
-			"path", secrets.MasterPasswordPath)
-	default:
-		deriver = secrets.NewDeriver(master["value"], master["salt"])
-	}
 
 	// How a credential is made is the claim's to say (secretMode), and it is
-	// asked each time one is made: the master password read above is used in
-	// derived mode only.
+	// asked each time one is made.
 	mode := controller.ClusterSecretMode(bootClient())
 	configured, modeErr := mode(ctx)
 	if modeErr != nil {
 		setupLog.Error(modeErr, "the secret mode could not be read; no credential is made until it can be")
 	}
 	setupLog.Info("secret seeder enabled",
-		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil, "secretMode", configured)
-	return secrets.NewSeeder(kv, deriver).WithMode(mode)
+		"bao_addr", baoAddr, "bao_role", role, "secretMode", configured)
+	seeder := secrets.NewSeeder(kv, nil).WithMode(mode)
+	// A check, not a gate: the operator starts either way, and the Seeder
+	// reads again each time it is asked to make a credential.
+	if modeErr == nil {
+		if err := seeder.CheckDerivation(ctx); err != nil {
+			setupLog.Error(err, "no credential can be made yet; reconciles that need one are retried until it can")
+		}
+	}
+	return seeder
 }
 
 // bundleSigningKey reads the cluster's bundle signing key from the vault

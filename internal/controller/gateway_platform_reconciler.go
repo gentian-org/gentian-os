@@ -108,7 +108,8 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "the longest session")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
-	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, authenticatedGatewayBackendTrafficPolicySpec(streamDuration)); err != nil {
+	gatewayPolicy := authenticatedGatewayBackendTrafficPolicySpec(streamDuration, edgeClientAddressHeader(ctx, r.Client))
+	if err := r.ensureKernelBackendTrafficPolicyNamed(ctx, authenticatedGatewayPolicyName, gatewayPolicy); err != nil {
 		logger.Error(err, "ensure the authenticated Gateway's backend policy")
 		return reconcile.Result{RequeueAfter: platformRetryAfter}, nil
 	}
@@ -455,6 +456,29 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kern
 			tenantApexSecretName(tenant.Name), tenantNamespaceName(tenant),
 		), true))
 	}
+	// A tenant's website on its own bare name: its zone under the cluster's
+	// domain, with the cluster's certificate (team.<kernel> is directly under
+	// it), or a domain of its own, whose listener is above. Only while a
+	// website holds it: an exact listener takes the name off the catch-all,
+	// where the tenant's apex redirect answers otherwise, and the kernel
+	// moves that redirect here for exactly as long (withTenantBareNames).
+	holders := addresses.BareNameHolders(inputs)
+	names := make([]string, 0, len(holders))
+	for name := range holders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		host := holders[name].Host
+		if _, dup := seen[host]; dup || !directlyUnder(host, kernelDomain) {
+			continue
+		}
+		seen[host] = struct{}{}
+		out = append(out, withAllowedRoutes(tlsListener(
+			perimeterListenerName(host), gatewayv1.Hostname(host),
+			kernelWildcardTLSSecretName, servicesNamespace,
+		), true))
+	}
 	// A tenant's website on the cluster's main address answers on the bare
 	// domain, with the cluster's own certificate. The platform's page is
 	// normally published there already and this adds nothing; where it is
@@ -600,8 +624,12 @@ const authenticatedGatewayPolicyName = "btp-gateway-" + AuthenticatedGatewayName
 // the authenticated Gateway inherits. A route with a policy of its own (the
 // identity provider's, a sign-in sidecar's) takes that one instead, so each
 // of those carries streamDuration (sessionStreamDuration) as well.
-func authenticatedGatewayBackendTrafficPolicySpec(streamDuration string) map[string]interface{} {
-	return withMaxStreamDuration(map[string]interface{}{
+//
+// It holds each client address to the allowance of a route behind a session
+// (edgeSessionRateLimit); clientAddressHeader is edgeClientAddressHeader's
+// answer for this cluster.
+func authenticatedGatewayBackendTrafficPolicySpec(streamDuration, clientAddressHeader string) map[string]interface{} {
+	spec := withMaxStreamDuration(map[string]interface{}{
 		"targetRefs": []interface{}{
 			map[string]interface{}{
 				"group": gatewayv1.GroupName,
@@ -613,6 +641,10 @@ func authenticatedGatewayBackendTrafficPolicySpec(streamDuration string) map[str
 			"http": map[string]interface{}{"requestTimeout": authenticatedGatewayRequestTimeout},
 		},
 	}, streamDuration)
+	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
+		spec["rateLimit"] = limit
+	}
+	return spec
 }
 
 func servedByKernelEdge(effectiveDomain, kernelDomain string) bool {

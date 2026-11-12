@@ -758,16 +758,17 @@ type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	SubDomain string `json:"subDomain,omitempty"`
 
-	// Apex publishes this entry on the cluster's bare domain -- its main
-	// address -- instead of a host under the zone's domain. Only a perimeter
-	// entry may say it. The operator honors it for the platform tenant,
-	// and for the one tenant that may hold the main address -- the tenant
-	// the Cluster claim names (mainAddress.tenant), or the user tenant of a
-	// single-tenancy cluster -- when that tenant's approver published the
-	// entry for the main address (apex on the enablement) and no other
-	// surface holds it. Everywhere else an
-	// apex entry has no host and is not published: the bare domain is the
-	// first thing anybody typing the cluster's address meets.
+	// Apex publishes this entry on a bare name instead of a host under the
+	// zone's domain. Only a perimeter entry may say it. For the platform
+	// tenant that is the cluster's bare domain. For the tenant that may hold
+	// the cluster's main address -- the tenant the Cluster claim names
+	// (mainAddress.tenant), or the user tenant of a single-tenancy cluster --
+	// it is the cluster's bare domain too. For every other tenant it is the
+	// tenant's own bare name: its zone (<tenant>.<cluster's domain>) or a
+	// domain bound to it. Either way only when the tenant's approver published
+	// the entry for it (apex on the enablement) and no other surface of the
+	// tenant holds it. Elsewhere an apex entry has no host and is not
+	// published.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
 

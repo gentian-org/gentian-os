@@ -213,6 +213,17 @@ spec:
                         required:
                         - profile
                         type: object
+                      addonsValuesPath:
+                        description: |-
+                          AddonsValuesPath is the dot-separated Helm values path at which the
+                          adapter is told which add-ons are selected into the app it adapts in
+                          its tenant: a list of their IDs (package.addon.id), empty while none is
+                          selected or the app is not installed. The adapter is rendered again
+                          when that selection changes. Absent, it is told nothing about them.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                        type: string
                     type: object
                   backup:
                     description: Backup declares what a consistent copy of this component
@@ -847,16 +858,17 @@ spec:
                           type: object
                         apex:
                           description: |-
-                            Apex publishes this entry on the cluster's bare domain -- its main
-                            address -- instead of a host under the zone's domain. Only a perimeter
-                            entry may say it. The operator honors it for the platform tenant,
-                            and for the one tenant that may hold the main address -- the tenant
-                            the Cluster claim names (mainAddress.tenant), or the user tenant of a
-                            single-tenancy cluster -- when that tenant's approver published the
-                            entry for the main address (apex on the enablement) and no other
-                            surface holds it. Everywhere else an
-                            apex entry has no host and is not published: the bare domain is the
-                            first thing anybody typing the cluster's address meets.
+                            Apex publishes this entry on a bare name instead of a host under the
+                            zone's domain. Only a perimeter entry may say it. For the platform
+                            tenant that is the cluster's bare domain. For the tenant that may hold
+                            the cluster's main address -- the tenant the Cluster claim names
+                            (mainAddress.tenant), or the user tenant of a single-tenancy cluster --
+                            it is the cluster's bare domain too. For every other tenant it is the
+                            tenant's own bare name: its zone (<tenant>.<cluster's domain>) or a
+                            domain bound to it. Either way only when the tenant's approver published
+                            the entry for it (apex on the enablement) and no other surface of the
+                            tenant holds it. Elsewhere an apex entry has no host and is not
+                            published.
                           type: boolean
                         authMode:
                           description: AuthMode is mandatory and has no default.

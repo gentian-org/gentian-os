@@ -144,6 +144,8 @@ type Repository interface {
 	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
 	TenantCountry(ctx context.Context, tenant string) (string, error)
 	SetTenantCountry(ctx context.Context, tenant, country string, meta gitops.Meta) (gitops.Result, error)
+	TenantModelAccess(ctx context.Context, tenant string) (*gentianov1alpha1.TenantLLM, error)
+	SetTenantModelAccess(ctx context.Context, tenant string, access *gentianov1alpha1.TenantLLM, by gitops.ModelAccessActor, meta gitops.Meta) (gitops.Result, error)
 	TenantOrganization(ctx context.Context, tenant string) (gitops.Organization, error)
 	SetTenantOrganization(ctx context.Context, tenant, displayName string, org gentianov1alpha1.TenantOrganization, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
@@ -202,12 +204,7 @@ type Config struct {
 	UpdaterOff bool
 	Authn      Authenticator
 	Authz      authz.Checker
-	// Viewer reads who holds what, for the console's read-only authorization
-	// view. Optional: without it the routes do not exist, which a console
-	// shows as the screen being unavailable rather than as an error on a
-	// screen that should have worked.
-	Viewer authz.Viewer
-	Repo   Repository
+	Repo       Repository
 	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
 	// catalogue's index when one is listed. Which catalogs there are is
 	// not its to know: they are read from git when they are needed, per
@@ -229,6 +226,9 @@ type Config struct {
 	// CommissionKeys are the components that may commission partners,
 	// as the operator lists them (partners.go). Nil recognizes none.
 	CommissionKeys *CommissionKeys
+	// CallerLimit is the limit each caller is held to (rate_limit.go,
+	// CallerLimitFromEnv). The zero value is none.
+	CallerLimit CallerLimit
 }
 
 // Server is the director's API.
@@ -264,6 +264,8 @@ type Server struct {
 	// placementAbsent is what the last placement found withdrawn, by
 	// tenant and app; held under platformApps (platform_apps.go).
 	placementAbsent map[string]bool
+	// limits holds each caller to cfg.CallerLimit (rate_limit.go).
+	limits *callerLimits
 }
 
 // New returns a Server with every route registered.
@@ -274,7 +276,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), limits: newCallerLimits(cfg.CallerLimit)}
 	s.background, s.stop = context.WithCancel(context.Background())
 	s.routes()
 	s.startUpdater()
@@ -338,6 +340,9 @@ type call struct {
 	// (authz.HolderUser), asked when user is refused.
 	holder string
 	meta   gitops.Meta
+	// held is the relation and object that opened the route, as
+	// "<relation> <object>"; empty for a route that asks none.
+	held string
 }
 
 // can asks for the caller what authorize asked: as user, then as holder.
@@ -366,7 +371,8 @@ func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Re
 
 // gate is the guard of this director's routes.
 func (s *Server) gate() *guard.Guard {
-	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Scoped: true, Log: s.cfg.Log, Fail: s.fail}
+	return &guard.Guard{Authn: s.cfg.Authn, Authz: s.cfg.Authz, Realm: "gentian-director", Scoped: true, Log: s.cfg.Log, Fail: s.fail,
+		Limit: s.limitPerson}
 }
 
 // clusterObject accepts only this director's own cluster. Another id is not
@@ -390,7 +396,13 @@ func tenantObject(r *http.Request) (string, error) {
 // may they do relation to the route's object. On refusal it has already
 // answered, and ok is false.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, relation string, obj object) (c call, ok bool) {
-	g, ok := s.gate().Authorize(w, r, pattern, guard.One(relation), obj)
+	return s.authorizeAny(w, r, pattern, guard.Ask{Relation: relation, Object: obj})
+}
+
+// authorizeAny is authorize for a route that relations on different objects
+// open; the first held answers, and the call says which (call.held).
+func (s *Server) authorizeAny(w http.ResponseWriter, r *http.Request, pattern string, asks ...guard.Ask) (c call, ok bool) {
+	g, ok := s.gate().AuthorizeAny(w, r, pattern, asks...)
 	if !ok {
 		return call{}, false
 	}
@@ -406,7 +418,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 		meta.Via = g.Ident.Client
 		meta.Reason = r.Header.Get("X-Gentian-Reason")
 	}
-	return call{id: g.Ident, user: g.User, holder: g.Holder, meta: meta}, true
+	return call{id: g.Ident, user: g.User, holder: g.Holder, meta: meta, held: g.Decision()}, true
 }
 
 // guarded registers a route with the relation it requires. Together with
@@ -431,6 +443,17 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if c, ok := s.authorize(w, r, pattern, relation, obj); ok {
+			h(w, r, c)
+		}
+	})
+}
+
+// guardedAny registers a route that any one of several relations, each on
+// its own object, opens. The handler reads call.held when what it may do
+// depends on which.
+func (s *Server) guardedAny(pattern string, asks []guard.Ask, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if c, ok := s.authorizeAny(w, r, pattern, asks...); ok {
 			h(w, r, c)
 		}
 	})
@@ -478,12 +501,6 @@ func (s *Server) routes() {
 	// tenant, and removes only what the tenant itself added.
 	s.guarded("PUT /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.addTenantCatalogue)
 	s.guarded("DELETE /v1/tenants/{t}/catalogues/{s}", "can_install_app", tenantObject, s.removeTenantCatalogue)
-
-	// What the caller holds on a tenant, for the desktop: it renders from
-	// the answer -- the admin tile by can_administer, the store by
-	// can_install_app -- and decides nothing itself (admin-console.md §1.2).
-	// Entered under can_enter, the relation that reaches the desktop at all.
-	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
 
 	// The App Store's terms, accepted once per version (spec.storeTerms):
 	// read by whoever sees the tenant, recorded by whoever may install apps
@@ -543,6 +560,21 @@ func (s *Server) routes() {
 		// every tenant. No provider's token is read or written here.
 		s.guarded("GET /v1/clusters/{c}/models", "can_audit", s.clusterObject, s.clusterModels)
 		s.guarded("PUT /v1/clusters/{c}/models", "can_configure", s.clusterObject, s.setClusterModels)
+		// Which of them a tenant's apps may use beyond the models every
+		// tenant may, and its budget there (Tenant.spec.llm): the cluster's
+		// administrator's, beside the models themselves, because a
+		// provider's model sends the tenant's prompts out of the cluster
+		// and spends the provider's account. The tenant's own administrator
+		// (can_administer on the tenant) reads it, and changes the
+		// providers only while the cluster's administrator delegates them
+		// (spec.llm.delegated); the budget and the delegation stay the
+		// cluster's administrator's, which setTenantModelAccess holds to.
+		s.guardedAny("GET /v1/clusters/{c}/tenants/{t}/model-access",
+			[]guard.Ask{{Relation: "can_audit", Object: s.clusterObject}, {Relation: "can_administer", Object: tenantObject}},
+			s.tenantModelAccess)
+		s.guardedAny("PUT /v1/clusters/{c}/tenants/{t}/model-access",
+			[]guard.Ask{{Relation: "can_configure", Object: s.clusterObject}, {Relation: "can_administer", Object: tenantObject}},
+			s.setTenantModelAccess)
 		// Bringing a tenant on is the errand the console exists for, and it
 		// is one commit. Listing is can_audit because seeing which customers
 		// a cluster carries is a read; creating and retiring are
@@ -651,21 +683,6 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/bundle-fetches/{f}", "can_configure", s.clusterObject, s.bundleFetch)
 			s.guarded("GET /v1/clusters/{c}/bundles/{prefix}/download", "can_configure", s.clusterObject, s.importedBundleDownload)
 		}
-		// Who the caller is at cluster scope: which of the cluster's verbs
-		// they hold. Identified, not guarded: a person with no cluster
-		// relation at all is answered with every verb false, because "you
-		// hold nothing here" is the ordinary answer for almost everyone who
-		// signs in, and a console has to render that rather than an error.
-		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
-	}
-	// The authorization state, read-only. can_audit at cluster scope and
-	// can_view at tenant scope: the same relation that governs reading the
-	// object each one describes.
-	if s.cfg.Viewer != nil {
-		if s.cfg.Cluster != "" {
-			s.guarded("GET /v1/clusters/{c}/authorization", "can_audit", s.clusterObject, s.clusterAuthorization)
-		}
-		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
 
 	// A tenant's partners: read by whoever may see the tenant, written by its
@@ -939,69 +956,6 @@ func (s *Server) routes() {
 	// (internal/registrar), which holds the Keycloak credential they need;
 	// this process holds none, so there is nothing here that could serve
 	// them.
-}
-
-// clusterRelations are the cluster verbs a console asks about the caller: the
-// ones that decide which screens exist for them. They are the permissions of
-// type cluster in the model, and the vocabulary check keeps this list honest.
-var clusterRelations = []string{
-	"can_configure", "can_deploy_tenant", "can_operate_system", "can_install_shared",
-	"can_grant_shared", "can_approve", "can_approve_perimeter", "can_set_admission", "can_edit_raw", "can_audit",
-}
-
-// clusterMe answers which cluster verbs the caller holds.
-func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
-	if r.PathValue("c") != s.cfg.Cluster {
-		s.fail(w, r, http.StatusNotFound, "unknown cluster")
-		return
-	}
-	target := authz.Cluster(s.cfg.Cluster)
-	relations := make(map[string]bool, len(clusterRelations))
-	for _, rel := range clusterRelations {
-		ok, err := s.can(r.Context(), c, rel, target)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		relations[rel] = ok
-	}
-	s.json(w, http.StatusOK, map[string]any{
-		"cluster":   s.cfg.Cluster,
-		"subject":   c.meta.Subject,
-		"relations": relations,
-	})
-}
-
-// tenantRelations are the tenant verbs the desktop asks about the caller.
-var tenantRelations = []string{
-	"can_enter", "can_view", "can_administer", "can_install_app", "can_manage_users",
-	"can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
-}
-
-func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
-	target, err := tenantObject(r)
-	if err != nil {
-		s.fail(w, r, http.StatusBadRequest, "invalid name")
-		return
-	}
-	relations := make(map[string]bool, len(tenantRelations))
-	for _, rel := range tenantRelations {
-		ok, err := s.can(r.Context(), c, rel, target)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		relations[rel] = ok
-	}
-	s.json(w, http.StatusOK, map[string]any{
-		"tenant":    r.PathValue("t"),
-		"subject":   c.meta.Subject,
-		"relations": relations,
-		// The platform's version line, which is no secret and which a
-		// tenant's administrator restoring a bundle of an older one needs to
-		// know: the cluster's settings carry it too, under can_audit.
-		"platformVersionLine": backup.PlatformVersionLine,
-	})
 }
 
 // tenantStoreTerms answers the tenant's acceptance of the store's terms:

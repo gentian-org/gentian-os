@@ -91,6 +91,11 @@ spec:
         # The switch for the kernel's network rules, compared as a string
         # the way it is passed (--set-string): only "true" is on.
         kernelNetworkPolicies: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
+        # The switch for the policies on the system tier's servers, the value
+        # the ApplicationSets hand the model gateway's chart: the operator
+        # writes the egress policy of the gateway's PostgreSQL by it. On
+        # unless "false", as the charts read it.
+        storeNetworkPolicies: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
         infraNamespace: {{ include "ns" (list . "authentication") }}
         authzBridge:
           # Where OpenFGA answers, which the operator and the director read.

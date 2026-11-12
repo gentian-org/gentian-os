@@ -185,7 +185,8 @@ mailImaps: ""
 # credentials alone. The installer passes STORE_NETWORK_POLICIES.
 # The same switch covers the policies on the kernel's own PostgreSQL
 # (kernel-postgres, whose policy is kept and admits everything when off) and
-# on the mail servers of a cluster that runs its own.
+# on the mail servers of a cluster that runs its own, and the operator, which
+# writes the egress policy of the model gateway's PostgreSQL by it.
 storeNetworkPolicies: "true"
 
 # Whether the kernel namespaces refuse an ingress their NetworkPolicies do not

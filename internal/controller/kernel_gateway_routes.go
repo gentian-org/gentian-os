@@ -154,14 +154,24 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	withTenantWWW(specs, tenantWWW(tenantList.Items, profiles, r.KernelDomain, r.TenancyMode, r.kernelRealm(), time.Now()))
 	homes := tenantHomes(tenantList.Items)
 	withTenantHomes(specs, homes)
+	bareNames, err := r.tenantBareNames(ctx, tenantList.Items, profiles)
+	if err != nil {
+		return fmt.Errorf("tenants' bare names: %w", err)
+	}
+	withTenantBareNames(specs, bareNames)
 	// The identity provider's public route is held to a rate of sign-in
-	// posts per client address, and which address that is has to be asked of
-	// the cluster (edgeClientAddressHeader), so it is set here and not where
-	// the routes are listed.
+	// posts per client address, and its administration, behind the kernel
+	// session, to the allowance of every route behind a session. Which
+	// address that is has to be asked of the cluster
+	// (edgeClientAddressHeader), so it is set here and not where the routes
+	// are listed.
 	clientAddressHeader := edgeClientAddressHeader(ctx, r.Client)
 	for i := range specs {
-		if specs[i].name == kernelRouteKeycloakIDP {
+		switch specs[i].name {
+		case kernelRouteKeycloakIDP:
 			specs[i].policy = keycloakRealmBackendTrafficPolicySpec(clientAddressHeader)
+		case kernelRouteKeycloakAdmin:
+			specs[i].policy = keycloakAdminBackendTrafficPolicySpec(clientAddressHeader)
 		}
 	}
 	// The bouncer's table first: a route whose policy asks the bouncer before the
@@ -273,6 +283,66 @@ func (r *GatewayPlatformReconciler) mainAddressWebsiteServing(ctx context.Contex
 	if holder == nil {
 		return false, nil
 	}
+	return r.proxyServing(ctx, holder)
+}
+
+// tenantBareName is a tenant's own bare name while a website of the tenant's
+// holds it (addresses.HolderOf), and whether that website's proxy serves yet.
+type tenantBareName struct {
+	host    string
+	serving bool
+}
+
+// tenantBareNames are the tenants whose own bare name a website of theirs
+// holds, by name. Not the cluster's main address: its front door is
+// kernelFrontDoor's.
+func (r *GatewayPlatformReconciler) tenantBareNames(
+	ctx context.Context, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile,
+) (map[string]tenantBareName, error) {
+	holders := addresses.BareNameHolders(mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
+		MainAddressTenant: r.MainAddressTenant,
+		Now:               time.Now(),
+	})
+	out := map[string]tenantBareName{}
+	for name, holder := range holders {
+		serving, err := r.proxyServing(ctx, holder)
+		if err != nil {
+			return nil, err
+		}
+		out[name] = tenantBareName{host: holder.Host, serving: serving}
+	}
+	return out, nil
+}
+
+// withTenantBareNames hands a tenant's bare name to the website that holds
+// it. The tenant's apex route moves to the perimeter listener the website is
+// on (perimeterTenantListeners adds it while the name is held): the exact
+// listener takes the name off the catch-all, so a redirect left there would
+// never be reached. Once the website's proxy serves, the route keeps /sign-in
+// alone, which always leads to the tenant's desktop and so to sign-in; until
+// then it redirects as before, and the bare name never answers with nothing.
+// It runs last: an approved website on the bare name is the tenant's most
+// explicit word on it, over a home and over a site at www.
+func withTenantBareNames(specs []kernelHTTPRouteSpec, names map[string]tenantBareName) {
+	for name, bare := range names {
+		for i := range specs {
+			if specs[i].name != fmt.Sprintf("tenant-%s-apex", name) || specs[i].host != bare.host {
+				continue
+			}
+			specs[i].gateway = PerimeterGatewayName
+			specs[i].sectionName = perimeterListenerName(bare.host)
+			if bare.serving {
+				specs[i].rules = []gatewayv1.HTTPRouteRule{signInRedirectRule(desktopHost(bare.host))}
+			}
+		}
+	}
+}
+
+// proxyServing reports whether the publishing proxy of a surface that holds a
+// bare name has an available pod.
+func (r *GatewayPlatformReconciler) proxyServing(ctx context.Context, holder *mainAddressClaim) (bool, error) {
 	namespace, name := mainAddressProxyName(holder)
 	proxy := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, proxy); err != nil {
@@ -1046,6 +1116,18 @@ func keycloakProxyBackendTrafficPolicySpec() map[string]interface{} {
 func keycloakRealmBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
 	spec := keycloakProxyBackendTrafficPolicySpec()
 	if limit := edgeSignInRateLimit(keycloakSignInPostPattern, clientAddressHeader); limit != nil {
+		spec["rateLimit"] = limit
+	}
+	return spec
+}
+
+// keycloakAdminBackendTrafficPolicySpec is the policy of the identity
+// provider's administration route: the proxy's, and the allowance of a route
+// behind a session (edge_rate_limit.go). The route is on the perimeter
+// Gateway, so it does not inherit the authenticated Gateway's.
+func keycloakAdminBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
+	spec := keycloakProxyBackendTrafficPolicySpec()
+	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
 		spec["rateLimit"] = limit
 	}
 	return spec

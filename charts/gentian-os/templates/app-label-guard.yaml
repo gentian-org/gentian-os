@@ -1,0 +1,109 @@
+# Who may say which app a pod of a tenant belongs to.
+#
+# A tenant's network policies select an app's pods by the labels
+# gentianos.io/app and gentianos.io/tenant. The operator sets them on the pod
+# templates of a release after its chart is rendered (internal/apprender, the
+# label rule). A workload written by an account of the tenant's own could say
+# otherwise: a chart may give its ServiceAccount a Role over Deployments,
+# StatefulSets and Jobs, and the tenant's Argo CD project lets other kinds
+# through. Such an account may write a workload, and may not put either label
+# on its pods or change one that is there. The patch the label rule is read
+# from has a guard of its own (release-patch-guard.yaml).
+#
+# The labels' writers are the accounts that deliver what the platform
+# rendered: the operator, provider-kubernetes, and provider-helm under the
+# identity it installs a tenant's charts with. The cluster's own controllers
+# (kube-system) copy a template into the objects they derive from it and are
+# not looked at. Neither is a person: a person with kubectl here is
+# break-glass.
+{{- $operator := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "gentian-os.serviceAccountName" .) }}
+{{- $provisioning := default "kernel-provisioning" .Values.layout.provisioning }}
+{{- $providerKubernetes := printf "system:serviceaccount:%s:%s" $provisioning .Values.appLabelGuard.providerKubernetesServiceAccount }}
+{{- $tenantAppsHelm := printf "system:serviceaccount:%s:%s" $provisioning .Values.appLabelGuard.tenantAppsHelmServiceAccount }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gentian-app-labels
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+      - key: gentianos.io/tier
+        operator: In
+        values: ["tenant", "tenant-dmz"]
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods", "replicationcontrollers"]
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    - apiGroups: ["batch"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["jobs", "cronjobs"]
+  matchConditions:
+  - name: a-service-account-that-delivers-nothing-of-the-platform
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:')
+      && !request.userInfo.username.startsWith('system:serviceaccount:kube-system:')
+      && !(request.userInfo.username in {{ list $operator $providerKubernetes $tenantAppsHelm | toJson }})
+  variables:
+  # The labels of the pods, by kind: a pod's own, a CronJob's job template's,
+  # any other workload's template's.
+  - name: labels
+    expression: >-
+      object == null ? {}
+      : object.kind == 'Pod'
+        ? (has(object.metadata.labels) ? object.metadata.labels : {})
+      : object.kind == 'CronJob'
+        ? (has(object.spec.jobTemplate.spec.template.metadata) && has(object.spec.jobTemplate.spec.template.metadata.labels)
+           ? object.spec.jobTemplate.spec.template.metadata.labels : {})
+      : (has(object.spec.template) && has(object.spec.template.metadata) && has(object.spec.template.metadata.labels)
+         ? object.spec.template.metadata.labels : {})
+  - name: oldLabels
+    expression: >-
+      oldObject == null ? {}
+      : oldObject.kind == 'Pod'
+        ? (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {})
+      : oldObject.kind == 'CronJob'
+        ? (has(oldObject.spec.jobTemplate.spec.template.metadata) && has(oldObject.spec.jobTemplate.spec.template.metadata.labels)
+           ? oldObject.spec.jobTemplate.spec.template.metadata.labels : {})
+      : (has(oldObject.spec.template) && has(oldObject.spec.template.metadata) && has(oldObject.spec.template.metadata.labels)
+         ? oldObject.spec.template.metadata.labels : {})
+  # "-" is no label value Kubernetes accepts, so it stands for no label.
+  - name: appBefore
+    expression: >-
+      'gentianos.io/app' in variables.oldLabels ? variables.oldLabels['gentianos.io/app'] : '-'
+  - name: appAfter
+    expression: >-
+      'gentianos.io/app' in variables.labels ? variables.labels['gentianos.io/app'] : '-'
+  - name: tenantBefore
+    expression: >-
+      'gentianos.io/tenant' in variables.oldLabels ? variables.oldLabels['gentianos.io/tenant'] : '-'
+  - name: tenantAfter
+    expression: >-
+      'gentianos.io/tenant' in variables.labels ? variables.labels['gentianos.io/tenant'] : '-'
+  validations:
+  - expression: >-
+      variables.appBefore == variables.appAfter && variables.tenantBefore == variables.tenantAfter
+    reason: Forbidden
+    messageExpression: >-
+      'the labels gentianos.io/app and gentianos.io/tenant on the pods of ' + object.kind + ' '
+      + object.metadata.namespace + '/' + (has(object.metadata.name) ? object.metadata.name : object.metadata.generateName)
+      + ' are set by the platform alone; ' + request.userInfo.username + ' may not set or change them'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gentian-app-labels
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  policyName: gentian-app-labels
+  validationActions: [Deny]

@@ -281,11 +281,11 @@ func makeTenantSMTPJob(tenantName, realmName, kernelMailHost, fromName string) *
 			},
 		},
 	)
-	return meta.ProvisioningJob(tenantSMTPJobName(tenantName), identityNamespace, map[string]string{
+	return keycloak.AsProvisioner(meta.ProvisioningJob(tenantSMTPJobName(tenantName), identityNamespace, map[string]string{
 		tenantLabel:                         tenantName,
 		managedByLabel:                      managedByValue,
 		"gentianos.io/keycloak-tenant-smtp": tenantSMTPVersion,
-	}, c)
+	}, c))
 }
 
 // clusterKeycloakSMTPCredentialsAvailable reports whether this cluster has SMTP

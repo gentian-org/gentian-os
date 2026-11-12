@@ -191,6 +191,16 @@ openbaoNamespace: "kernel-secrets"
 # namespaces.
 servicesNamespace: "kernel-edge"
 
+# The accounts, beside the operator, that deliver what the platform rendered
+# into a tenant's namespace, by the ServiceAccounts they act as in the
+# provisioning namespace (crossplane/providers/). The guard of the app labels
+# and the guard of a release's patch
+# (templates/app-label-guard.yaml, templates/release-patch-guard.yaml) name
+# them.
+appLabelGuard:
+  providerKubernetesServiceAccount: provider-kubernetes
+  tenantAppsHelmServiceAccount: provider-helm-tenant-apps
+
 # Where each kernel function runs, from kernel/namespaces.yaml. An install
 # passes every entry; empty means the operator answers from internal/layout's
 # own table, which is the same layout -- so a chart that forgot to set these
@@ -481,6 +491,13 @@ networkMode: ""
 # this tells the operator, whose two rules that name the Gateway's Envoy pods
 # follow the same switch (internal/controller/tenant_network_policy.go).
 kernelNetworkPolicies: "true"
+
+# The cluster's switch for the policies on the system tier's servers (the
+# installer's STORE_NETWORK_POLICIES, through the bootstrap chart), which the
+# model gateway's chart renders its policies by. The operator writes the
+# egress policy of the gateway's PostgreSQL by the same switch
+# (internal/controller/model_gateway_database_egress.go). On unless "false".
+storeNetworkPolicies: "true"
 
 # Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
 # programs the tunnel's routing rules for kernel and tenant hostnames, and

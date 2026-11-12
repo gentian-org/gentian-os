@@ -440,6 +440,12 @@ How to read it:
 
 - Verifies the caller's token against the realm that issued it. A token must
   be issued for the audience `gentian-director`.
+- Holds each caller -- a person by their account, a component that
+  commissions partners by its key -- to 20 requests a second, with 200 at
+  once, counted in each director replica; then answers `429` with
+  `Retry-After: 1`, before it asks OpenFGA anything. The director's
+  environment may change the numbers (`DIRECTOR_REQUESTS_PER_SECOND`,
+  `DIRECTOR_REQUEST_BURST`; `0` requests a second turns the limit off).
 - Asks OpenFGA the permission each route names, on the tenant or the cluster
   the route is about, before doing anything else.
 - Makes each permitted change as one commit to the deployment repository. The
@@ -488,7 +494,7 @@ commit unless marked as a command.
 | Settings | Read and change the cluster's settings, its branding and its models; choose a tenant's resource plan; set a tenant's sign-in security policy; set a tenant's backup policy and the cluster's. |
 | Platform security and roles | Read and replace the list of exceptions to the cluster's default security rules, as git declares it; name and remove the holders of platform roles. |
 | Backup bundles | Upload or inspect a bundle; declare the storage outside the cluster an import may read from, or a tenant's own store its exports are written to, and fetch a bundle from either; restore (as part of an import). |
-| Records | Read the history of changes to a tenant or the cluster (from the commits); read who holds which right on a tenant or the cluster (from OpenFGA); answer which permissions the caller holds (`…/me`). |
+| Records | Read the history of changes to a tenant or the cluster (from the commits). |
 | Commands relayed to the operator | Take a backup; delete a backup; send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
@@ -570,7 +576,7 @@ platform's administrator.
 
 **Who calls it, and whom it calls**
 
-- Called by: the desktop's backend (`…/me`), the admin console's backend, the
+- Called by: the admin console's backend, the
   App Store app's backend, and the command line tool (`kubectl gentian`,
   through a port-forward). It has no address on the Gateway.
 - Calls: Keycloak's public keys (to verify tokens), OpenFGA, the git host,
@@ -914,6 +920,8 @@ and asks OpenFGA before it answers.
 | Read | Permission |
 | --- | --- |
 | A tenant's tiles: the things this person may open, and whether the App Store is offered on this cluster | `can_enter` on the tenant; each tile is then checked separately |
+| Which permissions the caller holds on a tenant (`GET /v1/tenants/{t}/me`), and the platform's version line | `can_enter` on the tenant |
+| Which permissions the caller holds on the cluster (`GET /v1/clusters/{c}/me`) | none: a signed-in person asks about themselves |
 | The state of a tenant's apps; which uninstalled apps still hold data; what newer builds of one of its apps left behind | `can_view` on the tenant |
 | A tenant's resources, the plans it may move to, its usage and usage report | `can_view` on the tenant |
 | A tenant's backups and one backup, its backup policy, a restore's progress | `can_view` on the tenant |
@@ -921,9 +929,13 @@ and asks OpenFGA before it answers.
 | Every tenant's resources; the cluster's backup policy | `can_audit` on the cluster |
 | What awaits an approver | `can_approve`, `can_approve_perimeter` or `can_configure` on the cluster |
 | The platform security rules in force; the customization report; the usage statistics report | `can_audit` on the cluster |
+| Every domain the cluster serves, the DNS records it needs and whether the internet has them | `can_audit` on the cluster |
+| Who holds which role on a tenant, and what each role carries (`…/authorization`) | `can_view` on the tenant |
+| Who holds which role on the cluster | `can_audit` on the cluster |
 | What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
-The tiles come from a file the operator writes. All other answers are the
+The tiles come from a file the operator writes. Which permissions a caller
+holds, and who holds which role, are OpenFGA's answers. All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
 itself: each answer is worked out inside the operator, and reading the
 objects behind it would mean giving the usher access to every tenant's
@@ -935,7 +947,8 @@ namespace.
   reads only.
 - Filter a list inside a handler instead of naming the permission on the
   route. Its routes are lists, and a list is where one tenant's data leaks to
-  another.
+  another. The caller's own permissions on the cluster are the one route
+  without one: the answer is about nobody else.
 
 **What it holds**
 

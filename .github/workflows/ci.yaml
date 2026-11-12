@@ -239,10 +239,20 @@ jobs:
       # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
       # and only its export was ever exercised. age is installed rather than
       # letting the check skip: a test that silently does nothing on the one
-      # machine that always runs it is not coverage.
+      # machine that always runs it is not coverage. It comes from its pinned
+      # GitHub release, checked against the digest below, and not from the
+      # runner's apt mirror, whose name does not always resolve.
       - name: recovery kit round trip
+        env:
+          AGE_VERSION: v1.3.2
+          AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq age
+          curl -fsSL -o /tmp/age.tar.gz \
+            "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz"
+          echo "${AGE_SHA256}  /tmp/age.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/age.tar.gz -C /tmp age/age age/age-keygen
+          sudo install -m 0755 /tmp/age/age /tmp/age/age-keygen /usr/local/bin/
+          age --version
           make verify-recovery-kit
 
       - name: credential catalogue parity

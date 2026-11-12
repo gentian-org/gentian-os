@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -164,6 +165,65 @@ func (c *OpenFGA) Check(ctx context.Context, requestID, user, relation, object s
 	return c.fga.Check(ctx, c.storeID, c.modelID, user, relation, object)
 }
 
+// Question is one authorization question: does User have Relation on Object.
+type Question struct {
+	User, Relation, Object string
+}
+
+// BatchChecker answers several questions in one round trip, in the order
+// asked. Like Check, an error is a denial of all of them.
+type BatchChecker interface {
+	BatchCheck(ctx context.Context, requestID string, questions []Question) ([]bool, error)
+}
+
+// CheckAll answers questions in the order asked: in batches where c can
+// answer them so, else one at a time. Either way an error answers nothing,
+// and the caller must refuse as it would on one failed Check.
+func CheckAll(ctx context.Context, c Checker, requestID string, questions []Question) ([]bool, error) {
+	if b, ok := c.(BatchChecker); ok {
+		return b.BatchCheck(ctx, requestID, questions)
+	}
+	out := make([]bool, len(questions))
+	for i, q := range questions {
+		ok, err := c.Check(ctx, requestID, q.User, q.Relation, q.Object)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = ok
+	}
+	return out, nil
+}
+
+// BatchCheck implements BatchChecker: the questions in requests of at most
+// openfga.MaxBatchCheck, each decision logged as Check logs it.
+func (c *OpenFGA) BatchCheck(ctx context.Context, requestID string, questions []Question) ([]bool, error) {
+	out := make([]bool, 0, len(questions))
+	for len(questions) > 0 {
+		n := min(len(questions), openfga.MaxBatchCheck)
+		chunk := questions[:n]
+		questions = questions[n:]
+		tuples := make([]openfga.Tuple, n)
+		for i, q := range chunk {
+			tuples[i] = openfga.Tuple{User: q.User, Relation: q.Relation, Object: q.Object}
+		}
+		start := c.now()
+		allowed, err := c.fga.BatchCheck(ctx, c.storeID, c.modelID, tuples)
+		ms := c.now().Sub(start).Milliseconds()
+		if err != nil {
+			c.log.ErrorContext(ctx, "authz decision failed",
+				"request_id", requestID, "checks", n, "model", c.modelID, "duration_ms", ms, "error", err.Error())
+			return nil, err
+		}
+		for i, q := range chunk {
+			c.log.InfoContext(ctx, "authz decision",
+				"request_id", requestID, "user", q.User, "relation", q.Relation, "object", q.Object,
+				"allowed", allowed[i], "model", c.modelID, "duration_ms", ms)
+		}
+		out = append(out, allowed...)
+	}
+	return out, nil
+}
+
 // Tuple is one stored relationship.
 type Tuple = openfga.Tuple
 
@@ -183,3 +243,44 @@ func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
 
 // isNotFound reports OpenFGA saying that what was asked for does not exist.
 func isNotFound(err error) bool { return openfga.IsStatus(err, http.StatusNotFound) }
+
+// TenantRelations are the tenant verbs a person is told they hold, by the
+// usher's /me, so that a console shows what they may do and hides the rest.
+var TenantRelations = []string{
+	"can_enter", "can_view", "can_administer", "can_install_app", "can_manage_users",
+	"can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
+}
+
+// ClusterRelations are the cluster verbs a person is told they hold: the ones
+// that decide which screens a console shows them. Both lists are permissions
+// of the model, which verify-authz-vocabulary holds them to.
+var ClusterRelations = []string{
+	"can_configure", "can_deploy_tenant", "can_operate_system", "can_install_shared",
+	"can_grant_shared", "can_approve", "can_approve_perimeter", "can_set_admission", "can_edit_raw", "can_audit",
+}
+
+// Holds answers which of relations the caller holds on object, as the
+// account or as the realm's role holder (CheckAs), all asked together. An
+// error answers none of them.
+func Holds(ctx context.Context, c Checker, requestID, user, holder, object string, relations []string) (map[string]bool, error) {
+	questions := make([]Question, 0, 2*len(relations))
+	for _, rel := range relations {
+		questions = append(questions, Question{User: user, Relation: rel, Object: object})
+		if holder != "" {
+			questions = append(questions, Question{User: holder, Relation: rel, Object: object})
+		}
+	}
+	allowed, err := CheckAll(ctx, c, requestID, questions)
+	if err != nil {
+		return nil, err
+	}
+	per := 1
+	if holder != "" {
+		per = 2
+	}
+	out := make(map[string]bool, len(relations))
+	for i, rel := range relations {
+		out[rel] = slices.Contains(allowed[i*per:(i+1)*per], true)
+	}
+	return out, nil
+}

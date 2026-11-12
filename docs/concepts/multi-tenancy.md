@@ -242,7 +242,7 @@ cluster's own (`platform.<kernelDomain>` and below). `DELETE` is not
 refused, which is how a tenant bound earlier is put back. The operator does
 not ask the mode: a `TenantDomain` for the tenant `user` that is in the
 cluster anyway moves that tenant to `<label>.<domain>`, and a website it had
-on the main address is withdrawn (`OwnDomain`). The kernel's names stay
+on the main address moves to that domain's bare name. The kernel's names stay
 refused to its apps, because it is back on the cluster's domain the day the
 binding is removed. The tenant's hosts, mail and logins move to it, and
 the concierge finds it through `concierge-lookup`: one file per bound domain,

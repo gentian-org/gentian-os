@@ -1108,20 +1108,69 @@ spec:
               fi
               AUTH="Authorization: Bearer \${TOKEN}"
               REALM="\${KERNEL_REALM}"
-              # The service account Keycloak makes at first start. A Keycloak
-              # that started before it existed has none, and everything automated
-              # signs in with it.
+              # The master realm's service accounts, one per automated caller:
+              #   gentian-operator      the operator
+              #   keycloak-provisioner  the Jobs that configure realms
+              #   provider-keycloak     Crossplane's provider-keycloak
+              #
+              # Keycloak makes gentian-operator at first start as a temporary
+              # bootstrap administrator, which its documentation says to
+              # replace with a permanent one; this does, with the same secret,
+              # so nothing that holds it notices.
+              #
+              # A permanent client has "Full scope allowed" off (Keycloak 26.8
+              # deprecates it and warns on every token) and the admin role
+              # mapped into its scope instead, so its token carries exactly
+              # that role. Lightweight tokens keep it small: the admin role
+              # spans every realm's management roles.
+              #
+              # Creating and repairing these clients is the installer's, as
+              # the bootstrap administrator: nothing running in the cluster
+              # holds a credential that can make an administrator.
               MASTER="\${KEYCLOAK_BASE}/admin/realms/master"
-              if [ "\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=gentian-operator" | jq length)" = "0" ]; then
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" "\${MASTER}/clients" \\
-                  -d "\$(jq -n --arg s "\${OPERATOR_CLIENT_SECRET}" '{clientId:"gentian-operator",secret:\$s,serviceAccountsEnabled:true,publicClient:false,standardFlowEnabled:false,directAccessGrantsEnabled:false}')" >/dev/null
-                CLIENT_ID=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=gentian-operator" | jq -r '.[0].id')
-                SA_ID=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients/\${CLIENT_ID}/service-account-user" | jq -r .id)
-                ADMIN_ROLE=\$(curl -sf -H "\${AUTH}" "\${MASTER}/roles/admin")
+              ADMIN_ROLE=\$(curl -sf -H "\${AUTH}" "\${MASTER}/roles/admin")
+              ensure_admin_client() {
+                ac_name="\$1"
+                ac_secret="\$2"
+                [ -n "\${ac_secret}" ] || {
+                  printf '\033[0;31m[ERROR]\033[0m %s\n' "no secret for the \${ac_name} client" >&2
+                  exit 1
+                }
+                ac_current=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=\${ac_name}" | jq -c '.[0] // empty')
+                if [ -n "\${ac_current}" ] && [ "\$(printf '%s' "\${ac_current}" | jq -r '.attributes.is_temporary_admin // "false"')" = "true" ]; then
+                  curl -sf -X DELETE -H "\${AUTH}" "\${MASTER}/clients/\$(printf '%s' "\${ac_current}" | jq -r .id)" >/dev/null
+                  ac_current=""
+                  echo "Removed the temporary bootstrap client \${ac_name}"
+                fi
+                ac_want=\$(jq -n --arg c "\${ac_name}" --arg s "\${ac_secret}" '{
+                  clientId: \$c, secret: \$s, enabled: true, publicClient: false,
+                  serviceAccountsEnabled: true, standardFlowEnabled: false,
+                  implicitFlowEnabled: false, directAccessGrantsEnabled: false,
+                  fullScopeAllowed: false,
+                  attributes: {"client.use.lightweight.access.token.enabled": "true"}
+                }')
+                if [ -z "\${ac_current}" ]; then
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${MASTER}/clients" -d "\${ac_want}" >/dev/null
+                  ac_id=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=\${ac_name}" | jq -r '.[0].id')
+                  echo "Created the \${ac_name} service account"
+                else
+                  ac_id=\$(printf '%s' "\${ac_current}" | jq -r .id)
+                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${MASTER}/clients/\${ac_id}" \\
+                    -d "\$(printf '%s' "\${ac_current}" | jq -c --argjson w "\${ac_want}" '. * \$w')" >/dev/null
+                fi
+                ac_sa=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients/\${ac_id}/service-account-user" | jq -r .id)
+                # Both are idempotent: mapping a role a second time is a no-op.
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${MASTER}/users/\${SA_ID}/role-mappings/realm" -d "[\${ADMIN_ROLE}]" >/dev/null
-                echo "Created the gentian-operator service account"
-              fi
+                  "\${MASTER}/users/\${ac_sa}/role-mappings/realm" -d "[\${ADMIN_ROLE}]" >/dev/null
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${MASTER}/clients/\${ac_id}/scope-mappings/realm" -d "[\${ADMIN_ROLE}]" >/dev/null
+              }
+              ensure_admin_client gentian-operator "\${OPERATOR_CLIENT_SECRET}"
+              ensure_admin_client keycloak-provisioner "\${PROVISIONER_CLIENT_SECRET}"
+              ensure_admin_client provider-keycloak "\${PROVIDER_CLIENT_SECRET}"
+              echo "Keycloak service accounts: gentian-operator, keycloak-provisioner, provider-keycloak"
 
               realm_http=\$(curl -s -o /dev/null -w '%{http_code}' -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}")
               if [ "\${realm_http}" = "404" ]; then
@@ -1786,6 +1835,16 @@ ${smtp_shell}
                 secretKeyRef:
                   name: keycloak-idp-credentials
                   key: operator-client-secret
+            - name: PROVISIONER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-idp-credentials
+                  key: provisioner-client-secret
+            - name: PROVIDER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-idp-credentials
+                  key: provider-client-secret
             - name: KERNEL_DOMAIN
               valueFrom:
                 secretKeyRef:

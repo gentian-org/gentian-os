@@ -45,14 +45,19 @@ import (
 //     seeder: derived from the master for this tenant and app, or random) and
 //     kept in the vault beside the app's other credentials;
 //   - that key registered at the gateway under the app's alias, replacing
-//     whatever was registered there before;
+//     whatever was registered there before, in the tenant's team and naming
+//     the team's models, limited to the routes an app calls
+//     (modelgateway.AppRoutes) and labeled with the tenant and the app;
 //   - the Secret llm-credentials-<app> in the tenant's namespace, and the
 //     same two values through valueMapping.llm where the chart takes them;
 //   - a network path to the gateway's port, from the app's kernel-access
 //     policy (internal/kernel/netpolicy).
 //
 // An app that does not declare it gets none of them, and what an earlier
-// version gave it is taken away.
+// version gave it is taken away. An app that is uninstalled loses its key at
+// the gateway and its Secret; the vault keeps the key and the record keeps
+// its alias, so installing the app again registers the same key, and a purge
+// or the tenant's deletion still finds it.
 //
 // A component the platform places on tenants itself -- the desktop, the
 // administration console: defaultForTenants and its two siblings -- is
@@ -93,6 +98,9 @@ type modelAccessState struct {
 	waiting []string
 	// removed are the apps whose key and Secret were taken away.
 	removed []string
+	// revoked are the uninstalled apps whose key was taken off the gateway
+	// in this pass.
+	revoked []string
 }
 
 // ensureModelAccess serves requires.services.llm for a tenant's apps.
@@ -155,7 +163,7 @@ func (r *TenantReconciler) ensureModelAccess(
 	// What is there to take away: an installed app that does not declare the
 	// gateway and still holds a key, and a component the platform placed
 	// that this tenant no longer has.
-	var stale []string
+	var stale, uninstalled []string
 	for _, app := range undeclared {
 		held, err := r.holdsModelCredentials(ctx, tenant, app)
 		if err != nil {
@@ -172,14 +180,17 @@ func (r *TenantReconciler) ensureModelAccess(
 		// A key on record for a component the platform places, which this
 		// tenant no longer has: the platform took the component away. It was
 		// never the tenant's to uninstall, so nothing of it is retained. An
-		// uninstalled app's key is kept.
+		// uninstalled app's key leaves the gateway and stays on record.
 		if profile, ok := profileFromIndex(profiles, app); ok && operatorPlaced(profile) {
 			stale = append(stale, app)
+		} else {
+			uninstalled = append(uninstalled, app)
 		}
 	}
 	sort.Strings(stale)
+	sort.Strings(uninstalled)
 
-	if len(declaring) == 0 && len(stale) == 0 {
+	if len(declaring) == 0 && len(stale) == 0 && len(uninstalled) == 0 {
 		return state, nil
 	}
 
@@ -212,10 +223,40 @@ func (r *TenantReconciler) ensureModelAccess(
 		}
 	}
 
+	for _, app := range uninstalled {
+		revoked, why, err := r.revokeModelAccess(ctx, tenant, app, recorded[app], gateway, enabled)
+		if err != nil {
+			return state, err
+		}
+		switch {
+		case why != "":
+			state.waiting = append(state.waiting, app+": "+why)
+		case revoked:
+			state.revoked = append(state.revoked, app)
+		}
+	}
+
+	// The tenant's team, which every key below belongs to and whose models
+	// it names.
+	var keySpec modelgateway.KeySpec
+	teamWhy := ""
+	if gateway != nil && len(declaring) > 0 {
+		team := r.tenantTeam(ctx, tenant)
+		id, err := gateway.EnsureTeam(ctx, modelgateway.TeamAlias(tenant.Name), team)
+		if err != nil {
+			teamWhy = fmt.Sprintf("the model gateway did not write the tenant's team: %v", err)
+		}
+		keySpec = modelgateway.KeySpec{TeamID: id, Models: team.Models, Routes: modelgateway.AppRoutes}
+	}
+
 	for _, app := range declaring {
 		profile := profiles[app]
 		if gateway == nil {
 			state.waiting = append(state.waiting, app+": "+gatewayWhy)
+			continue
+		}
+		if teamWhy != "" {
+			state.waiting = append(state.waiting, app+": "+teamWhy)
 			continue
 		}
 		if direct[app] {
@@ -226,7 +267,9 @@ func (r *TenantReconciler) ensureModelAccess(
 				return state, err
 			}
 		}
-		why, err := r.serveModelAccess(ctx, tenant, app, profile, gateway)
+		spec := keySpec
+		spec.Metadata = map[string]string{"tenant": tenant.Name, "app": app}
+		why, err := r.serveModelAccess(ctx, tenant, app, profile, gateway, spec)
 		if err != nil {
 			return state, err
 		}
@@ -239,6 +282,9 @@ func (r *TenantReconciler) ensureModelAccess(
 
 	if len(state.removed) > 0 {
 		logger.Info("model access removed from apps that do not declare the model gateway", "apps", state.removed)
+	}
+	if len(state.revoked) > 0 {
+		logger.Info("the keys of uninstalled apps were taken off the model gateway", "apps", state.revoked)
 	}
 	if len(state.waiting) > 0 {
 		logger.Info("model access is waiting", "apps", state.waiting)
@@ -259,6 +305,7 @@ func (r *TenantReconciler) serveModelAccess(
 	app string,
 	profile *gentianov1alpha1.ComponentProfile,
 	gateway *modelgateway.Client,
+	spec modelgateway.KeySpec,
 ) (why string, err error) {
 	baseURL := modelgateway.OpenAIBaseURL(gateway.BaseURL)
 	key, why, err := r.modelKey(ctx, tenant, app, baseURL)
@@ -266,7 +313,7 @@ func (r *TenantReconciler) serveModelAccess(
 		return why, err
 	}
 	alias := modelgateway.KeyAlias(tenant.Name, app)
-	replaced, err := gateway.EnsureKey(ctx, alias, key)
+	replaced, err := gateway.EnsureKey(ctx, alias, key, spec)
 	if err != nil {
 		return fmt.Sprintf("the model gateway did not register the app's key: %v", err), nil
 	}
@@ -306,8 +353,8 @@ func (r *TenantReconciler) derivedKey(ctx context.Context, tenant *gentianov1alp
 		value, err := r.Seeder.SeedDerivedKey(ctx, tenant.Name, app, key)
 		switch {
 		case stderrors.Is(err, secrets.ErrNoMasterPassword):
-			return "", fmt.Sprintf("the key %s is derived from the master password, which the operator could not read when it started; "+
-				"it is made once the operator has been restarted with the master password readable", key), nil
+			return "", fmt.Sprintf("the key %s is derived from the master password, which the operator cannot read yet (%v); "+
+				"it is made on a later pass, once the master password and its salt can be read", key, err), nil
 		case err != nil:
 			return "", fmt.Sprintf("the vault did not keep the key %s: %v", key, err), nil
 		}
@@ -475,6 +522,48 @@ func (r *TenantReconciler) removeModelAccess(
 		return false, "", err
 	}
 	return true, "", nil
+}
+
+// revokeModelAccess takes an uninstalled app's key off the gateway and
+// removes the operator's Secret for it, and keeps the key's alias on the
+// tenant's record: the vault still holds the key, which installing the app
+// again registers once more, and a purge or the tenant's deletion removes
+// what is on record. revoked says a key or a Secret was there to take away.
+//
+// why is non-empty, with no error, when the gateway that should be there
+// cannot be asked; the key may still authenticate, and the next pass tries
+// again.
+func (r *TenantReconciler) revokeModelAccess(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+	app string,
+	recorded backup.Provisioned,
+	gateway *modelgateway.Client,
+	enabled bool,
+) (revoked bool, why string, err error) {
+	secret := &corev1.Secret{}
+	key := types.NamespacedName{Name: modelCredentialsSecretName(app), Namespace: tenantNamespaceName(tenant)}
+	switch err := r.Get(ctx, key, secret); {
+	case errors.IsNotFound(err):
+	case err != nil:
+		return false, "", err
+	case ownsModelCredentials(secret, tenant.Name, app):
+		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+			return false, "", fmt.Errorf("remove the model credentials of %s: %w", app, err)
+		}
+		revoked = true
+	}
+	switch {
+	case gateway != nil:
+		existed, err := gateway.DeleteKey(ctx, recorded.ModelKey)
+		if err != nil {
+			return revoked, fmt.Sprintf("its key %s could not be taken off the model gateway: %v", recorded.ModelKey, err), nil
+		}
+		return revoked || existed, "", nil
+	case enabled:
+		return revoked, fmt.Sprintf("it is uninstalled and its key %s cannot be taken off the model gateway, which cannot be asked", recorded.ModelKey), nil
+	}
+	return revoked, "", nil
 }
 
 // forgetModelAccess takes an app's model key off the tenant's record of what
