@@ -162,6 +162,20 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 	return v.verify(ctx, raw, v.cfg.Audience, tokenAccess)
 }
 
+// VerifyFor checks a raw access token made out to the named audience and not
+// to this verifier's own.
+//
+// The edge is the caller, on an entry that takes a token in place of a
+// session: such a token names that entry's address as its audience, so a
+// token of the edge's session does not pass there, and one made for the
+// entry passes nowhere Verify is asked.
+func (v *Verifier) VerifyFor(ctx context.Context, raw, audience string) (*Identity, error) {
+	if audience == "" {
+		return nil, fmt.Errorf("%w: no audience to hold the token against", ErrUnauthenticated)
+	}
+	return v.verify(ctx, raw, audience, tokenAccess)
+}
+
 // VerifyIDToken checks a raw ID token issued to the named client.
 //
 // An ID token says who signed in at one client and nothing about what they may

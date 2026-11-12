@@ -128,6 +128,12 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}}
 		}
+		if dec.Challenge != "" {
+			denied.Headers = append(denied.Headers, &corev3.HeaderValueOption{
+				Header:       &corev3.HeaderValue{Key: "www-authenticate", Value: dec.Challenge},
+				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			})
+		}
 		return &authv3.CheckResponse{
 			Status:       &rpcstatus.Status{Code: int32(grpcCode(dec.Status)), Message: dec.Reason},
 			HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: denied},

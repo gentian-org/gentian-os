@@ -36,7 +36,8 @@ type Route struct {
 	Relation string `json:"relation"`
 	Object   string `json:"object"`
 	// AuthMode is the route's L1: "oidc", a session the Gateway's OAuth2
-	// filter establishes, or "bearer", a token the caller presents.
+	// filter establishes, or "bearer", a token the caller presents and this
+	// service verifies (Audience, Realm). No filter runs ahead of it there.
 	//
 	// On an oidc route the OAuth2 filter runs ahead of this service. It
 	// answers its own callback and logout paths, sends a request with no
@@ -47,6 +48,19 @@ type Route struct {
 	// carries a token this service can verify, and one that does not is
 	// refused: there is no "no session yet" to be lenient about.
 	AuthMode string `json:"authMode"`
+	// Audience and Realm are what a token on a bearer route must say beside
+	// being valid: that it was made out to this entry (its address, as the
+	// realm's audience mapper writes it) and that the tenant's own realm
+	// issued it. Both are required there. The edge's session token names
+	// another audience and is refused; so is a token another tenant's realm
+	// made out to the same words.
+	Audience string `json:"audience,omitempty"`
+	Realm    string `json:"realm,omitempty"`
+	// ResourceMetadata is the address of the entry's protected resource
+	// metadata (RFC 9728), named in the challenge a bearer route answers a
+	// request without a valid token with. A program reads there which realm
+	// issues the token this entry takes.
+	ResourceMetadata string `json:"resourceMetadata,omitempty"`
 	// KeepClientToken says the Authorization header on this route is the
 	// page's own and not the edge's: the gateway does not put the session's
 	// access token there and this service neither reads it nor removes it.
@@ -112,9 +126,10 @@ type Route struct {
 	// derives from the policy and, for the two that carry a sign-in in
 	// progress, from that sign-in.
 	//
-	// The operator states both; this service guesses at neither. A route
-	// that names none keeps its Cookie header as it came, which is every
-	// bearer route: there is no session there.
+	// The operator states both; this service guesses at neither. A session
+	// route that names none keeps its Cookie header as it came. A bearer
+	// route names none and keeps no cookie at all: there is no session there,
+	// and nothing in that header is its backend's to read.
 	SessionCookies        []string `json:"sessionCookies,omitempty"`
 	SessionCookiePrefixes []string `json:"sessionCookiePrefixes,omitempty"`
 	// DeniedRedirect is where a browser refused by the store on this route
@@ -193,6 +208,24 @@ func ParseTable(b []byte) (*Table, error) {
 		}
 		if r.AuthMode != AuthModeOIDC && r.AuthMode != AuthModeBearer {
 			return nil, fmt.Errorf("route table: entry %d (%q) needs authMode oidc or bearer", i, r.Host)
+		}
+		// A bearer route with nothing to hold a token against would take any
+		// access token of the platform, the edge's own included.
+		if r.AuthMode == AuthModeBearer {
+			if strings.TrimSpace(r.Audience) == "" || strings.TrimSpace(r.Realm) == "" {
+				return nil, fmt.Errorf("route table: entry %d (%q) takes a token and needs the audience and the realm to hold it against", i, r.Host)
+			}
+			if r.ForwardToken || r.KeepClientToken || r.IDTokenSession || r.IDTokenAudience != "" {
+				return nil, fmt.Errorf("route table: entry %d (%q) takes a token: there is no session to forward, keep or prove", i, r.Host)
+			}
+			if r.ResourceMetadata != "" {
+				u, err := url.Parse(r.ResourceMetadata)
+				if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || strings.ContainsAny(r.ResourceMetadata, "\"\\ \r\n") {
+					return nil, fmt.Errorf("route table: entry %d (%q) names its resource metadata by an https address", i, r.Host)
+				}
+			}
+		} else if r.Audience != "" || r.Realm != "" || r.ResourceMetadata != "" {
+			return nil, fmt.Errorf("route table: entry %d (%q) names an audience, a realm or resource metadata only where it takes a token", i, r.Host)
 		}
 		if r.ExchangeScope != "" && (r.AuthMode != AuthModeOIDC || r.ForwardToken || r.KeepClientToken || r.IDTokenSession) {
 			return nil, fmt.Errorf("route table: entry %d (%q) exchanges a token only behind a session, and hands on one token", i, r.Host)
