@@ -473,3 +473,52 @@ spec:
 	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "")
 	expect(t, "an adapter instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "adapter")), "class is immutable")
 }
+
+// An action is one pinned image a component runs through the dispatcher.
+// These are the rules the class carries at admission.
+func TestActionProfileRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	const image = `{repository: registry.example/steps/ocr, digest: "sha256:` +
+		`0000000000000000000000000000000000000000000000000000000000000000"}`
+	profile := func(pkg, spec string) string {
+		return "\napiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata: {name: x}\nspec:\n" +
+			"  version: \"1.0.0\"\n  package: " + pkg + "\n" + spec
+	}
+	one := "{images: [" + image + "]}"
+	action := "  action: {command: [\"/ocr\"]}\n"
+	head := "  classes: [action]\n  launch: none\n  trustTier: certified\n"
+	chart := `{chart: {repository: "oci://example/charts", name: x, version: "1.0.0"}}`
+
+	for _, c := range []struct{ name, obj, want string }{
+		{"an action", profile(one, head+action), ""},
+		{"an action with everything said", profile(one, head+
+			"  action:\n    command: [\"/ocr\", \"--fast\"]\n    runtime: container\n    deadlineSeconds: 120\n"+
+			"    adapters: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
+			"    inputs: {type: object, properties: {file: {type: string}}}\n    outputs: {type: object}\n"+
+			"  requires:\n    privileges:\n      egress:\n      - name: ocr-service\n        reason: the recognition service\n"+
+			"        rule: {ports: [{port: 443}]}\n"), ""},
+
+		{"an action that is also an app", profile(one, "  classes: [action, app]\n  launch: none\n  trustTier: certified\n"+action), "action is exclusive"},
+		{"an action without its block", profile(one, head), "spec.action is for class action"},
+		{"an app with an action block", profile(chart, "  classes: [app]\n  launch: none\n  trustTier: certified\n"+action), "spec.action is for class action"},
+		{"an action someone opens", profile(one, "  classes: [action]\n  launch: from\n  trustTier: certified\n"+action), "an action has launch none"},
+		{"an action on the gateway", profile(one, head+action+"  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n"), "exposes, provides and integrates nothing"},
+		{"an action that provides a contract", profile(one, head+action+"  provides:\n  - {name: tools}\n"), "exposes, provides and integrates nothing"},
+		{"an action that integrates", profile(one, head+action+"  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n"), "exposes, provides and integrates nothing"},
+		{"an action with a chart", profile(chart, head+action), "exactly one pinned image"},
+		{"an action with a chart and an image", profile("{chart: {repository: \"oci://example/charts\", name: x, version: \"1.0.0\"}, images: ["+image+"]}", head+action), "exactly one pinned image"},
+		{"an action with no image", profile("{}", head+action), "exactly one pinned image"},
+		{"an action with two images", profile("{images: ["+image+", {repository: registry.example/steps/other, digest: \"sha256:"+
+			"1111111111111111111111111111111111111111111111111111111111111111\"}]}", head+action), "exactly one pinned image"},
+		{"an action that is an API", profile("{api: {baseUrl: \"https://steps.example\"}, images: ["+image+"]}", head+action), "exactly one pinned image"},
+		{"an action that requires a database", profile(one, head+action+"  requires:\n    services:\n      database: {engine: postgresql}\n"), "an action requires no service"},
+		{"an action placed on every tenant", profile(one, head+action+"  defaultForTenants: true\n"), "an action is never placed"},
+		{"an action without a command", profile(one, head+"  action: {}\n"), "command"},
+		{"an action that runs too long", profile(one, head+"  action: {command: [\"/ocr\"], deadlineSeconds: 90000}\n"), "deadlineSeconds"},
+		{"an action on another runtime", profile(one, head+"  action: {command: [\"/ocr\"], runtime: wasm}\n"), "runtime"},
+		// A package of images alone is an action's, and nothing else's.
+		{"an app with images and nothing to deploy", profile(one, "  classes: [app]\n  launch: none\n  trustTier: certified\n"), "a package is a chart"},
+	} {
+		expect(t, c.name, v.check(t, c.obj, ""), c.want)
+	}
+}

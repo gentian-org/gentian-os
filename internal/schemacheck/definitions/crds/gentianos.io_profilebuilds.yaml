@@ -180,6 +180,79 @@ spec:
                   until the operator has read the build, and taken off one that does
                   not verify.
                 properties:
+                  action:
+                    description: |-
+                      Action is what an action takes, returns and runs. Present exactly when
+                      the class is action.
+                    properties:
+                      adapters:
+                        description: |-
+                          Adapters names the adapters whose tools the calling component may call
+                          on a run's behalf, by their ComponentProfile. A run reaches no adapter
+                          itself. It is a statement for the administrator who installs the
+                          action; the caller enforces it.
+                        items:
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        maxItems: 32
+                        type: array
+                        x-kubernetes-list-type: set
+                      command:
+                        description: |-
+                          Command is what a run starts in the action's image. It is given the
+                          run's inputs on standard input and writes its outputs to standard
+                          output; the environment names the address and the credential at which
+                          the caller answers for anything more. It is stated because a run wraps
+                          it, and an image's own entrypoint cannot be wrapped unseen.
+                        items:
+                          maxLength: 1024
+                          minLength: 1
+                          type: string
+                        maxItems: 32
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      deadlineSeconds:
+                        default: 600
+                        description: |-
+                          DeadlineSeconds is the longest one attempt of a run may take. A caller
+                          may ask for less and never for more.
+                        format: int32
+                        maximum: 86400
+                        minimum: 1
+                        type: integer
+                      inputs:
+                        description: Inputs is the JSON Schema of what a run takes.
+                        x-kubernetes-preserve-unknown-fields: true
+                      outputs:
+                        description: Outputs is the JSON Schema of what a run returns.
+                        x-kubernetes-preserve-unknown-fields: true
+                      resources:
+                        description: Resources is what one attempt of a run is given.
+                        properties:
+                          cpu:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          memory:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        type: object
+                      runtime:
+                        default: container
+                        description: Runtime is what runs the action.
+                        enum:
+                        - container
+                        type: string
+                    required:
+                    - command
+                    type: object
                   adapter:
                     description: |-
                       Adapter is what an adapter adapts. Present exactly when the class is
@@ -401,6 +474,7 @@ spec:
                       - app
                       - shared-app
                       - adapter
+                      - action
                       type: string
                     maxItems: 2
                     minItems: 1
@@ -4434,9 +4508,9 @@ spec:
                     || !has(x.kernelRequirements.authorization))'
                 - message: a package is a chart, a composition, the two together,
                     an api, or an addon -- and nothing else beside them
-                  rule: '[has(self.__package__.chart) || (has(self.__package__.composition)
+                  rule: has(self.action) || [has(self.__package__.chart) || (has(self.__package__.composition)
                     && self.__package__.composition.size() > 0), has(self.__package__.api),
-                    has(self.__package__.addon)].exists_one(x, x)'
+                    has(self.__package__.addon)].exists_one(x, x)
                 - message: an addon is package.addon on this kind, not customization.addon
                   rule: '!has(self.customization) || !has(self.customization.addon)'
                 - message: 'launch tile needs a tile on an exposure or on package.api:
@@ -4488,6 +4562,43 @@ spec:
                 - message: 'an adapter is never placed: a tenant''s administrator
                     installs it'
                   rule: '!has(self.adapter) || !has(self.placement)'
+                - message: 'action is exclusive: an action is a component of its own,
+                    never also the app that runs it'
+                  rule: '!has(self.classes) || !(''action'' in self.classes) || self.classes.size()
+                    == 1'
+                - message: spec.action is for class action, and class action needs
+                    it
+                  rule: (has(self.classes) && 'action' in self.classes) == has(self.action)
+                - message: 'an action has launch none: nobody opens it'
+                  rule: '!has(self.action) || self.launch == ''none'''
+                - message: 'an action exposes, provides and integrates nothing: a
+                    run reaches the component that started it and nothing else'
+                  rule: '!has(self.action) || ((!has(self.expose) || self.expose.size()
+                    == 0) && (!has(self.provides) || self.provides.size() == 0) &&
+                    (!has(self.integrations) || self.integrations.size() == 0))'
+                - message: 'an action''s package is exactly one pinned image (package.images)
+                    and nothing else: no chart, composition, api or addon'
+                  rule: '!has(self.action) || (!has(self.__package__.chart) && !has(self.__package__.composition)
+                    && !has(self.__package__.api) && !has(self.__package__.addon)
+                    && has(self.__package__.images) && self.__package__.images.size()
+                    == 1)'
+                - message: 'an action requires no service: what a run needs it asks
+                    of the component that started it'
+                  rule: '!has(self.action) || !has(self.requires) || !has(self.requires.services)'
+                - message: 'an action asks for egress and no other privilege: a run
+                    holds no right at the Kubernetes API and runs under the restricted
+                    pod security standard'
+                  rule: '!has(self.action) || !has(self.requires) || !has(self.requires.privileges)
+                    || ((!has(self.requires.privileges.podSecurity) || self.requires.privileges.podSecurity.size()
+                    == 0) && (!has(self.requires.privileges.clusterRoles) || self.requires.privileges.clusterRoles.size()
+                    == 0) && (!has(self.requires.privileges.apiExtensions) || self.requires.privileges.apiExtensions.size()
+                    == 0))'
+                - message: 'an action is never placed: a tenant''s administrator installs
+                    it'
+                  rule: '!has(self.action) || (!has(self.placement) && !((has(self.defaultForTenants)
+                    && self.defaultForTenants) || (has(self.defaultForPlatform) &&
+                    self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
+                    && self.defaultWhereStoreOffered)))'
                 - message: 'placement is for class app: a service and a shared-app
                     have one instance'
                   rule: '!has(self.placement) || !has(self.classes) || (''app'' in
