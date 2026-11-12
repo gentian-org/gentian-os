@@ -113,4 +113,21 @@ func TestEnvoyGetsHeadersOnAllowAndAStatusOnDeny(t *testing.T) {
 	if denied.Status.Code != int32(codes.Unauthenticated) || denied.GetDeniedResponse().GetStatus().GetCode() != typev3.StatusCode_Unauthorized {
 		t.Fatalf("denied = %v", denied)
 	}
+	// A route that takes a token says so, and where its metadata is.
+	var asked string
+	for _, h := range denied.GetDeniedResponse().GetHeaders() {
+		if h.Header.Key == "www-authenticate" {
+			asked = h.Header.Value
+		}
+	}
+	if asked != `Bearer resource_metadata="`+entryMetadata+`"` {
+		t.Fatalf("www-authenticate = %q", asked)
+	}
+	// A session route answers no such thing: a browser is sent to sign in by
+	// the gateway, never asked for a bearer.
+	for _, h := range check("argocd.k.example", "/", nil).GetDeniedResponse().GetHeaders() {
+		if h.Header.Key == "www-authenticate" {
+			t.Fatalf("a session route asked for a bearer: %q", h.Header.Value)
+		}
+	}
 }

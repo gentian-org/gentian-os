@@ -235,4 +235,28 @@ func TestTheRouteTableNamesTheSessionsCookiesOfEveryRouteWithASession(t *testing
 	if r := parsed.Match("wiki-api.acme.k.example"); r == nil || len(r.SessionCookies) != 0 || len(r.SessionCookiePrefixes) != 0 {
 		t.Fatalf("a bearer route names no session cookie: %+v", r)
 	}
+	// What a token on that route is held against: the entry's own address
+	// and the zone's realm, and the challenge names the entry's metadata.
+	r := parsed.Match("wiki-api.acme.k.example")
+	if r.Audience != "https://wiki-api.acme.k.example" || r.Realm != acme.realm || r.Realm == "" ||
+		r.ResourceMetadata != "https://wiki-api.acme.k.example/.well-known/oauth-protected-resource" {
+		t.Fatalf("a token route is held against %+v", r)
+	}
+	if r := parsed.Match("wiki.acme.k.example"); r.Audience != "" || r.Realm != "" || r.ResourceMetadata != "" {
+		t.Fatalf("a session route names what a token is held against: %+v", r)
+	}
+	// A token route with nothing to hold a token against is no route: its
+	// host is refused, and the rest of the table still loads.
+	delete(api.Annotations, bouncerTokenAudienceAnnotation)
+	extra, err = componentRouteTableEntries(context.Background(), fake.NewClientBuilder().WithScheme(scheme).WithObjects(web, api).Build())
+	if err != nil {
+		t.Fatal(err)
+	}
+	table, err = bouncerRouteTable(nil, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed, err = bouncer.ParseTable([]byte(table)); err != nil || parsed.Match("wiki-api.acme.k.example") != nil || parsed.Match("wiki.acme.k.example") == nil {
+		t.Fatalf("err %v, table\n%s", err, table)
+	}
 }

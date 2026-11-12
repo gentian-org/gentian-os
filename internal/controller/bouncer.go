@@ -329,6 +329,12 @@ type bouncerRoute struct {
 	// app alone (internal/bouncer, exchange.go).
 	ExchangeScope string `json:"exchangeScope,omitempty"`
 	AuthMode      string `json:"authMode"`
+	// Audience, Realm and ResourceMetadata are a route's that takes a token
+	// in place of a session: what the token is held against, and where the
+	// challenge sends a program (internal/bouncer, table.go).
+	Audience         string `json:"audience,omitempty"`
+	Realm            string `json:"realm,omitempty"`
+	ResourceMetadata string `json:"resourceMetadata,omitempty"`
 	// DenyPaths are refused at L2 before identity is looked at. Unioned
 	// across every exposure that shares the host.
 	DenyPaths []string `json:"denyPaths,omitempty"`
@@ -524,6 +530,18 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 				}
 				continue
 			}
+			// A route that takes a token has no session to forward or to
+			// exchange a token of, and says what its token is held against.
+			if mode == "bearer" {
+				byHost[host] = &bouncerRoute{
+					Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
+					AuthMode: mode, DenyPaths: denied,
+					Audience: ann[bouncerTokenAudienceAnnotation], Realm: ann[bouncerTokenRealmAnnotation],
+					ResourceMetadata: ann[bouncerResourceMetadataAnnotation],
+				}
+				order = append(order, host)
+				continue
+			}
 			byHost[host] = &bouncerRoute{
 				Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
 				ForwardToken:  ann[bouncerForwardAnnotation] == "true",
@@ -538,6 +556,20 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 	out := make([]bouncerRoute, 0, len(order))
 	for _, h := range order {
 		route := *byHost[h]
+		// A host takes a token or has a session, never both: the bouncer
+		// refuses a table that says otherwise, and with it every route. Where
+		// a host's first route takes a token, nothing of a session is said
+		// for it; and one with nothing to hold a token against is left out,
+		// which leaves its host with no route and every request refused.
+		if route.AuthMode == "bearer" {
+			if route.Audience == "" || route.Realm == "" {
+				continue
+			}
+			route.ForwardToken, route.KeepClientToken, route.IDTokenAudience, route.ExchangeScope = false, false, "", ""
+			route.SessionCookies, route.SessionCookiePrefixes = nil, nil
+		} else {
+			route.Audience, route.Realm, route.ResourceMetadata = "", "", ""
+		}
 		// A host whose session is proved by its ID token and which keeps
 		// nothing: the header is not read and is still removed.
 		route.IDTokenSession = route.IDTokenAudience != "" && !route.KeepClientToken

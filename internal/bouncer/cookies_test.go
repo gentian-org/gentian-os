@@ -35,9 +35,9 @@ func sessionTable() *Table {
 		with(Route{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeOIDC}),
 		with(Route{Host: "desktop.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC}),
 		with(Route{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", KeepClientToken: true, IDTokenAudience: kernelClient, AuthMode: AuthModeOIDC}),
-		// A bearer route has no session. Naming cookies on one changes
-		// nothing: only a route with a session has them taken out.
-		with(Route{Host: "api.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeBearer}),
+		// A route that takes a token has no session. Naming cookies on one
+		// changes nothing: no cookie at all goes on from there.
+		with(Route{Host: "api.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeBearer, Audience: "https://api.k.example", Realm: "kernel"}),
 		// A session route whose table line names no cookie.
 		{Host: "old.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeOIDC},
 	}}
@@ -170,10 +170,13 @@ func TestACookieHeaderThatIsNotTheSessionsIsNotTouched(t *testing.T) {
 			t.Fatalf("%s: the Cookie header was touched: %+v", name, dec)
 		}
 	}
-	// A bearer route has no session; a cookie there is the caller's own,
-	// whatever it is called.
-	untouched("a bearer route", d.Decide(context.Background(), Request{Host: "api.k.example", Authorization: "Bearer root-token",
-		Cookie: "gentian-kernel-access=whatever; sid=1"}))
+	// A route that takes a token is the exception the other way: the whole
+	// header goes, whatever is in it.
+	dec := d.Decide(context.Background(), Request{Host: "api.k.example", Authorization: "Bearer root-entry-token",
+		Cookie: "gentian-kernel-access=whatever; sid=1"})
+	if _, set := dec.Headers[HeaderCookie]; !dec.Allow || set || !removes(dec, HeaderCookie) {
+		t.Fatalf("a token route: %+v", dec)
+	}
 	untouched("a session route, only the app's cookies", d.Decide(context.Background(), Request{Host: "argocd.k.example",
 		Authorization: "Bearer root-token", Cookie: "sid=1; theme=dark"}))
 	untouched("a session route, no cookie at all", d.Decide(context.Background(), Request{Host: "argocd.k.example",

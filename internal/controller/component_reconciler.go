@@ -167,6 +167,12 @@ const (
 	// app the token's audience.
 	bouncerExchangeScopeAnnotation = "gentianos.io/bouncer-exchange-scope"
 	bouncerAuthModeAnnotation      = "gentianos.io/bouncer-mode"
+	// On a route that takes a token in place of a session: the audience
+	// and the realm the bouncer holds the token against, and where the
+	// entry's protected resource metadata is (RFC 9728).
+	bouncerTokenAudienceAnnotation    = "gentianos.io/bouncer-token-audience"
+	bouncerTokenRealmAnnotation       = "gentianos.io/bouncer-token-realm"
+	bouncerResourceMetadataAnnotation = "gentianos.io/bouncer-resource-metadata"
 	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
 	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
@@ -1776,6 +1782,14 @@ func componentOwnHosts(zone zoneNames, comp *gentianov1alpha1.Component, profile
 // has to admit exactly that and no more. It is not the component's to choose:
 // a component that answered X-Frame-Options: DENY would silently break its
 // own tile.
+// tokenEntryMetadataPath is where an entry that takes a token publishes its
+// protected resource metadata (RFC 9728 §3).
+const tokenEntryMetadataPath = "/.well-known/oauth-protected-resource"
+
+// tokenEntryAudience is what a token for the entry on a host names as its
+// audience: the entry's address, without a path.
+func tokenEntryAudience(host string) string { return "https://" + host }
+
 func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string, framers []string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
@@ -1808,6 +1822,15 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host
 		bouncerObjectAnnotation:   authz.object,
 		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
 		bouncerAuthModeAnnotation: mode,
+	}
+	// A token is held against the entry's own address and the zone's realm:
+	// one made out to anything else, or issued by another tenant's realm, is
+	// refused. Only this reconciler knows both.
+	if mode == "bearer" {
+		annotations[bouncerForwardAnnotation] = "false"
+		annotations[bouncerTokenAudienceAnnotation] = tokenEntryAudience(host)
+		annotations[bouncerTokenRealmAnnotation] = zone.realm
+		annotations[bouncerResourceMetadataAnnotation] = tokenEntryAudience(host) + tokenEntryMetadataPath
 	}
 	if e.ExchangeToken && e.AuthMode == gentianov1alpha1.AuthModeOIDC && !authz.forwardToken && !authz.sessionByIDToken() {
 		annotations[bouncerExchangeScopeAnnotation] = AppTokenScope(comp.Spec.ProfileRef.Name)
