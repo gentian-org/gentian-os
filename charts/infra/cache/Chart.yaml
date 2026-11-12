@@ -1,0 +1,9 @@
+apiVersion: v2
+name: cache
+description: The shared kernel cache, Valkey by default
+type: application
+version: 1.0.0
+appVersion: 8.1.11
+home: https://valkey.io
+sources:
+  - https://github.com/valkey-io/valkey-container

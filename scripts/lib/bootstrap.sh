@@ -1205,7 +1205,7 @@ resync_credential_consumers() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_s3_ready argocd_url
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_cache_ready infra_s3_ready argocd_url
 
     # Around a dozen cluster queries, and on a remote API server they add up to
     # the better part of a minute. Announce it: the last thing printed before
@@ -1255,7 +1255,7 @@ print_summary_cp() {
     }
     infra_pg_ready=$(_release_ready postgresql)
     infra_mdb_ready=$(_release_ready mariadb)
-    infra_redis_ready=$(_release_ready redis)
+    infra_cache_ready=$(_release_ready cache)
     infra_s3_ready=$(_release_ready seaweedfs)
     # Keycloak and OpenFGA are Argo CD Applications of the identity
     # ApplicationSet (kernel/appsets/raw/09-identity.yaml), not composed:
@@ -1286,7 +1286,7 @@ print_summary_cp() {
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
     echo -e "${GREEN}  System PG      : ${xr_name}-postgresql (Ready=${infra_pg_ready})${NC}"
     echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
-    echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  System cache   : ${xr_name}-cache (Ready=${infra_cache_ready})${NC}"
     echo -e "${GREEN}  System S3      : ${xr_name}-seaweedfs (Ready=${infra_s3_ready})${NC}"
     echo -e "${GREEN}  Keycloak       : keycloak-idp-${GENTIAN_DEPLOYMENTS_STAGE:-dev} (${keycloak_state})${NC}"
     echo -e "${GREEN}  OpenFGA        : openfga-${GENTIAN_DEPLOYMENTS_STAGE:-dev} (${openfga_state})${NC}"

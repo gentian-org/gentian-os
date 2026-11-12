@@ -6,28 +6,25 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ .Release.Name }}-master
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "redis.labels" . | nindent 4 }}
+    {{- include "cache.labels" . | nindent 4 }}
 spec:
   replicas: 1
   serviceName: {{ .Release.Name }}-headless
   selector:
     matchLabels:
-      {{- include "redis.selectorLabels" . | nindent 6 }}
+      {{- include "cache.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "redis.labels" . | nindent 8 }}
-      {{- with .Values.master.podAnnotations }}
+        {{- include "cache.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      # Named, not left out: a live install upgrading from the Bitnami chart
-      # keeps its service account otherwise, through the deprecated
-      # serviceAccount field, and that account is gone with the old chart.
       serviceAccountName: default
       automountServiceAccountToken: false
       {{- with $global.imagePullSecrets }}
@@ -37,9 +34,9 @@ spec:
         {{- end }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.master.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: redis
+        - name: cache
           image: {{ printf "%s/%s:%s@%s" $image.registry $image.repository $image.tag $image.digest }}
           imagePullPolicy: {{ $image.pullPolicy }}
           command: ["/bin/sh", "-c"]
@@ -47,57 +44,58 @@ spec:
           # default user is left out of what is loaded: a file naming it wins
           # over --requirepass, and a rotated password would never take.
           #
-          # A directory of its own: a volume that served Redis 7.4 holds files
-          # Valkey cannot read, and refuses to start on.
+          # redis-server and redis-cli are the names the Valkey and the Redis
+          # images both ship, so the image alone chooses the engine.
           args:
             - |
               set -eu
-              mkdir -p /data/valkey
-              touch /data/valkey/users.acl
-              sed -i '/^user default /d' /data/valkey/users.acl
-              exec valkey-server --port {{ .Values.master.containerPorts.redis }} --dir /data/valkey \
-                --aclfile /data/valkey/users.acl \
-                --requirepass "$VALKEYCLI_AUTH" \
+              touch /data/users.acl
+              sed -i '/^user default /d' /data/users.acl
+              exec redis-server --port {{ .Values.port }} --dir /data \
+                --aclfile /data/users.acl \
+                --requirepass "$REDISCLI_AUTH" \
                 --appendonly yes --save ''
           env:
-            - name: VALKEYCLI_AUTH
+            # The password, under the name redis-cli reads it by, so the
+            # probes below authenticate.
+            - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
                   name: {{ required "auth.existingSecret" .Values.auth.existingSecret }}
                   key: {{ .Values.auth.existingSecretPasswordKey }}
           ports:
-            - name: redis
-              containerPort: {{ .Values.master.containerPorts.redis }}
+            - name: cache
+              containerPort: {{ .Values.port }}
           livenessProbe:
             exec:
-              command: ["/bin/sh", "-c", 'valkey-cli ping | grep -qE "PONG|LOADING"']
+              command: ["/bin/sh", "-c", 'redis-cli ping | grep -qE "PONG|LOADING"']
             initialDelaySeconds: 20
             periodSeconds: 5
             timeoutSeconds: 6
             failureThreshold: 5
           readinessProbe:
             exec:
-              command: ["/bin/sh", "-c", 'valkey-cli ping | grep -q PONG']
+              command: ["/bin/sh", "-c", 'redis-cli ping | grep -q PONG']
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 5
-          {{- with .Values.master.resources }}
+          {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.master.containerSecurityContext }}
+          {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            - name: redis-data
+            - name: cache-data
               mountPath: /data
   volumeClaimTemplates:
     - metadata:
-        name: redis-data
+        name: cache-data
         labels:
-          {{- include "redis.selectorLabels" . | nindent 10 }}
+          {{- include "cache.selectorLabels" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
         {{- with $global.storageClass }}
@@ -105,4 +103,4 @@ spec:
         {{- end }}
         resources:
           requests:
-            storage: {{ .Values.master.persistence.size }}
+            storage: {{ .Values.persistence.size }}

@@ -20,8 +20,10 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,19 +33,20 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
 	conditionCacheReady     = "CacheReady"
-	redisAdminSecret        = backup.RedisAdminSecret
+	cacheAdminSecret        = backup.CacheAdminSecret
 	cacheRequeueAfter       = 2 * time.Second
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
 	memcachedPort           = provisioner.MemcachedPort
 )
 
-// ensureCache provisions per-app Redis ACL users (via valkey-cli Job) and per-tenant
+// ensureCache provisions per-app ACL users on the shared cache (via a Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
 // to True once all Jobs complete and Memcached reports ready replicas.
 func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -61,15 +64,15 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 	allDone := true
 	var pendingJobs []string
 
-	// One Redis ACL Job per app.
+	// One ACL Job per app on the shared cache.
 	for _, appName := range redisApps {
-		done, err := r.ensureRedisACLJob(ctx, tenant, appName)
+		done, err := r.ensureCacheACLJob(ctx, tenant, appName)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure Redis ACL Job for app %s: %w", appName, err)
+			return ctrl.Result{}, fmt.Errorf("ensure the cache ACL Job for app %s: %w", appName, err)
 		}
 		if !done {
 			allDone = false
-			pendingJobs = append(pendingJobs, redisACLJobName(tenant.Name, appName))
+			pendingJobs = append(pendingJobs, cacheACLJobName(tenant.Name, appName))
 		}
 	}
 
@@ -101,7 +104,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 // find afterwards, so it is never read from a Job or the record.
 func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, mode AppCollectionMode) (redisApps, memcachedApps []string, err error) {
 	redisApps, err = r.collectKernelApps(ctx, tenant, mode, matchRedisProfile, func(tenantName string) string {
-		return redisACLJobName(tenantName, "")
+		return cacheACLJobName(tenantName, "")
 	}, func(p backup.Provisioned) bool { return p.Has(backup.KindCache) })
 	if err != nil {
 		return nil, nil, err
@@ -113,9 +116,9 @@ func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentian
 	return redisApps, memcachedApps, nil
 }
 
-// ensureRedisACLJob waits for the Crossplane-owned Redis ACL Job.
-func (r *TenantReconciler) ensureRedisACLJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, tenant.Name, redisACLJobName(tenant.Name, appName))
+// ensureCacheACLJob waits for the Crossplane-owned cache ACL Job.
+func (r *TenantReconciler) ensureCacheACLJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string) (bool, error) {
+	return r.waitForProvisioningJob(ctx, tenant.Name, cacheACLJobName(tenant.Name, appName))
 }
 
 // ensureMemcached waits for the Crossplane-provisioned Memcached Deployment.
@@ -135,11 +138,11 @@ func (r *TenantReconciler) ensureMemcached(ctx context.Context, tenant *gentiano
 
 // deleteCache handles cache cleanup on tenant deletion.
 // DeletionPolicy=Delete:
-//   - Creates ACL DELUSER Jobs for per-app Redis users.
+//   - Creates ACL DELUSER Jobs for the per-app users of the shared cache.
 //   - Deletes the Memcached Deployment and Service.
 //
 // DeletionPolicy=Retain:
-//   - No-op — Redis keys and Memcached data are preserved for recovery.
+//   - No-op — the shared cache's keys and Memcached data are preserved for recovery.
 func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
@@ -149,7 +152,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		return err
 	}
 
-	if err := r.ensureDeleteJobs(ctx, cacheNamespace, tenant, redisApps, redisACLDeleteJobName, makeRedisACLDeleteJob); err != nil {
+	if err := r.ensureDeleteJobs(ctx, cacheNamespace, tenant, redisApps, cacheACLDeleteJobName, makeCacheACLDeleteJob); err != nil {
 		return err
 	}
 
@@ -177,25 +180,25 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 
 // --- Job constructors --------------------------------------------------------
 
-// makeRedisACLJob creates a valkey-cli Job that provisions a per-app Redis ACL user.
+// makeCacheACLJob creates a Job that provisions a per-app ACL user on the shared cache.
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
 // When withPassword is set the pod reads the user's password from the Secret
 // of the Job's name, which the Job owns (jobSecret); it is in no Job spec,
 // no ConfigMap and no composed Object.
-func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword bool) *batchv1.Job {
-	username := redisACLUsername(tenant.Name, appName)
-	keyPrefix := redisKeyPrefix(tenant.Name, appName)
-	jobName := redisACLJobName(tenant.Name, appName)
-	c := redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix))
+func makeCacheACLJob(tenant *gentianov1alpha1.Tenant, appName string, withPassword bool) *batchv1.Job {
+	username := cacheACLUsername(tenant.Name, appName)
+	keyPrefix := cacheKeyPrefix(tenant.Name, appName)
+	jobName := cacheACLJobName(tenant.Name, appName)
+	c := cacheContainer("set-acl-user", username, keyPrefix, cacheSetUserScript(username, keyPrefix))
 	if withPassword {
-		c.Env = append(c.Env, meta.SecretEnv("REDIS_USER_PASSWORD", jobName, jobSecretPasswordKey))
+		c.Env = append(c.Env, meta.SecretEnv("CACHE_USER_PASSWORD", jobName, jobSecretPasswordKey))
 	}
 	return newKernelProvisioningJob(jobName, cacheNamespace, tenant, appName, c)
 }
 
-// makeRedisACLDeleteJob removes an app's user from the shared cache: the Job
+// makeCacheACLDeleteJob removes an app's user from the shared cache: the Job
 // the purge of one app runs too.
-func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
+func makeCacheACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
 	return backup.CacheDestroyJob(tenant, appName, backup.DestroyInTheBackground)
 }
 
@@ -287,19 +290,20 @@ func makeMemcachedService(tenant *gentianov1alpha1.Tenant) *corev1.Service {
 
 // --- Container constructor ---------------------------------------------------
 
-// redisContainer returns a Container running valkey-cli with admin credentials
-// injected from redis-admin Secret and user-specific values as literal env vars.
-func redisContainer(name, username, keyPrefix, script string) corev1.Container {
+// cacheContainer returns a Container running the cache's command-line client
+// with admin credentials injected from the cache-admin Secret and
+// user-specific values as literal env vars.
+func cacheContainer(name, username, keyPrefix, script string) corev1.Container {
 	return corev1.Container{
 		Name:            name,
-		Image:           kernel.RedisProvisionerImage(),
+		Image:           kernel.CacheProvisionerImage(),
 		Command:         []string{"/bin/sh", "-c", script},
 		SecurityContext: meta.RestrictedContainer(),
 		// The admin connection by the inventory's one block, then the
 		// per-user values as safe literals.
 		Env: append(backup.CacheAdminEnv(),
-			corev1.EnvVar{Name: "REDIS_USERNAME", Value: username},
-			corev1.EnvVar{Name: "REDIS_KEY_PREFIX", Value: keyPrefix},
+			corev1.EnvVar{Name: "CACHE_USERNAME", Value: username},
+			corev1.EnvVar{Name: "CACHE_KEY_PREFIX", Value: keyPrefix},
 		),
 	}
 }
@@ -313,7 +317,7 @@ func redisContainer(name, username, keyPrefix, script string) corev1.Container {
 // under these same rules.
 const cacheUserCommands = `+@read +@write +@connection +eval +evalsha +@pubsub +@transaction -@dangerous +info -randomkey -scan`
 
-// redisSetUserScript returns an idempotent ACL SETUSER script.
+// cacheSetUserScript returns an idempotent ACL SETUSER script.
 // reset takes the user back to nothing first, so what a Job leaves is these
 // rules and no earlier ones. The server answers an error with exit code 0, so
 // every answer is read.
@@ -321,11 +325,11 @@ const cacheUserCommands = `+@read +@write +@connection +eval +evalsha +@pubsub +
 // ACL SAVE comes first as well as last: a server that has no file to save to
 // loses its users on a restart, and this Job fails there without changing
 // anything, and is run again until the server that keeps them is up.
-func redisSetUserScript(username, keyPrefix string) string {
+func cacheSetUserScript(username, keyPrefix string) string {
 	return fmt.Sprintf(
 		`set -eu
-USER_PW="${REDIS_USER_PASSWORD:-$REDIS_PASSWORD}"
-cli() { valkey-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning "$@"; }
+USER_PW="${CACHE_USER_PASSWORD:-$CACHE_PASSWORD}"
+`+backup.CacheCLI+`
 expect_ok() {
   answer="$(cli "$@")"
   [ "$answer" = OK ] || { echo "ERROR: $1 $2: $answer" >&2; exit 1; }
@@ -338,21 +342,78 @@ echo "ACL user %[1]s provisioned"`,
 	)
 }
 
-// redisCacheEndpoint returns the shared Redis host/port from the kernel redis-admin Secret.
-func (r *TenantReconciler) redisCacheEndpoint(ctx context.Context) (host, port string, err error) {
+// cacheEndpoint returns the shared cache's host and port from its cache-admin Secret.
+func (r *TenantReconciler) cacheEndpoint(ctx context.Context) (host, port string, err error) {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: redisAdminSecret, Namespace: cacheNamespace}, secret); err != nil {
-		return "", "", fmt.Errorf("get redis-admin secret: %w", err)
+	if err := r.Get(ctx, types.NamespacedName{Name: cacheAdminSecret, Namespace: cacheNamespace}, secret); err != nil {
+		return "", "", fmt.Errorf("get the cache-admin secret: %w", err)
 	}
 	host = string(secret.Data["host"])
 	port = string(secret.Data["port"])
 	if port == "" {
-		port = fmt.Sprint(provisioner.RedisPort)
+		port = fmt.Sprint(provisioner.CachePort)
 	}
 	if host == "" {
-		return "", "", fmt.Errorf("redis-admin secret missing host")
+		return "", "", fmt.Errorf("the cache-admin secret has no host")
 	}
 	return host, port, nil
+}
+
+// cacheAddressAnnotation is written on each ExternalSecret that reads an
+// app's cache record, with the address the record names. A change of it is a
+// change to the object, which has the secrets operator read the record again
+// now rather than at its next refresh, an hour away: an app whose cache moved
+// is handed the new address while the old one already answers nobody.
+const cacheAddressAnnotation = "gentianos.io/cache-address"
+
+// refreshCacheReaders stamps the cache's address on the ExternalSecrets of
+// the namespace that read the record at path, and on none that carry it
+// already. Best effort: a refresh that does not happen here happens at the
+// ExternalSecret's interval.
+func (r *TenantReconciler) refreshCacheReaders(ctx context.Context, ns, path, address string) {
+	log := ctrl.LoggerFrom(ctx)
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(secrets.ExternalSecretGVK.GroupVersion().WithKind(secrets.ExternalSecretGVK.Kind + "List"))
+	if err := r.List(ctx, list, client.InNamespace(ns)); err != nil {
+		if !apimeta.IsNoMatchError(err) {
+			log.Error(err, "cannot list the ExternalSecrets that read a cache record", "namespace", ns)
+		}
+		return
+	}
+	for i := range list.Items {
+		es := &list.Items[i]
+		if es.GetAnnotations()[cacheAddressAnnotation] == address || !readsRemoteKey(es, path) {
+			continue
+		}
+		patch := client.MergeFrom(es.DeepCopy())
+		annotations := es.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[cacheAddressAnnotation] = address
+		es.SetAnnotations(annotations)
+		if err := r.Patch(ctx, es, patch); err != nil {
+			log.Error(err, "cannot refresh an ExternalSecret that reads a cache record",
+				"namespace", ns, "externalSecret", es.GetName())
+		}
+	}
+}
+
+// readsRemoteKey reports whether an ExternalSecret reads anything from the
+// vault path key, entry by entry (spec.data) or whole (spec.dataFrom).
+func readsRemoteKey(es *unstructured.Unstructured, key string) bool {
+	for _, field := range []string{"data", "dataFrom"} {
+		entries, _, _ := unstructured.NestedSlice(es.Object, "spec", field)
+		for _, raw := range entries {
+			entry, _ := raw.(map[string]any)
+			for _, refField := range []string{"remoteRef", "extract"} {
+				if ref, ok := entry[refField].(map[string]any); ok && ref["key"] == key {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // --- Status helpers ----------------------------------------------------------
@@ -369,24 +430,24 @@ func deploymentIsReady(dep *appsv1.Deployment) bool {
 
 // --- Name helpers ------------------------------------------------------------
 
-// redisACLUsername returns the Redis ACL username for a tenant + app.
-func redisACLUsername(tenantName, appName string) string {
-	return backup.RedisACLUser(tenantName, appName)
+// cacheACLUsername returns the shared cache's ACL username for a tenant + app.
+func cacheACLUsername(tenantName, appName string) string {
+	return backup.CacheACLUser(tenantName, appName)
 }
 
-// redisKeyPrefix returns the Redis key prefix scoped to a tenant + app.
+// cacheKeyPrefix returns the cache key prefix scoped to a tenant + app.
 // ACL key patterns use glob syntax; the trailing * is part of the ACL rule,
 // not the prefix value stored here. A profile writes it as
 // ${TENANT_ID}:${APP_ID}: and may use the same text without the colon as a
 // channel.
-func redisKeyPrefix(tenantName, appName string) string {
+func cacheKeyPrefix(tenantName, appName string) string {
 	return fmt.Sprintf("%s:%s:", tenantName, appName)
 }
 
-func redisACLJobName(tenantName, appName string) string {
-	return fmt.Sprintf("redis-acl-%s-%s", tenantName, appName)
+func cacheACLJobName(tenantName, appName string) string {
+	return fmt.Sprintf("cache-acl-%s-%s", tenantName, appName)
 }
 
-func redisACLDeleteJobName(tenantName, appName string) string {
+func cacheACLDeleteJobName(tenantName, appName string) string {
 	return backup.CacheDestroyJobName(tenantName, appName)
 }

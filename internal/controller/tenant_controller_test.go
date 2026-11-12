@@ -102,7 +102,7 @@ var deleteRetainManualTestTenants = map[string]struct{}{
 
 func provisioningJobTenant(jobName string) (tenant string, ok bool) {
 	for _, prefix := range []string{
-		"redis-acl-",
+		"cache-acl-",
 		"pg-role-",
 		"mariadb-setup-",
 		"s3-bucket-",
@@ -125,7 +125,7 @@ func shouldAutoCompleteProvisioningJob(jobName string) bool {
 	}
 	if _, manual := dataPlaneManualTestTenants[tenant]; manual {
 		switch {
-		case strings.HasPrefix(jobName, "redis-acl-"):
+		case strings.HasPrefix(jobName, "cache-acl-"):
 			return false
 		case strings.HasPrefix(jobName, "pg-role-"):
 			// Portal shell DB is required for every tenant; manual data-plane tests
@@ -149,7 +149,7 @@ func deleteCleanupJobTenant(jobName string) (tenant string, ok bool) {
 		"keycloak-realm-disable-",
 		"mariadb-delete-",
 		"s3-delete-",
-		"redis-acl-delete-",
+		"cache-acl-delete-",
 	} {
 		if strings.HasPrefix(jobName, prefix) {
 			rest := strings.TrimPrefix(jobName, prefix)
@@ -963,7 +963,7 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 	redisJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "system-cache"}, redisJob) == nil
+			types.NamespacedName{Name: "cache-acl-combodp-combo-redis", Namespace: "system-cache"}, redisJob) == nil
 	})
 }
 

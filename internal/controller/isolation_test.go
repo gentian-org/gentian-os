@@ -300,7 +300,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	// first, then the buckets with the backup bucket, then the databases,
 	// and the realm -- which holds every app's group and client -- last.
 	cleanupJobs := []string{
-		"redis-acl-delete-del-full-del-pgapp",
+		"cache-acl-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-gentian-backup",
@@ -327,7 +327,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		"s3-delete-del-full-del-pgapp",
 		"s3-delete-del-full-del-mariaapp",
 		"s3-delete-del-full-gentian-backup",
-		"redis-acl-delete-del-full-del-pgapp",
+		"cache-acl-delete-del-full-del-pgapp",
 	} {
 		t.Run("purges "+jobName, func(t *testing.T) {
 			waitFor(t, jobAppearTimeout, func() bool {

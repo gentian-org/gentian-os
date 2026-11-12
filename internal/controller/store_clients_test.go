@@ -157,7 +157,7 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"tenant-app-mariadb": app(gentianov1alpha1.ServiceRequirements{
 			Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEngineMariaDB}}, "mariadb", provisioner.MariaDBPort),
 		"tenant-app-cache": app(gentianov1alpha1.ServiceRequirements{
-			Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis}}, "cache", provisioner.RedisPort),
+			Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis}}, "cache", provisioner.CachePort),
 		"tenant-app-s3": app(gentianov1alpha1.ServiceRequirements{
 			Storage: &gentianov1alpha1.StorageRequirement{S3: &gentianov1alpha1.S3Requirement{}}}, "s3", provisioner.ObjectStoragePort),
 		"tenant-app-llm": app(gentianov1alpha1.ServiceRequirements{
@@ -196,7 +196,7 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 		"export-mariadb-upload":  unit(exports, bundle.ArtefactMariaDBOwned),
 		"restore-mariadb":        unit(restores, bundle.ArtefactMariaDB),
 		"restore-mariadb-fetch":  unit(restores, bundle.ArtefactMariaDBOwned),
-		"redis-acl-job":          job(makeRedisACLJob(tenant, "wiki", false)),
+		"cache-acl-job":          job(makeCacheACLJob(tenant, "wiki", false)),
 		"cache-destroy-job":      job(backup.CacheDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
 		"s3-bucket-job":          job(makeS3BucketJob(tenant, "wiki", false, backup.ObjectStorageOptions{})),
 		"s3-destroy-job":         job(backup.ObjectStorageDestroyJob(tenant, "wiki", backup.DestroyInTheBackground)),
@@ -228,7 +228,7 @@ func TestTheStoresClientsAreWhereTheirNetworkPoliciesExpectThem(t *testing.T) {
 	dataPort := map[string]int32{
 		"postgresql": provisioner.PostgresPort,
 		"mariadb":    provisioner.MariaDBPort,
-		"cache":      provisioner.RedisPort,
+		"cache":      provisioner.CachePort,
 		"s3":         provisioner.ObjectStoragePort,
 		// The model gateway is no store, and is held to the same table: its
 		// namespace carries the same kind of policy, per server pod set.

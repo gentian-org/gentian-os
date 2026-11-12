@@ -250,7 +250,7 @@ func TestProvisioningContainersAreAdmittedInTheSystemNamespaces(t *testing.T) {
 	for name, c := range map[string]corev1.Container{
 		"psql":    psqlContainer("x", "true"),
 		"mariadb": mariadbContainer("x", "true"),
-		"redis":   redisContainer("x", "user", "prefix", "true"),
+		"cache":   cacheContainer("x", "user", "prefix", "true"),
 		"s3":      backup.ObjectStorageProvisionContainer("x", "bucket", ""),
 	} {
 		sc := c.SecurityContext

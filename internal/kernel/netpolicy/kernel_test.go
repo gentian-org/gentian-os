@@ -116,7 +116,7 @@ func TestADeclaredStoreOpensItsOwnServerAndNoOther(t *testing.T) {
 			services{Cache: &gentianov1alpha1.CacheRequirement{}},
 			[]string{redis + ":6379"}},
 		// Memcached is the tenant's own, in the tenant's namespace: the
-		// tenant-cache policies open it, and the shared Redis is not its.
+		// tenant-cache policies open it, and the shared cache is not its.
 		"memcached": {
 			services{Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineMemcached}},
 			nil},
@@ -300,7 +300,7 @@ func TestTheModelGatewayIsOpenedForADeclaringAppOnItsPortAlone(t *testing.T) {
 	}, nil)
 	got := opened(t, netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "chat", both, netpolicy.Config{}))
 	want := []string{
-		fmt.Sprintf("%s:%d", layout.System("cache"), provisioner.RedisPort),
+		fmt.Sprintf("%s:%d", layout.System("cache"), provisioner.CachePort),
 		fmt.Sprintf("%s:%d", llm, provisioner.ModelGatewayPort),
 	}
 	sort.Strings(want)

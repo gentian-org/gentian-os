@@ -224,7 +224,7 @@ func TestSeederSeedCacheRecordsUser(t *testing.T) {
 
 	ctx := context.Background()
 	first, err := s.SeedCache(ctx, "demo", "test-app", secrets.CacheCreds{
-		Host: "redis.kernel.svc", Port: "6379", User: "demo-test-app",
+		Host: "cache.kernel.svc", Port: "6379", User: "demo-test-app",
 	})
 	if err != nil {
 		t.Fatalf("first seed: %v", err)
@@ -239,7 +239,7 @@ func TestSeederSeedCacheRecordsUser(t *testing.T) {
 	// A reconcile that does not supply the user must not erase the stored one,
 	// and must keep returning the same derived password.
 	second, err := s.SeedCache(ctx, "demo", "test-app", secrets.CacheCreds{
-		Host: "redis.kernel.svc", Port: "6379",
+		Host: "cache.kernel.svc", Port: "6379",
 	})
 	if err != nil {
 		t.Fatalf("second seed: %v", err)

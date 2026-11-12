@@ -419,7 +419,7 @@ func (s *Seeder) SeedS3(ctx context.Context, path string, base S3Creds) (S3Creds
 	}, nil
 }
 
-// --- Cache (Redis) -----------------------------------------------------------
+// --- Cache -------------------------------------------------------------------
 
 // CacheCreds is the set of values written to …/cache.
 type CacheCreds struct {
@@ -430,7 +430,7 @@ type CacheCreds struct {
 }
 
 // SeedCache derives the cache password from the master. Host and port are refreshed
-// on reconcile so infrastructure moves (e.g. shared Redis in gentian-infra-dev) propagate.
+// on reconcile so a move of the shared cache propagates.
 //
 // User is the per-app ACL user the cache reconciler provisions. It is derived from
 // the tenant and app names rather than generated, but it is recorded here so apps can

@@ -55,7 +55,7 @@ func TestTheStoreJobsReadTheAppsPasswordFromASecretTheyOwn(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("POSTGRES_PROVISIONER_IMAGE", "")
 	t.Setenv("MARIADB_PROVISIONER_IMAGE", "")
-	t.Setenv("REDIS_PROVISIONER_IMAGE", "")
+	t.Setenv("CACHE_PROVISIONER_IMAGE", "")
 	profile := func(name string, req gentianov1alpha1.ServiceRequirements) *gentianov1alpha1.ComponentProfile {
 		return &gentianov1alpha1.ComponentProfile{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -70,16 +70,16 @@ func TestTheStoreJobsReadTheAppsPasswordFromASecretTheyOwn(t *testing.T) {
 			{Profile: "wiki"}, {Profile: "shop"}, {Profile: "chat"},
 		}},
 	}
-	redisAdmin := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: redisAdminSecret, Namespace: cacheNamespace},
-		Data:       map[string][]byte{"host": []byte("redis.cache.svc")},
+	cacheAdmin := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: cacheAdminSecret, Namespace: cacheNamespace},
+		Data:       map[string][]byte{"host": []byte("cache.cache.svc")},
 	}
 	s := componentDatabaseScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
 		profile("wiki", gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEnginePostgreSQL}}),
 		profile("shop", gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{Engine: gentianov1alpha1.DatabaseEngineMariaDB}}),
 		profile("chat", gentianov1alpha1.ServiceRequirements{Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis}}),
-		tenant, redisAdmin,
+		tenant, cacheAdmin,
 	).Build()
 	vault := memVault{}
 	r := &TenantReconciler{Client: c, Scheme: s, Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master"))}
@@ -109,8 +109,8 @@ func TestTheStoreJobsReadTheAppsPasswordFromASecretTheyOwn(t *testing.T) {
 			types.NamespacedName{Namespace: postgresNamespace, Name: roleJobName("demo", "wiki")}},
 		{"mariadb user", secrets.CategoryPath("demo", "shop", "database"), "DB_PASS",
 			types.NamespacedName{Namespace: mariadbNamespace, Name: mariadbSetupJobName("demo", "shop")}},
-		{"cache user", secrets.CategoryPath("demo", "chat", "cache"), "REDIS_USER_PASSWORD",
-			types.NamespacedName{Namespace: cacheNamespace, Name: redisACLJobName("demo", "chat")}},
+		{"cache user", secrets.CategoryPath("demo", "chat", "cache"), "CACHE_USER_PASSWORD",
+			types.NamespacedName{Namespace: cacheNamespace, Name: cacheACLJobName("demo", "chat")}},
 	} {
 		t.Run(store.name, func(t *testing.T) {
 			password := vault[store.vaultPath]["password"]
@@ -220,7 +220,7 @@ func TestTheStoreJobsReadNoPasswordWithoutAVault(t *testing.T) {
 	for env, job := range map[string]*batchv1.Job{
 		"ROLE_PW":             makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", false, "", false, 25),
 		"DB_PASS":             makeMariaDBSetupJob(tenant, "shop", false, false, 25),
-		"REDIS_USER_PASSWORD": makeRedisACLJob(tenant, "chat", false),
+		"CACHE_USER_PASSWORD": makeCacheACLJob(tenant, "chat", false),
 	} {
 		for _, e := range job.Spec.Template.Spec.Containers[0].Env {
 			if e.Name == env {
