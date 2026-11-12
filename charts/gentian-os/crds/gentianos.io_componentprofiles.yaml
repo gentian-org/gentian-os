@@ -974,6 +974,20 @@ spec:
                         platform trust. An exchanged token is worth nothing outside the app it
                         names, and any app may ask for it.
                       type: boolean
+                    exchangedBy:
+                      description: |-
+                        ExchangedBy names, on a token entry, the profiles of the components
+                        that exchange the entry's tokens for one per app
+                        (requires.services.vouching.exchange): the entry's tokens then name
+                        each one's client, which is what lets the realm exchange them for it.
+                        A component not named here can exchange none of them.
+                      items:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      maxItems: 4
+                      type: array
+                      x-kubernetes-list-type: set
                     forwardToken:
                       description: |-
                         ForwardToken asks the gateway to pass the edge access token to this
@@ -1188,6 +1202,11 @@ spec:
                   - message: 'clientRedirectURIs is for a token entry (a gateway entry
                       with authMode bearer): no other entry has a client of its own'
                     rule: '!has(self.clientRedirectURIs) || (self.surface == ''gateway''
+                      && self.authMode == ''bearer'')'
+                  - message: 'exchangedBy is for a token entry (a gateway entry with
+                      authMode bearer): no other entry''s tokens are made out by a
+                      client of its own'
+                    rule: '!has(self.exchangedBy) || (self.surface == ''gateway''
                       && self.authMode == ''bearer'')'
                 maxItems: 32
                 type: array
@@ -2020,6 +2039,16 @@ spec:
                               maxItems: 2
                               type: array
                               x-kubernetes-list-type: set
+                            exchange:
+                              description: |-
+                                Exchange lets the component's client also exchange a person's own
+                                token for one valid at a single app (RFC 8693), for the same scopes it
+                                may ask for when it vouches. The realm exchanges a token only for a
+                                client the token names, and only a token entry that says so
+                                (exchangedBy on the entry) names this one. So what the component can
+                                exchange is what came in through such an entry: a person present, who
+                                connected a program and need not be linked.
+                              type: boolean
                             keys:
                               description: |-
                                 Keys says where the component publishes the keys its statements are
@@ -4318,6 +4347,16 @@ spec:
                             maxItems: 2
                             type: array
                             x-kubernetes-list-type: set
+                          exchange:
+                            description: |-
+                              Exchange lets the component's client also exchange a person's own
+                              token for one valid at a single app (RFC 8693), for the same scopes it
+                              may ask for when it vouches. The realm exchanges a token only for a
+                              client the token names, and only a token entry that says so
+                              (exchangedBy on the entry) names this one. So what the component can
+                              exchange is what came in through such an entry: a person present, who
+                              connected a program and need not be linked.
+                            type: boolean
                           keys:
                             description: |-
                               Keys says where the component publishes the keys its statements are

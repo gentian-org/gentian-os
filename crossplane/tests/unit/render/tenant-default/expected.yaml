@@ -1899,6 +1899,7 @@ spec:
     realmId: render-fixture
     serviceAccountsEnabled: false
     standardFlowEnabled: false
+    standardTokenExchangeEnabled: true
   managementPolicies:
   - Observe
   - Create

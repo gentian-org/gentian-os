@@ -69,17 +69,18 @@ const (
 	// line per profile, sorted, four or five fields separated by single
 	// spaces:
 	//
-	//	<profile> <service> <port> <path> [<director scopes>]
+	//	<profile> <service> <port> <path> [<what else its client may do>]
 	//
 	// for example "scribe scribe-keys 8443 /.well-known/jwks.json". A space is
 	// a safe separator because none of them can hold one: the first two
 	// are DNS labels, the third is a number, the fourth is held to the
-	// characters of a URL path by the profile's schema, and the fifth is the
-	// profile's requires.services.vouching.director joined by commas. The
+	// characters of a URL path by the profile's schema, and the fifth is a
+	// list of words joined by commas: "exchange" where the profile says
+	// requires.services.vouching.exchange, then the profile's
+	// requires.services.vouching.director. The
 	// path is always written out, the default included, so the Composition
-	// does not have to know what the default is. The fifth is written only
-	// in the platform tenant's projection, and only when the profile names
-	// any: a token for the director is the cluster's administrators', who
+	// does not have to know what the default is. The director's scopes are
+	// written only in the platform tenant's projection: a token for the director is the cluster's administrators', who
 	// sign in at that tenant's realm, and in another tenant's realm the
 	// scopes are never made.
 	//
@@ -91,6 +92,9 @@ const (
 	// Here for the reason the exchange profiles are: a component every tenant
 	// is given may vouch as well as an installed one may.
 	zoneVouchingProfilesKey = "vouchingProfiles"
+	// vouchingExchangeWord is, in the fifth field of a vouching line, the
+	// word that switches token exchange on at the component's client.
+	vouchingExchangeWord = "exchange"
 
 	// vouchingKeysDefaultPath is where a component's keys are fetched from
 	// when its profile names no path: the default the profile's schema
@@ -238,13 +242,21 @@ func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string) str
 		path = vouchingKeysDefaultPath
 	}
 	fields := []string{profile.Name, vouching.Keys.Service, strconv.Itoa(int(vouching.Keys.Port)), path}
+	// The fifth field: what the client may do beside vouching.
+	var extra []string
+	if vouching.Exchange {
+		extra = append(extra, vouchingExchangeWord)
+	}
 	if tenant == gentianov1alpha1.PlatformTenantName && len(vouching.Director) > 0 {
 		scopes := make([]string, 0, len(vouching.Director))
 		for _, d := range vouching.Director {
 			scopes = append(scopes, string(d))
 		}
 		sort.Strings(scopes)
-		fields = append(fields, strings.Join(scopes, ","))
+		extra = append(extra, scopes...)
+	}
+	if len(extra) > 0 {
+		fields = append(fields, strings.Join(extra, ","))
 	}
 	return strings.Join(fields, " ")
 }

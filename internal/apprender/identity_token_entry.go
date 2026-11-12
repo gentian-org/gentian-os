@@ -23,6 +23,9 @@ import (
 type TokenEntry struct {
 	Host         string
 	RedirectURIs []string
+	// Exchangers are the realm clients that may exchange the entry's
+	// tokens, by client id.
+	Exchangers []string
 }
 
 // TokenEntryClientID is the realm client the programs that connect to a
@@ -105,11 +108,11 @@ func (id *identityScope) tokenEntryClient() []*unstructured.Unstructured {
 			"providerConfigRef": identityProvider,
 		}),
 	}
-	// The component behind the entry exchanges the token it is handed for
-	// one per app, and the realm lets a client exchange only a token that
-	// names it. So the component's own client is named too, where it has one.
-	if s := id.services(); s.Identity != nil && s.Identity.OIDC != nil && s.Identity.OIDC.ClientID != "" {
-		objs = append(objs, id.tokenEntryAudienceMapper(clientName, "token-entry-audience-own", "audience-component", s.Identity.OIDC.ClientID))
+	// The components that exchange the entry's tokens for one per app
+	// (exchangedBy on the entry): the realm exchanges a token only for a
+	// client the token names.
+	for _, client := range entry.Exchangers {
+		objs = append(objs, id.tokenEntryAudienceMapper(clientName, "token-entry-audience-"+client, "audience-"+client, client))
 	}
 	return objs
 }

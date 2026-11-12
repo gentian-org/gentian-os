@@ -269,7 +269,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		// No path: a profile no API server defaulted. The default is
 		// written out.
 		vouching("scribe", "scribe", 8080, ""),
-		vouching("steward", "steward-keys", 8443, "/keys/current.json"),
+		// Exchanges as well: the word that says so follows its line.
+		exchanging(vouching("steward", "steward-keys", 8443, "/keys/current.json")),
 		plain,
 		// Vouches, and no component of this tenant is of it.
 		vouching("elsewhere", "elsewhere", 8080, ""),
@@ -289,7 +290,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	got := vouchingProfilesOf(t, r, tenant.Name)
 	want := []string{
 		"scribe scribe 8080 " + vouchingKeysDefaultPath,
-		"steward steward-keys 8443 /keys/current.json",
+		"steward steward-keys 8443 /keys/current.json exchange",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("vouching profiles = %q, want %q: sorted, one line per profile, only the ones that vouch", got, want)
@@ -363,4 +364,11 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath {
 		t.Fatalf("another tenant was given director scopes: %q", got)
 	}
+}
+
+// exchanging says the profile's client also exchanges a person's own token
+// (requires.services.vouching.exchange).
+func exchanging(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ComponentProfile {
+	p.Spec.Requires.Services.Vouching.Exchange = true
+	return p
 }

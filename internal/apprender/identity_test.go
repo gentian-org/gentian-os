@@ -184,6 +184,7 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		t.Fatal("a client with no redirect address is rendered")
 	}
 	in.TokenEntry.RedirectURIs = []string{"http://localhost/callback"}
+	in.TokenEntry.Exchangers = []string{"vouch-steward"}
 	objs := render()
 	fp, _, _ := unstructured.NestedMap(objs[client].Object, "spec", "forProvider")
 	want := map[string]interface{}{
@@ -207,8 +208,8 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		t.Fatalf("client (-want +got):\n%s", diff)
 	}
 	for name, aud := range map[string]string{
-		"demo-agent-door-token-entry-audience":     "https://mcp.demo.example.org",
-		"demo-agent-door-token-entry-audience-own": "agent-door",
+		"demo-agent-door-token-entry-audience":               "https://mcp.demo.example.org",
+		"demo-agent-door-token-entry-audience-vouch-steward": "vouch-steward",
 	} {
 		got, _, _ := unstructured.NestedString(objs[name].Object, "spec", "forProvider", "config", "included.custom.audience")
 		if got != aud {
@@ -225,6 +226,12 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		}
 	}
 	in.Profile.SessionMaxAge = nil
+	// The component's own client is not named: it exchanges nothing.
+	for name, o := range objs {
+		if aud, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "config", "included.custom.audience"); aud == "agent-door" {
+			t.Errorf("%s makes the entry's tokens out to the component's own client", name)
+		}
+	}
 	scopes, _, _ := unstructured.NestedStringSlice(objs["demo-agent-door-token-entry-optional-scopes"].Object, "spec", "forProvider", "optionalScopes")
 	for _, s := range scopes {
 		if s == "offline_access" {

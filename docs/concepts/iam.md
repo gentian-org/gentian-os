@@ -602,7 +602,7 @@ What 26.8 enables that 26.0 did not is inert until something asks for it:
 
 | Feature | Stays off because |
 |---|---|
-| Standard token exchange, proof-of-possession (DPoP) tokens | per client; no client the platform creates sets `standard.token.exchange.enabled` or `dpop.bound.access.tokens` |
+| Standard token exchange, proof-of-possession (DPoP) tokens | per client. `standard.token.exchange.enabled` is set on the edge's exchange client and on the client of a component that declares `requires.services.vouching.exchange`; no client the platform creates sets `dpop.bound.access.tokens` |
 | SCIM API, fine-grained admin permissions v2 | per realm (`scimApiEnabled`, `adminPermissionsEnabled`), false in every realm the platform creates |
 | JWT authorization grant, federated client authentication, Kubernetes service-account sign-in | need an identity provider or client authenticator configured for them; none is |
 | Passkeys, update-email, workflows, client secret rotation | per realm policy, required action or client policy; none is configured |

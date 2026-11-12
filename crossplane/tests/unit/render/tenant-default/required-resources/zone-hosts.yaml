@@ -31,4 +31,4 @@ data:
     wiki
   vouchingProfiles: |
     scribe scribe 8080 /.well-known/jwks.json
-    steward steward-keys 8443 /keys/current.json
+    steward steward-keys 8443 /keys/current.json exchange

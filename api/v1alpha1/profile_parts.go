@@ -524,6 +524,16 @@ type VouchingRequirement struct {
 	// +kubebuilder:validation:MaxItems=2
 	// +listType=set
 	Director []DirectorScope `json:"director,omitempty"`
+
+	// Exchange lets the component's client also exchange a person's own
+	// token for one valid at a single app (RFC 8693), for the same scopes it
+	// may ask for when it vouches. The realm exchanges a token only for a
+	// client the token names, and only a token entry that says so
+	// (exchangedBy on the entry) names this one. So what the component can
+	// exchange is what came in through such an entry: a person present, who
+	// connected a program and need not be linked.
+	// +optional
+	Exchange bool `json:"exchange,omitempty"`
 }
 
 // DirectorScope is one thing a vouched token may do at the director.

@@ -623,15 +623,17 @@ spec:
             {{- if and (or (eq (len $f) 4) (eq (len $f) 5)) (not (has (index $f 0) $vouchingSeen)) }}
             {{- $vouchingSeen = append $vouchingSeen (index $f 0) }}
             {{- $director := list }}
+            {{- $exchanges := false }}
             {{- if eq (len $f) 5 }}
             {{- range $d := (splitList "," (index $f 4)) }}
+            {{- if eq $d "exchange" }}{{- $exchanges = true }}{{- end }}
             {{- if and (has $d (list "plans-read" "plans-apply")) (not (has $d $director)) }}
             {{- $director = append $director $d }}
             {{- if not (has $d $directorScopes) }}{{- $directorScopes = append $directorScopes $d }}{{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges) }}
             {{- end }}
             {{- end }}
             {{- /* The components that call partners or accept their
@@ -1831,6 +1833,14 @@ spec:
                 directAccessGrantsEnabled: false
                 serviceAccountsEnabled: false
                 fullScopeAllowed: false
+                {{- /* requires.services.vouching.exchange: the client may
+                     also turn a person's own token into one for a single
+                     app. The realm does that only for a token that names
+                     this client, and only a token entry that says so makes
+                     its tokens out to it. */}}
+                {{- if $v.exchange }}
+                standardTokenExchangeEnabled: true
+                {{- end }}
                 extraConfig:
                   oauth2.jwt.authorization.grant.enabled: "true"
                   oauth2.jwt.authorization.grant.idp: {{ $vouchAlias }}
