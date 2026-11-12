@@ -181,26 +181,43 @@ func tokenEntryApproved(comp *gentianov1alpha1.Component, e *gentianov1alpha1.Ex
 	return false
 }
 
+// tokenEntryApprovalWaived says whether the entry is served without an
+// approval: the tenant says so, and the cluster's claim lets tenants say so.
+// The tenant's word alone waives nothing.
+func tokenEntryApprovalWaived(tenant *gentianov1alpha1.Tenant, clusterAllows bool) bool {
+	return clusterAllows && tenant != nil && tenant.Spec.TokenEntries != nil &&
+		tenant.Spec.TokenEntries.Approval == gentianov1alpha1.TokenEntryApprovalWaived
+}
+
 // servedTokenEntry says whether the component's token entry is served, and
 // writes the condition that says so (in memory: the caller's status update
 // carries it). It is served when the tenant's perimeter approver approved the
-// entry as a token entry, the approval has not expired, and the entry's host
-// is no other entry's.
+// entry as a token entry and the approval has not expired, or the tenant
+// waives the approval as the cluster allows (waived), and the entry's host is
+// no other entry's.
 func servedTokenEntry(
 	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
-	e *gentianov1alpha1.ExposureSpec, host string, sessionHosts map[string]bool, now time.Time,
+	e *gentianov1alpha1.ExposureSpec, host string, sessionHosts map[string]bool, waived bool, now time.Time,
 ) bool {
 	if e == nil {
 		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionTokenEntry)
 		return false
 	}
 	approved := tokenEntryApproved(comp, e, now)
+	byWaiver := !approved && waived
+	approved = approved || waived
 	cond := metav1.Condition{
 		Type: ConditionTokenEntry, Status: metav1.ConditionTrue, Reason: "Approved",
 		Message: fmt.Sprintf(
 			"%s takes a token of the tenant's realm made out to https://%s in place of a session: approved by the tenant's perimeter approver. The right to use the component is still required",
 			e.Name, host),
 		ObservedGeneration: comp.Generation,
+	}
+	if byWaiver {
+		cond.Reason = "ApprovalWaived"
+		cond.Message = fmt.Sprintf(
+			"%s takes a token of the tenant's realm made out to https://%s in place of a session. Nobody approved it: the tenant waives the approval of its token entries, as the cluster allows. The right to use the component is still required",
+			e.Name, host)
 	}
 	switch {
 	case host == "":

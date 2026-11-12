@@ -892,7 +892,7 @@ registry.
 # Component.spec
 exposures:
   - exposureName: public-share       # names an entry of the profile
-    kind: public                     # public | publicAppCredential | signInAppAuthorization
+    kind: public                     # public | publicAppCredential | signInAppAuthorization | tokenEntry
     owner: <keycloak subject>        # immutable: a renewal by someone else is a new enablement
     reviewAt: 2026-11-24T00:00:00Z   # always set
     expiresAt: 2026-12-24T00:00:00Z  # optional

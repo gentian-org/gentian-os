@@ -11,6 +11,8 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"time"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -27,6 +29,10 @@ type TokenEntry struct {
 // component's token entry sign people in through. One per component, named
 // after it, so a person setting a program up can be told what to enter.
 func TokenEntryClientID(app string) string { return "token-entry-" + app }
+
+// tokenEntrySessionMaxAge is how long a sign-in through a token entry's
+// client may be used before the person signs in again.
+const tokenEntrySessionMaxAge = 4 * time.Hour
 
 // tokenEntryAudience is what the entry's tokens are made out to, and what the
 // bouncer holds them against: the entry's own address.
@@ -68,7 +74,16 @@ func (id *identityScope) tokenEntryClient() []*unstructured.Unstructured {
 		"displayOnConsentScreen":    true,
 		"validRedirectUris":         identityStringList(entry.RedirectURIs),
 	}
-	id.capSession(fp)
+	// A program keeps what renews its tokens on the person's computer, and
+	// the realm rotates that for no single client. So the client's sessions
+	// end after tokenEntrySessionMaxAge whatever the realm's own limit, or
+	// sooner where the profile says so: past it the realm refuses the
+	// renewal and the person signs in again.
+	max := tokenEntrySessionMaxAge
+	if own := id.profile.SessionMaxAge; own != nil && own.Duration > 0 && own.Duration < max {
+		max = own.Duration
+	}
+	fp["clientSessionMaxLifespan"] = max.String()
 	objs := []*unstructured.Unstructured{
 		identityObject("openidclient.keycloak.crossplane.io/v1alpha1", "Client", clientName, map[string]interface{}{
 			"deletionPolicy":     "Delete",

@@ -1689,6 +1689,9 @@ spec:
                     # what routes Grafana at monitoring.<kernelDomain>. The
                     # operator reads it; absent means off.
                     monitoring.enabled: {{ default false (dig "monitoring" "enabled" false $spec) | quote }}
+                    # Whether a tenant may say its token entries need no
+                    # approval. The operator reads it; absent means no.
+                    tokenEntries.tenantsMayWaiveApproval: {{ default false (dig "tokenEntries" "tenantsMayWaiveApproval" false $spec) | quote }}
                     # Where the edge runs, which is the one kernel namespace a
                     # Composition has to name. The Gateway, its SecurityPolicies
                     # and the zone client secrets they read all live there, and

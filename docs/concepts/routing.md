@@ -592,7 +592,46 @@ the offending bytes replaced. The rewrite touches only the request to the
 backend: the filter has read its cookies before the bouncer is asked, and
 `Set-Cookie` on the way back is the filter's.
 
-A bearer route has no session and its `Cookie` header is not touched.
+**A token entry takes a token in place of the session.** A program with no
+browser, such as an AI assistant on a person's computer, cannot hold the
+session's cookies. A profile of `trustTier: platform` may declare one gateway
+entry with `authMode: bearer` for it, on a `subDomain` of its own. That host
+has a route with a `SecurityPolicy` of its own (`sp-<component>-token`) that
+carries the bouncer and no sign-in filter, so nothing there redirects, reads
+a cookie or replaces the `Authorization` header; every other route of the
+component is as before, and `passThroughAuthHeader` is still set on no
+policy. A host takes a token or has a session, never both.
+
+The bouncer verifies the token on every request: signature, expiry, that it
+is an access token of the tenant's own realm, that it is made out to the
+entry's address (`aud` holds `https://<host>`) and that it names a session of
+the realm, and then asks the route's relation of the person. A refusal is
+`401` with `WWW-Authenticate: Bearer resource_metadata=...`, never a
+redirect. The `Cookie` header is removed before the backend, the token is
+left in `Authorization`, and the audit record names the program's client
+beside the person. The session's own token is refused there, and a token
+made out to the entry is refused at the director and at every app.
+
+The realm issues such a token to one public client, `token-entry-<component>`,
+which exists while the entry is served: authorization code with PKCE and the
+person's consent, no other grant, no role of the person in the token, no
+offline token, and a sign-in through it ends after four hours (sooner where
+the profile's `sessionMaxAge` is shorter). A program is sent back only to an
+address the entry declares (`clientRedirectURIs`): an exact `https` address,
+or a loopback address for a program on the person's computer. Where to obtain
+a token is published on the entry's host at
+`/.well-known/oauth-protected-resource` (RFC 9728), answered by the Gateway
+on a route that has no backend. The component behind the entry passes the
+token on to no app: it exchanges it at the realm for a token of the one app
+it calls.
+
+A token entry is served once the tenant's perimeter approver approved it
+(§7). A tenant may waive that approval for its token entries
+(`spec.tokenEntries.approval: waived` on the Tenant), which counts only where
+the Cluster claim allows tenants the choice
+(`spec.tokenEntries.tenantsMayWaiveApproval`, off by default). The
+component's `TokenEntry` condition says which of the two holds, or why the
+entry is not served.
 
 Routes without a session policy are unchanged and never ask the bouncer:
 perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
@@ -1009,7 +1048,7 @@ main-address setting that is not the entry's, is refused (`422`) and nothing
 is committed (§5). The read is from git: it says where an entry will answer,
 not whether it answers yet.
 
-**Three kinds of entry take an approval**, and the registry records which
+**Four kinds of entry take an approval**, and the registry records which
 one was approved (`kind`):
 
 | Kind | Declared as | Once approved |
@@ -1017,6 +1056,7 @@ one was approved (`kind`):
 | `public` | `surface: perimeter`, `authMode: none` | The declared paths are published for anyone. No credential reaches the app |
 | `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
 | `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
+| `tokenEntry` | `surface: gateway`, `authMode: bearer` | Nothing is published. On a host of its own, a program reaches the component as a person, with a token of the tenant's realm made out to that host (§4.1). The approval covers the addresses a program may be sent back to after sign-in |
 
 An approval holds for the kind it was given for. If the app's catalog
 entry later declares another kind, the platform does nothing for the entry
@@ -1213,6 +1253,7 @@ answers 404 at the listener.
 | Class | Hostname | Entry | L1 | L2 | Backend |
 | --- | --- | --- | --- | --- | --- |
 | Tenant app, browser | `<app>.<effectiveDomain>` | `surface: gateway`, `authMode: oidc` | tenant-realm session | `can_use` on the app: the same relation the desktop's tiles resolve, so the route cannot be more open than the tile | the app in `tenant-<t>` |
+| Token entry | `<subDomain>.<effectiveDomain>` | `surface: gateway`, `authMode: bearer`, `trustTier: platform`, once approved | a tenant-realm access token made out to the host, verified by the bouncer | `can_use` on the app, or `can_enter` on the tenant for a component with `launch: none` | the component in `tenant-<t>`; `/.well-known/oauth-protected-resource` is answered by the Gateway |
 | Tenant desktop | `desktop.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | `can_enter` on the tenant: members and administrators both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | the desktop in `tenant-<t>` |
 | Tenant administration console | `admin.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | as the desktop's | the console in `tenant-<t>`; a relay to the director with the person's token |
 | Platform desktop and console | `platform.<kernelDomain>`, `admin.platform.<kernelDomain>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | the platform tenant's desktop and console in `tenant-platform` (AD-10), on the `*.platform.<kernelDomain>` listener with a wildcard of its own |
@@ -1222,8 +1263,9 @@ answers 404 at the listener.
 | Published entry | `<label>.<effectiveDomain>`, the bare domain (`apex`, §5), or an alias under the cluster's domain (§7) | `surface: perimeter`, `authMode: none` or `app`, once approved | -- | -- | the publishing proxy in `tenant-<t>-dmz`, on a listener for exactly that host. `jwt`, `bearer`, `basic` and `signature` are refused on a perimeter entry by the schema |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | none | -- | -- | cert-manager's solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned surfaces without a session |
 
-A gateway entry is behind the zone's session (`authMode: oidc`); the schema
-admits nothing else there. What needs no session is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
+A gateway entry is behind the zone's session (`authMode: oidc`) or, for a
+profile of platform trust, takes a token of the tenant's realm on a host of
+its own (`authMode: bearer`, §4.1); the schema admits nothing else there. What needs no session is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
 component has one policy for all its hosts (§4.1).
 
 **Keycloak's administration console shares the issuer's hostname**, and this

@@ -756,7 +756,8 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// The realm client of the token entry, for as long as the entry is
 		// approved: without the approval the realm issues nobody a token
 		// for it.
-		if e := tokenEntryOf(comp, profile); tokenEntryApproved(comp, e, time.Now()) {
+		if e := tokenEntryOf(comp, profile); e != nil && (tokenEntryApproved(comp, e, time.Now()) ||
+			tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))) {
 			in.TokenEntry = &apprender.TokenEntry{Host: exposureHost(zone, comp, e), RedirectURIs: e.ClientRedirectURIs}
 		}
 		rendered, err := r.render(ctx, in)
@@ -911,7 +912,8 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// stopped declaring it still carries the condition, and is asked once
 	// more so that the route goes.
 	hadTokenEntry := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil
-	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, time.Now())
+	tokenWaived := tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
 	if tokenEntry != nil || hadTokenEntry || len(routable) > 0 {
 		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, tokenServed, held); err != nil {
 			return ctrl.Result{}, fmt.Errorf("token entry: %w", err)

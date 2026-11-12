@@ -107,7 +107,7 @@ func TestATokenEntryIsServedOnlyApprovedAsOneAndOnAHostOfItsOwn(t *testing.T) {
 		"approved, with no host":            {[]gentianov1alpha1.ExposureEnablement{tokenApproval(gentianov1alpha1.ExposureKindTokenEntry, nil)}, "", nil, false, "NoHost"},
 	} {
 		comp, profile := tokenEntryComponent(tc.approvals...), tokenEntryProfile()
-		served := servedTokenEntry(comp, profile, tokenEntryOf(comp, profile), tc.host, tc.taken, now)
+		served := servedTokenEntry(comp, profile, tokenEntryOf(comp, profile), tc.host, tc.taken, false, now)
 		cond := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry)
 		if served != tc.served || cond == nil || cond.Reason != tc.reason || (cond.Status == metav1.ConditionTrue) != tc.served {
 			t.Errorf("%s: served %v, condition %+v", name, served, cond)
@@ -116,7 +116,7 @@ func TestATokenEntryIsServedOnlyApprovedAsOneAndOnAHostOfItsOwn(t *testing.T) {
 	// A component that declares none carries no such condition.
 	comp := tokenEntryComponent()
 	comp.Status.Conditions = []metav1.Condition{{Type: ConditionTokenEntry, Status: metav1.ConditionTrue, Reason: "Approved"}}
-	if servedTokenEntry(comp, tokenEntryProfile(), nil, "", nil, now) || apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil {
+	if servedTokenEntry(comp, tokenEntryProfile(), nil, "", nil, false, now) || apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil {
 		t.Fatalf("no entry: %+v", comp.Status.Conditions)
 	}
 }
@@ -283,5 +283,47 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	// nothing fails.
 	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, nil, false, false); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A tenant's word that its token entries need no approval counts only where
+// the cluster's claim lets tenants say so, and then the entry is served
+// without one, and says that nobody approved it.
+func TestATenantWaivesTheApprovalOnlyWhereTheClusterAllowsIt(t *testing.T) {
+	tenant := acmeTenantFixture()
+	if tokenEntryApprovalWaived(tenant, true) {
+		t.Fatal("a tenant that says nothing waives the approval")
+	}
+	tenant.Spec.TokenEntries = &gentianov1alpha1.TenantTokenEntries{Approval: "required"}
+	if tokenEntryApprovalWaived(tenant, true) {
+		t.Fatal("approval: required waives the approval")
+	}
+	tenant.Spec.TokenEntries.Approval = gentianov1alpha1.TokenEntryApprovalWaived
+	if tokenEntryApprovalWaived(tenant, false) {
+		t.Fatal("the tenant's word alone waives the approval")
+	}
+	if !tokenEntryApprovalWaived(tenant, true) {
+		t.Fatal("the tenant waives, the cluster allows it, and the approval is still asked")
+	}
+
+	comp, profile := tokenEntryComponent(), tokenEntryProfile()
+	entry := tokenEntryOf(comp, profile)
+	if !servedTokenEntry(comp, profile, entry, "mcp.acme.k.example", nil, true, time.Now()) {
+		t.Fatal("a waived entry is not served")
+	}
+	cond := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry)
+	if cond.Reason != "ApprovalWaived" || !strings.Contains(cond.Message, "Nobody approved it") {
+		t.Fatalf("condition = %+v", cond)
+	}
+	// An approval, where there is one, is what the condition names.
+	comp = tokenEntryComponent(tokenApproval(gentianov1alpha1.ExposureKindTokenEntry, nil))
+	servedTokenEntry(comp, profile, entry, "mcp.acme.k.example", nil, true, time.Now())
+	if cond := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry); cond.Reason != "Approved" {
+		t.Fatalf("condition = %+v", cond)
+	}
+	// A waiver does not put a token entry on a host that has a session.
+	comp = tokenEntryComponent()
+	if servedTokenEntry(comp, profile, entry, "mcp.acme.k.example", map[string]bool{"mcp.acme.k.example": true}, true, time.Now()) {
+		t.Fatal("a waived entry is served on a host with a session")
 	}
 }

@@ -1499,6 +1499,26 @@ spec:
                 - acceptedAt
                 - version
                 type: object
+              tokenEntries:
+                description: |-
+                  TokenEntries is how this tenant's token entries come to be served: a
+                  component's address that takes a token of the tenant's realm in place
+                  of a session. Unset, each waits for the perimeter approver's approval.
+                properties:
+                  approval:
+                    description: |-
+                      Approval says whether a token entry needs the perimeter approver's
+                      approval before it is served. "required", and unset, it does. "waived"
+                      serves a token entry as soon as its component is installed, and takes
+                      effect only on a cluster whose claim allows tenants the choice
+                      (spec.tokenEntries.tenantsMayWaiveApproval); elsewhere it changes
+                      nothing. Only a profile of trustTier platform declares a token entry,
+                      and a person still needs the right to use the component.
+                    enum:
+                    - required
+                    - waived
+                    type: string
+                type: object
             required:
             - displayName
             type: object

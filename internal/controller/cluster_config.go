@@ -32,15 +32,19 @@ import (
 // from the same source instead of from a Helm value that has to be kept in
 // agreement by hand.
 const (
-	clusterConfigName           = "gentian-cluster-config"
-	clusterConfigLLMKey         = "llm.enabled"
-	clusterConfigLLMConsoleKey  = "llm.console.enabled"
-	clusterConfigMonitoringKey  = "monitoring.enabled"
-	clusterConfigTenancyKey     = "tenancyMode"
-	clusterConfigMailModeKey    = "mail.serviceMode"
-	clusterConfigMailEgressKey  = "mail.egressHost"
-	clusterConfigSecretModeKey  = "secretMode"
-	clusterConfigMainAddressKey = "mainAddress.tenant"
+	clusterConfigName          = "gentian-cluster-config"
+	clusterConfigLLMKey        = "llm.enabled"
+	clusterConfigLLMConsoleKey = "llm.console.enabled"
+	clusterConfigMonitoringKey = "monitoring.enabled"
+	// Whether a tenant may waive the approval of its token entries
+	// (spec.tokenEntries.tenantsMayWaiveApproval). No environment fallback:
+	// a ConfigMap that cannot answer means no.
+	clusterConfigTokenEntryWaiverKey = "tokenEntries.tenantsMayWaiveApproval"
+	clusterConfigTenancyKey          = "tenancyMode"
+	clusterConfigMailModeKey         = "mail.serviceMode"
+	clusterConfigMailEgressKey       = "mail.egressHost"
+	clusterConfigSecretModeKey       = "secretMode"
+	clusterConfigMainAddressKey      = "mainAddress.tenant"
 	// The tenant whose people also have the cluster's domain as their mail
 	// domain (spec.mainAddress.mailTenant); read on every sync of the mail
 	// maps, not at start.
@@ -161,6 +165,12 @@ func clusterLLMConsoleRouted(ctx context.Context, c client.Reader) bool {
 // console has none: a ConfigMap that cannot answer means no route.
 func clusterMonitoringEnabled(ctx context.Context, c client.Reader) bool {
 	return clusterConfigValueOr(ctx, c, clusterConfigMonitoringKey, "") == "true"
+}
+
+// clusterAllowsTokenEntryWaiver reports whether the claim lets a tenant say
+// that its token entries need no approval. Off unless the claim says so.
+func clusterAllowsTokenEntryWaiver(ctx context.Context, c client.Reader) bool {
+	return clusterConfigValueOr(ctx, c, clusterConfigTokenEntryWaiverKey, "") == "true"
 }
 
 // kernelConsoles are the kernel consoles a claim may switch on: each is

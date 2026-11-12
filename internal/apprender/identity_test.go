@@ -201,6 +201,7 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		"consentRequired":           true,
 		"displayOnConsentScreen":    true,
 		"validRedirectUris":         []interface{}{"http://localhost/callback"},
+		"clientSessionMaxLifespan":  "4h0m0s",
 	}
 	if diff := cmp.Diff(want, fp); diff != "" {
 		t.Fatalf("client (-want +got):\n%s", diff)
@@ -214,6 +215,16 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 			t.Errorf("%s names %q, want %q", name, got, aud)
 		}
 	}
+	// A profile's own cap holds where it is the shorter one, and never
+	// lengthens the entry's.
+	for age, want := range map[time.Duration]string{time.Hour: "1h0m0s", 8 * time.Hour: "4h0m0s"} {
+		in.Profile.SessionMaxAge = &metav1.Duration{Duration: age}
+		got, _, _ := unstructured.NestedString(render()[client].Object, "spec", "forProvider", "clientSessionMaxLifespan")
+		if got != want {
+			t.Errorf("a profile capped at %s: the entry's sessions last %s, want %s", age, got, want)
+		}
+	}
+	in.Profile.SessionMaxAge = nil
 	scopes, _, _ := unstructured.NestedStringSlice(objs["demo-agent-door-token-entry-optional-scopes"].Object, "spec", "forProvider", "optionalScopes")
 	for _, s := range scopes {
 		if s == "offline_access" {

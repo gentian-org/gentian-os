@@ -18,3 +18,5 @@ declared paths and passes no credential; `app` passes the caller's
 and the operator acts on it only while the entry still declares that kind.
 `basic`, `signature`, `jwt` and `bearer` are refused on a perimeter entry,
 because nothing could enforce them ([routing.md §7](../concepts/routing.md)).
+On a gateway entry `bearer` is a token entry, approved under the same
+relation as a kind of its own ([routing.md §4.1](../concepts/routing.md)).

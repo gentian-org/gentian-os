@@ -923,6 +923,23 @@ spec:
                                 systemServices.objectStore.size cannot shrink:
                                 a volume is grown in place and never made
                                 smaller.
+                tokenEntries:
+                  type: object
+                  description: >
+                    Token entries: a component's address that takes a token of
+                    the tenant's realm in place of a session
+                    (docs/concepts/routing.md). Each is served once the
+                    tenant's perimeter approver approved it.
+                  properties:
+                    tenantsMayWaiveApproval:
+                      type: boolean
+                      default: false
+                      description: >
+                        true lets a tenant say that its token entries need no
+                        approval (spec.tokenEntries.approval: waived on the
+                        Tenant). false, which is the default, and a tenant's
+                        own setting has no effect: every token entry waits
+                        for its approval.
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.
