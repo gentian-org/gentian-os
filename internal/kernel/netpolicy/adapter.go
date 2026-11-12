@@ -186,7 +186,7 @@ func AdapterNetworkPolicies(in BuildInput) []*networkingv1.NetworkPolicy {
 		pods := in.podsOf(adapter)
 		adapterPeers = append(adapterPeers, networkingv1.NetworkPolicyPeer{PodSelector: &pods})
 
-		egress := baselineEgress(in.Config, in.KubeAPIEndpts)
+		egress := BaselineEgress(in.Config, in.KubeAPIEndpts)
 		var ingress []networkingv1.NetworkPolicyIngressRule
 		if len(callerPeers) > 0 {
 			ingress = []networkingv1.NetworkPolicyIngressRule{{From: callerPeers}}

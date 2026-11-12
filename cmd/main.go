@@ -547,6 +547,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The egress policy of the model gateway's PostgreSQL, which names the
+	// API server's addresses.
+	if err := (&controller.ModelGatewayDatabaseEgressReconciler{
+		Client:            mgr.GetClient(),
+		NetworkPolicies:   controller.StoreNetworkPoliciesEnabled(),
+		KubeAPIServerCIDR: controller.KubeAPIServerCIDR(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ModelGatewayDatabaseEgress")
+		os.Exit(1)
+	}
+
 	// The arbiter's table: which component's key opens which authorization
 	// store, and the model each is decided against.
 	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {

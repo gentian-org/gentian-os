@@ -44,8 +44,11 @@
   gives a component that talks to a store (internal/controller/store_offer.go).
   No IPv6 block is named, so nothing is admitted over IPv6.
 
-  The gateway's PostgreSQL is not selected: CloudNativePG's instances talk to
-  the Kubernetes API, whose address depends on the cluster.
+  The gateway's PostgreSQL (llm-database-egress) is not rendered here: its
+  instances reach the Kubernetes API, whose addresses are the cluster's, so
+  the operator writes that policy, by the same switch as this chart's
+  (internal/controller/model_gateway_database_egress.go): DNS, the API
+  server, and the cluster's own pods on 5432.
 
   Sync wave -1, with the ingress policies: before the pods.
 */ -}}

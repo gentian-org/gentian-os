@@ -18,10 +18,12 @@
 #   llm_network_policies.py console   the gateway's console, off unless asked for
 #   llm_network_policies.py vllm      a model served on the cluster's GPUs
 #   llm_network_policies.py egress    what the pods that call out may reach
+#   llm_network_policies.py operator  the switch, as the operator is told it
 # =============================================================================
 import re
 import sys
 import tempfile
+from pathlib import Path
 
 import yaml
 
@@ -365,6 +367,44 @@ def check_off():
         raise Failure("the LLM ApplicationSet is rendered for a cluster that serves no models")
 
 
+def check_operator():
+    """The operator writes the database's egress policy (llm-database-egress)
+    by the switch the chart renders its own by: the bootstrap chart hands both
+    the same value, and the operator's Deployment carries it as
+    STORE_NETWORK_POLICIES. The chart renders no policy of that name."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ns_values = Path(tmp) / "namespaces.yaml"
+        body = (ROOT / "kernel/namespaces.yaml").read_text()
+        ns_values.write_text("namespaces:\n" + "".join("  " + line for line in body.splitlines(True)))
+        pins = Path(tmp) / "versions.yaml"
+        body = (ROOT / "versions.yaml").read_text()
+        pins.write_text("versions:\n" + "".join("  " + line for line in body.splitlines(True)))
+        for passed, want in ((None, "true"), (("--set-string", "storeNetworkPolicies=false"), "false"),
+                             (("--set", "storeNetworkPolicies=false"), "false"),
+                             (("--set-string", "storeNetworkPolicies=true"), "true")):
+            docs = helm("boot", "kernel/bootstrap/chart", "-f", str(ns_values), "-f", str(pins), "-f", "kernel/platforms.yaml",
+                        "--set-string", "appsets.enabled=true", "--set-string", "operator.enabled=true",
+                        "--set-string", "operator.tag=develop-abc1234", "--set-string", "kernelDomain=k.example",
+                        "--set-string", "cluster=c", "--set-string", "dnsProvider=cloudflare", *(passed or ()))
+            apps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Application"}
+            appsets_got = apps["gentian-appsets"]["spec"]["source"]["helm"]["valuesObject"].get("storeNetworkPolicies")
+            source = next(s for s in apps["gentian-os"]["spec"]["sources"] if s.get("path") == "charts/gentian-os")
+            values = Path(tmp) / "operator.yaml"
+            values.write_text(yaml.safe_dump(source["helm"]["valuesObject"]))
+            env = None
+            for doc in helm("gentian-os", "charts/gentian-os", "-n", "kernel-control", "-f", str(values)):
+                if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "gentian-os":
+                    env = {e["name"]: e.get("value") for e in doc["spec"]["template"]["spec"]["containers"][0]["env"]}
+            if env is None:
+                raise Failure("the operator's chart renders no Deployment gentian-os")
+            told = env.get("STORE_NETWORK_POLICIES")
+            if appsets_got != want or told != want:
+                raise Failure(f"bootstrap chart {' '.join(passed or ()) or '(default)'}: the ApplicationSets are handed "
+                              f"{appsets_got!r} and the operator is told {told!r}, want {want!r} for both")
+    if "llm-database-egress" in by_name(render(application())):
+        raise Failure("the chart renders llm-database-egress, which the operator writes")
+
+
 def edge_peers(policy, edge):
     """The sources a policy admits from the edge namespace."""
     return [peer for _, peers in rules(policy) for peer in peers
@@ -535,7 +575,8 @@ def check_egress():
 
 def main():
     checks = {"shape": check_shape, "clients": check_clients, "wiring": check_wiring, "off": check_off,
-              "console": check_console, "vllm": check_vllm, "egress": check_egress}
+              "console": check_console, "vllm": check_vllm, "egress": check_egress,
+              "operator": check_operator}
     args = sys.argv[1:]
     if len(args) != 1 or args[0] not in checks:
         print(f"usage: {sys.argv[0]} {'|'.join(checks)}", file=sys.stderr)
