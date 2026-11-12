@@ -597,6 +597,99 @@ _keycloak_refresh_token_shell() {
 EOREFRESH
 }
 
+# The master realm's service accounts and the Admin API scope they carry, as
+# the shell the bootstrap Job runs: ensure_admin_api_scope and
+# ensure_admin_client. Quoted, so the Job and scripts/tests/
+# test-admin-api-scope-lab.sh run the same text. They read KEYCLOAK_BASE,
+# AUTH, MASTER and ADMIN_ROLE.
+#
+# The Admin REST API takes a token only when it carries the kc-admin-api
+# scope and, as its audience, the Admin API address of the token's realm
+# (Keycloak 26.8.2 on). Keycloak makes that scope in every realm when it
+# migrates to 26.8.2 and gives it to its own consoles alone; these accounts
+# get it here. A Keycloak before 26.8.2 has no such scope, so it is made here
+# under the same name, with the audience and token scope Keycloak checks:
+# the migration keeps a scope of that name, and the accounts carry it across
+# the upgrade instead of being refused by the upgraded server. The audience
+# is the frontend address the realm's issuer names, which is what Keycloak
+# derives it from.
+_keycloak_admin_clients_shell() {
+    cat <<'EOADMINCLIENTS'
+              ensure_admin_api_scope() {
+                ADMIN_API_SCOPE_ID=$(curl -sf -H "${AUTH}" "${MASTER}/client-scopes" \
+                  | jq -r '[.[] | select(.name == "kc-admin-api")][0].id // empty')
+                [ -z "${ADMIN_API_SCOPE_ID}" ] || return 0
+                aas_issuer=$(curl -sf "${KEYCLOAK_BASE}/realms/master/.well-known/openid-configuration" | jq -r '.issuer // empty')
+                case "${aas_issuer}" in
+                  */realms/master) ;;
+                  *) printf '\033[0;31m[ERROR]\033[0m %s\n' "the master realm names no issuer (got '${aas_issuer}')" >&2; exit 1 ;;
+                esac
+                aas_audience="${aas_issuer%/realms/master}/admin/realms/master"
+                curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" "${MASTER}/client-scopes" \
+                  -d "$(jq -n --arg aud "${aas_audience}" '{
+                    name: "kc-admin-api", protocol: "openid-connect",
+                    description: "Grants access to the Keycloak Admin REST API by adding its required audience to the token",
+                    attributes: {"include.in.token.scope": "true", "display.on.consent.screen": "false"},
+                    protocolMappers: [{
+                      name: "admin-api-audience", protocol: "openid-connect",
+                      protocolMapper: "oidc-audience-mapper",
+                      config: {"included.custom.audience": $aud, "access.token.claim": "true",
+                               "introspection.token.claim": "true", "lightweight.claim": "true",
+                               "id.token.claim": "false"}
+                    }]
+                  }')" >/dev/null
+                ADMIN_API_SCOPE_ID=$(curl -sf -H "${AUTH}" "${MASTER}/client-scopes" \
+                  | jq -r '[.[] | select(.name == "kc-admin-api")][0].id // empty')
+                [ -n "${ADMIN_API_SCOPE_ID}" ] || {
+                  printf '\033[0;31m[ERROR]\033[0m %s\n' "created the kc-admin-api client scope and cannot find it" >&2
+                  exit 1
+                }
+                echo "Created the kc-admin-api client scope (audience ${aas_audience})"
+              }
+              ensure_admin_client() {
+                ac_name="$1"
+                ac_secret="$2"
+                [ -n "${ac_secret}" ] || {
+                  printf '\033[0;31m[ERROR]\033[0m %s\n' "no secret for the ${ac_name} client" >&2
+                  exit 1
+                }
+                ac_current=$(curl -sf -H "${AUTH}" "${MASTER}/clients?clientId=${ac_name}" | jq -c '.[0] // empty')
+                if [ -n "${ac_current}" ] && [ "$(printf '%s' "${ac_current}" | jq -r '.attributes.is_temporary_admin // "false"')" = "true" ]; then
+                  curl -sf -X DELETE -H "${AUTH}" "${MASTER}/clients/$(printf '%s' "${ac_current}" | jq -r .id)" >/dev/null
+                  ac_current=""
+                  echo "Removed the temporary bootstrap client ${ac_name}"
+                fi
+                ac_want=$(jq -n --arg c "${ac_name}" --arg s "${ac_secret}" '{
+                  clientId: $c, secret: $s, enabled: true, publicClient: false,
+                  serviceAccountsEnabled: true, standardFlowEnabled: false,
+                  implicitFlowEnabled: false, directAccessGrantsEnabled: false,
+                  fullScopeAllowed: false,
+                  attributes: {"client.use.lightweight.access.token.enabled": "true"}
+                }')
+                if [ -z "${ac_current}" ]; then
+                  curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                    "${MASTER}/clients" -d "${ac_want}" >/dev/null
+                  ac_id=$(curl -sf -H "${AUTH}" "${MASTER}/clients?clientId=${ac_name}" | jq -r '.[0].id')
+                  echo "Created the ${ac_name} service account"
+                else
+                  ac_id=$(printf '%s' "${ac_current}" | jq -r .id)
+                  curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+                    "${MASTER}/clients/${ac_id}" \
+                    -d "$(printf '%s' "${ac_current}" | jq -c --argjson w "${ac_want}" '. * $w')" >/dev/null
+                fi
+                ac_sa=$(curl -sf -H "${AUTH}" "${MASTER}/clients/${ac_id}/service-account-user" | jq -r .id)
+                # All three are idempotent: mapping a role or a default scope
+                # a second time is a no-op.
+                curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${MASTER}/users/${ac_sa}/role-mappings/realm" -d "[${ADMIN_ROLE}]" >/dev/null
+                curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+                  "${MASTER}/clients/${ac_id}/scope-mappings/realm" -d "[${ADMIN_ROLE}]" >/dev/null
+                curl -sf -X PUT -H "${AUTH}" \
+                  "${MASTER}/clients/${ac_id}/default-client-scopes/${ADMIN_API_SCOPE_ID}" >/dev/null
+              }
+EOADMINCLIENTS
+}
+
 # Apply keycloak-smtp-credentials Secret used by bootstrap / SMTP-only Jobs.
 #
 # Only where nothing else owns it. On external-mail clusters the Secret is built
@@ -1024,10 +1117,11 @@ run_keycloak_portal_bootstrap_job() {
         --from-file=smtp_password=<(printf '%s' "${smtp_password}") \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    local smtp_shell refresh_shell job_image
+    local smtp_shell refresh_shell admin_clients_shell job_image
     job_image=$(_keycloak_job_image)
     smtp_shell=$(_keycloak_smtp_configure_shell)
     refresh_shell=$(_keycloak_refresh_token_shell)
+    admin_clients_shell=$(_keycloak_admin_clients_shell)
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
@@ -1127,46 +1221,13 @@ spec:
               # Creating and repairing these clients is the installer's, as
               # the bootstrap administrator: nothing running in the cluster
               # holds a credential that can make an administrator.
+              # Each account also carries the kc-admin-api scope, without
+              # which the Admin API refuses its token (see
+              # _keycloak_admin_clients_shell).
               MASTER="\${KEYCLOAK_BASE}/admin/realms/master"
               ADMIN_ROLE=\$(curl -sf -H "\${AUTH}" "\${MASTER}/roles/admin")
-              ensure_admin_client() {
-                ac_name="\$1"
-                ac_secret="\$2"
-                [ -n "\${ac_secret}" ] || {
-                  printf '\033[0;31m[ERROR]\033[0m %s\n' "no secret for the \${ac_name} client" >&2
-                  exit 1
-                }
-                ac_current=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=\${ac_name}" | jq -c '.[0] // empty')
-                if [ -n "\${ac_current}" ] && [ "\$(printf '%s' "\${ac_current}" | jq -r '.attributes.is_temporary_admin // "false"')" = "true" ]; then
-                  curl -sf -X DELETE -H "\${AUTH}" "\${MASTER}/clients/\$(printf '%s' "\${ac_current}" | jq -r .id)" >/dev/null
-                  ac_current=""
-                  echo "Removed the temporary bootstrap client \${ac_name}"
-                fi
-                ac_want=\$(jq -n --arg c "\${ac_name}" --arg s "\${ac_secret}" '{
-                  clientId: \$c, secret: \$s, enabled: true, publicClient: false,
-                  serviceAccountsEnabled: true, standardFlowEnabled: false,
-                  implicitFlowEnabled: false, directAccessGrantsEnabled: false,
-                  fullScopeAllowed: false,
-                  attributes: {"client.use.lightweight.access.token.enabled": "true"}
-                }')
-                if [ -z "\${ac_current}" ]; then
-                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${MASTER}/clients" -d "\${ac_want}" >/dev/null
-                  ac_id=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients?clientId=\${ac_name}" | jq -r '.[0].id')
-                  echo "Created the \${ac_name} service account"
-                else
-                  ac_id=\$(printf '%s' "\${ac_current}" | jq -r .id)
-                  curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${MASTER}/clients/\${ac_id}" \\
-                    -d "\$(printf '%s' "\${ac_current}" | jq -c --argjson w "\${ac_want}" '. * \$w')" >/dev/null
-                fi
-                ac_sa=\$(curl -sf -H "\${AUTH}" "\${MASTER}/clients/\${ac_id}/service-account-user" | jq -r .id)
-                # Both are idempotent: mapping a role a second time is a no-op.
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${MASTER}/users/\${ac_sa}/role-mappings/realm" -d "[\${ADMIN_ROLE}]" >/dev/null
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${MASTER}/clients/\${ac_id}/scope-mappings/realm" -d "[\${ADMIN_ROLE}]" >/dev/null
-              }
+${admin_clients_shell}
+              ensure_admin_api_scope
               ensure_admin_client gentian-operator "\${OPERATOR_CLIENT_SECRET}"
               ensure_admin_client keycloak-provisioner "\${PROVISIONER_CLIENT_SECRET}"
               ensure_admin_client provider-keycloak "\${PROVIDER_CLIENT_SECRET}"
