@@ -14,10 +14,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
@@ -40,70 +38,23 @@ func (h *HTTPServer) registerBackupRoutes(mux router) {
 	mux.Read("GET /v1/tenants/{tenant}/backup-policy", h.handleTenantBackupPolicy)
 	mux.Read("GET /v1/backup-policy", h.handleClusterBackupPolicy)
 
-	// Actions. Under /actions/ and always POST, because they are neither a
-	// read nor a change to what the cluster should be: they make something
-	// happen now, once. A policy -- what should be true of every run -- is
-	// declared state and arrives as a commit the director makes to git;
-	// there is no endpoint for it here, and that absence is the design.
-	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/backup", h.handleStartBackup)
-	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/delete-backup", h.handleDeleteBackup)
+	// Taking a backup and deleting one are acts, done once on a call, and
+	// are the dispatcher's (internal/dispatcher/acts.go). A policy -- what
+	// should be true of every run -- is declared state and arrives as a
+	// commit the director makes to git; there is no endpoint for either
+	// here.
 }
 
 // actorOf reads who asked.
 //
 // The director puts the person there, having verified their token and checked
-// the relation. It is a claim, not a proof: this API authenticates nobody, and
-// anything that can reach the Service can assert any name — which is equally
-// true of the app install and uninstall writes that have been here all along.
-// Making it a proof is its own piece of work (S7A.16), and until it is done
-// the name here is only as good as who can reach the port.
+// the relation. The routes that read it admit the director's identity alone
+// (authenticated), so the name is the director's word and nobody else's.
 func actorOf(r *http.Request) string {
 	if actor := r.Header.Get("X-Gentian-Actor"); actor != "" {
 		return actor
 	}
 	return "app-lifecycle-api"
-}
-
-func (h *HTTPServer) handleStartBackup(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name        string                              `json:"name"`
-		Apps        []string                            `json:"apps"`
-		Recipients  []string                            `json:"recipients"`
-		Destination *gentianov1alpha1.ExportDestination `json:"destination"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
-		return
-	}
-	started, err := h.Service.StartBackup(r.Context(), StartBackupRequest{
-		Tenant: r.PathValue("tenant"), Name: body.Name, Actor: actorOf(r),
-		Apps: body.Apps, Recipients: body.Recipients, Destination: body.Destination,
-	})
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, started)
-}
-
-func (h *HTTPServer) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
-		return
-	}
-	if body.Name == "" {
-		writeErr(w, http.StatusBadRequest, errors.New("name is required"))
-		return
-	}
-	started, err := h.Service.DeleteBackup(r.Context(), r.PathValue("tenant"), body.Name)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, started)
 }
 
 func (h *HTTPServer) handleBackups(w http.ResponseWriter, r *http.Request) {

@@ -127,7 +127,7 @@ func DispatcherPodLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/component": "dispatcher"}
 }
 
-// runsEgress is the way to the dispatcher: its pods, on its one port, and
+// runsEgress is the way to the dispatcher: its pods, on the port for runs, and
 // nothing else of the namespace the kernel's controllers run in.
 func runsEgress() networkingv1.NetworkPolicyEgressRule {
 	tcp := corev1.ProtocolTCP

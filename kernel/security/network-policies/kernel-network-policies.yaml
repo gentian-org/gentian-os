@@ -350,6 +350,17 @@ spec:
     ports:
     - port: 8080
       protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-control
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: director
+          app.kubernetes.io/name: gentian-os
+    ports:
+    - port: 8081
+      protocol: TCP
   podSelector:
     matchLabels:
       app.kubernetes.io/component: dispatcher

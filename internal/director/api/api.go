@@ -195,6 +195,13 @@ type Lifecycle interface {
 	Delete(ctx context.Context, path, actor string, query url.Values) (int, []byte, error)
 }
 
+// Acts is the dispatcher's listener as the director uses it: an act done
+// once, as the person named. See internal/director/lifecycle, whose client
+// speaks to both listeners.
+type Acts interface {
+	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
+}
+
 // Config assembles a Server.
 type Config struct {
 	// UpdaterOff keeps the platform's own mover (updater.go) from running:
@@ -223,6 +230,11 @@ type Config struct {
 	// Nil leaves those routes unregistered: a director with no operator to
 	// ask has nothing to command and nothing to validate a plan against.
 	Lifecycle Lifecycle
+	// Acts carries out what is done once and follows no declaration: a
+	// backup taken, a backup deleted. It is the dispatcher's listener for
+	// the director. Nil leaves those routes answering that there is nobody
+	// to ask.
+	Acts Acts
 	// CommissionKeys are the components that may commission partners,
 	// as the operator lists them (partners.go). Nil recognizes none.
 	CommissionKeys *CommissionKeys

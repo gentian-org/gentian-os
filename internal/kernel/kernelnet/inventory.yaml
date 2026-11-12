@@ -595,7 +595,17 @@ namespaces:
                   request without a key the operator's table names
                 evidence:
                   - internal/controller/runs.go:132
-                  - charts/gentian-os/templates/dispatcher.yaml:105
+                  - charts/gentian-os/templates/dispatcher.yaml:152
+          - port: 8081
+            what: carries out an act the director asks for, done once and following nothing declared
+            from:
+              - peer: director
+                why: >-
+                  relays a person's request for a backup taken or deleted; the
+                  listener admits the director's ServiceAccount token alone
+                evidence:
+                  - charts/gentian-os/templates/director.yaml:277
+                  - cmd/director/main.go:224
       - name: usher
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os
