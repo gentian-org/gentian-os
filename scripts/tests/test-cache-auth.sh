@@ -37,7 +37,7 @@ fi
 SANDBOX="$(mktemp -d)"
 NAME="gentian-cache-auth-$$"
 VOLUME="${NAME}-data"
-# shellcheck disable=SC2329 # run by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # run by the EXIT trap
 cleanup() {
     docker rm -f "${NAME}" >/dev/null 2>&1
     docker volume rm -f "${VOLUME}" >/dev/null 2>&1
