@@ -1224,8 +1224,21 @@ spec:
                           to an app'
                         rule: '!has(self.apex) || !self.apex || self.authMode == ''none'''
                       - message: a gateway entry is behind the zone's session (authMode
-                          oidc). What needs no session is a perimeter surface
-                        rule: self.surface != 'gateway' || self.authMode == 'oidc'
+                          oidc) or takes a token the tenant's realm made out to it
+                          (authMode bearer). What needs neither is a perimeter surface
+                        rule: self.surface != 'gateway' || self.authMode in ['oidc',
+                          'bearer']
+                      - message: 'a token entry (authMode bearer) names a subDomain:
+                          it answers on a host of its own, where no session''s cookie
+                          is sent'
+                        rule: self.surface != 'gateway' || self.authMode != 'bearer'
+                          || (has(self.subDomain) && self.subDomain.size() > 0)
+                      - message: 'a token entry (authMode bearer) declares no forwardToken,
+                          exchangeToken or tile: there is no session whose token could
+                          be passed on, and nobody opens it in a browser'
+                        rule: self.surface != 'gateway' || self.authMode != 'bearer'
+                          || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken)
+                          || !self.exchangeToken) && !has(self.tile))
                     maxItems: 32
                     type: array
                     x-kubernetes-list-map-keys:
@@ -4646,6 +4659,21 @@ spec:
                     the component is sent every record the platform writes'
                   rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.logDestination)
                     || self.trustTier == ''platform'''
+                - message: 'a token entry (a gateway entry with authMode bearer) requires
+                    trustTier platform: the component is handed a person''s token
+                    and speaks for them'
+                  rule: '!has(self.expose) || !self.expose.exists(e, e.surface ==
+                    ''gateway'' && e.authMode == ''bearer'') || self.trustTier ==
+                    ''platform'''
+                - message: a profile declares at most one token entry
+                  rule: '!has(self.expose) || self.expose.filter(e, e.surface == ''gateway''
+                    && e.authMode == ''bearer'').size() <= 1'
+                - message: 'a token entry is for class app: it is approved in a tenant''s
+                    registry by that tenant''s perimeter approver, and its tokens
+                    are that tenant''s realm''s'
+                  rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.expose)
+                    || !self.expose.exists(e, e.surface == ''gateway'' && e.authMode
+                    == ''bearer'')'
                 - message: 'requires.services.vouching requires trustTier platform:
                     the component can obtain a person''s token for any app of the
                     tenant'

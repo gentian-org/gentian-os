@@ -171,6 +171,13 @@ spec:
   package: {chart: {repository: "oci://example/charts", name: x, version: "1.0.0"}}
 `
 
+// tokenEntry is a profile of platform trust with one token entry, and
+// whatever else the entry is to say.
+func tokenEntry(more string) string {
+	return "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n" +
+		"  - {name: mcp, surface: gateway, authMode: bearer, subDomain: mcp, backend: {service: x, port: 80}" + more + "}\n"
+}
+
 func TestComponentProfileRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
 	// A gateway entry with no tile, so a case that is not about tiles does not
@@ -255,7 +262,20 @@ func TestComponentProfileRules(t *testing.T) {
 		// entry with no session.
 		{"a gateway entry that pins its caller instead", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 		{"a gateway entry with no session", app + "\n  expose:\n  - {name: open, surface: gateway, authMode: none, backend: {service: x, port: 80}}\n", "behind the zone's session"},
-		{"a gateway entry with a bearer and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, backend: {service: x, port: 80}}\n", "behind the zone's session"},
+		// A token entry: a gateway entry that takes a token of the tenant's
+		// realm in place of a session, on a host of its own, of a profile of
+		// platform trust.
+		{"a token entry", tokenEntry(""), ""},
+		{"a token entry beside an entry behind sign-in", tokenEntry("") + "  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", ""},
+		{"a token entry of a profile that is not of platform trust", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, subDomain: api, backend: {service: x, port: 80}}\n", "requires trustTier platform"},
+		{"a token entry on the component's own host", strings.Replace(tokenEntry(""), "subDomain: mcp, ", "", 1), "names a subDomain"},
+		{"a token entry that forwards a token", tokenEntry(", forwardToken: true"), "declares no forwardToken, exchangeToken or tile"},
+		{"a token entry that asks for an exchanged token", tokenEntry(", exchangeToken: true"), "declares no forwardToken, exchangeToken or tile"},
+		{"a token entry with a tile", strings.Replace(tokenEntry(", tile: {displayName: MCP, relation: can_use, object: app}"), "launch: none", "launch: tile", 1), "declares no forwardToken, exchangeToken or tile"},
+		{"a token entry that keeps the app's header", tokenEntry(", clientAuthorization: app"), "clientAuthorization is for a gateway entry behind the session"},
+		{"two token entries", tokenEntry("") + "  - {name: mcp2, surface: gateway, authMode: bearer, subDomain: mcp2, backend: {service: x, port: 80}}\n", "at most one token entry"},
+		{"a token entry of a service", strings.Replace(tokenEntry(""), "classes: [app]", "classes: [service]", 1), "a token entry is for class app"},
+		{"a gateway entry with a signed token and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: jwt, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 
 		// An exposure may route into another component: an addon's tile points
 		// into its base, and a bound shared-app routes into shared-<app>.

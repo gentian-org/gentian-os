@@ -162,6 +162,13 @@ type ComponentPlacement struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.exchangeToken) && e.exchangeToken) || (e.surface == 'gateway' && e.authMode == 'oidc'))",message="exchangeToken is for a gateway entry behind a session (authMode oidc): there is a session's token to exchange only there"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || !(self.expose.exists(e, has(e.forwardToken) && e.forwardToken) && self.expose.exists(e, has(e.exchangeToken) && e.exchangeToken))",message="a component asks for forwardToken or for exchangeToken, not both: its entries share one host, and a host's backends are handed one token or the other"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.logDestination) || self.trustTier == 'platform'",message="requires.services.logDestination requires trustTier platform: the component is sent every record the platform writes"
+// A token entry lets a program reach the component as a person of the tenant,
+// with no browser session in front. That its host is no other entry's is the
+// operator's to hold (ConditionTokenEntry, HostShared): the entries' hosts
+// are known only in a tenant's zone.
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || !self.expose.exists(e, e.surface == 'gateway' && e.authMode == 'bearer') || self.trustTier == 'platform'",message="a token entry (a gateway entry with authMode bearer) requires trustTier platform: the component is handed a person's token and speaks for them"
+// +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.filter(e, e.surface == 'gateway' && e.authMode == 'bearer').size() <= 1",message="a profile declares at most one token entry"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.expose) || !self.expose.exists(e, e.surface == 'gateway' && e.authMode == 'bearer')",message="a token entry is for class app: it is approved in a tenant's registry by that tenant's perimeter approver, and its tokens are that tenant's realm's"
 // +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching) || self.trustTier == 'platform'",message="requires.services.vouching requires trustTier platform: the component can obtain a person's token for any app of the tenant"
 // A service may expose -- a console is not a contract surface -- but only on
 // the gateway. The perimeter has no session, and a service console published
@@ -650,14 +657,17 @@ const (
 
 // AuthMode is how a caller of an exposure entry is authenticated.
 //
-// The values the platform acts on are three. oidc is the zone's session, on a
-// gateway entry. none and app are for a perimeter entry: none publishes the
-// declared paths to anyone and passes no credential on; app passes the
-// caller's own Authorization header to the app, which alone checks it.
+// The values the platform acts on are four. oidc is the zone's session, on a
+// gateway entry. bearer, on a gateway entry, is a token entry: its callers
+// are programs that present a token the tenant's realm made out to this
+// entry alone, and the edge verifies it in place of a session. none and app
+// are for a perimeter entry: none publishes the declared paths to anyone and
+// passes no credential on; app passes the caller's own Authorization header
+// to the app, which alone checks it.
 //
-// jwt, bearer, basic and signature remain values of the field, and no
-// perimeter entry may declare them: there they named a check at the edge
-// that nothing makes.
+// jwt, basic and signature remain values of the field, and no entry may
+// declare them: they named a check at the edge that nothing makes. Nor may a
+// perimeter entry declare bearer.
 // +kubebuilder:validation:Enum=oidc;app;jwt;bearer;basic;signature;none
 type AuthMode string
 
@@ -669,8 +679,14 @@ const (
 	// that one header on and checks nothing; the app checks every caller.
 	// It takes effect once the tenant's perimeter approver has approved the
 	// entry as that.
-	AuthModeApp       AuthMode = "app"
-	AuthModeJWT       AuthMode = "jwt"
+	AuthModeApp AuthMode = "app"
+	AuthModeJWT AuthMode = "jwt"
+	// AuthModeBearer is a gateway entry that takes a token in place of a
+	// session, on a host of its own. The edge holds the token against the
+	// entry's address and the tenant's realm, and asks whether the person
+	// may use the component, as on any gateway entry. Only a profile of
+	// trustTier platform declares one, and it takes effect once the
+	// tenant's perimeter approver has approved the entry as that.
 	AuthModeBearer    AuthMode = "bearer"
 	AuthModeBasic     AuthMode = "basic"
 	AuthModeSignature AuthMode = "signature"
@@ -695,7 +711,7 @@ const (
 // ExposureKind is what approving one entry of a profile allows. The registry
 // records it with the approval, and an approval is in force only for an entry
 // that still declares the kind it was approved as.
-// +kubebuilder:validation:Enum=public;publicAppCredential;signInAppAuthorization
+// +kubebuilder:validation:Enum=public;publicAppCredential;signInAppAuthorization;tokenEntry
 type ExposureKind string
 
 const (
@@ -710,6 +726,11 @@ const (
 	// entry behind sign-in on which the Authorization header is the app's
 	// own (clientAuthorization app).
 	ExposureKindSignInAppAuthorization ExposureKind = "signInAppAuthorization"
+	// ExposureKindTokenEntry is an entry that takes a token in place of a
+	// session (a gateway entry with authMode bearer): a program reaches the
+	// component as a person of the tenant, with a token the tenant's realm
+	// made out to that entry.
+	ExposureKindTokenEntry ExposureKind = "tokenEntry"
 )
 
 // Normalized reads an approval that names no kind as the one every approval
@@ -741,6 +762,9 @@ func (e *ExposureSpec) RequestKind() ExposureKind {
 		if e.AuthMode == AuthModeOIDC && e.ClientAuthorization == ClientAuthorizationApp {
 			return ExposureKindSignInAppAuthorization
 		}
+		if e.AuthMode == AuthModeBearer {
+			return ExposureKindTokenEntry
+		}
 	}
 	return ""
 }
@@ -763,7 +787,9 @@ func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
 // +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || (self.surface == 'gateway' && self.authMode == 'oidc')",message="clientAuthorization is for a gateway entry behind the session (authMode oidc): it says whose the Authorization header is once a person has signed in"
 // +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))",message="clientAuthorization excludes forwardToken and exchangeToken: the Authorization header toward the app is either the app's own or a token the platform puts there"
 // +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || self.authMode == 'none'",message="an apex entry is a website for anyone (authMode none): the cluster's main address passes no credential to an app"
-// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode == 'oidc'",message="a gateway entry is behind the zone's session (authMode oidc). What needs no session is a perimeter surface"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode in ['oidc', 'bearer']",message="a gateway entry is behind the zone's session (authMode oidc) or takes a token the tenant's realm made out to it (authMode bearer). What needs neither is a perimeter surface"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || (has(self.subDomain) && self.subDomain.size() > 0)",message="a token entry (authMode bearer) names a subDomain: it answers on a host of its own, where no session's cookie is sent"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken) && !has(self.tile))",message="a token entry (authMode bearer) declares no forwardToken, exchangeToken or tile: there is no session whose token could be passed on, and nobody opens it in a browser"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40

@@ -584,6 +584,7 @@ spec:
                       - public
                       - publicAppCredential
                       - signInAppAuthorization
+                      - tokenEntry
                       type: string
                     lastReviewedAt:
                       format: date-time

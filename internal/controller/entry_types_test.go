@@ -683,6 +683,8 @@ func TestWhatAnEntryAsksForAndWhatAnApprovalCovers(t *testing.T) {
 		{entry(gw, gentianov1alpha1.AuthModeOIDC, gentianov1alpha1.ClientAuthorizationApp), gentianov1alpha1.ExposureKindSignInAppAuthorization},
 		{entry(gw, gentianov1alpha1.AuthModeNone, gentianov1alpha1.ClientAuthorizationApp), ""},
 		{entry(gw, gentianov1alpha1.AuthModeApp, ""), ""},
+		{entry(gw, gentianov1alpha1.AuthModeBearer, ""), gentianov1alpha1.ExposureKindTokenEntry},
+		{entry(gw, gentianov1alpha1.AuthModeJWT, ""), ""},
 	} {
 		if got := tc.e.RequestKind(); got != tc.want {
 			t.Errorf("%+v asks for %q, want %q", tc.e, got, tc.want)

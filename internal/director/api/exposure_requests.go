@@ -135,6 +135,7 @@ const (
 	kindPublic                 = gitops.KindPublic
 	kindPublicAppCredential    = gitops.KindPublicAppCredential
 	kindSignInAppAuthorization = gitops.KindSignInAppAuthorization
+	kindTokenEntry             = gitops.KindTokenEntry
 )
 
 // kindLabels are the kinds in a few words, for a list.
@@ -142,6 +143,7 @@ var kindLabels = map[string]string{
 	kindPublic:                 "Public address",
 	kindPublicAppCredential:    "Public address that passes the caller's credential to the app",
 	kindSignInAppAuthorization: "Behind sign-in: keeps the app's own Authorization header",
+	kindTokenEntry:             "Token entry: programs reach it as a person, with a token of the tenant's realm",
 }
 
 // normalKind reads a registry entry that names no kind as what every entry
@@ -162,6 +164,9 @@ func normalKind(k string) string {
 //   - publicAppCredential: the same proxy, passing the one header on.
 //   - signInAppAuthorization: the session and the bouncer as on any entry
 //     behind sign-in; only the header is left alone (internal/bouncer).
+//   - tokenEntry: no sign-in filter on the route; the bouncer verifies the
+//     token and asks the store, as on any entry (internal/bouncer,
+//     Route.Audience; internal/controller, token_entry.go).
 func accessOf(kind string) string {
 	switch kind {
 	case kindPublic:
@@ -179,6 +184,16 @@ func accessOf(kind string) string {
 			"it no longer replaces or removes that header, and puts no token of its own there. " +
 			"The app receives whatever a signed-in person's browser sends in that header, and the app alone checks it. " +
 			"Until approved, the header is removed before the app, and calls the app's own pages make with a token of the app's are refused by the app."
+	case kindTokenEntry:
+		return "This is not a public address, and nobody signs in on it with a browser. " +
+			"A program, such as an AI assistant on a person's computer, reaches this component as that person: " +
+			"it presents a token the tenant's sign-in service issued to the person for this address alone, after the person signed in and agreed. " +
+			"The platform checks every request: that the token is valid, was issued by this tenant's sign-in service for this address, " +
+			"belongs to a sign-in that has not ended, and that the person may use the component. " +
+			"A person who is removed from the tenant, or whose sign-in is ended, loses this access within minutes. " +
+			"A token for this address is refused everywhere else on the platform, and a browser's session is refused here. " +
+			"The component receives the person's token and acts for them in the tenant's apps, with that person's rights. " +
+			"Until approved, the address answers nobody."
 	}
 	return ""
 }
@@ -381,7 +396,7 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 	kind := string(entry.RequestKind())
 	out.Kind, out.KindLabel = kind, kindLabels[kind]
 	out.PublicAddress = entry.Surface == gentianov1alpha1.SurfacePerimeter
-	out.PassesCredential = kind == kindPublicAppCredential || kind == kindSignInAppAuthorization
+	out.PassesCredential = kind == kindPublicAppCredential || kind == kindSignInAppAuthorization || kind == kindTokenEntry
 	out.AuthMode = string(entry.AuthMode)
 	out.AnyoneWithoutSignIn = kind == kindPublic
 	out.Access, out.RateLimit = accessOf(kind), rateLimitOf(kind)
@@ -495,7 +510,7 @@ func (v *exposureView) entries() []exposureEntry {
 		// not known here.
 		e.Kind = normalKind(p.Kind)
 		e.KindLabel = kindLabels[e.Kind]
-		e.PublicAddress = e.Kind != kindSignInAppAuthorization
+		e.PublicAddress = e.Kind != kindSignInAppAuthorization && e.Kind != kindTokenEntry
 		if why := v.unknownToTheRepository(p.Install); why != "" {
 			// Not shown as matching nothing: what it matches is not the
 			// repository's to say.
