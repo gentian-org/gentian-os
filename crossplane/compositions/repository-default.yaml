@@ -431,7 +431,8 @@ spec:
 
             {{- if and $isOci $hasCred (ne $tenant "") }}
             {{- /* A TENANT's registry repository: its credential goes to that
-                 tenant's namespace and to no other.
+                 tenant's namespace and its namespace for runs, and to no
+                 other.
 
                  Whose it is is spec.tenant, which the director writes from the
                  route the caller was authorised on, and the selector below is
@@ -439,8 +440,10 @@ spec:
                  it: spec.namespaceSelector is not read for a tenant's
                  repository, and there is no label a namespace can opt in
                  with. The tier is matched as well, so the Secret reaches the
-                 namespace the tenant's apps run in and not its DMZ, where
-                 only the platform's own proxy runs.
+                 namespace the tenant's apps run in and the one its runs are
+                 started in (tenant-<t>-runs, where the dispatcher names it on
+                 a run's pod), and not its DMZ, where only the platform's own
+                 proxy runs.
 
                  The store the ExternalSecret reads through is the tenant's
                  own (openbao-tenant-<tenant>, tenant-default.yaml), whose
@@ -487,6 +490,9 @@ spec:
                       - matchLabels:
                           gentianos.io/tenant: {{ $tenant | quote }}
                           gentianos.io/tier: tenant
+                      - matchLabels:
+                          gentianos.io/tenant: {{ $tenant | quote }}
+                          gentianos.io/tier: tenant-runs
                     refreshTime: 1h
                     externalSecretSpec:
                       refreshInterval: 1h

@@ -1180,7 +1180,7 @@ kubectl gentian repositories declare acme --tenant demo --url oci://registry.exa
 
 The token is set in the Admin Console of the tenant, under Credentials, as the name the command prints
 (`repository-acme`); it is kept in the vault, as every repository's is, and becomes a pull Secret in that
-tenant's namespace only. A chart whose address lies inside the declared registry
+tenant's namespace and its namespace for runs only. A chart whose address lies inside the declared registry
 is pulled with it. The App Store app does both steps itself for what it sells; for your own registry
 they are done once by the tenant's administrator.
 

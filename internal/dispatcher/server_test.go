@@ -98,6 +98,7 @@ func (c *cluster) end(pod *corev1.Pod, phase corev1.PodPhase, code int32, at tim
 func twoTenants() *Table {
 	t := table()
 	t.Callers[0].KeyHash = componentkeys.Hash(flowKey)
+	t.Tenants[0].Actions[0].PullSecrets = []string{"repository-vendor-pull"}
 	other := Caller{Callback: Callback{Service: "flow", Namespace: "tenant-other", Port: 80}, Concurrency: 2}
 	other.Tenant, other.Component, other.KeyHash = "other", "flow", componentkeys.Hash(otherKey)
 	t.Callers = append(t.Callers, other)
@@ -195,6 +196,12 @@ func TestARunIsOnePodOfThePinnedImage(t *testing.T) {
 		t.Fatalf("security context = %+v", main.SecurityContext)
 	}
 
+	// The image is pulled with the Secrets the table names for it, and a
+	// run the table names none for is pulled with none.
+	if len(spec.ImagePullSecrets) != 1 || spec.ImagePullSecrets[0].Name != "repository-vendor-pull" {
+		t.Fatalf("pull Secrets = %v", spec.ImagePullSecrets)
+	}
+
 	// Asking again starts nothing, and a run of the caller's own carries no
 	// action's label: it is given no action's egress.
 	if status, again := h.run(flowKey, "invoice 7", "ocr"); status != http.StatusOK || again.ID != "invoice 7" || len(h.cluster.pods) != 1 {
@@ -206,6 +213,9 @@ func TestARunIsOnePodOfThePinnedImage(t *testing.T) {
 	own := h.cluster.pods["tenant-acme-runs/"+PodName(Hash("acme", "flow", "agent 1"), 1)]
 	if _, labeled := own.Labels[LabelAction]; labeled || own.Labels[LabelCaller] != "flow" {
 		t.Fatalf("own run's labels = %v", own.Labels)
+	}
+	if len(own.Spec.ImagePullSecrets) != 0 {
+		t.Fatalf("own run's pull Secrets = %v", own.Spec.ImagePullSecrets)
 	}
 	if !strings.Contains(h.audit.String(), `"action":"start"`) || !strings.Contains(h.audit.String(), `"person":"ada"`) {
 		t.Fatalf("no record of the start: %s", h.audit.String())

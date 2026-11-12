@@ -72,6 +72,10 @@ type Runnable struct {
 	Memory string `json:"memory,omitempty"`
 	// DeadlineSeconds is the longest one attempt may take.
 	DeadlineSeconds int32 `json:"deadlineSeconds"`
+	// PullSecrets are the Secrets of the tenant's namespace for runs the
+	// image is pulled with, by name: the cluster's own, then those of the
+	// repositories the tenant declared.
+	PullSecrets []string `json:"pullSecrets,omitempty"`
 }
 
 // Ref is the image a pod names: the repository at the digest.
@@ -119,6 +123,8 @@ type Table struct {
 var (
 	dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 	digest   = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	// secretName is a Secret's name: labels joined by dots, 253 at most.
+	secretName = regexp.MustCompile(`^[a-z0-9]([-.a-z0-9]{0,251}[a-z0-9])?$`)
 )
 
 func (r Runnable) check() error {
@@ -133,6 +139,11 @@ func (r Runnable) check() error {
 		return fmt.Errorf("%s is for the runtime %q, which the dispatcher does not have", r.Name, r.Runtime)
 	case r.DeadlineSeconds < 1:
 		return fmt.Errorf("%s has no deadline", r.Name)
+	}
+	for _, secret := range r.PullSecrets {
+		if !secretName.MatchString(secret) {
+			return fmt.Errorf("%s is pulled with %q, which is not a Secret's name", r.Name, secret)
+		}
 	}
 	return nil
 }

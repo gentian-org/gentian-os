@@ -237,6 +237,42 @@ func TestTheDispatchersTableSaysWhoMayStartWhat(t *testing.T) {
 	}
 }
 
+// A run's image is pulled with the credentials of the repositories its
+// tenant declared, as an app's pods are: a repository of the whole tenant
+// for every run, one bound to a profile for that profile's runs alone, and
+// never another tenant's or the cluster's.
+func TestARunIsPulledWithItsTenantsRepositories(t *testing.T) {
+	ctx := context.Background()
+	flow := rightsComponent("acme", "flow")
+	ocr, ocrProfile := actionFixture("acme", "ocr", true)
+	scan, scanProfile := actionFixture("acme", "scan", true)
+	bound := ociRepositorySpec("acme", "https://registry.example/steps/scan")
+	bound["app"] = "scan"
+	c, r := runsHarness(t, rightsTenant("acme"), flow, runsProfile("flow"), ocr, ocrProfile, scan, scanProfile,
+		repositoryClaimFixture(repositoryClaimNamespace, "vendor", ociRepositorySpec("acme", "https://registry.example")),
+		repositoryClaimFixture(repositoryClaimNamespace, "scan-only", bound),
+		repositoryClaimFixture(repositoryClaimNamespace, "theirs", ociRepositorySpec("other", "https://registry.example")),
+		repositoryClaimFixture(repositoryClaimNamespace, "cluster", ociRepositorySpec("", "https://registry.example")))
+	if err := (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).ensureRuns(ctx, flow, "acme", runsProfile("flow")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, runsRequest); err != nil {
+		t.Fatal(err)
+	}
+	table := runsTable(t, c)
+	caller := &table.Callers[0]
+	for name, want := range map[string]string{
+		"ocr":    "repository-vendor-pull",
+		"runner": "repository-vendor-pull",
+		"scan":   "repository-scan-only-pull",
+	} {
+		runnable, _, found := table.Runnable(caller, name)
+		if !found || strings.Join(runnable.PullSecrets, ",") != want {
+			t.Errorf("%s is pulled with %v, want %s", name, runnable.PullSecrets, want)
+		}
+	}
+}
+
 // The namespace for runs lets nothing in, lets a pod ask the DNS and nothing
 // else, gives a run of an action the egress granted to that action, and lets
 // a caller's run through to that caller on the port its Service sends to.

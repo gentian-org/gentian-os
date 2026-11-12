@@ -407,6 +407,14 @@ spec:
                           matchLabels:
                             gentianos.io/tier: tenant
                             gentianos.io/tenant: {{ $tenant }}
+                      # The tenant's namespace for runs, where the pull
+                      # Secrets of its repositories are delivered as well
+                      # (repository-default.yaml). Tenants apply nothing
+                      # there.
+                      - namespaceSelector:
+                          matchLabels:
+                            gentianos.io/tier: tenant-runs
+                            gentianos.io/tenant: {{ $tenant }}
                     provider:
                       vault:
                         server: {{ $openbaoServer }}
