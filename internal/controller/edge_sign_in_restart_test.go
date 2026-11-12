@@ -66,6 +66,8 @@ func TestSignInRestartPageCannotLoopOrLeave(t *testing.T) {
 		`now - last > 120000`,            // ... in two minutes
 		`url.origin === location.origin`, // never another origin
 		`href="/"`,                       // a link when it does not restart
+		`Your sign-in did not finish`,    // English by default ...
+		`Erneut anmelden`,                // ... German for a German browser
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the page lacks %q", want)

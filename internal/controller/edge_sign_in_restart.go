@@ -29,16 +29,27 @@ package controller
 // Where it goes is the address the filter kept in the flow's state, if that
 // is on this host, and the host's root otherwise -- never another origin.
 //
+// The page is in English and German: the script switches to German when the
+// browser's first language is German. Without the script it stays English.
+//
 // The body contains no percent sign: Envoy reads one as a command operator.
 const edgeSignInRestartPage = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in again</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem">
-<h1 style="font-size:1.25rem">Your sign-in did not finish</h1>
-<p>The sign-in took longer than this site waits for it, so it has to start over.</p>
+<h1 id="heading" style="font-size:1.25rem">Your sign-in did not finish</h1>
+<p id="reason">The sign-in took longer than this site waits for it, so it has to start over.</p>
 <p><a id="again" href="/">Sign in again</a></p>
 <script>
 (function () {
+  var lang = ((navigator.languages && navigator.languages[0]) || navigator.language || "").toLowerCase();
+  if (lang === "de" || lang.indexOf("de-") === 0) {
+    document.documentElement.lang = "de";
+    document.title = "Erneut anmelden";
+    document.getElementById("heading").textContent = "Ihre Anmeldung wurde nicht abgeschlossen";
+    document.getElementById("reason").textContent = "Die Anmeldung hat länger gedauert, als diese Seite darauf wartet, und muss neu beginnen.";
+    document.getElementById("again").textContent = "Erneut anmelden";
+  }
   var key = "gentian-sign-in-restart", target = "/";
   try {
     var state = new URLSearchParams(location.search).get("state");
