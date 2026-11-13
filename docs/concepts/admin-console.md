@@ -214,8 +214,9 @@ No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
 **Inviting a member.** *Members* → *Invite*: address, name, optional recovery
 address, the app groups to join (an app installed for everyone is preselected).
-The registrar creates the account with no password and has Keycloak mail a
-link with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
+The registrar creates the account with no password, always in the tenant's
+`members` group (entering the tenant takes it), and has Keycloak mail a link
+with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 
 ### 4.3 Password reset and recovery
 

@@ -82,6 +82,8 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 	groups := []map[string]any{
 		{"id": "g-chiefs", "name": chiefs, "path": "/" + chiefs, "attributes": custom},
 		{"id": "g-sales", "name": "gentian:tenant:demo:sales", "path": "/gentian:tenant:demo:sales", "attributes": custom},
+		// Every tenant realm has it, and every invitation puts the person in it.
+		{"id": "g-members", "name": "gentian:tenant:demo:members", "path": "/gentian:tenant:demo:members"},
 	}
 	users := map[string]map[string]any{
 		"root1": {"id": "root1", "username": "admin@demo." + dt.KernelDomain, "enabled": true, "emailVerified": true},
@@ -114,7 +116,7 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 			answer(groups[:1])
 			return
 		}
-		answer(groups[1:])
+		answer(groups[1:2])
 	case strings.HasSuffix(path, "/credentials"):
 		answer([]map[string]string{{"id": "otp1", "type": "otp"}})
 	case strings.HasPrefix(path, "/users/"):
