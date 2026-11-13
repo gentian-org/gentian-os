@@ -85,6 +85,23 @@ func sensitiveOf(t *testing.T, objs []*unstructured.Unstructured, app string) (d
 	return data, set
 }
 
+// optionalReadsOf is the keys of the component's Secret a release reads as
+// values it may go without (valuesFrom, optional): a contract's endpoint is
+// one, empty until the contract is granted.
+func optionalReadsOf(t *testing.T, release *unstructured.Unstructured, secret string) []string {
+	t.Helper()
+	entries, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "valuesFrom")
+	var keys []string
+	for _, e := range entries {
+		ref, _ := e.(map[string]interface{})["secretKeyRef"].(map[string]interface{})
+		if ref["name"] != secret || ref["optional"] != true {
+			t.Fatalf("valuesFrom %v, want an optional read of %s", ref, secret)
+		}
+		keys = append(keys, ref["key"].(string))
+	}
+	return keys
+}
+
 // The values a profile maps come out in one order -- by contract, then
 // endpoint, user, password -- with each Secret key named after its contract
 // and read from that contract's path in the tenant's store, and each set
@@ -97,7 +114,8 @@ func TestTheMappedValuesAreReadByContractInAFixedOrder(t *testing.T) {
 		"orders":      {EndpointKey: "orders.url", PasswordKey: "orders.token"},
 		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL", UserKey: "api.env.DESKTOP_API_USER"},
 	})
-	data, set := sensitiveOf(t, renderApp(t, chartRenderInput("store", profile)), "store")
+	objs := renderApp(t, chartRenderInput("store", profile))
+	data, set := sensitiveOf(t, objs, "store")
 
 	want := []struct{ secretKey, path, property, valueKey string }{
 		{"integration-desktop-api-endpoint", secrets.ContractPath("acme", "desktop-api"), "endpoint", "api.env.DESKTOP_API_URL"},
@@ -105,19 +123,39 @@ func TestTheMappedValuesAreReadByContractInAFixedOrder(t *testing.T) {
 		{"integration-orders-endpoint", secrets.ContractPath("acme", "orders"), "endpoint", "orders.url"},
 		{"integration-orders-password", secrets.ContractPath("acme", "orders"), "password", "orders.token"},
 	}
-	if len(data) != len(want) || len(set) != len(want) {
-		t.Fatalf("data = %v, set = %v, want %d entries each", data, set, len(want))
+	if len(data) != len(want) {
+		t.Fatalf("data = %v, want %d entries", data, len(want))
 	}
+	// An endpoint is a value the chart may go without, read apart from the
+	// set entries: it is empty until the contract is granted.
+	var optional []string
+	next := 0
 	for i, w := range want {
 		d := data[i]
 		ref := d["remoteRef"].(map[string]interface{})
 		if d["secretKey"] != w.secretKey || ref["key"] != w.path || ref["property"] != w.property {
 			t.Fatalf("data[%d] = %v, want %s from %s#%s", i, d, w.secretKey, w.path, w.property)
 		}
-		s := set[i]
+		if w.property == "endpoint" {
+			optional = append(optional, "values-"+w.secretKey)
+			continue
+		}
+		if next >= len(set) {
+			t.Fatalf("set = %v, want an entry for %s", set, w.valueKey)
+		}
+		s := set[next]
+		next++
 		from := s["valueFrom"].(map[string]interface{})["secretKeyRef"].(map[string]interface{})
 		if s["name"] != w.valueKey || from["name"] != "store-sensitive-values" || from["namespace"] != "tenant-acme" || from["key"] != w.secretKey {
-			t.Fatalf("set[%d] = %v, want %s from store-sensitive-values/%s", i, s, w.valueKey, w.secretKey)
+			t.Fatalf("set = %v, want %s from store-sensitive-values/%s", s, w.valueKey, w.secretKey)
+		}
+	}
+	if next != len(set) {
+		t.Fatalf("set = %v, want the user and the password of each contract and nothing else", set)
+	}
+	for _, release := range renderedOfKind(objs, "Release") {
+		if got := optionalReadsOf(t, release, "store-sensitive-values"); !reflect.DeepEqual(got, optional) {
+			t.Fatalf("optional reads = %v, want %v", got, optional)
 		}
 	}
 
@@ -274,34 +312,25 @@ func TestTheSensitiveValuesAreRemovedWhenUnmappedAndForeignOnesLeftAlone(t *test
 	}
 }
 
-// The Release names each mapped value with a set entry reading the
-// component's Secret.
-func TestTheReleaseIsToldTheMappedValuesBySetEntries(t *testing.T) {
+// The Release reads a mapped endpoint from the component's Secret as a value
+// it may go without, and sets nothing it would have to have: the endpoint is
+// empty until the contract is granted, and a release told to set an empty
+// value is not installed.
+func TestTheReleaseReadsAMappedEndpointAsAValueItMayGoWithout(t *testing.T) {
 	ctx := context.Background()
 	h := mappedWikiHarness(t)
-	releaseSet := func() ([]interface{}, bool) {
-		t.Helper()
-		release := &unstructured.Unstructured{}
-		release.SetGroupVersionKind(helmReleaseGVK)
-		if err := h.c.Get(ctx, types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
-			t.Fatal(err)
-		}
-		set, found, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
-		return set, found
-	}
-
 	h.reconcileInstalled()
-	set, _ := releaseSet()
-	if len(set) != 1 {
-		t.Fatalf("set = %v, want the one mapped value", set)
+	release := &unstructured.Unstructured{}
+	release.SetGroupVersionKind(helmReleaseGVK)
+	if err := h.c.Get(ctx, types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
+		t.Fatal(err)
 	}
-	entry := set[0].(map[string]interface{})
-	ref, _, _ := unstructured.NestedStringMap(entry, "valueFrom", "secretKeyRef")
-	if entry["name"] != "api.env.DESKTOP_API_URL" || ref["name"] != "wiki-sensitive-values" ||
-		ref["namespace"] != "tenant-acme" || ref["key"] != "integration-desktop-api-endpoint" {
-		t.Fatalf("set entry = %v", entry)
+	if set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); len(set) != 0 {
+		t.Fatalf("set = %v, want nothing the release must have", set)
 	}
-
+	if got := optionalReadsOf(t, release, "wiki-sensitive-values"); !reflect.DeepEqual(got, []string{"values-integration-desktop-api-endpoint"}) {
+		t.Fatalf("optional reads = %v, want the endpoint", got)
+	}
 }
 
 // What the render no longer says is taken off the live object, not only what
@@ -328,6 +357,9 @@ func TestWhatTheRenderNoLongerSaysIsTakenOffTheRelease(t *testing.T) {
 	if set, found, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); found && len(set) > 0 {
 		t.Errorf("set = %v after nothing is mapped any more", set)
 	}
+	if reads := optionalReadsOf(t, release, "wiki-sensitive-values"); len(reads) > 0 {
+		t.Errorf("optional reads = %v after nothing is mapped any more", reads)
+	}
 	if old, found, _ := unstructured.NestedFieldNoCopy(release.Object, "spec", "forProvider", "values", "feature"); found {
 		t.Errorf("values.feature = %v after the profile stopped carrying it", old)
 	}
@@ -335,7 +367,7 @@ func TestWhatTheRenderNoLongerSaysIsTakenOffTheRelease(t *testing.T) {
 
 // A component that maps a contract's values waits for its Secret with
 // ValuesPending and has no Release meanwhile; once ESO has written it, the
-// Release is made with the set entry that reads it.
+// Release is made with the read of it.
 func TestAComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
 	profile := materialised(t, wikiBundle)
 	profile.Annotations = nil
@@ -366,9 +398,8 @@ func TestAComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
 	if err := h.c.Get(context.Background(), types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
 		t.Fatalf("no release after the Secret arrived: %v", err)
 	}
-	set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
-	if len(set) != 1 || set[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_URL" {
-		t.Fatalf("set = %v", set)
+	if got := optionalReadsOf(t, release, "wiki-sensitive-values"); !reflect.DeepEqual(got, []string{"values-integration-desktop-api-endpoint"}) {
+		t.Fatalf("optional reads = %v, want the endpoint", got)
 	}
 }
 
@@ -518,8 +549,8 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 	if err := c.Get(ctx, types.NamespacedName{Name: releaseName(consumer)}, release); err != nil {
 		t.Fatalf("no release for the consumer: %v", err)
 	}
-	if set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); len(set) != 1 || set[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_URL" {
-		t.Fatalf("set = %v", set)
+	if got := optionalReadsOf(t, release, sensitiveValuesName(consumer)); !reflect.DeepEqual(got, []string{"values-integration-desktop-api-endpoint"}) {
+		t.Fatalf("optional reads = %v, want the endpoint", got)
 	}
 
 	// Withdrawn: no way between the two, and no address.
