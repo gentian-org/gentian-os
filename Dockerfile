@@ -56,6 +56,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o registrar ./cmd/re
 # that instance's key.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o arbiter ./cmd/arbiter
 
+# The chaperone: carries tool calls to a tenant's adapters, run in a tenant
+# as a component the platform places. One build with everything else here.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o chaperone ./cmd/chaperone
+
 # vault-migrator: what a release changes in the vault, run once per release.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o vault-migrator ./cmd/vault-migrator
 
@@ -79,6 +83,7 @@ COPY --from=builder /workspace/run-program /run-program
 COPY --from=builder /workspace/custodian /custodian
 COPY --from=builder /workspace/registrar /registrar
 COPY --from=builder /workspace/arbiter /arbiter
+COPY --from=builder /workspace/chaperone /chaperone
 COPY --from=builder /workspace/vault-migrator /vault-migrator
 
 USER 65532:65532
