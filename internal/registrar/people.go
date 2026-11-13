@@ -310,6 +310,7 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 	if !s.decode(w, r, &body) {
 		return
 	}
+	body.Groups = withMembers(r.PathValue("t"), body.Groups)
 	login := ""
 	if local := strings.ToLower(strings.TrimSpace(body.Username)); local != "" {
 		if !localPart.MatchString(local) {
@@ -375,6 +376,24 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 	s.json(w, http.StatusAccepted, out)
+}
+
+// withMembers adds the tenant's members group to an invitation's groups.
+// Entering a tenant takes membership of it (can_enter in the authz model):
+// somebody invited without it would hold their apps and be refused on every
+// page of the tenant, the apps' own included. The platform tenant has no
+// members group; its people are the kernel realm's administrators.
+func withMembers(tenant string, groups []string) []string {
+	if tenant == platformTenant {
+		return groups
+	}
+	members := tenantGroupPrefix(tenant) + "members"
+	for _, g := range groups {
+		if strings.TrimPrefix(g, "/") == members {
+			return groups
+		}
+	}
+	return append(groups, members)
 }
 
 // localPart is what a person may type before @<login domain>.

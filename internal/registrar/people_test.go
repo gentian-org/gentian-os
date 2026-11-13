@@ -709,3 +709,35 @@ func TestTheClusterCountsItsPeoplePerRealm(t *testing.T) {
 		t.Fatalf("a tenant administrator counting the cluster: %d, want 403", status)
 	}
 }
+
+// Entering a tenant takes membership of it, so an invitation always makes
+// the person a member, whatever groups it names: somebody invited with only
+// an app's group would hold the app and be refused on every page.
+func TestAnInvitationAlwaysMakesAMember(t *testing.T) {
+	const members = "gentian:tenant:demo:members"
+	for name, groups := range map[string]string{
+		"no groups":      `[]`,
+		"an app only":    `["gentian:tenant:demo:app:open-webui-ce","gentian:tenant:demo:app-admins"]`,
+		"members named":  `["gentian:tenant:demo:members"]`,
+		"members, slash": `["/gentian:tenant:demo:members"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeIdentity("demo")
+			h := startWithIdentity(t, f)
+			status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person",
+				h.token(t, "tenant-demo", "tom"), `{"email":"ada@example.com","groups":`+groups+`}`)
+			if status != http.StatusAccepted {
+				t.Fatalf("invite: %d %v", status, body)
+			}
+			n := 0
+			for _, g := range f.lastInvite.Groups {
+				if strings.TrimPrefix(g, "/") == members {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Fatalf("groups = %v, want %s exactly once", f.lastInvite.Groups, members)
+			}
+		})
+	}
+}
