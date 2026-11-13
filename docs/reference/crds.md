@@ -340,6 +340,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `spec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
 | `spec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
+| `spec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `spec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
 | `spec.customization.addon` | object |  | `Addon` declares that *this* profile is an addon rather than a deployable app, and how the base activates it. |
 | `spec.customization.addon.id` | string | yes | `ID` is what the hosting app's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
@@ -1182,6 +1183,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `status.profileSpec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
 | `status.profileSpec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
+| `status.profileSpec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `status.profileSpec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
 | `status.profileSpec.customization.addon` | object |  | `Addon` declares that *this* profile is an addon rather than a deployable app, and how the base activates it. |
 | `status.profileSpec.customization.addon.id` | string | yes | `ID` is what the hosting app's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
@@ -1731,6 +1733,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.apps[].addonPins[].digest` | string | yes | `Digest` pins the addon's profile bundle: the build the install asked for. |
 | `spec.apps[].addonPins[].name` | string | yes | `Name` is the addon's profile name, as addons lists it. |
 | `spec.apps[].addons` | []string |  | `Addons` lists the addon profiles activated inside this app for this tenant — customization-ladder rung L3. |
+| `spec.apps[].cameWith` | string |  | `CameWith` names the app this one was installed together with: that app's profile names this one (ComponentProfile spec.comesWith), and the tenant did not have… |
 | `spec.apps[].catalogue` | string |  | `Catalogue` is the catalog the pinned build was fetched from: the first half of its coordinate, \<catalogue>/\<profile>. |
 | `spec.apps[].config` | object |  | `Config` provides per-tenant overrides for this app installation. |
 | `spec.apps[].config.dropIns` | []object |  | `DropIns` supply tenant-authored files into drop-in directories the target ComponentProfile declares as tenantEditable. |

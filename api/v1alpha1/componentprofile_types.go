@@ -358,6 +358,26 @@ type ComponentProfileSpec struct {
 	// +optional
 	Placement *ComponentPlacement `json:"placement,omitempty"`
 
+	// ComesWith names the profiles of the apps this app is installed
+	// together with. Installing the app also installs each of them the
+	// tenant does not have yet, from a catalog the tenant sees, and
+	// uninstalling it removes those again unless another installed app
+	// comes with them too. An app the tenant installed itself is left as it
+	// is, on install and on uninstall. An install is refused as a whole
+	// when one of them cannot be found or may not be installed in the
+	// tenant.
+	//
+	// Each of them is an app of its own for everything else: its own
+	// requirements, entries, privileges and approvals, its own builds and
+	// moves, and its own data, which is kept when it is removed and
+	// destroyed when it is purged.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	ComesWith []string `json:"comesWith,omitempty"`
+
 	// DefaultForTenants is placement {tenants: every}.
 	//
 	// Superseded by placement: read for one release so that catalogs

@@ -57,6 +57,8 @@ type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
+	InstallWith(ctx context.Context, tenant, profile, digest, catalogue, with string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
+	UninstallWith(ctx context.Context, tenant, profile string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
 	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
 	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)
@@ -1198,11 +1200,13 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		s.repoError(w, r, err)
 		return
 	}
+	var definition *gentianov1alpha1.ComponentProfile
 	if source != nil {
 		fetched, ok := s.fetchOrStored(w, r, *source, tenant, entry, body.Digest)
 		if !ok {
 			return
 		}
+		definition = fetched.Definition
 		if s.refusedByFloor(w, r, fetched, "app "+body.Coordinate) {
 			return
 		}
@@ -1225,7 +1229,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		if !s.onClusterFor(w, r, tenant, profile, "") {
 			return
 		}
-		definition, err := s.cfg.Repo.ProfileDefinition(ctx, profile)
+		definition, err = s.cfg.Repo.ProfileDefinition(ctx, profile)
 		if err != nil && !errors.Is(err, gitops.ErrProfileUnreadable) {
 			s.repoError(w, r, err)
 			return
@@ -1244,8 +1248,23 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
+	// The apps it comes with, before its own entry: an app is not installed
+	// without them, and one that cannot be had refuses the install with
+	// nothing of the tenant's changed.
+	came, ok := s.installComesWith(w, r, c, tenant, profile, definition, catalogueName, body.DefaultGrant)
+	if !ok {
+		return
+	}
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
 	if err != nil || retry == nil {
+		if err == nil && len(came) > 0 {
+			out := map[string]any{"status": res.Status, "installedWith": came}
+			if res.Changed {
+				out["commit"] = res.Commit
+			}
+			s.json(w, http.StatusAccepted, out)
+			return
+		}
 		s.written(w, r, res, err)
 		return
 	}
@@ -1590,12 +1609,22 @@ func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {
 	if s.refusedAsCapabilityApp(w, r, r.PathValue("p")) {
 		return
 	}
-	res, err := s.cfg.Repo.Uninstall(r.Context(), r.PathValue("t"), r.PathValue("p"), c.meta)
+	tenant, profile := r.PathValue("t"), r.PathValue("p")
+	heirs, err := s.heirsOf(r.Context(), tenant, profile)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	res, removed, err := s.cfg.Repo.UninstallWith(r.Context(), tenant, profile, heirs, c.meta)
 	if err != nil || !res.Changed {
 		s.written(w, r, res, err)
 		return
 	}
-	s.json(w, http.StatusAccepted, map[string]any{"status": res.Status, "commit": res.Commit, "note": uninstallNote})
+	out := map[string]any{"status": res.Status, "commit": res.Commit, "note": uninstallNote}
+	if len(removed) > 0 {
+		out["removedWith"] = removed
+	}
+	s.json(w, http.StatusAccepted, out)
 }
 
 type addonsRequest struct {
@@ -2245,6 +2274,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, gitops.ErrPlatformTenant):
 		s.fail(w, r, http.StatusConflict, gitops.ErrPlatformTenant.Error())
 	case errors.Is(err, gitops.ErrPlacedApp):
+		s.fail(w, r, http.StatusConflict, err.Error())
+	case errors.Is(err, gitops.ErrCameWithApp):
 		s.fail(w, r, http.StatusConflict, err.Error())
 	case errors.Is(err, gitops.ErrNoClusterClaim):
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")

@@ -369,6 +369,17 @@ only, with the approver's acknowledgement. Limits, reserved paths and the rule f
 network path between the two apps exists while the tenant's administrator has granted it to the
 consumer, and not before ([app-customization.md §2.3](app-customization.md)).
 
+**An app that needs other apps beside it names them.** `spec.comesWith` lists the profiles of the
+apps an app is installed together with. Installing the app also installs each of them the tenant
+does not have yet, from the app's own catalog or another one the tenant sees, and marks the entry
+(`cameWith` in the tenant's `spec.apps`); uninstalling the app removes the entries so marked, unless
+another installed app comes with them too. An app the tenant installed itself is left as it is both
+times. The install is refused as a whole when one of them is offered nowhere or cannot be installed
+on the cluster. Each of them is otherwise an app of its own: it asks for its own privileges and
+approvals, moves to newer builds by itself, is not uninstalled by hand while the app it came with
+is installed, and keeps its data when removed until it is purged by name. What an app that came
+along comes with itself is not followed.
+
 **An app that creates databases of its own** (`spec.requires.services.database.allowDynamicDatabaseCreation`)
 has to name them the platform's way on MariaDB, where every tenant's databases are on one server:
 the name of the database it was given, an underscore, then anything — `<database>_reports`. It can

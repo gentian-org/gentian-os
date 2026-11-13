@@ -1178,6 +1178,16 @@ type TenantApp struct {
 	// +optional
 	Placed bool `json:"placed,omitempty"`
 
+	// CameWith names the app this one was installed together with: that
+	// app's profile names this one (ComponentProfile spec.comesWith), and
+	// the tenant did not have it. The director writes the key and removes
+	// the entry with the app it names; it is not uninstalled by hand. In
+	// every other respect the entry is an installed app.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	CameWith string `json:"cameWith,omitempty"`
+
 	// AddonGrants says which addons of this app every member of the tenant
 	// has access to by default. An addon is entitled by its own group, as an
 	// app is, and defaultGrant on an entry here is that addon's defaultGrant:

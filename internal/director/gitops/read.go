@@ -51,6 +51,9 @@ type App struct {
 	// Placed says the platform put the app here (Tenant.spec.apps[].placed):
 	// only the placement worker changes the entry.
 	Placed bool `json:"placed,omitempty"`
+	// CameWith names the app this one was installed together with
+	// (Tenant.spec.apps[].cameWith): it is removed with that app.
+	CameWith string `json:"cameWith,omitempty"`
 }
 
 // Apps returns what git says a tenant has installed. Git is the desired state;
