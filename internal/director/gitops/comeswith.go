@@ -44,17 +44,69 @@ func refuseCameWith(lines []string, profile string) error {
 	return nil
 }
 
-// InstallWith installs an app that another app comes with, as InstallFrom
-// installs any app, and marks the entry with the app it came with. An app
-// the tenant already has is left exactly as it is, unmarked and at the build
-// it was at: the status is then "already_installed".
+// CameWith is one app to install together with another: the build to pin
+// it to and the catalog it was fetched from, or neither where the cluster
+// already holds its profile.
+type CameWith struct {
+	Profile, Digest, Catalogue string
+}
+
+// InstallWith installs the apps another app comes with, in one commit, each
+// as InstallFrom installs an app and marked with the app it came with. An
+// app the tenant already has is left exactly as it is, unmarked and at the
+// build it was at. Installed lists the ones this call wrote.
+//
+// One commit for all of them: an app with several is not half installed
+// when a push fails, and the request is not as many pushes long as it has
+// apps.
 func (g *GitOps) InstallWith(
-	ctx context.Context, tenant, profile, digest, catalogue, with string, defaultGrant *bool, meta Meta,
-) (Result, error) {
+	ctx context.Context, tenant, with string, apps []CameWith, defaultGrant *bool, meta Meta,
+) (res Result, installed []string, err error) {
 	if !ValidName(with) {
-		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, with)
+		return Result{}, nil, fmt.Errorf("%w: profile %q", ErrInvalidName, with)
 	}
-	return g.installFrom(ctx, tenant, profile, digest, catalogue, with, defaultGrant, meta)
+	var names []string
+	for _, a := range apps {
+		if !ValidName(a.Profile) {
+			return Result{}, nil, fmt.Errorf("%w: profile %q", ErrInvalidName, a.Profile)
+		}
+		if a.Digest != "" && !digestPattern.MatchString(a.Digest) {
+			return Result{}, nil, fmt.Errorf("%w: digest %q", ErrInvalidName, a.Digest)
+		}
+		if a.Catalogue != "" && (a.Digest == "" || !ValidName(a.Catalogue)) {
+			return Result{}, nil, fmt.Errorf("%w: catalog %q", ErrInvalidName, a.Catalogue)
+		}
+		names = append(names, a.Profile)
+	}
+	forEveryone := defaultGrant != nil && *defaultGrant
+	msg := fmt.Sprintf("feat(%s): install %s with %s (via %s)", tenant, strings.Join(names, ", "), with, meta.actor())
+	if forEveryone {
+		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
+	}
+	res, err = g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		installed = nil
+		if adoptsAnotherRealm(text, tenant) {
+			return "", "", false, ErrPlatformTenant
+		}
+		out := text
+		for _, a := range apps {
+			if _, _, _, present := appEntryExtent(strings.Split(out, "\n"), a.Profile); present {
+				continue
+			}
+			next, ok := insertComponentProfile(out, a.Profile, a.Digest, a.Catalogue, forEveryone)
+			if !ok {
+				return "", "", false, errors.New("failed to update apps list")
+			}
+			marked, _ := setAppEntryKey(strings.Split(next, "\n"), a.Profile, appCameWithKey, with, "")
+			out = strings.Join(marked, "\n")
+			installed = append(installed, a.Profile)
+		}
+		if len(installed) == 0 {
+			return text, "already_installed", false, nil
+		}
+		return out, "installed", true, nil
+	})
+	return res, installed, err
 }
 
 // UninstallWith removes an app and, in the same commit, the apps that came

@@ -13,8 +13,10 @@ package api_test
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
@@ -91,6 +93,52 @@ func TestAnAppIsInstalledWithTheAppsItComesWith(t *testing.T) {
 	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/suite", tom, ""); code != http.StatusOK || h.tip(t) != before {
 		t.Errorf("a second install = %d %v, and the repository moved: %v", code, out, h.tip(t) != before)
 	}
+}
+
+// The apps an app comes with are written in one commit, and the install is
+// finished once begun: a caller that hangs up while it is being written
+// still leaves the tenant with the app and everything it came with.
+func TestAnInstallWithOtherAppsIsFinishedWithoutItsCaller(t *testing.T) {
+	h := startComingWith(t)
+	before := dt.Git(t, "", "--git-dir", h.remote, "rev-list", "--count", "main")
+
+	req, err := http.NewRequest("POST", h.URL+"/v1/tenants/demo/apps/suite", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+h.token(t, "tenant-demo", "tom"))
+	// Long enough for the request to arrive, far too short for its writes.
+	client := &http.Client{Timeout: 150 * time.Millisecond}
+	if resp, err := client.Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Skip("the install answered before the caller gave up; nothing to show here")
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for appEntryOf(t, h, "demo", "suite") == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("the install was not finished after its caller hung up")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	for _, name := range []string{"wiki", "board"} {
+		if entry := appEntryOf(t, h, "demo", name); !strings.Contains(entry, "cameWith: suite") {
+			t.Errorf("%s did not come with the suite:\n%q", name, entry)
+		}
+	}
+	after := dt.Git(t, "", "--git-dir", h.remote, "rev-list", "--count", "main")
+	if fmt.Sprint(atoi(t, after)-atoi(t, before)) != "2" {
+		t.Errorf("the install made %s commits on top of %s; want two, one for what it comes with and one for the app", after, before)
+	}
+}
+
+func atoi(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // An app that comes with one nobody offers is not installed, and neither is

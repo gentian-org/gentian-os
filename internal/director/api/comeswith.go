@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -28,6 +29,11 @@ import (
 // digest, held to the floor and committed with its profile. Uninstalling the
 // app removes the ones that came with it. One level: what an app that came
 // along comes with itself is not followed.
+
+// comesWithWait bounds the writes of an install that brings other apps: the
+// profile of each, their entries and the app's own. They are made whether or
+// not the caller is still waiting.
+const comesWithWait = 2 * time.Minute
 
 // companion is one app to install with another: where its build is, or no
 // catalog where the cluster already holds its profile for this tenant.
@@ -71,7 +77,7 @@ func (s *Server) installComesWith(
 		}
 		plan = append(plan, found)
 	}
-	var came []string
+	var with []gitops.CameWith
 	for _, p := range plan {
 		if p.catalogue != "" {
 			if _, detail, err := s.materialise(ctx, c, "app", tenant, p.name, p.catalogue, p.digest); err != nil {
@@ -80,14 +86,15 @@ func (s *Server) installComesWith(
 				return nil, false
 			}
 		}
-		res, err := s.cfg.Repo.InstallWith(ctx, tenant, p.name, p.digest, p.catalogue, profile, defaultGrant, c.meta)
-		if err != nil {
-			s.repoError(w, r, err)
-			return nil, false
-		}
-		if res.Changed {
-			came = append(came, p.name)
-		}
+		with = append(with, gitops.CameWith{Profile: p.name, Digest: p.digest, Catalogue: p.catalogue})
+	}
+	if len(with) == 0 {
+		return nil, true
+	}
+	_, came, err := s.cfg.Repo.InstallWith(ctx, tenant, profile, with, defaultGrant, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return nil, false
 	}
 	return came, true
 }
