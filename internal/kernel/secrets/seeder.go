@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -841,9 +842,9 @@ func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (Con
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
 	}
 	if got["user"] != user {
-		with := make(map[string]string, len(got)+1)
-		for k, v := range got {
-			with[k] = v
+		with := maps.Clone(got)
+		if with == nil {
+			with = map[string]string{}
 		}
 		with["user"] = user
 		if err := s.w.Put(ctx, salt, with); err != nil {
