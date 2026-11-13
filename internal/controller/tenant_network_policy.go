@@ -124,10 +124,12 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	// release, not the app label every other chart is rendered with. A
 	// contract selects each side by what it carries.
 	selectors := map[string]map[string]string{}
+	var placed []string
 	for name, profile := range profiles {
 		if !operatorPlaced(profile) {
 			continue
 		}
+		placed = append(placed, name)
 		comp := &gentianov1alpha1.Component{}
 		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: nsName}, comp); err != nil && !errors.IsNotFound(err) {
 			return err
@@ -149,6 +151,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		TenantName:    tenant.Name,
 		Namespace:     nsName,
 		Apps:          installed,
+		Placed:        placed,
 		Profiles:      profiles,
 		Bindings:      bindings,
 		Grants:        grants,
@@ -158,6 +161,12 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	}
 	desired := netpolicy.BuildDesired(in)
 	desiredNames := netpolicy.ManagedPolicyNames(in)
+
+	// Who may call the tenant's adapters is decided above; the same
+	// components are told which adapters there are.
+	if err := r.ensureAdapterLists(ctx, tenant, in); err != nil {
+		return err
+	}
 
 	for _, np := range desired {
 		if err := controllerutil.SetControllerReference(tenant, np, r.Scheme); err != nil {

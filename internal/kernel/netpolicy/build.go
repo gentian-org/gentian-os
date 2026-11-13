@@ -46,6 +46,11 @@ type BuildInput struct {
 	// built for these. A component the platform places writes its own and
 	// is not among them.
 	Apps []gentianov1alpha1.TenantApp
+	// Placed are the install names of the components the platform places
+	// in the tenant, which Apps leaves out. One of them that may speak as a
+	// person is a caller of the tenant's adapters like an installed one;
+	// nothing else is derived from them here.
+	Placed []string
 	// Profiles are the profiles by install name. They may name more than
 	// Apps -- a placed component's, for the pod selectors of a contract.
 	Profiles map[string]*gentianov1alpha1.ComponentProfile

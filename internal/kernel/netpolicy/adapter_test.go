@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package netpolicy_test
 
 import (
+	"strings"
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -225,5 +226,46 @@ func TestAnAPIAdapterIsReachedThroughTheChaperonesGrantedEgress(t *testing.T) {
 	callers := got["adapter-callers-chaperone"]
 	if callers == nil || len(callers.Spec.Egress) != 1 || callers.Spec.Egress[0].To[0].IPBlock.CIDR != "203.0.113.10/32" {
 		t.Fatalf("the chaperone must reach the granted tool server, got %+v", callers)
+	}
+}
+
+// A component the platform places that may speak as a person is a caller
+// like an installed one: admitted by the adapter and given the way to it,
+// selected by the labels its release carries. A placed component that does
+// not speak as a person is nobody to an adapter.
+func TestAPlacedComponentThatSpeaksAsAPersonIsACallerToo(t *testing.T) {
+	t.Parallel()
+	in := tenantWith(map[string]*gentianov1alpha1.ComponentProfile{
+		"openproject":         appProfile(),
+		"openproject-adapter": adapterProfile("openproject", false),
+	})
+	in.Profiles["usher"] = chaperoneProfile()
+	in.Profiles["desktop"] = appProfile()
+	in.Placed = []string{"usher", "desktop"}
+	in.PodSelectors["usher"] = map[string]string{instanceLabel: "tenant-demo-usher"}
+	in.PodSelectors["desktop"] = map[string]string{instanceLabel: "tenant-demo-desktop"}
+	got := byName(netpolicy.BuildDesired(in))
+
+	floor := got["adapter-openproject-adapter"]
+	if floor == nil || len(floor.Spec.Ingress) != 1 || len(floor.Spec.Ingress[0].From) != 1 ||
+		floor.Spec.Ingress[0].From[0].PodSelector.MatchLabels[instanceLabel] != "tenant-demo-usher" {
+		t.Fatalf("the adapter must admit the placed caller and nobody else, got %+v", floor)
+	}
+	callers := got["adapter-callers-usher"]
+	if callers == nil || callers.Spec.PodSelector.MatchLabels[instanceLabel] != "tenant-demo-usher" ||
+		callers.Spec.Egress[0].To[0].PodSelector.MatchLabels[meta.AppLabel] != "openproject-adapter" {
+		t.Fatalf("the placed caller must reach the adapter, got %+v", callers)
+	}
+	if _, ok := got["adapter-callers-desktop"]; ok {
+		t.Fatal("a placed component that does not speak as a person was given the way to the adapter")
+	}
+	if _, ok := netpolicy.ManagedPolicyNames(in)["adapter-callers-usher"]; !ok {
+		t.Error("adapter-callers-usher is built and not kept: it would be deleted on the next pass")
+	}
+	// Nothing else is derived from a placed component here.
+	for name := range got {
+		if strings.Contains(name, "desktop") {
+			t.Errorf("%s was built for a placed component", name)
+		}
 	}
 }

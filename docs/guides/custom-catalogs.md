@@ -555,7 +555,8 @@ people, that is an addon, or that is placed by default.
 What the platform does with it, and nothing needs granting for:
 
 - The adapter's pods are left out of the tenant's baseline and admit only the tenant's components
-  that speak as a person (those that declare vouching, above); those may reach every adapter.
+  that speak as a person (those that declare vouching, above); those may reach every adapter. Such
+  a component is admitted whether a tenant installed it or the platform placed it.
 - An adapter reaches the app it `adapts` and nothing else in the tenant, and that app admits it. The
   app is not changed for this.
 - It keeps no credential of its app: the credential for a call arrives with the call. Egress beyond
@@ -565,6 +566,21 @@ What the platform does with it, and nothing needs granting for:
 - An adapter may be an `api` instead of a chart: a tool server outside the cluster. It adapts no app
   of the tenant and runs nothing in it, so the egress granted to it is given to the components that
   call it.
+
+An adapter that says where its tool server answers is made known to the components that may call
+it:
+
+```yaml
+  adapter:
+    adapts: {profile: openproject}
+    endpoint: {service: openproject-tools, port: 8765, path: /mcp}
+```
+
+Each of those components finds a ConfigMap `adapters-<component>` in its namespace. Its one key,
+`ADAPTERS`, is a JSON object from an adapter's install name to its address inside the tenant and
+the app it adapts: `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
+The list follows what is installed. It grants nothing: the way to an adapter is the network
+policy above, and an adapter without an `endpoint` is installed and on no list.
 
 An adapter whose tools depend on the app's add-ons names a chart value in
 `spec.adapter.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
