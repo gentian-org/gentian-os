@@ -80,8 +80,10 @@ func speaksAsPerson(profile *gentianov1alpha1.ComponentProfile) bool {
 		profile.Spec.Requires.Services.Vouching != nil
 }
 
-// adapterRoles are the installed adapters and the installed components that
-// may call them, each by install name, sorted and without repeats.
+// adapterRoles are the installed adapters and the components that may call
+// them, each by install name, sorted and without repeats. A caller is
+// installed or placed by the platform: what admits it is that it may speak
+// as a person, not who put it there. An adapter is always installed.
 func (in BuildInput) adapterRoles() (adapters, callers []string) {
 	seen := map[string]struct{}{}
 	for _, app := range in.Apps {
@@ -97,10 +99,23 @@ func (in BuildInput) adapterRoles() (adapters, callers []string) {
 			callers = append(callers, app.Profile)
 		}
 	}
+	for _, name := range in.Placed {
+		if _, done := seen[name]; done {
+			continue
+		}
+		seen[name] = struct{}{}
+		if speaksAsPerson(in.Profiles[name]) {
+			callers = append(callers, name)
+		}
+	}
 	sort.Strings(adapters)
 	sort.Strings(callers)
 	return adapters, callers
 }
+
+// AdapterRoles are the tenant's installed adapters and the components that
+// may call them, as the adapters' policies have them.
+func AdapterRoles(in BuildInput) (adapters, callers []string) { return in.adapterRoles() }
 
 // installed reports whether an app is installed in the tenant.
 func (in BuildInput) installed(name string) bool {

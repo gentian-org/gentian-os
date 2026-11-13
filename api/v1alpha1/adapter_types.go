@@ -35,6 +35,14 @@ type AdapterSpec struct {
 	// +optional
 	Adapts *AdaptedApp `json:"adapts,omitempty"`
 
+	// Endpoint is where the adapter's tool server (MCP) answers inside the
+	// tenant: its Service, the port and the path. With it the platform tells
+	// the tenant's components that may call adapters that this one is there
+	// (the ConfigMap adapters-<component>). Absent, the adapter is installed
+	// and callers are not told of it.
+	// +optional
+	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+
 	// AddonsValuesPath is the dot-separated Helm values path at which the
 	// adapter is told which add-ons are selected into the app it adapts in
 	// its tenant: a list of their IDs (package.addon.id), empty while none is

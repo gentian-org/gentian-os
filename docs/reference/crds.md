@@ -319,6 +319,10 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `spec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
 | `spec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
+| `spec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
+| `spec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `spec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `spec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -1155,6 +1159,10 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `status.profileSpec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
 | `status.profileSpec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
+| `status.profileSpec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
+| `status.profileSpec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `status.profileSpec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `status.profileSpec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
