@@ -301,7 +301,14 @@ spec:
         template:
           spec:
             containers:
-            - image: ghcr.io/gentian-org/gentian-app-init:develop
+            - command:
+              - /bin/sh
+              - -c
+              - |2
+
+                  set -eu
+                echo realm
+              image: ghcr.io/gentian-org/gentian-app-init:develop
               name: provision
             restartPolicy: Never
   providerConfigRef:
