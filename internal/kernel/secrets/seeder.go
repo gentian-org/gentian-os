@@ -807,25 +807,48 @@ type ContractCreds struct {
 	Password string
 }
 
-// SeedContract writes a unique password into OpenBao for an integration contract.
+// ContractUser is the account the two sides of a contract share the password
+// of. It follows from the contract's name alone and names no address.
+func ContractUser(contract string) string {
+	return "gentian-contract-" + contract
+}
+
+// SeedContract writes a unique password into OpenBao for an integration
+// contract, and the contract's user with it.
 //
-// The endpoint and the user are written empty with it, and are the binding's
-// to fill (IntegrationBindingReconciler): a component that maps them is
-// installed whether or not the other side of the contract is, and the
-// ExternalSecret that reads them fails on a property the path does not hold.
+// The endpoint is written empty, and is the binding's to fill
+// (IntegrationBindingReconciler): a component that maps it is installed
+// whether or not the other side of the contract is, and the ExternalSecret
+// that reads it fails on a property the path does not hold.
+//
+// The user is not the binding's: a provider that makes the account its
+// consumers sign in with is installed before any of them is bound, and a
+// release that maps an empty user is never installed. A path seeded before
+// the user was is given it here.
 func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
 	salt := ContractPath(tenant, contract)
 	g, err := s.gen(ctx, salt, "password", 40)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
 	}
+	user := ContractUser(contract)
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"password": g.value,
 		"endpoint": "",
-		"user":     "",
+		"user":     user,
 	}, g.reproducible)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
+	}
+	if got["user"] != user {
+		with := make(map[string]string, len(got)+1)
+		for k, v := range got {
+			with[k] = v
+		}
+		with["user"] = user
+		if err := s.w.Put(ctx, salt, with); err != nil {
+			return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): write the user: %w", tenant, contract, err)
+		}
 	}
 	return ContractCreds{Password: got["password"]}, nil
 }
