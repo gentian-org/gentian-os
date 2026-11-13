@@ -34,7 +34,7 @@ func vouchingProfile(name string) *gentianov1alpha1.ComponentProfile {
 	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Services: &gentianov1alpha1.ServiceRequirements{Vouching: &gentianov1alpha1.VouchingRequirement{
-			Keys: gentianov1alpha1.VouchingKeys{Service: name, Port: 8080},
+			Keys: &gentianov1alpha1.VouchingKeys{Service: name, Port: 8080},
 		}},
 	}
 	return profile

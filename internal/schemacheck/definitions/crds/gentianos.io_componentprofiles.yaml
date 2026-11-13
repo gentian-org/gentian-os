@@ -2052,7 +2052,8 @@ spec:
                             keys:
                               description: |-
                                 Keys says where the component publishes the keys its statements are
-                                signed with, as a JWKS. The realm fetches them from there.
+                                signed with, as a JWKS. The realm fetches them from there. Left out
+                                only by a component that exchanges and does not vouch.
                               properties:
                                 path:
                                   default: /.well-known/jwks.json
@@ -2077,9 +2078,16 @@ spec:
                               - port
                               - service
                               type: object
-                          required:
-                          - keys
                           type: object
+                          x-kubernetes-validations:
+                          - message: 'vouching.keys is required: only a component
+                              that does nothing but exchange a present person''s token
+                              (exchange: true) may leave it out'
+                            rule: has(self.keys) || (has(self.exchange) && self.exchange)
+                          - message: 'vouching.director needs vouching.keys: a token
+                              for the director is obtained with a signed statement'
+                            rule: has(self.keys) || !has(self.director) || size(self.director)
+                              == 0
                       type: object
                     name:
                       description: |-
@@ -4360,7 +4368,8 @@ spec:
                           keys:
                             description: |-
                               Keys says where the component publishes the keys its statements are
-                              signed with, as a JWKS. The realm fetches them from there.
+                              signed with, as a JWKS. The realm fetches them from there. Left out
+                              only by a component that exchanges and does not vouch.
                             properties:
                               path:
                                 default: /.well-known/jwks.json
@@ -4385,9 +4394,16 @@ spec:
                             - port
                             - service
                             type: object
-                        required:
-                        - keys
                         type: object
+                        x-kubernetes-validations:
+                        - message: 'vouching.keys is required: only a component that
+                            does nothing but exchange a present person''s token (exchange:
+                            true) may leave it out'
+                          rule: has(self.keys) || (has(self.exchange) && self.exchange)
+                        - message: 'vouching.director needs vouching.keys: a token
+                            for the director is obtained with a signed statement'
+                          rule: has(self.keys) || !has(self.director) || size(self.director)
+                            == 0
                     type: object
                 type: object
               secrets:

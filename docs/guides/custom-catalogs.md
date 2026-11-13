@@ -503,7 +503,11 @@ token for one valid at a single app, with the same client and for the same
 scopes. The realm exchanges a token only for a client the token names, and
 only a token entry that lists the component's profile under `exchangedBy`
 makes its tokens out to it ([routing.md §4.1](../concepts/routing.md)). The
-person need not be linked: the token is theirs.
+person need not be linked: the token is theirs. A component that only
+exchanges leaves `keys` out. It signs no statements, so the platform gives it
+the client and the Secret, without `VOUCHING_ISSUER`, and does not enter it in
+the realm as an issuer: there is nobody to link to it and nothing it says
+about a person is believed.
 
 **A component of the platform tenant may also obtain a token for the director** — a cluster
 administrator's, for the platform's own API — by naming what it may do there in

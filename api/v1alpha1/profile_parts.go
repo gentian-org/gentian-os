@@ -507,10 +507,19 @@ type PartnersRequirement struct {
 //
 // A component that can obtain a person's token for any app of the tenant is
 // of platform trust.
+//
+// A component that only exchanges the token of a person who is present
+// (exchange, below) signs no statements and names no keys. It is given the
+// client and the Secret, without VOUCHING_ISSUER, and is not entered as an
+// issuer: the realm believes nothing it says about anybody.
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || (has(self.exchange) && self.exchange)",message="vouching.keys is required: only a component that does nothing but exchange a present person's token (exchange: true) may leave it out"
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.director) || size(self.director) == 0",message="vouching.director needs vouching.keys: a token for the director is obtained with a signed statement"
 type VouchingRequirement struct {
 	// Keys says where the component publishes the keys its statements are
-	// signed with, as a JWKS. The realm fetches them from there.
-	Keys VouchingKeys `json:"keys"`
+	// signed with, as a JWKS. The realm fetches them from there. Left out
+	// only by a component that exchanges and does not vouch.
+	// +optional
+	Keys *VouchingKeys `json:"keys,omitempty"`
 
 	// Director names what a token the component obtains for a person may do
 	// at the platform's own API, beside the apps: plans-read reads the
