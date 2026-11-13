@@ -431,3 +431,45 @@ func TestSyncSMTPFollowsValues(t *testing.T) {
 		t.Fatalf("empty sync changed the record to %v", got)
 	}
 }
+
+// A contract's user is the contract's from the moment its path is seeded: a
+// provider that makes the account its consumers sign in with is installed
+// before any of them is bound. A path seeded before the user was is given it,
+// and what the path held besides is left as it is.
+func TestSeedContractGivesTheContractItsUser(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	c := newClient(t, srv.URL)
+	s := secrets.NewSeeder(c, secrets.NewDeriver("unit-test-master"))
+	ctx := context.Background()
+
+	first, err := s.SeedContract(ctx, "acme", "process-engine")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	path := secrets.ContractPath("acme", "process-engine")
+	got, err := c.Get(ctx, path)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got["user"] != "gentian-contract-process-engine" || got["endpoint"] != "" || got["password"] != first.Password {
+		t.Fatalf("a new path holds user %q, endpoint %q", got["user"], got["endpoint"])
+	}
+
+	// As a cluster seeded it before, with an endpoint a binding wrote since.
+	old := secrets.ContractPath("acme", "files")
+	if err := c.Put(ctx, old, map[string]string{"password": "kept", "endpoint": "http://files:8080/dav", "user": ""}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	again, err := s.SeedContract(ctx, "acme", "files")
+	if err != nil {
+		t.Fatalf("seed over an older path: %v", err)
+	}
+	got, err = c.Get(ctx, old)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got["user"] != "gentian-contract-files" || got["password"] != "kept" || again.Password != "kept" || got["endpoint"] != "http://files:8080/dav" {
+		t.Fatalf("an older path holds user %q, endpoint %q, and its password is kept: %v", got["user"], got["endpoint"], got["password"] == "kept")
+	}
+}

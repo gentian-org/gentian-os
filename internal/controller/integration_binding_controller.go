@@ -141,7 +141,7 @@ func (r *IntegrationBindingReconciler) seedContract(ctx context.Context, ib *gen
 		return nil
 	}
 	endpoint := ""
-	user := fmt.Sprintf("gentian-contract-%s", ib.Spec.Contract) // A standard user
+	user := secrets.ContractUser(ib.Spec.Contract)
 	switch {
 	case ib.Spec.Endpoint != nil:
 		// Where the provider's profile says it answers the contract. What
