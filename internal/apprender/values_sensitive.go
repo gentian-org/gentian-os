@@ -213,7 +213,13 @@ func (r *valuesRender) sensitiveValues() *valuesSensitive {
 	}
 	for _, contract := range integrations {
 		m := vm.Integrations[contract]
-		set(m.EndpointKey, "integration-"+contract+"-endpoint")
+		// The address is empty until the tenant's administrator has granted
+		// the contract and its provider answers. An empty value cannot be
+		// set on a release, which would then never install: the chart keeps
+		// its own default until there is an address.
+		if m.EndpointKey != "" {
+			v.optional(secret, ns, m.EndpointKey, "integration-"+contract+"-endpoint", false)
+		}
 		set(m.UserKey, "integration-"+contract+"-user")
 		set(m.PasswordKey, "integration-"+contract+"-password")
 	}

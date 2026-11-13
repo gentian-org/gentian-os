@@ -141,11 +141,25 @@ func TestValuesDatabaseReadKeysAndIntegrations(t *testing.T) {
 		key, _, _ := unstructured.NestedString(m, "valueFrom", "secretKeyRef", "key")
 		setKeys = append(setKeys, key)
 	}
-	if diff := cmp.Diff([]string{"db.name", "db.readName", "alpha.user", "zeta.url"}, setNames); diff != "" {
+	if diff := cmp.Diff([]string{"db.name", "db.readName", "alpha.user"}, setNames); diff != "" {
 		t.Errorf("set names (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]string{"db-name", "db-name", "integration-alpha-user", "integration-zeta-endpoint"}, setKeys); diff != "" {
+	if diff := cmp.Diff([]string{"db-name", "db-name", "integration-alpha-user"}, setKeys); diff != "" {
 		t.Errorf("set keys (-want +got):\n%s", diff)
+	}
+	// A contract's address is empty until the contract is granted, and an
+	// empty value cannot be set on a release: it is read as a document of
+	// its own, optional, so the chart installs and keeps its default.
+	var optional []string
+	valuesFrom, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "valuesFrom")
+	for _, f := range valuesFrom {
+		ref, _, _ := unstructured.NestedMap(f.(map[string]interface{}), "secretKeyRef")
+		if ref["optional"] == true {
+			optional = append(optional, ref["key"].(string))
+		}
+	}
+	if diff := cmp.Diff([]string{"values-integration-zeta-endpoint"}, optional); diff != "" {
+		t.Errorf("optional value documents (-want +got):\n%s", diff)
 	}
 	data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
 	var paths []string
