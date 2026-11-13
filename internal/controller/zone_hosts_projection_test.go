@@ -249,7 +249,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 			Vouching: &gentianov1alpha1.VouchingRequirement{
-				Keys: gentianov1alpha1.VouchingKeys{Service: service, Port: port, Path: path},
+				Keys: &gentianov1alpha1.VouchingKeys{Service: service, Port: port, Path: path},
 			},
 		}}
 		return p
@@ -272,6 +272,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		// Exchanges as well: the word that says so follows its line.
 		exchanging(vouching("steward", "steward-keys", 8443, "/keys/current.json")),
 		plain,
+		// Exchanges and names no keys: the line says there are none.
+		keyless("warden"),
 		// Vouches, and no component of this tenant is of it.
 		vouching("elsewhere", "elsewhere", 8080, ""),
 		// Two components of one profile are one issuer with one set of keys.
@@ -279,6 +281,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		comp("scribe-b", "scribe", tenant.NamespaceName()),
 		comp("steward", "steward", tenant.NamespaceName()),
 		comp("plain", "plain", tenant.NamespaceName()),
+		comp("warden", "warden", tenant.NamespaceName()),
 		// A component in nobody's namespace is in nobody's realm.
 		comp("elsewhere", "elsewhere", "system-data"),
 	).Build()
@@ -291,6 +294,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	want := []string{
 		"scribe scribe 8080 " + vouchingKeysDefaultPath,
 		"steward steward-keys 8443 /keys/current.json exchange",
+		"warden - 0 - exchange",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("vouching profiles = %q, want %q: sorted, one line per profile, only the ones that vouch", got, want)
@@ -322,8 +326,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != want[0] {
-		t.Fatalf("vouching profiles = %q after steward stopped vouching, want scribe alone", got)
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != want[0] || got[1] != want[2] {
+		t.Fatalf("vouching profiles = %q after steward stopped vouching, want the other two", got)
 	}
 }
 
@@ -340,7 +344,7 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	syncer := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "syncer"}}
 	syncer.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 		Vouching: &gentianov1alpha1.VouchingRequirement{
-			Keys:     gentianov1alpha1.VouchingKeys{Service: "syncer", Port: 8080},
+			Keys:     &gentianov1alpha1.VouchingKeys{Service: "syncer", Port: 8080},
 			Director: []gentianov1alpha1.DirectorScope{gentianov1alpha1.DirectorScopePlansApply, gentianov1alpha1.DirectorScopePlansRead},
 		},
 	}}
@@ -364,6 +368,16 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath {
 		t.Fatalf("another tenant was given director scopes: %q", got)
 	}
+}
+
+// keyless is a profile that exchanges a present person's token and vouches
+// for nobody: it names no keys.
+func keyless(name string) *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Exchange: true},
+	}}
+	return p
 }
 
 // exchanging says the profile's client also exchanges a person's own token

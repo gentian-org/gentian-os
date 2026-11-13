@@ -517,7 +517,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `spec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
-| `spec.extensions[].kernelRequirements.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `spec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.extensions[].kernelRequirements.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -798,7 +798,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `spec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
-| `spec.requires.services.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `spec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -1353,7 +1353,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
-| `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -1634,7 +1634,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `status.profileSpec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
-| `status.profileSpec.requires.services.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `status.profileSpec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |

@@ -633,7 +633,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "keyless" (eq (index $f 1) "-")) }}
             {{- end }}
             {{- end }}
             {{- /* The components that call partners or accept their
@@ -1601,6 +1601,11 @@ spec:
             {{- $vouchIssuer := printf "https://%s.%s.svc" $vouchAlias $ns }}
             {{- $vouchSecret := printf "vouching-%s" $p }}
 
+            {{- /* A component that names no keys exchanges a present
+                 person's own token and signs nothing. It is no issuer: the
+                 entry below is not made for it, and its client further down
+                 may not use the JWT authorization grant. */}}
+            {{- if not $v.keyless }}
             {{- /* The component as an issuer the realm believes.
 
                  The issuer is a name and is never fetched. It is what the
@@ -1687,6 +1692,7 @@ spec:
                   key: client_secret
               providerConfigRef:
                 name: keycloak
+            {{- end }}
 
             {{- /* The client's secret, generated exactly as the exchange
                  client's is and for the reasons given at the zone client's:
@@ -1781,7 +1787,9 @@ spec:
                           labels:
                             app.kubernetes.io/managed-by: gentian-os
                         data:
+                          {{- if not $v.keyless }}
                           VOUCHING_ISSUER: {{ $vouchIssuer | quote }}
+                          {{- end }}
                           VOUCHING_CLIENT_ID: {{ $vouchAlias | quote }}
                           VOUCHING_CLIENT_SECRET: "{{ `{{ .secret }}` }}"
                           VOUCHING_TOKEN_URL: {{ printf "%s/realms/%s/protocol/openid-connect/token" $kcInternal $realm | quote }}
@@ -1842,8 +1850,10 @@ spec:
                 standardTokenExchangeEnabled: true
                 {{- end }}
                 extraConfig:
+                  {{- if not $v.keyless }}
                   oauth2.jwt.authorization.grant.enabled: "true"
                   oauth2.jwt.authorization.grant.idp: {{ $vouchAlias }}
+                  {{- end }}
                   gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: {{ $vouchSecret }}

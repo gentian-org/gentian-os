@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: eso-secret-store, keycloak-browser-config-admin-is,
-      keycloak-browser-config-other-is-not, and 53 more'
+      keycloak-browser-config-other-is-not, and 56 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -1909,6 +1909,50 @@ spec:
     name: keycloak
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-client-warden
+    crossplane.io/external-name: vouch-warden
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-warden-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: vouch-warden
+    clientSecretSecretRef:
+      key: VOUCHING_CLIENT_SECRET
+      name: vouching-warden
+      namespace: tenant-render-fixture
+    directAccessGrantsEnabled: false
+    enabled: true
+    extraConfig:
+      gentianos.io/managed-by: platform
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Acme Cloud vouching (warden)
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+    standardTokenExchangeEnabled: true
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: ClientDefaultScopes
 metadata:
   annotations:
@@ -1956,6 +2000,34 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-vouching-steward-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-default-scopes-warden
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-warden-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-vouching-warden-client
       policy:
         resolve: Always
     defaultScopes:
@@ -2156,6 +2228,35 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-vouching-steward-client
+      policy:
+        resolve: Always
+    optionalScopes:
+    - app-notes
+    - app-wiki
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientOptionalScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-vouching-optional-scopes-warden
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-warden-optional-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-vouching-warden-client
       policy:
         resolve: Always
     optionalScopes:
@@ -2449,6 +2550,42 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vouching-password-warden
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-warden-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-warden
+        namespace: tenant-render-fixture
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vouching-secret-scribe
   labels:
     crossplane.io/composite: render-fixture
@@ -2538,6 +2675,56 @@ spec:
               VOUCHING_CLIENT_ID: vouch-steward
               VOUCHING_CLIENT_SECRET: '{{ .secret }}'
               VOUCHING_ISSUER: https://vouch-steward.tenant-render-fixture.svc
+              VOUCHING_TOKEN_URL: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vouching-secret-warden
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-vouching-warden-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: vouching-warden
+        namespace: tenant-render-fixture
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: vouching-warden
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: vouching-warden
+          template:
+            data:
+              VOUCHING_CLIENT_ID: vouch-warden
+              VOUCHING_CLIENT_SECRET: '{{ .secret }}'
               VOUCHING_TOKEN_URL: http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth/realms/render-fixture/protocol/openid-connect/token
             metadata:
               labels:

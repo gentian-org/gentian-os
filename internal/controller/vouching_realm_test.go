@@ -34,6 +34,9 @@ type vouchingComponent struct {
 	// jwks is where the realm fetches the component's keys, put together by
 	// the Composition from the projection's line and the tenant's namespace.
 	jwks string
+	// keyless says the profile names no keys: it exchanges a present
+	// person's token and is no issuer.
+	keyless bool
 }
 
 var vouchingRealmFixtures = []struct {
@@ -51,10 +54,12 @@ var vouchingRealmFixtures = []struct {
 		internalURL: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth",
 		components: []vouchingComponent{
 			// The default path, on a Service called what the profile is.
-			{"scribe", "http://scribe.tenant-render-fixture.svc.cluster.local:8080/.well-known/jwks.json"},
+			{profile: "scribe", jwks: "http://scribe.tenant-render-fixture.svc.cluster.local:8080/.well-known/jwks.json"},
 			// Another Service name, port and path: none of the four fields of
 			// a line is taken from another.
-			{"steward", "http://steward-keys.tenant-render-fixture.svc.cluster.local:8443/keys/current.json"},
+			{profile: "steward", jwks: "http://steward-keys.tenant-render-fixture.svc.cluster.local:8443/keys/current.json"},
+			// No keys: a client and a Secret, and no issuer.
+			{profile: "warden", keyless: true},
 		},
 		delivered: true,
 	},
@@ -65,7 +70,7 @@ var vouchingRealmFixtures = []struct {
 		fixture: "tenant-platform", tenant: "platform", realm: "kernel", namespace: "tenant-platform",
 		internalURL: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth",
 		components: []vouchingComponent{
-			{"herald", "http://herald.tenant-platform.svc.cluster.local:8080/.well-known/jwks.json"},
+			{profile: "herald", jwks: "http://herald.tenant-platform.svc.cluster.local:8080/.well-known/jwks.json"},
 		},
 	},
 }
@@ -130,12 +135,25 @@ func TestTheVouchingIssuerAsRendered(t *testing.T) {
 	for _, c := range vouchingRealmFixtures {
 		objs := renderedObjects(t, c.fixture)
 		issuers := vouchingIssuersOf(objs)
-		if len(issuers) != len(c.components) {
-			t.Fatalf("%s: %d vouching identity providers, want one for each of %v", c.fixture, len(issuers), c.components)
+		signing := 0
+		for _, comp := range c.components {
+			if !comp.keyless {
+				signing++
+			}
+		}
+		if len(issuers) != signing {
+			t.Fatalf("%s: %d vouching identity providers, want one for each of %v that names keys", c.fixture, len(issuers), c.components)
 		}
 		for _, comp := range c.components {
 			alias := VouchingAlias(comp.profile)
 			idp, ok := issuers[alias]
+			if comp.keyless {
+				// A component that signs nothing is believed about nobody.
+				if ok {
+					t.Errorf("%s: %s names no keys and is an issuer all the same", c.fixture, alias)
+				}
+				continue
+			}
 			if !ok {
 				t.Fatalf("%s: no identity provider %q: the registrar would link people to an entry the realm does not hold", c.fixture, alias)
 			}
@@ -259,8 +277,8 @@ func TestTheVouchingClientAsRendered(t *testing.T) {
 			// Vouching is not exchanging: a client may trade a person's own
 			// token only where its profile says so
 			// (requires.services.vouching.exchange), which in these fixtures
-			// is tenant-default's steward and nobody else.
-			exchanges := c.fixture == "tenant-default" && comp.profile == "steward"
+			// is tenant-default's steward and warden.
+			exchanges := c.fixture == "tenant-default" && (comp.profile == "steward" || comp.keyless)
 			if on, _, _ := unstructured.NestedBool(client, "spec", "forProvider", "standardTokenExchangeEnabled"); on != exchanges {
 				t.Errorf("%s: %s exchanges tokens: %v, want %v", c.fixture, alias, on, exchanges)
 			}
@@ -275,10 +293,14 @@ func TestTheVouchingClientAsRendered(t *testing.T) {
 				"oauth2.jwt.authorization.grant.idp":     VouchingAlias(comp.profile),
 				keycloak.PlatformMarkerAttribute:         keycloak.PlatformMarkerValue,
 			}
+			if comp.keyless {
+				// No statements, so no grant that takes one.
+				want = map[string]string{keycloak.PlatformMarkerAttribute: keycloak.PlatformMarkerValue}
+			}
 			if !reflect.DeepEqual(attrs, want) {
 				t.Errorf("%s: %s has attributes %v, want %v", c.fixture, alias, attrs, want)
 			}
-			if _, ok := vouchingIssuersOf(objs)[attrs["oauth2.jwt.authorization.grant.idp"]]; !ok {
+			if _, ok := vouchingIssuersOf(objs)[attrs["oauth2.jwt.authorization.grant.idp"]]; !ok && !comp.keyless {
 				t.Errorf("%s: %s is allowed an issuer the realm is not given", c.fixture, alias)
 			}
 			for _, f := range []string{"validRedirectUris", "rootUrl", "baseUrl", "webOrigins"} {
@@ -379,12 +401,18 @@ func TestTheVouchingSecretIsWhatTheComponentIsTold(t *testing.T) {
 				// cluster: the component has no reason to leave it.
 				VouchingTokenURLKey: c.internalURL + "/realms/" + c.realm + "/protocol/openid-connect/token",
 			}
+			if comp.keyless {
+				// It signs as nobody, and is told no name to sign as.
+				delete(want, VouchingIssuerKey)
+			}
 			if !reflect.DeepEqual(data, want) {
 				t.Errorf("%s: %s holds\n  %v\nwant\n  %v", c.fixture, name, data, want)
 			}
 			// What the component signs as is what the realm looks the issuer
 			// up by, and what it asks as is a client the realm holds.
-			if idp, ok := vouchingIssuersOf(objs)[data[VouchingClientIDKey]]; !ok {
+			if comp.keyless {
+				// Nothing to compare an issuer with.
+			} else if idp, ok := vouchingIssuersOf(objs)[data[VouchingClientIDKey]]; !ok {
 				t.Errorf("%s: %s names a client id the realm has no issuer under", c.fixture, name)
 			} else if iss, _, _ := unstructured.NestedString(idp, "spec", "forProvider", "issuer"); iss != data[VouchingIssuerKey] {
 				t.Errorf("%s: %s tells the component it is %q, and the realm knows it as %q", c.fixture, name, data[VouchingIssuerKey], iss)

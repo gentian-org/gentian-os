@@ -71,7 +71,8 @@ const (
 	//
 	//	<profile> <service> <port> <path> [<what else its client may do>]
 	//
-	// for example "scribe scribe-keys 8443 /.well-known/jwks.json". A space is
+	// for example "scribe scribe-keys 8443 /.well-known/jwks.json", or
+	// "steward - 0 - exchange" for a profile that names no keys. A space is
 	// a safe separator because none of them can hold one: the first two
 	// are DNS labels, the third is a number, the fourth is held to the
 	// characters of a URL path by the profile's schema, and the fifth is a
@@ -95,6 +96,10 @@ const (
 	// vouchingExchangeWord is, in the fifth field of a vouching line, the
 	// word that switches token exchange on at the component's client.
 	vouchingExchangeWord = "exchange"
+	// vouchingNoKeys stands where a service and a path would, in the line of
+	// a profile that names no keys. Neither a DNS label nor a path can be a
+	// lone hyphen, so it is never mistaken for one.
+	vouchingNoKeys = "-"
 
 	// vouchingKeysDefaultPath is where a component's keys are fetched from
 	// when its profile names no path: the default the profile's schema
@@ -237,11 +242,16 @@ func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
 // describes. Only called for a profile wantsVouching says yes to.
 func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string) string {
 	vouching := profile.Services().Vouching
-	path := vouching.Keys.Path
-	if path == "" {
-		path = vouchingKeysDefaultPath
+	// A profile that names no keys exchanges and does not vouch: the three
+	// fields say so, and the Composition makes no issuer of it.
+	fields := []string{profile.Name, vouchingNoKeys, "0", vouchingNoKeys}
+	if keys := vouching.Keys; keys != nil {
+		path := keys.Path
+		if path == "" {
+			path = vouchingKeysDefaultPath
+		}
+		fields = []string{profile.Name, keys.Service, strconv.Itoa(int(keys.Port)), path}
 	}
-	fields := []string{profile.Name, vouching.Keys.Service, strconv.Itoa(int(vouching.Keys.Port)), path}
 	// The fifth field: what the client may do beside vouching.
 	var extra []string
 	if vouching.Exchange {
