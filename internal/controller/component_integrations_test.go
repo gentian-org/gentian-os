@@ -85,6 +85,21 @@ func sensitiveOf(t *testing.T, objs []*unstructured.Unstructured, app string) (d
 	return data, set
 }
 
+// optionalValueDocuments are the keys of the values documents a release
+// reads only where they exist.
+func optionalValueDocuments(release *unstructured.Unstructured) []string {
+	var keys []string
+	from, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "valuesFrom")
+	for _, f := range from {
+		ref, _, _ := unstructured.NestedMap(f.(map[string]interface{}), "secretKeyRef")
+		if ref["optional"] == true {
+			key, _ := ref["key"].(string)
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 // The values a profile maps come out in one order -- by contract, then
 // endpoint, user, password -- with each Secret key named after its contract
 // and read from that contract's path in the tenant's store, and each set
@@ -105,8 +120,16 @@ func TestTheMappedValuesAreReadByContractInAFixedOrder(t *testing.T) {
 		{"integration-orders-endpoint", secrets.ContractPath("acme", "orders"), "endpoint", "orders.url"},
 		{"integration-orders-password", secrets.ContractPath("acme", "orders"), "password", "orders.token"},
 	}
-	if len(data) != len(want) || len(set) != len(want) {
-		t.Fatalf("data = %v, set = %v, want %d entries each", data, set, len(want))
+	// A contract's address is read into the Secret like its user and
+	// password, and is no set entry: see optionalValueDocuments.
+	var wantSet []int
+	for i, w := range want {
+		if w.property != "endpoint" {
+			wantSet = append(wantSet, i)
+		}
+	}
+	if len(data) != len(want) || len(set) != len(wantSet) {
+		t.Fatalf("data = %v, set = %v, want %d read and %d set", data, set, len(want), len(wantSet))
 	}
 	for i, w := range want {
 		d := data[i]
@@ -114,7 +137,9 @@ func TestTheMappedValuesAreReadByContractInAFixedOrder(t *testing.T) {
 		if d["secretKey"] != w.secretKey || ref["key"] != w.path || ref["property"] != w.property {
 			t.Fatalf("data[%d] = %v, want %s from %s#%s", i, d, w.secretKey, w.path, w.property)
 		}
-		s := set[i]
+	}
+	for i, at := range wantSet {
+		w, s := want[at], set[i]
 		from := s["valueFrom"].(map[string]interface{})["secretKeyRef"].(map[string]interface{})
 		if s["name"] != w.valueKey || from["name"] != "store-sensitive-values" || from["namespace"] != "tenant-acme" || from["key"] != w.secretKey {
 			t.Fatalf("set[%d] = %v, want %s from store-sensitive-values/%s", i, s, w.valueKey, w.secretKey)
@@ -133,7 +158,7 @@ func mappedWikiHarness(t *testing.T) *digestHarness {
 	profile := materialised(t, wikiBundle)
 	profile.Annotations = nil
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
+		"desktop-api": {UserKey: "api.env.DESKTOP_API_USER"},
 	}}
 	return startDigestHarness(t, profile, "")
 }
@@ -297,8 +322,8 @@ func TestTheReleaseIsToldTheMappedValuesBySetEntries(t *testing.T) {
 	}
 	entry := set[0].(map[string]interface{})
 	ref, _, _ := unstructured.NestedStringMap(entry, "valueFrom", "secretKeyRef")
-	if entry["name"] != "api.env.DESKTOP_API_URL" || ref["name"] != "wiki-sensitive-values" ||
-		ref["namespace"] != "tenant-acme" || ref["key"] != "integration-desktop-api-endpoint" {
+	if entry["name"] != "api.env.DESKTOP_API_USER" || ref["name"] != "wiki-sensitive-values" ||
+		ref["namespace"] != "tenant-acme" || ref["key"] != "integration-desktop-api-user" {
 		t.Fatalf("set entry = %v", entry)
 	}
 
@@ -340,7 +365,7 @@ func TestAComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
 	profile := materialised(t, wikiBundle)
 	profile.Annotations = nil
 	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
-		"desktop-api": {EndpointKey: "api.env.DESKTOP_API_URL"},
+		"desktop-api": {UserKey: "api.env.DESKTOP_API_USER"},
 	}}
 	h := startDigestHarness(t, profile, "")
 
@@ -367,7 +392,7 @@ func TestAComponentWaitsForItsMappedValuesBeforeItsRelease(t *testing.T) {
 		t.Fatalf("no release after the Secret arrived: %v", err)
 	}
 	set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
-	if len(set) != 1 || set[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_URL" {
+	if len(set) != 1 || set[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_USER" {
 		t.Fatalf("set = %v", set)
 	}
 }
@@ -518,8 +543,14 @@ func TestAContractBetweenAPlacedAndAnInstalledComponentOpensItsPathAndDeliversTh
 	if err := c.Get(ctx, types.NamespacedName{Name: releaseName(consumer)}, release); err != nil {
 		t.Fatalf("no release for the consumer: %v", err)
 	}
-	if set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); len(set) != 1 || set[0].(map[string]interface{})["name"] != "api.env.DESKTOP_API_URL" {
+	// The address is no set entry: it is empty until the contract is
+	// granted, and an empty value fails a release. It is a values document
+	// of its own that the release reads when there is one.
+	if set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set"); len(set) != 0 {
 		t.Fatalf("set = %v", set)
+	}
+	if docs := optionalValueDocuments(release); len(docs) != 1 || docs[0] != "values-integration-desktop-api-endpoint" {
+		t.Fatalf("optional value documents = %v", docs)
 	}
 
 	// Withdrawn: no way between the two, and no address.
