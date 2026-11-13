@@ -158,7 +158,9 @@ func TestAnInstalledChartKeepsItsVolumesOnUninstall(t *testing.T) {
 		t.Fatalf("patchesFrom = %v", patches)
 	}
 	ref, _, _ := unstructured.NestedMap(patches[0].(map[string]interface{}), "configMapKeyRef")
-	if ref["name"] != "wiki-keep-volumes" || ref["namespace"] != "tenant-acme" || ref["key"] != "patch.yaml" || ref["optional"] != false {
+	// Not optional: the reference does not say "optional", which the Helm
+	// provider reads as false and writes back by leaving it out.
+	if ref["name"] != "wiki-keep-volumes" || ref["namespace"] != "tenant-acme" || ref["key"] != "patch.yaml" || ref["optional"] == true {
 		t.Fatalf("the release reads its keep rule from %v", ref)
 	}
 
