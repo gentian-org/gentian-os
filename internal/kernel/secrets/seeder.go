@@ -12,8 +12,12 @@ package secrets
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"sync"
@@ -170,6 +174,39 @@ func (s *Seeder) gen(ctx context.Context, salt, info string, n int) (generated, 
 		return generated{value: d.Derive(salt, info, n), reproducible: true}, nil
 	}
 	return generated{value: randomHex(n)}, nil
+}
+
+// genKey returns an EC P-256 private key, PKCS #8 in PEM: in ModeDerived the
+// key whose secret number is HKDF-derived from the salt, in ModeRandom one
+// from crypto/rand.
+//
+// 32 derived bytes are a P-256 secret number unless they are zero or not
+// below the curve's order, which one draw in four billion is; the next
+// draw, under the next info, is taken then.
+func (s *Seeder) genKey(ctx context.Context, salt string) (generated, error) {
+	d, err := s.derivation(ctx)
+	if err != nil {
+		return generated{}, err
+	}
+	var key *ecdsa.PrivateKey
+	if d == nil {
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return generated{}, err
+		}
+	}
+	for draw := 0; key == nil; draw++ {
+		number, err := hex.DecodeString(d.Derive(salt, fmt.Sprintf("ec-p256/%d", draw), 64))
+		if err != nil {
+			return generated{}, err
+		}
+		key, _ = ecdsa.ParseRawPrivateKey(elliptic.P256(), number)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return generated{}, err
+	}
+	value := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	return generated{value: value, reproducible: d != nil}, nil
 }
 
 // randomHex returns n hex characters from crypto/rand.
@@ -715,8 +752,25 @@ func emptyRecord(rec map[string]string) bool {
 // an app's data back readable after a purge, in another tenant or on another
 // cluster, in both modes.
 func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (string, error) {
+	return s.SeedAppSecretAs(ctx, tenant, app, name, "")
+}
+
+// FormatECP256 is the format of an app secret that is a private key: EC
+// P-256, PKCS #8 in PEM. Any other format is the random string.
+const FormatECP256 = "ec-p256"
+
+// SeedAppSecretAs is SeedAppSecret for a secret whose profile says what the
+// value is. A key is made, stored and kept as the string is: derived or
+// random as the mode says, and the first one stored stays the path's.
+func (s *Seeder) SeedAppSecretAs(ctx context.Context, tenant, app, name, format string) (string, error) {
 	salt := InternalPath(tenant, app, name)
-	g, err := s.gen(ctx, salt, "value", 40)
+	var g generated
+	var err error
+	if format == FormatECP256 {
+		g, err = s.genKey(ctx, salt)
+	} else {
+		g, err = s.gen(ctx, salt, "value", 40)
+	}
 	if err != nil {
 		return "", fmt.Errorf("seed app-secret(%s/%s/%s): %w", tenant, app, name, err)
 	}

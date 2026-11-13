@@ -428,6 +428,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.expose[].tile.relation` | string | yes | `Relation` is what the caller must hold, on the object Object names, for the tile to be on their page: a permission of the authorization model… |
 | `spec.extensions` | []object |  | `Extensions` are containers shipped inside the component's own pod: the only escape hatch, and one that cannot create a cluster-scoped object. |
 | `spec.extensions[].appSecrets` | []object |  | `AppSecrets` are sidecar-internal secrets stored at gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}. |
+| `spec.extensions[].appSecrets[].format` | string |  | `Format` is what the value is. |
 | `spec.extensions[].appSecrets[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `spec.extensions[].appSecrets[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `spec.extensions[].chart` | object | yes | `Chart` references the sidecar Helm chart. |
@@ -811,6 +812,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `spec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
 | `spec.secrets.generated` | []object |  | `Generated` secrets are random, created once and held in the vault. |
+| `spec.secrets.generated[].format` | string |  | `Format` is what the value is. |
 | `spec.secrets.generated[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `spec.secrets.generated[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `spec.secrets.supplied` | []object |  | `Supplied` secrets are credentials only a person can provide. |
@@ -1269,6 +1271,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.expose[].tile.relation` | string | yes | `Relation` is what the caller must hold, on the object Object names, for the tile to be on their page: a permission of the authorization model… |
 | `status.profileSpec.extensions` | []object |  | `Extensions` are containers shipped inside the component's own pod: the only escape hatch, and one that cannot create a cluster-scoped object. |
 | `status.profileSpec.extensions[].appSecrets` | []object |  | `AppSecrets` are sidecar-internal secrets stored at gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}. |
+| `status.profileSpec.extensions[].appSecrets[].format` | string |  | `Format` is what the value is. |
 | `status.profileSpec.extensions[].appSecrets[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `status.profileSpec.extensions[].appSecrets[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `status.profileSpec.extensions[].chart` | object | yes | `Chart` references the sidecar Helm chart. |
@@ -1652,6 +1655,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `status.profileSpec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
 | `status.profileSpec.secrets.generated` | []object |  | `Generated` secrets are random, created once and held in the vault. |
+| `status.profileSpec.secrets.generated[].format` | string |  | `Format` is what the value is. |
 | `status.profileSpec.secrets.generated[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `status.profileSpec.secrets.generated[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `status.profileSpec.secrets.supplied` | []object |  | `Supplied` secrets are credentials only a person can provide. |
