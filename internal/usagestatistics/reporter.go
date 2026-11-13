@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"time"
 
@@ -23,7 +24,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// Reporter sends the report shortly after start and once a day after that.
+// Reporter sends the report shortly after start and once a day after that,
+// and again soon after the cluster's tenants change: a tenant provisioned
+// between two daily reports is otherwise unknown to the receiving end for up
+// to a day, and that end looks a tenant up by what the latest report names.
 //
 // It is a runnable of the operator's manager and nothing else depends on it:
 // a report that fails is recorded and tried again, and no failure here is
@@ -60,6 +64,13 @@ type Reporter struct {
 	// doubles from the first to the second.
 	RetryMin time.Duration
 	RetryMax time.Duration
+	// CheckEvery is how often the tenants are compared with the ones the
+	// last report that arrived named. MinGap is the least time between that
+	// report and one sent because they changed, so that many tenants
+	// provisioned at once go in a few reports and stay well inside what the
+	// receiving end takes from one cluster in an hour.
+	CheckEvery time.Duration
+	MinGap     time.Duration
 }
 
 // Defaults for the schedule.
@@ -68,6 +79,8 @@ const (
 	DefaultInterval     = 24 * time.Hour
 	DefaultRetryMin     = time.Minute
 	DefaultRetryMax     = time.Hour
+	DefaultCheckEvery   = time.Minute
+	DefaultMinGap       = 3 * time.Minute
 )
 
 // NeedLeaderElection keeps one replica reporting: two would send two reports
@@ -85,25 +98,61 @@ func (r *Reporter) Start(ctx context.Context) error {
 	}
 	logger.Info("usage statistics are on", "url", r.Settings.URL, "firstIn", r.initialDelay(), "every", r.interval())
 
-	wait, retry := r.initialDelay(), time.Duration(0)
+	// due is when the scheduled report goes: the first, the daily one, or a
+	// retry. Between two, the tenants are checked against the ones the last
+	// report that arrived named, and a change makes the report go early. A
+	// report that failed is not hurried: its retry carries the change.
+	due, retry := time.Now().Add(r.initialDelay()), time.Duration(0)
+	var named map[string]string
+	var sentAt time.Time
 	for {
+		wait := min(time.Until(due), r.checkEvery())
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(wait):
+		}
+		if time.Now().Before(due) && !r.changed(ctx, named, sentAt) {
+			continue
+		}
+		// What the report is about to name, read before it is built: a
+		// tenant that arrives in between is one more change, seen next time.
+		current, err := Names(ctx, r.Client, r.Identity)
+		if err != nil {
+			current = nil
 		}
 		next := r.interval()
 		// What the next wait would be if this attempt fails, decided before
 		// it is made so the record can say when the next one is.
 		retry = r.backoff(retry)
 		if r.RunOnce(ctx, next, retry) {
-			retry = 0
-			wait = next
+			retry, named, sentAt = 0, current, time.Now()
+			due = sentAt.Add(next)
 		} else {
-			wait = retry
+			named = nil
+			due = time.Now().Add(retry)
 		}
 	}
 }
+
+// changed reports whether the tenants are no longer the ones the last report
+// that arrived named, and that report is far enough back for another to go.
+// Without such a report (none yet, or the last attempt failed) the schedule
+// alone decides.
+func (r *Reporter) changed(ctx context.Context, named map[string]string, sentAt time.Time) bool {
+	if named == nil || time.Since(sentAt) < r.minGap() {
+		return false
+	}
+	current, err := Names(ctx, r.Client, r.Identity)
+	if err != nil || maps.Equal(current, named) {
+		return false
+	}
+	log.FromContext(ctx).WithName("usage-statistics").Info("the cluster's tenants changed; the report goes now", "tenants", len(current), "before", len(named))
+	return true
+}
+
+func (r *Reporter) checkEvery() time.Duration { return orDefault(r.CheckEvery, DefaultCheckEvery) }
+func (r *Reporter) minGap() time.Duration     { return orDefault(r.MinGap, DefaultMinGap) }
 
 func (r *Reporter) initialDelay() time.Duration {
 	return orDefault(r.InitialDelay, DefaultInitialDelay)

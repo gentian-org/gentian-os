@@ -16,7 +16,8 @@ info:
     identifier: MPL-2.0
   description: |
     A Gentian OS cluster with usage statistics on sends one report a few
-    minutes after its operator starts and one every 24 hours after that.
+    minutes after its operator starts, one every 24 hours after that, and
+    one within a few minutes of its tenants changing.
     This file is the format of that request, for whoever receives it. It
     describes what the cluster already does (`internal/usagestatistics`,
     `docs/concepts/operations.md` §6.2); it changes nothing about it. Where
