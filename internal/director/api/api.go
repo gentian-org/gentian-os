@@ -57,7 +57,7 @@ type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
-	InstallWith(ctx context.Context, tenant, profile, digest, catalogue, with string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
+	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, defaultGrant *bool, meta gitops.Meta) (gitops.Result, []string, error)
 	UninstallWith(ctx context.Context, tenant, profile string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
 	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
 	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
@@ -1251,6 +1251,15 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// The apps it comes with, before its own entry: an app is not installed
 	// without them, and one that cannot be had refuses the install with
 	// nothing of the tenant's changed.
+	//
+	// Such an install is several writes, and it is finished once begun: a
+	// caller that stops waiting does not leave the tenant with some of the
+	// apps and not the one they came with.
+	if definition != nil && len(definition.Spec.ComesWith) > 0 {
+		writing, done := context.WithTimeout(context.WithoutCancel(ctx), comesWithWait)
+		defer done()
+		ctx, r = writing, r.WithContext(writing)
+	}
 	came, ok := s.installComesWith(w, r, c, tenant, profile, definition, catalogueName, body.DefaultGrant)
 	if !ok {
 		return
