@@ -145,6 +145,17 @@ func TestTheKeysAreFetchedOnceAndAgainOnlyForAnUnknownKey(t *testing.T) {
 	if fetches.Load() != 1 {
 		t.Fatalf("%d fetches, want 1", fetches.Load())
 	}
+	// An unknown key right after a fetch is refused without another one;
+	// later it costs one, since the realm may have a new key.
+	if _, err := p.Verify(context.Background(), realmToken(t, realmKey, "k2", nil), now); err == nil {
+		t.Fatal("an unknown key was accepted")
+	}
+	if fetches.Load() != 1 {
+		t.Fatalf("%d fetches, want 1", fetches.Load())
+	}
+	p.keys.mu.Lock()
+	p.keys.fetched = p.keys.fetched.Add(-keysMinInterval - time.Second)
+	p.keys.mu.Unlock()
 	if _, err := p.Verify(context.Background(), realmToken(t, realmKey, "k2", nil), now); err == nil {
 		t.Fatal("an unknown key was accepted")
 	}

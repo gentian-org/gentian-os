@@ -24,7 +24,13 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
-const keysTTL = 10 * time.Minute
+const (
+	keysTTL = 10 * time.Minute
+	// keysMinInterval is how soon the keys may be asked for again because
+	// of a key that is not known: a stream of tokens naming unknown keys is
+	// not a stream of fetches.
+	keysMinInterval = 10 * time.Second
+)
 
 // keySet is the signing keys a party publishes, read from where it publishes
 // them and kept for ten minutes. A key that is not cached is fetched once
@@ -77,6 +83,9 @@ func (k *keySet) key(ctx context.Context, kid string) (jose.JSONWebKey, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for _, refresh := range []bool{false, true} {
+		if refresh && time.Since(k.fetched) < keysMinInterval {
+			break
+		}
 		if refresh || k.keys == nil || time.Since(k.fetched) > keysTTL {
 			if err := k.fetch(ctx); err != nil {
 				return jose.JSONWebKey{}, fmt.Errorf("the keys could not be read: %w", err)
