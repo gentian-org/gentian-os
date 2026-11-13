@@ -2029,7 +2029,22 @@ type AppSecret struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	ValuePath string `json:"valuePath"`
+
+	// Format is what the value is. Left out, it is a random string of 40 hex
+	// characters. ec-p256 makes it a private key instead: an EC P-256 key as
+	// PKCS #8 in PEM, for a component that signs what it issues and has to
+	// keep signing with the same key across upgrades. A key is held,
+	// delivered, kept and destroyed exactly as any other generated secret.
+	// +optional
+	// +kubebuilder:validation:Enum=ec-p256
+	Format AppSecretFormat `json:"format,omitempty"`
 }
+
+// AppSecretFormat is what a generated secret's value is.
+type AppSecretFormat string
+
+// AppSecretFormatECP256 is an EC P-256 private key, PKCS #8 in PEM.
+const AppSecretFormatECP256 AppSecretFormat = "ec-p256"
 
 // SuppliedSecret declares a credential an app needs that only a person can
 // provide: a payment provider's keys, an API token of a service outside the

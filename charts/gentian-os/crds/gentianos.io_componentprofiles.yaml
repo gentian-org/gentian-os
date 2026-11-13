@@ -1267,6 +1267,16 @@ spec:
                           and inject. These are credentials the app needs (admin passwords, session
                           signing keys, cluster tokens) that are not provided by any kernel service.
                         properties:
+                          format:
+                            description: |-
+                              Format is what the value is. Left out, it is a random string of 40 hex
+                              characters. ec-p256 makes it a private key instead: an EC P-256 key as
+                              PKCS #8 in PEM, for a component that signs what it issues and has to
+                              keep signing with the same key across upgrades. A key is held,
+                              delivered, kept and destroyed exactly as any other generated secret.
+                            enum:
+                            - ec-p256
+                            type: string
                           name:
                             description: |-
                               Name is the logical identifier for this secret (e.g., "admin_password").
@@ -4488,6 +4498,16 @@ spec:
                         and inject. These are credentials the app needs (admin passwords, session
                         signing keys, cluster tokens) that are not provided by any kernel service.
                       properties:
+                        format:
+                          description: |-
+                            Format is what the value is. Left out, it is a random string of 40 hex
+                            characters. ec-p256 makes it a private key instead: an EC P-256 key as
+                            PKCS #8 in PEM, for a component that signs what it issues and has to
+                            keep signing with the same key across upgrades. A key is held,
+                            delivered, kept and destroyed exactly as any other generated secret.
+                          enum:
+                          - ec-p256
+                          type: string
                         name:
                           description: |-
                             Name is the logical identifier for this secret (e.g., "admin_password").

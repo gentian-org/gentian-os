@@ -12,6 +12,10 @@ package secrets_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
@@ -439,5 +443,43 @@ func TestReplaceAppSecretSetsTheValueAndSaysWhetherItChanged(t *testing.T) {
 	}
 	if _, err := away.ReplaceAppSecret(ctx, "acme", "wiki", "session_key", "v"); err == nil {
 		t.Error("a value was set in a vault that does not answer")
+	}
+}
+
+// A generated secret that is a key follows the mode as the string does:
+// derived, the same key on an emptied vault; random, another. Either way it
+// is an EC P-256 private key a signer can read, and the one stored stays.
+func TestAppKeyFollowsTheMode(t *testing.T) {
+	ctx := context.Background()
+	make1 := func(mode secrets.Mode) string {
+		srv := newFakeBao()
+		defer srv.Close()
+		s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver(goldenMaster, goldenSalt)).WithMode(fixed(mode))
+		got, err := s.SeedAppSecretAs(ctx, "acme", "signer", "signing_key", secrets.FormatECP256)
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		block, rest := pem.Decode([]byte(got))
+		if block == nil || block.Type != "PRIVATE KEY" || len(rest) != 0 {
+			t.Fatalf("%s: not one PEM private key: %q", mode, got)
+		}
+		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		if key, ok := parsed.(*ecdsa.PrivateKey); !ok || key.Curve != elliptic.P256() {
+			t.Fatalf("%s: the key is %T, not EC P-256", mode, parsed)
+		}
+		again, err := s.SeedAppSecretAs(ctx, "acme", "signer", "signing_key", secrets.FormatECP256)
+		if err != nil || again != got {
+			t.Errorf("%s: a second pass changed the stored key (%v)", mode, err)
+		}
+		return got
+	}
+	if first, second := make1(secrets.ModeDerived), make1(secrets.ModeDerived); first != second {
+		t.Error("derived: an emptied vault got another key")
+	}
+	if first, second := make1(secrets.ModeRandom), make1(secrets.ModeRandom); first == second {
+		t.Error("random: an emptied vault got the same key")
 	}
 }
