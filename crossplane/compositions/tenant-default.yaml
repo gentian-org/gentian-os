@@ -448,7 +448,11 @@ spec:
                 name: kubernetes
               forProvider:
                 manifest:
-                  {{- $job | toYaml | nindent 18 }}
+                  {{- /* As JSON, on one line: written as YAML and indented
+                       again, a script that begins with a line break or a
+                       space is a block scalar whose indentation no longer
+                       holds, and the whole tenant stops rendering. */}}
+                  {{ $job | toJson }}
             {{- end }}
 
             {{- range $obj := $objects }}
@@ -466,7 +470,7 @@ spec:
                 name: kubernetes
               forProvider:
                 manifest:
-                  {{- $obj | toYaml | nindent 18 }}
+                  {{ $obj | toJson }}
             {{- end }}
 
             {{- /* ── the zone's edge client and its secret ──────────────────

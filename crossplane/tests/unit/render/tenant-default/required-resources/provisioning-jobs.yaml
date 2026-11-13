@@ -26,7 +26,8 @@ data:
               "containers": [
                 {
                   "name": "provision",
-                  "image": "ghcr.io/gentian-org/gentian-app-init:develop"
+                  "image": "ghcr.io/gentian-org/gentian-app-init:develop",
+                  "command": ["/bin/sh", "-c", "\n  set -eu\necho realm\n"]
                 }
               ]
             }
