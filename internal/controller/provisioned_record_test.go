@@ -203,32 +203,34 @@ func TestTheModelKeyIsRecordedForAnAppThatDeclaredTheGateway(t *testing.T) {
 	}
 }
 
-// A component the platform places -- the desktop, placed on every tenant --
-// has its entry in spec.apps like any app, and declares a PostgreSQL
-// database. Its stores are made through its own Component, so the
-// tenant-level kernel requirement path leaves its entry out: neither the
-// database provisioning nor the record of provisioned stores sees it, and no
-// second database appears beside the one its Component has. An app the
-// tenant installed next to it is provisioned as before.
-func TestAPlacedEntryGetsNoTenantLevelStores(t *testing.T) {
+// The desktop, placed on every tenant, has its entry in spec.apps like any
+// app and declares a PostgreSQL database. That database is the tenant's own,
+// made through the desktop's Component, so the tenant-level path leaves the
+// entry out and no second database appears beside it. Any other component
+// the platform places has its stores made and recorded under its own name,
+// exactly as an app the tenant installed has.
+func TestAPlacedComponentHasItsOwnStoresAndTheDesktopTheTenants(t *testing.T) {
 	ctx := context.Background()
 	scheme := deleteGapsScheme()
 	desktop := storesProfile("desktop", gentianov1alpha1.DatabaseEnginePostgreSQL, false, false)
 	desktop.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}
 	desktop.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
 	wiki := storesProfile("wiki", gentianov1alpha1.DatabaseEnginePostgreSQL, false, false)
+	sync := storesProfile("sync", gentianov1alpha1.DatabaseEnginePostgreSQL, false, false)
+	sync.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}
+	sync.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementEvery}
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{placedEntry("desktop"), {Profile: "wiki"}},
+			Apps: []gentianov1alpha1.TenantApp{placedEntry("desktop"), placedEntry("sync"), {Profile: "wiki"}},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(desktop, wiki).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(desktop, wiki, sync).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 
 	pg, err := r.collectPostgresApps(ctx, tenant)
-	if err != nil || !reflect.DeepEqual(pg, []string{"wiki"}) {
-		t.Fatalf("PostgreSQL apps to provision = %v, %v; want wiki alone", pg, err)
+	if err != nil || !reflect.DeepEqual(pg, []string{"sync", "wiki"}) {
+		t.Fatalf("PostgreSQL apps to provision = %v, %v; want the placed sync and the wiki", pg, err)
 	}
 	if err := r.recordProvisionedStores(ctx, tenant); err != nil {
 		t.Fatal(err)
@@ -237,7 +239,10 @@ func TestAPlacedEntryGetsNoTenantLevelStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := recorded["desktop"]; ok || len(recorded) != 1 {
-		t.Fatalf("recorded = %+v, want wiki's stores alone", recorded)
+	if _, ok := recorded["desktop"]; ok || len(recorded) != 2 {
+		t.Fatalf("recorded = %+v, want the stores of the sync and of the wiki", recorded)
+	}
+	if recorded["sync"].Database == "" {
+		t.Errorf("the placed sync's database is not on record: %+v", recorded["sync"])
 	}
 }

@@ -682,6 +682,13 @@ marked `placed: true`, and takes it out when the condition stops holding; nobody
 uninstalls, moves or changes it by hand, and an export leaves it out. A profile placed under a
 condition must own no data. Only a cluster's own catalogs place.
 
+A placed component that declares a database (`requires.services.database`) has one of its own,
+named after it like an installed app's, and is told of it as a Secret
+(`valueMapping.database.secretNameKey`). When the placement ends only the component is removed:
+the database stays, shows as an uninstalled app's data and is destroyed by a purge of that name,
+which is refused while the component is placed. The desktop is the exception: its database is the
+tenant's own and lives as long as the tenant.
+
 A profile placed `while: llm` is found through the index (`placedWith: llm`) before it is on the
 cluster, and is installed into every user tenant for everyone at the build the index lists, as an
 ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who

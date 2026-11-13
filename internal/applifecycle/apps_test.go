@@ -253,6 +253,19 @@ func TestAPurgeIsRefusedWhileTheAppIsInstalled(t *testing.T) {
 	}
 }
 
+// A component the platform places keeps its data while it is placed: the
+// purge is refused at once, not after waiting for a Component that stays.
+func TestAPurgeIsRefusedWhileTheComponentIsPlaced(t *testing.T) {
+	tenant := demoTenant()
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "sync", Placed: true}}
+	s := appsService(t, tenant, component("sync", "Ready", "", true))
+
+	_, err := s.PurgeApp(context.Background(), "demo", "sync", "tom@example.com")
+	if !errors.Is(err, ErrStillInstalled) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // Provisioning hands an app to people, so there has to be an app.
 func TestProvisioningNeedsTheAppToBeInstalled(t *testing.T) {
 	s := appsService(t, demoTenant())

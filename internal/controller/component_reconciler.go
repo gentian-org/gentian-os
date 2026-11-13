@@ -583,9 +583,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Requirements first: a chart whose database does not exist yet is not
-	// installed, it is waited for. A placed component's database is in the
-	// platform's own schema, and the operator provides it; an installed
-	// app's is the tenant's store's, read by its sensitive values.
+	// installed, it is waited for. A placed component is handed its
+	// database as a Secret: the desktop the tenant's own, any other the one
+	// the tenant's stores make under its name. An installed app's is read
+	// by its sensitive values.
 	if operatorPlaced(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, profile, tenant)
 		if err != nil {

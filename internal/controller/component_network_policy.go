@@ -66,9 +66,10 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 		seen[ns] = struct{}{}
 		out = append(out, ns)
 	}
-	// The database, where this reconciler fulfilled it: a placed
-	// component's. An installed app's way there is the tenant's
-	// (kernel-access-<app>), on the database's port only.
+	// The database of a placed component: the desktop's, or the one the
+	// tenant's stores made under the component's name. An installed app's
+	// way there is the tenant's (kernel-access-<app>), on the database's
+	// port only.
 	if operatorPlaced(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		add(r.componentDatabaseNamespace(tenant, profile))
 	}
