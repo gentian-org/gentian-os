@@ -354,8 +354,9 @@ realm as `group:<realm>/<name>#member` (`:` in a name becomes `/`, so the
 tenant's members are `group:<realm>/gentian/tenant/<tenant>/members`); the
 model needs a `type group` with `define member: [user]`, and a store created
 after a membership was made holds it from that person's next change in the
-realm on. An app's key may not write a tuple whose user or object is a group
-(403). A starting tuple the profile drops is taken out again; what the app
+realm on. An app's key may not write a tuple whose object is a group (403);
+it gives its own objects to a group's members (`group:<realm>/<name>#member`
+as the user) as to a person. A starting tuple the profile drops is taken out again; what the app
 wrote is never touched. The store is the tenant's data: exported, restored
 into a fresh store, kept on uninstall and deleted by a purge.
 

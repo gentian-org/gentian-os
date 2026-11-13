@@ -277,5 +277,5 @@ func (s *Server) platformPurgeTenant(r *http.Request) (any, error) {
 	return nil, s.stores.PurgeTenant(r.Context(), tenant)
 }
 
-// errForbiddenGroupTuple is a component writing a tuple of type group.
-var errForbiddenGroupTuple = errors.New("tuples whose user or object is a group are the platform's")
+// errForbiddenGroupTuple is a component writing a tuple about a group.
+var errForbiddenGroupTuple = errors.New("tuples whose object is a group are the platform's")

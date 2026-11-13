@@ -122,13 +122,14 @@ func TestARealmsMembershipsReachItsTenantsMirroringStoresOnly(t *testing.T) {
 	}
 }
 
-// A component writes no tuple whose user or object is a group; it reads and
-// asks about them as about any other.
-func TestAComponentWritesNoGroupTuple(t *testing.T) {
+// A component writes no tuple whose object is a group; it reads and asks
+// about them as about any other, and gives its own objects to a group's
+// members as to a person.
+func TestAComponentWritesNoTupleAboutAGroup(t *testing.T) {
 	h := newHarness(t, mirroring(t, "acme", "ledger", "key-a", "acme"))
 	for _, tuple := range []Tuple{
 		{User: "user:acme/u1", Relation: "member", Object: "group:acme/staff"},
-		{User: "group:acme/staff#member", Relation: "viewer", Object: "project:1"},
+		{User: "group:acme/staff#member", Relation: "member", Object: "group:acme/board"},
 	} {
 		for _, req := range []WriteRequest{{Writes: []Tuple{tuple}}, {Deletes: []Tuple{tuple}}} {
 			code, body := h.call(t, http.MethodPost, "/v1/write", "key-a", req)
@@ -139,6 +140,12 @@ func TestAComponentWritesNoGroupTuple(t *testing.T) {
 	}
 	if code, _ := h.call(t, http.MethodPost, "/v1/write", "key-a", WriteRequest{Writes: []Tuple{{User: "user:acme/u1", Relation: "owner", Object: "project:1"}}}); code != http.StatusOK {
 		t.Fatalf("an ordinary tuple: %d", code)
+	}
+	shared := Tuple{User: "group:acme/staff#member", Relation: "viewer", Object: "project:1"}
+	for _, req := range []WriteRequest{{Writes: []Tuple{shared}}, {Deletes: []Tuple{shared}}} {
+		if code, body := h.call(t, http.MethodPost, "/v1/write", "key-a", req); code != http.StatusOK {
+			t.Fatalf("its own object for a group's members, %+v: %d %v", req, code, body)
+		}
 	}
 	h.call(t, http.MethodPut, "/v1/platform/memberships", "operator-token", MembershipsRequest{Tenant: "acme", Realm: "acme", Subject: "u1", Groups: []string{"staff"}})
 	if _, body := h.call(t, http.MethodPost, "/v1/check", "key-a", CheckRequest{User: "user:acme/u1", Relation: "member", Object: "group:acme/staff"}); body["allowed"] != true {
