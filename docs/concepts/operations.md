@@ -166,9 +166,12 @@ the cluster is blocked by the answer: the operator reads the HTTP status of the
 reply and nothing else.
 
 **When.** A leader-elected worker in the operator sends one report a few
-minutes after the operator starts and one every 24 hours after that. A report
-that does not arrive is retried with a doubling wait, from one minute up to
-one hour. No failure stops anything else.
+minutes after the operator starts and one every 24 hours after that. When a
+tenant is provisioned or removed, or its address or realm changes, a report
+goes within a few minutes, at least three minutes after the last one, so the
+receiving end knows the tenant the same day. A report that does not arrive is
+retried with a doubling wait, from one minute up to one hour. No failure stops
+anything else.
 
 **Where.** An HTTP `POST` to one `https` address fixed at install time
 (`usageStatistics.url` in the operator chart). A redirect is not followed.
