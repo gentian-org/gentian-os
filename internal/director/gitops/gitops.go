@@ -570,6 +570,15 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 func (g *GitOps) InstallFrom(
 	ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta Meta,
 ) (Result, error) {
+	return g.installFrom(ctx, tenant, profile, digest, catalogue, "", defaultGrant, meta)
+}
+
+// installFrom is InstallFrom, and InstallWith where with names the app the
+// entry comes with: written on an entry this call makes, never on one that
+// was there.
+func (g *GitOps) installFrom(
+	ctx context.Context, tenant, profile, digest, catalogue, with string, defaultGrant *bool, meta Meta,
+) (Result, error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
@@ -603,7 +612,16 @@ func (g *GitOps) InstallFrom(
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
 			}
+			if with != "" {
+				marked, _ := setAppEntryKey(strings.Split(out, "\n"), profile, appCameWithKey, with, "")
+				out = strings.Join(marked, "\n")
+			}
 			return out, "installed", true, nil
+		}
+		if with != "" {
+			// The tenant has it: its own install, or one that came with
+			// another app. Either way it stays as it is.
+			return text, "already_installed", false, nil
 		}
 		changed := false
 		if digest != "" {
@@ -782,7 +800,11 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 		// Remove the whole list entry, not just its `- profile:` line: an entry can carry
 		// nested keys (addons, config) and leaving those behind produces YAML that does
 		// not parse, which wedges every later reconcile. See removeAppEntry.
-		if err := refusePlaced(strings.Split(text, "\n"), profile); err != nil {
+		lines := strings.Split(text, "\n")
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
+		}
+		if err := refuseCameWith(lines, profile); err != nil {
 			return "", "", false, err
 		}
 		out, ok := removeAppEntry(text, profile)
