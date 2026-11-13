@@ -738,7 +738,10 @@ path means egress is held to the same standard as a waiver, by construction.
 | supplied | only a person can provide it; asked for in the console after install | `secrets.supplied` |
 
 Generated secrets have no counterparty: an admin bootstrap password, a session
-signing key. Derivation's stability comes from recomputation rather than
+signing key. A generated secret is a random string unless it says otherwise:
+`format: ec-p256` makes it an EC P-256 private key (PKCS #8, PEM), for a
+component that signs what it issues and has to keep the same key across
+upgrades. Derivation's stability comes from recomputation rather than
 storage, so the formula and its inputs are load-bearing forever, and a change
 to either silently rotates the value for every existing tenant. Generated and
 stored is the more robust default. How each mode is computed and kept is
