@@ -554,6 +554,15 @@ func (s *Service) PurgeApp(ctx context.Context, tenantName, profile, actor strin
 		}
 	}
 
+	// A component the platform places keeps its data while it is placed:
+	// its stores are purged, like an app's, once the placement has ended.
+	for _, a := range tenant.Spec.Apps {
+		if a.Placed && a.Profile == profile {
+			return nil, fmt.Errorf("%w: the platform places %s in this tenant; its data can be purged once it is no longer placed",
+				ErrStillInstalled, profile)
+		}
+	}
+
 	// Which stores an app has is declared by its profile and by nothing
 	// else. Without it a purge could only guess -- it used to assume a
 	// PostgreSQL database and look at nothing more -- and a purge that

@@ -20,7 +20,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
-	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // The tenant's record of the stores provisioning made (backup.Provisioned):
@@ -45,19 +44,17 @@ func (r *TenantReconciler) recordProvisionedStores(ctx context.Context, tenant *
 	// elsewhere the requirement waits and nothing is made to record.
 	models := clusterLLMEnabled(ctx, r.Client)
 	made := map[string]backup.Provisioned{}
-	// A component the platform places has its stores made, and its model key
-	// recorded, by its own Component (ensureModelAccess): not here.
-	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
-	if err != nil {
-		return err
-	}
-	for _, app := range installed {
+	// A component the platform places has its stores recorded here like an
+	// installed app's; the desktop's database is the tenant's own and is
+	// not an app's store. The model key of a placed component is recorded
+	// by its own Component (ensureModelAccess): not here.
+	for _, app := range storeOwners(tenant.Spec.Apps) {
 		profile, ok := profileForApp(profiles, app)
 		if !ok {
 			continue
 		}
 		p := backup.ProvisionedOf(backup.InventoryOf(tenant, app.Profile, profile))
-		if !models {
+		if !models || (app.Placed && operatorPlaced(profile)) {
 			p.ModelKey = ""
 		}
 		if !p.Empty() {

@@ -254,14 +254,44 @@ func splitDots(s string) []string {
 	return append(out, cur)
 }
 
+// holdsDesktopStore reports whether a component is the desktop: the one
+// component whose database is the tenant's own (backup.DesktopStore), which
+// the platform keeps for the tenant itself and which lives as long as the
+// tenant does. Every other component, placed or installed, has a database
+// under its own name with an app's lifecycle: kept when the component goes,
+// destroyed by a purge.
+func holdsDesktopStore(profile *gentianov1alpha1.ComponentProfile) bool {
+	return operatorPlaced(profile) && profile.Name == DesktopProfileName
+}
+
+// storeOwners are the entries of a tenant's spec.apps whose stores the
+// tenant's reconciler makes and records under the entry's own name: every
+// app the tenant installed, and every component the platform places except
+// the desktop, whose database its Component makes.
+func storeOwners(apps []gentianov1alpha1.TenantApp) []gentianov1alpha1.TenantApp {
+	out := make([]gentianov1alpha1.TenantApp, 0, len(apps))
+	for _, app := range apps {
+		name := app.Profile
+		if name == "" && app.ProfileRef != nil {
+			name = app.ProfileRef.Name
+		}
+		if app.Placed && name == DesktopProfileName {
+			continue
+		}
+		out = append(out, app)
+	}
+	return out
+}
+
 // componentDatabaseNamespace is where a component's database lives, and so
-// where its pods must be allowed to go. An app the tenant installed has its
-// database on the shared store of its engine, made by the tenant's stores.
+// where its pods must be allowed to go. An app the tenant installed, and a
+// component the platform places other than the desktop, has its database on
+// the shared store of its engine, made by the tenant's stores.
 // The desktop's is on the kernel's data plane for the platform tenant, and
 // on the tenant postgres of the system tier for every other
 // (kernel.md §6.1).
 func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile) string {
-	if !operatorPlaced(profile) {
+	if !holdsDesktopStore(profile) {
 		if provisioner.DatabaseEngineOf(profile) == gentianov1alpha1.DatabaseEngineMariaDB {
 			return mariadbNamespace
 		}
@@ -294,12 +324,12 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 	// nothing of the kernel's is read into a tenant's namespace.
 	store := secrets.TenantStore(tenant.Name)
 	path := secrets.CategoryPath(tenant.Name, portalShellAppName, "database")
-	// An app the tenant installed has its database made by the tenant's
-	// stores, under its own name (kernel_requirement.go), as an app the
-	// Composition delivers has: the credential is read from its own path,
-	// and the Secret arrives once the record is there. Only a component the
-	// platform places itself -- the desktop -- has the one made here.
-	if !operatorPlaced(profile) {
+	// A component has its database made by the tenant's stores, under its
+	// own name (kernel_requirement.go), whether the tenant installed it or
+	// the platform places it: the credential is read from its own path,
+	// and the Secret arrives once the record is there. Only the desktop has
+	// the one made here.
+	if !holdsDesktopStore(profile) {
 		own := secrets.CategoryPath(tenant.Name, comp.Name, "database")
 		target = databaseSecretTemplate("{{ .host }}", "{{ .port }}", "{{ .name }}", "{{ .user }}", "{{ .password }}")
 		if provisioner.DatabaseEngineOf(profile) == gentianov1alpha1.DatabaseEngineMariaDB {

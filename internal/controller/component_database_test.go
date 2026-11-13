@@ -357,6 +357,50 @@ func TestAnInstalledComponentIsGivenItsOwnDatabaseNotTheDesktops(t *testing.T) {
 	}
 }
 
+// A component the platform places, other than the desktop, is given a
+// database of its own too: the credential at its own path, in the platform
+// tenant as in any other, and its pods go to the tenants' PostgreSQL and not
+// to the kernel's.
+func TestAPlacedComponentIsGivenItsOwnDatabaseNotTheDesktops(t *testing.T) {
+	ctx := context.Background()
+	s := componentDatabaseScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ComponentReconciler{Client: c, Scheme: s, KernelRealm: "kernel"}
+
+	placed := &gentianov1alpha1.ComponentProfile{}
+	placed.Name = "sync"
+	placed.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: gentianov1alpha1.PlacementPlatform}
+	for _, tenant := range []*gentianov1alpha1.Tenant{platformTenantFixture(), acmeTenantFixture()} {
+		comp := &gentianov1alpha1.Component{}
+		comp.Name, comp.Namespace, comp.UID = "sync", tenant.NamespaceName(), "sync-uid"
+		if _, reason, _, err := r.ensureDatabaseRequirement(ctx, comp, placed, tenant); err != nil || reason != "DatabaseProvisioning" {
+			t.Fatalf("%s: reason=%q err=%v, want waiting for the credential", tenant.Name, reason, err)
+		}
+		es := &unstructured.Unstructured{}
+		es.SetGroupVersionKind(secrets.ExternalSecretGVK)
+		if err := c.Get(ctx, types.NamespacedName{Name: "sync" + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
+			t.Fatal(err)
+		}
+		data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+		if len(data) != 5 {
+			t.Errorf("%s: the credential reads %d keys, want host, port, name, user and password", tenant.Name, len(data))
+		}
+		for _, d := range data {
+			key := d.(map[string]interface{})["remoteRef"].(map[string]interface{})["key"]
+			if key != "gentian-os/tenants/"+tenant.Name+"/apps/sync/database" {
+				t.Errorf("%s: the credential reads %v, want the component's own path", tenant.Name, key)
+			}
+		}
+		if got := r.componentDatabaseNamespace(tenant, placed); got != postgresNamespace {
+			t.Errorf("%s: the component's database is in %s, want %s", tenant.Name, got, postgresNamespace)
+		}
+	}
+	jobs := &batchv1.JobList{}
+	if err := c.List(ctx, jobs); err != nil || len(jobs.Items) != 0 {
+		t.Errorf("a role Job was made by the Component (%v): the tenant's stores make it", err)
+	}
+}
+
 // An app the tenant installed reaches its database on the shared store of
 // its engine, wherever its tenant is; only the desktop's is on the kernel's
 // data plane, for the platform tenant.
