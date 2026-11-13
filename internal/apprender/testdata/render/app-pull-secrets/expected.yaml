@@ -453,7 +453,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-acme
-        optional: false
     set:
     - name: auth.password
       valueFrom:
@@ -471,7 +470,7 @@ spec:
         gentianos.io/tenant: acme
       upstreamUrl: https://demo.acme.platform.example.test
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
@@ -640,7 +639,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-acme
-        optional: false
     set:
     - name: demo-app.oidc.secret
       valueFrom:
@@ -668,7 +666,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: acme
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3

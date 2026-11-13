@@ -520,7 +520,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     set:
     - name: demo-app.oidc.secret
       valueFrom:
@@ -540,7 +539,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3

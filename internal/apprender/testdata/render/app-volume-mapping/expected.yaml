@@ -388,7 +388,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     set:
     - name: demo-app.oidc.secret
       valueFrom:
@@ -440,7 +439,7 @@ spec:
         secret:
           secretName: gentian-trust-anchor-tls
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3

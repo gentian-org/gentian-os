@@ -114,19 +114,19 @@ func (r *valuesRender) release(v *valuesSensitive, values map[string]interface{}
 		// manifests: an app whose pods never schedule must not read Ready.
 		// 10m for a first boot's migrations.
 		"wait":        true,
-		"waitTimeout": "10m",
+		"waitTimeout": releaseWaitTimeout,
 		"skipCRDs":    true,
 		// The tenant's namespace exists, and the release's account may not
 		// create one.
 		"skipCreateNamespace": true,
-		// Not optional: a release installed without the rule would delete
-		// the app's files when uninstalled.
+		// Not optional, which is what a reference that does not say is: a
+		// release installed without the rule would delete the app's files
+		// when uninstalled. See releaseWaitTimeout for why it does not say.
 		"patchesFrom": []interface{}{map[string]interface{}{
 			"configMapKeyRef": map[string]interface{}{
 				"name":      r.in.KeepVolumes,
 				"namespace": r.ns,
 				"key":       "patch.yaml",
-				"optional":  false,
 			},
 		}},
 	}
@@ -202,3 +202,16 @@ func (r *valuesRender) serviceAliases(values map[string]interface{}) (objs, obse
 	alias(api, "api", 8000, fullnameOverride != "" && api == fullnameOverride+"-api")
 	return objs, observe
 }
+
+// releaseWaitTimeout is how long a release waits for its workloads, written
+// the way the Helm provider writes it back.
+//
+// The provider rewrites a Release whenever it records an attempt on it, and
+// writes its own spelling of what it read: a duration as Go prints it, and
+// no "optional: false", which it leaves out as the default. A Release
+// rendered in any other spelling differs from the live one after every
+// failed attempt, is put back, and the write starts the next attempt at
+// once: a release that cannot install was retried several times a second,
+// each time signing in to its registry. So the render says both the
+// provider's way.
+const releaseWaitTimeout = "10m0s"
