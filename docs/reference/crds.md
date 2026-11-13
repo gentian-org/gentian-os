@@ -1710,6 +1710,8 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec` | object |  |  |
 | `spec.admin` | object |  | `Admin` is how the tenant's administrator account is handed over. |
 | `spec.admin.requireMFA` | boolean |  | `RequireMFA` makes enrolling a second factor part of activating the account. |
+| `spec.agenticInterfaces` | object |  | `AgenticInterfaces` is whether programs and agents reach the tenant's apps through the platform; see TenantAgenticInterfaces. |
+| `spec.agenticInterfaces.enabled` | boolean |  | `Enabled` turns the interfaces on. |
 | `spec.apps` | []object |  | `Apps` lists the applications to install for this tenant. |
 | `spec.apps[].addonGrants` | []object |  | `AddonGrants` says which addons of this app every member of the tenant has access to by default. |
 | `spec.apps[].addonGrants[].defaultGrant` | boolean |  | `DefaultGrant` says every member of the tenant has access to this addon by default, as an app's defaultGrant does for the app. |

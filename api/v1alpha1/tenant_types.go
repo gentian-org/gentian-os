@@ -247,6 +247,20 @@ func (t *Tenant) AdminRequiresMFA() bool {
 	return *t.Spec.Admin.RequireMFA
 }
 
+// TenantAgenticInterfaces turns on the interfaces through which a program a
+// person connected, or an agent acting for one, uses the tenant's apps.
+//
+// On, the platform places in the tenant the components that declare
+// placement while agenticInterfaces: the chaperone, which carries every
+// such call to an app's adapter under the person's own rights, and what a
+// cluster's catalogs add to it. Off, none of them runs, and nothing reaches
+// an app that way. Declared in git; nothing writes it.
+type TenantAgenticInterfaces struct {
+	// Enabled turns the interfaces on.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
 type TenantSpec struct {
 	// DisplayName is a human-readable name for this tenant/organization.
 	// +kubebuilder:validation:Required
@@ -266,6 +280,12 @@ type TenantSpec struct {
 	// or off, they are invited; see TenantSignUp.
 	// +optional
 	SignUp *TenantSignUp `json:"signUp,omitempty"`
+
+	// AgenticInterfaces is whether programs and agents reach the tenant's
+	// apps through the platform; see TenantAgenticInterfaces. Unset or
+	// off, the components that offer such interfaces are not placed in it.
+	// +optional
+	AgenticInterfaces *TenantAgenticInterfaces `json:"agenticInterfaces,omitempty"`
 
 	// Partners are realms outside this tenant it has a relation with; see
 	// TenantPartner. Written by the director, as the patch partners.yaml

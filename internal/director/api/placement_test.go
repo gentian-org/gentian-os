@@ -300,3 +300,62 @@ func TestAPreApprovalLeavesAnAdministratorsGrantAlone(t *testing.T) {
 		t.Errorf("grants:\n%s", grants)
 	}
 }
+
+// What is placed while agentic interfaces are on goes to the tenants whose
+// manifest turns them on, and to no other; a new tenant does not have it;
+// and a tenant that turns them off loses it on the second pass that finds
+// it so, like any placement withdrawn.
+func TestWhatNeedsAgenticInterfacesIsPlacedWhereATenantTurnedThemOn(t *testing.T) {
+	op := &placingOperator{}
+	agentic := placement.Set{Wanted: []string{"chaperone", "desktop"}, Agentic: []string{"chaperone"}, Undecided: []string{}}
+	op.set(placement.Answer{Users: agentic, Platform: set("desktop")})
+	h := startPlacing(t, op)
+	srv := h.server()
+
+	demo := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	on := strings.Replace(demo, "\nspec:\n", "\nspec:\n  agenticInterfaces:\n    enabled: true\n", 1)
+	if on == demo {
+		t.Fatal("the tenant's manifest has no spec to turn them on in")
+	}
+	dt.Commit(t, h.remote, map[string]string{dt.TenantPath("demo"): on})
+
+	srv.PlacePlatformApps(context.Background())
+	g := gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{})
+	if a, ok := placedApp(t, g, "demo", "chaperone"); !ok || !a.Placed {
+		t.Fatalf("demo/chaperone = %+v (present %v), want placed", a, ok)
+	}
+	for _, tenant := range []string{"solo", "other", "platform"} {
+		if _, ok := placedApp(t, g, tenant, "chaperone"); ok {
+			t.Errorf("%s has the chaperone and did not turn agentic interfaces on", tenant)
+		}
+		if _, ok := placedApp(t, g, tenant, "desktop"); !ok {
+			t.Errorf("%s has no desktop", tenant)
+		}
+	}
+
+	// Turned off again. The director reads a checkout that may be a few
+	// seconds old, so a pass that writes something comes first: it brings
+	// the checkout up to the commit that turned them off.
+	placedOn := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
+	dt.Commit(t, h.remote, map[string]string{dt.TenantPath("demo"): strings.Replace(placedOn, "    enabled: true\n", "    enabled: false\n", 1)})
+	agentic.Wanted = []string{"chaperone", "desktop", "store"}
+	op.set(placement.Answer{Users: agentic, Platform: set("desktop")})
+	if placed, removed := srv.PlacePlatformApps(context.Background()); placed != 3 || removed != 0 {
+		t.Fatalf("the pass that places the store placed %d and removed %d, want 3 and 0", placed, removed)
+	}
+	// Gone on the second pass that finds them off, like any placement
+	// withdrawn.
+	if placed, removed := srv.PlacePlatformApps(context.Background()); placed != 0 || removed != 0 {
+		t.Fatalf("the first pass to find them off placed %d and removed %d", placed, removed)
+	}
+	if placed, removed := srv.PlacePlatformApps(context.Background()); placed != 0 || removed != 1 {
+		t.Fatalf("placed %d and removed %d, want 0 and 1", placed, removed)
+	}
+	g = gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{})
+	if _, ok := placedApp(t, g, "demo", "chaperone"); ok {
+		t.Error("demo still has the chaperone")
+	}
+	if _, ok := placedApp(t, g, "demo", "desktop"); !ok {
+		t.Error("demo lost its desktop")
+	}
+}

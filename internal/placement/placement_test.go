@@ -211,3 +211,34 @@ func TestACredentialPlacesAComponentOneWay(t *testing.T) {
 		t.Fatalf("a user tenant was given it: %+v", users)
 	}
 }
+
+// A profile placed while agentic interfaces are on is wanted in the tenants
+// its placement names, and marked: which of them has them on is each
+// tenant's to say. In a tenant that has them off it is not in the set; and
+// a set that marks nothing is the same in every tenant.
+func TestAProfileForAgenticInterfacesGoesToTheTenantsThatTurnedThemOn(t *testing.T) {
+	answer := placement.Decide(placement.Facts{Profiles: []gentianov1alpha1.ComponentProfile{
+		profile("desktop", placed(gentianov1alpha1.PlacementEvery, "")),
+		profile("chaperone", placed(gentianov1alpha1.PlacementEvery, gentianov1alpha1.PlacementWhileAgenticInterfaces)),
+		profile("gateway", placed(gentianov1alpha1.PlacementUsers, gentianov1alpha1.PlacementWhileAgenticInterfaces)),
+	}})
+	if got := answer.Users; !reflect.DeepEqual(got.Wanted, []string{"chaperone", "desktop", "gateway"}) ||
+		!reflect.DeepEqual(got.Agentic, []string{"chaperone", "gateway"}) {
+		t.Fatalf("users = %+v", got)
+	}
+	if got := answer.Platform; !reflect.DeepEqual(got.Wanted, []string{"chaperone", "desktop"}) ||
+		!reflect.DeepEqual(got.Agentic, []string{"chaperone"}) {
+		t.Fatalf("platform = %+v", got)
+	}
+	if on := answer.Users.In(true); !on.Has("chaperone") || !on.Has("gateway") || !on.Has("desktop") {
+		t.Fatalf("a tenant with them on has %+v", on)
+	}
+	off := answer.Users.In(false)
+	if off.Has("chaperone") || off.Has("gateway") || !off.Has("desktop") {
+		t.Fatalf("a tenant with them off has %+v", off)
+	}
+	// Off is decided, not unknown: what was placed is taken away.
+	if !off.Decided("chaperone") {
+		t.Fatal("a tenant with them off leaves the chaperone undecided")
+	}
+}

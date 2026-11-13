@@ -537,13 +537,15 @@ without one is installable by a tenant's administrator and never placed.
 spec:
   placement:
     tenants: every          # every | platform | users
-    while: storeOffered     # optional: storeOffered | llm | credentialSet
+    while: storeOffered     # optional: storeOffered | llm | credentialSet | agenticInterfaces
 ```
 
 `while` names the condition the placement lasts for; absent, it lasts for the
 life of each tenant. A conditional placement is also taken away, so such a
 profile must own no data; `credentialSet` is the exception and never takes it
-away. Only class `app` is placed: a service and a shared-app have one instance.
+away. `agenticInterfaces` is the one condition that is a tenant's and not the
+cluster's: of the tenants the placement names, the component goes to those
+whose manifest says `spec.agenticInterfaces.enabled: true`. Only class `app` is placed: a service and a shared-app have one instance.
 `defaultForTenants`, `defaultForPlatform` and `defaultWhereStoreOffered` are
 the same three placements in an older spelling and are still read.
 

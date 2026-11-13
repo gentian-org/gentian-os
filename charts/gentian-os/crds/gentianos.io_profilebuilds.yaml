@@ -3165,6 +3165,7 @@ spec:
                         - storeOffered
                         - llm
                         - credentialSet
+                        - agenticInterfaces
                         type: string
                     required:
                     - tenants

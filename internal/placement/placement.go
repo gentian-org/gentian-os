@@ -41,6 +41,9 @@ const RequiresUsageStatisticsAnnotation = "gentianos.io/requires-usage-statistic
 type Set struct {
 	// Wanted are the profiles the tenant has.
 	Wanted []string `json:"wanted"`
+	// Agentic are the profiles among Wanted that a tenant has only while
+	// it has agentic interfaces turned on (PlacementWhileAgenticInterfaces).
+	Agentic []string `json:"agentic,omitempty"`
 	// Undecided are the profiles whose placement could not be decided: a
 	// fact it depends on could not be read. What is placed of them stays,
 	// and nothing of them is placed.
@@ -49,6 +52,21 @@ type Set struct {
 
 // Has reports whether the set places a profile.
 func (s Set) Has(name string) bool { return contains(s.Wanted, name) }
+
+// In is the set for one tenant: without the profiles that need agentic
+// interfaces, unless the tenant has them turned on.
+func (s Set) In(agenticInterfaces bool) Set {
+	if agenticInterfaces || len(s.Agentic) == 0 {
+		return s
+	}
+	out := Set{Wanted: []string{}, Undecided: s.Undecided}
+	for _, name := range s.Wanted {
+		if !contains(s.Agentic, name) {
+			out.Wanted = append(out.Wanted, name)
+		}
+	}
+	return out
+}
 
 // Decided reports whether the set decided a profile either way.
 func (s Set) Decided(name string) bool { return !contains(s.Undecided, name) }
@@ -136,19 +154,28 @@ func Decide(f Facts) Answer {
 			out.Platform.Undecided = append(out.Platform.Undecided, profile.Name)
 			continue
 		}
+		var sets []*Set
 		switch p.Tenants {
 		case gentianov1alpha1.PlacementEvery:
-			out.Users.Wanted = append(out.Users.Wanted, profile.Name)
-			out.Platform.Wanted = append(out.Platform.Wanted, profile.Name)
+			sets = []*Set{&out.Users, &out.Platform}
 		case gentianov1alpha1.PlacementPlatform:
-			out.Platform.Wanted = append(out.Platform.Wanted, profile.Name)
+			sets = []*Set{&out.Platform}
 		case gentianov1alpha1.PlacementUsers:
-			out.Users.Wanted = append(out.Users.Wanted, profile.Name)
+			sets = []*Set{&out.Users}
+		}
+		for _, s := range sets {
+			s.Wanted = append(s.Wanted, profile.Name)
+			// Which tenants have them on is each tenant's own manifest
+			// to say; the one who writes the placement reads it there.
+			if p.While == gentianov1alpha1.PlacementWhileAgenticInterfaces {
+				s.Agentic = append(s.Agentic, profile.Name)
+			}
 		}
 	}
 	out.Grants = preApproved(f.Profiles, f.Gone)
 	for _, s := range []*Set{&out.Users, &out.Platform} {
 		sort.Strings(s.Wanted)
+		sort.Strings(s.Agentic)
 		sort.Strings(s.Undecided)
 		if s.Wanted == nil {
 			s.Wanted = []string{}

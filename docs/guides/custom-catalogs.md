@@ -658,13 +658,25 @@ spec:
   classes: [app]
   placement:
     tenants: users        # every (the platform tenant too), platform (it alone), users (all but it)
-    while: storeOffered   # optional: storeOffered, or llm (the cluster serves models)
+    while: storeOffered   # optional: storeOffered, llm (the cluster serves models), agenticInterfaces
 ```
 
 The director writes a placed profile into each tenant it names, as an entry of the tenant's apps
 marked `placed: true`, and takes it out when the condition stops holding; nobody installs,
 uninstalls, moves or changes it by hand, and an export leaves it out. A profile placed under a
 condition must own no data. Only a cluster's own catalogs place.
+
+A profile placed `while: agenticInterfaces` offers programs and agents a way to the tenant's apps. It
+goes to the tenants, of those `tenants` names, that turned such interfaces on in their manifest:
+
+```yaml
+kind: Tenant
+spec:
+  agenticInterfaces:
+    enabled: true
+```
+
+A new tenant has them off. Turned off again, the profile is taken out of the tenant.
 
 A profile placed `while: llm` is found through the index (`placedWith: llm`) before it is on the
 cluster, and is installed into every user tenant for everyone at the build the index lists, as an

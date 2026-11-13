@@ -94,7 +94,7 @@ const (
 
 // PlacementCondition is what a placement lasts for.
 //
-// +kubebuilder:validation:Enum=storeOffered;llm;credentialSet
+// +kubebuilder:validation:Enum=storeOffered;llm;credentialSet;agenticInterfaces
 type PlacementCondition string
 
 const (
@@ -112,6 +112,12 @@ const (
 	// it stays when the credential goes, as what it keeps may not be taken
 	// away by a credential lapsing.
 	PlacementWhileCredentialSet PlacementCondition = "credentialSet"
+	// PlacementWhileAgenticInterfaces is for as long as the tenant has
+	// agentic interfaces turned on (Tenant spec.agenticInterfaces.enabled).
+	// The one condition that is a tenant's and not the cluster's: of the
+	// tenants the placement names, the component goes to those that turned
+	// them on.
+	PlacementWhileAgenticInterfaces PlacementCondition = "agenticInterfaces"
 )
 
 // PinnedImage is one image repository and the build of it a component runs.

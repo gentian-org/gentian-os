@@ -78,6 +78,16 @@ spec:
                       account. Defaults to true.
                     type: boolean
                 type: object
+              agenticInterfaces:
+                description: |-
+                  AgenticInterfaces is whether programs and agents reach the tenant's
+                  apps through the platform; see TenantAgenticInterfaces. Unset or
+                  off, the components that offer such interfaces are not placed in it.
+                properties:
+                  enabled:
+                    description: Enabled turns the interfaces on.
+                    type: boolean
+                type: object
               apps:
                 description: Apps lists the applications to install for this tenant.
                 items:

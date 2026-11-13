@@ -191,6 +191,9 @@ type Tenant struct {
 	// SignUp is spec.signUp.enabled: anybody may make an account in the
 	// tenant's realm. Chosen when the tenant is made.
 	SignUp bool `json:"signUp"`
+	// AgenticInterfaces is spec.agenticInterfaces.enabled: the components
+	// that let programs and agents use the tenant's apps are placed in it.
+	AgenticInterfaces bool `json:"agenticInterfaces,omitempty"`
 	// Country is spec.country: an ISO 3166-1 alpha-2 code, or "".
 	Country string `json:"country,omitempty"`
 	// AdminsEnter is spec.platformAccess.adminsEnter: the platform's
@@ -335,6 +338,9 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						SignUp struct {
 							Enabled bool `json:"enabled"`
 						} `json:"signUp"`
+						AgenticInterfaces struct {
+							Enabled bool `json:"enabled"`
+						} `json:"agenticInterfaces"`
 						Country        string `json:"country"`
 						PlatformAccess struct {
 							AdminsEnter bool `json:"adminsEnter"`
@@ -346,6 +352,7 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
 					t.AdminsEnter = doc.Spec.PlatformAccess.AdminsEnter
+					t.AgenticInterfaces = doc.Spec.AgenticInterfaces.Enabled
 					t.CataloguesDelegated = doc.Spec.Catalogue.Delegated
 					t.SignUp = doc.Spec.SignUp.Enabled
 					t.Country = doc.Spec.Country

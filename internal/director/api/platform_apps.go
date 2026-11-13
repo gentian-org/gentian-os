@@ -222,7 +222,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 			have[a.Profile] = a
 		}
 		if answered {
-			set := answer.For(platform)
+			set := answer.For(platform).In(t.AgenticInterfaces)
 			// What the platform has placed in this tenant once this pass
 			// is through, for the contracts it pre-approves between them.
 			ours := map[string]bool{}
@@ -353,5 +353,7 @@ func (s *Server) placedForNewTenant(ctx context.Context) []string {
 			"and the next placement adds it", "error", err.Error())
 		return nil
 	}
-	return answer.Users.Wanted
+	// A new tenant has agentic interfaces off: what needs them is placed
+	// when it turns them on.
+	return answer.Users.In(false).Wanted
 }
