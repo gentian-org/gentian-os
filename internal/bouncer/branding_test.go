@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package bouncer
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -27,14 +28,14 @@ func TestTheDeniedPageWearsTheBrand(t *testing.T) {
 			t.Fatalf("issuer %q gave %q", issuer, got)
 		}
 	}
-	page := deniedPage(BrandingBase("https://id.k.example/auth/"))
+	page := deniedPage(BrandingBase("https://id.k.example/auth/"), http.StatusForbidden)
 	if !strings.Contains(page, `<link rel="stylesheet" href="https://k.example/branding/brand.css">`) {
 		t.Fatalf("no brand stylesheet:\n%s", page)
 	}
 	if !strings.Contains(page, "var(--brand-color-brand-500,#262696)") {
 		t.Fatal("the button lost its fallback color")
 	}
-	if strings.Contains(deniedPage(""), "<link") {
+	if strings.Contains(deniedPage("", http.StatusForbidden), "<link") {
 		t.Fatal("a page without a brand still links one")
 	}
 }

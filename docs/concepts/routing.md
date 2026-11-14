@@ -486,7 +486,8 @@ With the OAuth2 filter first, per request on a session route:
 |---|---|---|
 | Valid session | Removes the client's `Authorization` header, sets it to the session's access token | The token. Verifies it, asks the relation, sets `x-gentian-*` |
 | Session whose access token has run out, refresh token present | Fetches new tokens from the realm, then as above with the new token; the new cookies go out with the response | The new token |
-| No session, or the refresh failed | Redirects the browser to the realm | Nothing: the request does not reach it |
+| No session | Redirects the browser to the realm | Nothing: the request does not reach it |
+| Session the realm has ended (a sign-out elsewhere, an administrator), so the refresh is refused | Passes the request on with the session's cookies and no token | No token. A page the person opened is signed in again; anything else gets `401` (below) |
 | `/oauth2/callback` | Completes the code flow and redirects | Nothing |
 | `/oauth2/logout` | Signs out (§4.2) | Nothing |
 
@@ -507,7 +508,16 @@ failed.": it starts a new sign-in once, back to the page the person asked
 for on the same host, and offers a link if that sign-in fails again within
 two minutes (`responseOverride` on the session routes' BackendTrafficPolicy,
 for Envoy-generated `401`s in `text/plain` only; the bouncer's refusals keep
-their own page). The one path of an app that takes no
+their own page). A page whose session the realm has ended reaches the bouncer
+with the filter's cookies and no token. The bouncer clears those cookies,
+the ones of earlier policies on the host included, and sends the browser back
+to the address it asked for on the same host. The filter then starts a sign-in,
+which comes straight back while the realm still has a session for the person
+and shows the login form otherwise. That happens only for a `GET` the browser
+marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
+(`gentian-edge-restart` cookie, never passed to a backend). A page that comes
+back still without a session gets a page saying the sign-in has ended. The page
+for a person who lacks the access is shown only for a `403`. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
