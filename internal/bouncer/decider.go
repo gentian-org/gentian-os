@@ -60,6 +60,10 @@ type Request struct {
 	IDToken string
 	// Cookie is the Cookie header as it arrived, never read for identity.
 	Cookie string
+	// Method and FetchMode (HeaderFetchMode) say whether the request is a
+	// page the person opened. They decide only how a refusal is answered.
+	Method    string
+	FetchMode string
 }
 
 // Decision is the bouncer's answer.
@@ -84,11 +88,16 @@ type Decision struct {
 	// Challenge is the WWW-Authenticate header of a 401 on a route that
 	// takes a token: what a program needs to find where to get one.
 	Challenge string
+	// SetCookies go out with a redirect as Set-Cookie headers: the edge's
+	// cookies of an ended session, cleared, and RestartCookie.
+	SetCookies []string
 
 	// What the audit record names, set where it is known: the verified
 	// subject, the store question, and whether a cached allow answered.
 	subject, relation, object string
 	cached                    bool
+	// restart is a sign-in restarted for an ended session.
+	restart bool
 	// client is the client a token on a bearer route was issued to.
 	client string
 }
@@ -178,6 +187,18 @@ const LogoutPath = "/oauth2/logout"
 // be a 404 from a backend today.
 const SignOutPath = "/oauth2/sign-out"
 
+// HeaderFetchMode is the browser's own word for what a request is for. Only
+// "navigate", a page the person opened, can follow a redirect to sign in.
+const HeaderFetchMode = "sec-fetch-mode"
+
+// RestartCookie marks a sign-in this service restarted on this host, for as
+// long as restartWindow. A page that comes back with it and still no session
+// is not sent round again: something other than an ended session is wrong,
+// and a second round would be the first of a loop.
+const RestartCookie = "gentian-edge-restart"
+
+const restartWindow = 2 * time.Minute
+
 // Identity headers the backend receives. The gateway strips whatever the
 // client sent under these names by overriding them, so the app may trust
 // one at all.
@@ -250,6 +271,8 @@ func reasonOf(dec Decision) string {
 		return "allowed"
 	case dec.Redirect == LogoutPath:
 		return "sign-out"
+	case dec.restart:
+		return "session-ended"
 	case dec.Redirect != "":
 		return "refused"
 	case dec.Status == http.StatusUnauthorized:
@@ -284,9 +307,20 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 		// runs first and would have sent such a request to sign in; one that
 		// arrives here without a token it set is a request the filter did
 		// not vouch for, and the only safe answer is no.
+		//
+		// Except that it does let one through: a session the realm has
+		// ended, whose refresh the realm refuses, reaches this service with
+		// the filter's cookies and no token. A page the person opens is
+		// then signed in again rather than refused (restartSignIn).
+		if dec, ok := restartSignIn(route, req, err.Error()); ok {
+			return about(route, "", dec)
+		}
 		return about(route, "", challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error()))))
 	}
 	if id.SessionID == "" {
+		if dec, ok := restartSignIn(route, req, "token names no session"); ok {
+			return about(route, id.Subject, dec)
+		}
 		return about(route, id.Subject, challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session"))))
 	}
 	if route.AuthMode == AuthModeBearer {

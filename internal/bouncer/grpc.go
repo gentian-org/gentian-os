@@ -29,14 +29,25 @@ import (
 // colors are the cluster's brand when brandingBase names where that is
 // published (the browser fetches it, not this service), and the platform's
 // own otherwise.
-func deniedPage(brandingBase string) string {
+//
+// A 401 says the session is gone, a 403 that it lacks the access; the page
+// says which, since the way out is the same link but not the same reason.
+func deniedPage(brandingBase string, status int) string {
 	brand := ""
 	if strings.HasPrefix(brandingBase, "https://") {
 		brand = `<link rel="stylesheet" href="` + html.EscapeString(brandingBase+"brand.css") + `">`
 	}
+	title, heading, text, link := "Not available to you", "This is not available to you",
+		"Your session does not carry the access this page needs. If you have "+
+			"just been given it, or you are signed in as someone else, sign out and "+
+			"sign in again.", "Sign out"
+	if status == http.StatusUnauthorized {
+		title, heading, text, link = "Signed out", "Your sign-in has ended",
+			"This page could not renew your session. Sign in again to continue.", "Sign in again"
+	}
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
-		`<title>Not available to you</title>` + brand + `<style>` +
+		`<title>` + title + `</title>` + brand + `<style>` +
 		`body{font-family:var(--brand-font-family-sans,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif);` +
 		`background:var(--brand-color-paper-0,#f4f1ea);color:var(--brand-color-ink-1,#14152e);` +
 		`display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}` +
@@ -44,10 +55,7 @@ func deniedPage(brandingBase string) string {
 		`p{margin:0 0 1rem;color:var(--brand-color-ink-3,#45486b);line-height:1.5}` +
 		`a{display:inline-block;background:var(--brand-color-brand-500,#262696);color:#fff;text-decoration:none;` +
 		`padding:.55rem 1rem;border-radius:var(--brand-radius-1,.5rem)}</style></head><body><main>` +
-		`<h1>This is not available to you</h1>` +
-		`<p>Your session does not carry the access this page needs. If you have ` +
-		`just been given it, or you are signed in as someone else, sign out and ` +
-		`sign in again.</p><a href="` + LogoutPath + `">Sign out</a></main></body></html>`
+		`<h1>` + heading + `</h1><p>` + text + `</p><a href="` + LogoutPath + `">` + link + `</a></main></body></html>`
 }
 
 // BrandingBase is where the cluster's brand is published, from the issuer
@@ -84,6 +92,8 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		Authorization: headers["authorization"],
 		IDToken:       headers[HeaderIDToken],
 		Cookie:        headers[HeaderCookie],
+		Method:        httpReq.GetMethod(),
+		FetchMode:     headers[HeaderFetchMode],
 	}
 	if r.Host == "" {
 		r.Host = httpReq.GetHost()
@@ -107,6 +117,12 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 				Header:       &corev3.HeaderValue{Key: "cache-control", Value: "no-store"},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}}
+			for _, c := range dec.SetCookies {
+				denied.Headers = append(denied.Headers, &corev3.HeaderValueOption{
+					Header:       &corev3.HeaderValue{Key: "set-cookie", Value: c},
+					AppendAction: corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,
+				})
+			}
 			return &authv3.CheckResponse{
 				Status:       &rpcstatus.Status{Code: int32(codes.PermissionDenied), Message: dec.Reason},
 				HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: denied},
@@ -122,7 +138,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		// names it. It grants nothing: signing out is available to anyone
 		// holding a session, refused or not.
 		if dec.Browser {
-			denied.Body = deniedPage(s.BrandingBase)
+			denied.Body = deniedPage(s.BrandingBase, dec.Status)
 			denied.Headers = []*corev3.HeaderValueOption{{
 				Header:       &corev3.HeaderValue{Key: "content-type", Value: "text/html; charset=utf-8"},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
