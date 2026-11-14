@@ -74,6 +74,13 @@ writes one by hand.
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
 | the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared cache (Valkey) through `kernel-access-<app>` instead |
 
+A component that is told the realm's issuer
+(`valueMapping.platform.issuerKey`) and is handed no token by an exposure of
+its own has one more rule in `component-<app>`: the edge Service's pods on
+the port its https port forwards to, where the issuer answers from inside the
+cluster. It fetches the realm's signing keys there; nothing else of the edge
+namespace is opened.
+
 A component that starts runs (`requires.services.runs`) has two more:
 `component-<app>` opens the way to the dispatcher's pods on its port, and
 `runs-<app>` admits that component's own runs, from the tenant's namespace

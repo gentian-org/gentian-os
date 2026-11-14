@@ -198,6 +198,19 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsRuns(profile) {
 		outside = append(outside, runsEgress())
 	}
+	// The realm's signing keys, for a component told the issuer that no
+	// exposure of its own takes to the edge: the edge Service's pods on the
+	// port its https port forwards to (issuer_keys.go). An edge that cannot
+	// be read leaves the rule out, as below.
+	if wantsIssuerKeys(profile) {
+		keys, err := r.issuerKeysRule(ctx)
+		if err != nil {
+			logf.FromContext(ctx).Info("the edge's Service could not be read; the policy leaves the issuer's keys out",
+				"component", comp.Name, "error", err.Error())
+			keys = nil
+		}
+		outside = append(outside, keys...)
+	}
 	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is
