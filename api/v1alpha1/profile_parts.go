@@ -633,6 +633,14 @@ type RightsRequirement struct {
 	// the key asks the app question alone.
 	// +optional
 	Audit bool `json:"audit,omitempty"`
+	// BreakGlass lets the same key ask one question more, for a person of
+	// the platform tenant: do they hold break_glass on the cluster now
+	// (cluster#break_glass): through the realm's break-glass group, or by
+	// name until their expiresAt. It is for a component that hands such a
+	// person a short-lived credential, and is honored for a component of the
+	// platform tenant only, as Audit is.
+	// +optional
+	BreakGlass bool `json:"breakGlass,omitempty"`
 }
 
 // LLMRequirement declares that a component uses the platform's model gateway.

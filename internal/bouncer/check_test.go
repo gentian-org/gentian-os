@@ -38,12 +38,18 @@ func checkFixture(t *testing.T) (*fakeStore, http.Handler) {
 		"user:kernel/audrey|can_audit|cluster:main":        true,
 		"user:kernel/audrey|can_read_evidence|tenant:acme": true,
 		"user:kernel/dana|can_read_evidence|tenant:acme":   true,
+		// bella holds break_glass by name until her entry ends; root through
+		// the realm's group, as the account itself.
+		"user:kernel/bella|break_glass|cluster:main": true,
+		"user:root|break_glass|cluster:main":         true,
 	}}
 	table := &Table{Checkers: []Checker{
 		{Key: componentkeys.Key{Tenant: "acme", Component: "notary", KeyHash: componentkeys.Hash("acme-key")}},
 		{Key: componentkeys.Key{Tenant: "globex", Component: "notary", KeyHash: componentkeys.Hash("globex-key")}},
 		{Key: componentkeys.Key{Tenant: "platform", Component: "evidence", KeyHash: componentkeys.Hash("platform-key")},
 			Audit: &CheckerAudit{Cluster: "main", Realm: "kernel"}},
+		{Key: componentkeys.Key{Tenant: "platform", Component: "desk", KeyHash: componentkeys.Hash("desk-key")},
+			BreakGlass: &CheckerAudit{Cluster: "main", Realm: "kernel"}},
 	}}
 	return store, New(Options{Store: store, Table: table}).CheckHandler()
 }
@@ -169,6 +175,49 @@ func TestAnAuditKeyAsksNothingElse(t *testing.T) {
 	}
 }
 
+// A key with BreakGlass asks one question more: does a person of the
+// platform tenant hold break_glass on the cluster, by group or by name.
+func TestABreakGlassKeyAsksWhoHoldsBreakGlass(t *testing.T) {
+	_, h := checkFixture(t)
+	for body, want := range map[string]bool{
+		`{"person":"bella","relation":"break_glass"}`:  true,
+		`{"person":"root","relation":"break_glass"}`:   true,
+		`{"person":"audrey","relation":"break_glass"}`: false,
+	} {
+		rec := ask(h, "desk-key", body)
+		if rec.Code != 200 || strings.Contains(rec.Body.String(), `"allowed":true`) != want {
+			t.Errorf("%s: got %d %s, want allowed %v", body, rec.Code, rec.Body, want)
+		}
+	}
+}
+
+// The break-glass question is its own declaration: an audit key does not
+// ask it, a break-glass key asks no audit question, and it names no tenant.
+func TestTheBreakGlassQuestionIsAskedOnlyByAKeyThatMay(t *testing.T) {
+	store, h := checkFixture(t)
+	for key, body := range map[string]string{
+		"platform-key": `{"person":"bella","relation":"break_glass"}`,
+		"acme-key":     `{"person":"bella","relation":"break_glass"}`,
+		"desk-key":     `{"person":"audrey","relation":"can_audit"}`,
+	} {
+		if rec := ask(h, key, body); rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s: got %d %s, want 403", key, body, rec.Code, rec.Body)
+		}
+	}
+	for _, body := range []string{
+		`{"person":"bella","relation":"break_glass","tenant":"acme"}`,
+		`{"person":"bella","app":"projects","relation":"break_glass"}`,
+		`{"person":"a/b","relation":"break_glass"}`,
+	} {
+		if rec := ask(h, "desk-key", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d %s, want 400", body, rec.Code, rec.Body)
+		}
+	}
+	if store.checks != 0 {
+		t.Fatalf("the store was asked %d times for questions the key may not ask", store.checks)
+	}
+}
+
 func TestCheckFailsClosedAndTakesNoOtherMethod(t *testing.T) {
 	store, h := checkFixture(t)
 	store.down = true
@@ -191,6 +240,7 @@ func TestTableRefusesAMalformedChecker(t *testing.T) {
 		"audit with no realm":                `{tenant: platform, component: evidence, keyHash: "` + componentkeys.Hash("k") + `", audit: {cluster: main}}`,
 		"audit with no cluster":              `{tenant: platform, component: evidence, keyHash: "` + componentkeys.Hash("k") + `", audit: {realm: kernel}}`,
 		"audit of a cluster that is no name": `{tenant: platform, component: evidence, keyHash: "` + componentkeys.Hash("k") + `", audit: {cluster: "a:b", realm: kernel}}`,
+		"break-glass with no realm":          `{tenant: platform, component: desk, keyHash: "` + componentkeys.Hash("k") + `", breakGlass: {cluster: main}}`,
 	} {
 		if _, err := ParseTable([]byte("checkers: [" + entry + "]")); err == nil {
 			t.Errorf("%s: accepted", name)

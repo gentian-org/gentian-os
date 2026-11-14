@@ -472,6 +472,14 @@ the evidence's own settings away from its readers; and `{"person": "<subject>", 
 auditors hold for every tenant and a `tenantAuditor` ([commands.md](../reference/commands.md)) for one. In any other tenant `audit` is ignored, and a key without it is
 refused (`403`) when it names a relation.
 
+A component of the platform tenant that hands a break-glass holder a short-lived credential declares
+`spec.requires.services.rights: {breakGlass: true}`, and its key asks one question more: `{"person":
+"<subject>", "relation": "break_glass"}`, does this person of the platform tenant hold `break_glass`
+on the cluster now, through the realm's break-glass group or by name until their entry's
+`expiresAt`. It is declared on its own: `audit` does not include it, and it does not include the
+audit questions. In any other tenant it is ignored, and a key without it is refused (`403`) when it
+asks.
+
 **A component of the platform tenant that receives the platform's log forwarder** inside the cluster
 declares `spec.requires.services.logDestination: {service, port}`: its Service, and the port that
 Service and its pods serve HTTPS on (the same number on both). It needs `trustTier: platform`. The
