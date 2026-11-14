@@ -23,6 +23,11 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
+// challengeBody is the body of a 401 that carries a challenge: what RFC 6750
+// has a program read is in the header, so this says only that a token is
+// called for.
+const challengeBody = `{"error":"unauthorized"}`
+
 // deniedPage is what a browser gets instead of the word "Forbidden": the
 // refusal, and the one link that can change it. Inline and tiny, because this
 // service serves no assets and must answer without reaching anything. Its
@@ -144,8 +149,17 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}}
 		}
+		// A refusal a program can act on: the challenge says what is called
+		// for and where the entry's metadata is. The answer is JSON and not
+		// plain text, because the Gateway replaces a plain-text 401 with the
+		// page that restarts a browser's sign-in (edgeSignInRestart), and
+		// the challenge would go with it.
 		if dec.Challenge != "" {
+			denied.Body = challengeBody
 			denied.Headers = append(denied.Headers, &corev3.HeaderValueOption{
+				Header:       &corev3.HeaderValue{Key: "content-type", Value: "application/json"},
+				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			}, &corev3.HeaderValueOption{
 				Header:       &corev3.HeaderValue{Key: "www-authenticate", Value: dec.Challenge},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			})
