@@ -96,7 +96,10 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if err := r.Status().Update(ctx, &ib); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: again}, seedErr
+	if seedErr != nil {
+		return ctrl.Result{}, seedErr
+	}
+	return ctrl.Result{RequeueAfter: again}, nil
 }
 
 // addressReadAnnotation holds, on a consumer's ExternalSecret, when the
