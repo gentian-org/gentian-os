@@ -279,6 +279,68 @@ func TestOnlyThePlatformTenantsKeyAsksTheAuditQuestions(t *testing.T) {
 	}
 }
 
+func TestOnlyThePlatformTenantsKeyAsksTheBreakGlassQuestion(t *testing.T) {
+	ctx := context.Background()
+	scheme := rightsScheme(t)
+	breaking := func(name string, trust gentianov1alpha1.TrustTier) *gentianov1alpha1.ComponentProfile {
+		profile := rightsProfile(name, true)
+		profile.Spec.Requires.Services.Rights.BreakGlass = true
+		profile.Spec.TrustTier = trust
+		return profile
+	}
+	desk, elsewhere := rightsComponent("platform", "desk"), rightsComponent("acme", "desk")
+	notary, untrusted := rightsComponent("platform", "notary"), rightsComponent("platform", "untrusted")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rightsTenant("platform"), rightsTenant("acme"), desk, elsewhere, notary, untrusted,
+		breaking("desk", gentianov1alpha1.TrustTierPlatform), rightsProfile("notary", true),
+		breaking("untrusted", "")).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme}
+	for _, comp := range []*gentianov1alpha1.Component{desk, elsewhere, notary, untrusted} {
+		profile := &gentianov1alpha1.ComponentProfile{}
+		if err := c.Get(ctx, types.NamespacedName{Name: comp.Spec.ProfileRef.Name}, profile); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.ensureRightsCheck(ctx, comp, defaultTenantName(comp), profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	against := bouncer.CheckerAudit{Cluster: "main", Realm: "kernel"}
+	checkers, err := rightsCheckers(ctx, c, against)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"platform/desk": true, "acme/desk": false, "platform/notary": false, "platform/untrusted": false}
+	if len(checkers) != len(want) {
+		t.Fatalf("checkers = %+v", checkers)
+	}
+	for _, ch := range checkers {
+		name := ch.Tenant + "/" + ch.Component
+		if (ch.BreakGlass != nil) != want[name] {
+			t.Errorf("%s asks the break-glass question: %v, want %v", name, ch.BreakGlass != nil, want[name])
+		}
+		if ch.BreakGlass != nil && *ch.BreakGlass != against {
+			t.Errorf("%s asks against %+v", name, *ch.BreakGlass)
+		}
+		if ch.Audit != nil {
+			t.Errorf("%s asks the audit questions without declaring them", name)
+		}
+	}
+
+	rendered, err := bouncerTable(nil, nil, checkers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table, err := bouncer.ParseTable([]byte(rendered))
+	if err != nil {
+		t.Fatalf("the bouncer refuses the operator's table: %v", err)
+	}
+	for _, ch := range table.Checkers {
+		if (ch.BreakGlass != nil) != want[ch.Tenant+"/"+ch.Component] {
+			t.Errorf("the bouncer read %s/%s with break-glass %+v", ch.Tenant, ch.Component, ch.BreakGlass)
+		}
+	}
+}
+
 func TestRightsCheckOpensOnePortOfTheEdge(t *testing.T) {
 	rule := rightsCheckEgress()
 	if len(rule.To) != 1 || rule.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != servicesNamespace {
