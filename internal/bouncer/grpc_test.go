@@ -14,6 +14,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +130,60 @@ func TestEnvoyGetsHeadersOnAllowAndAStatusOnDeny(t *testing.T) {
 		if h.Header.Key == "www-authenticate" {
 			t.Fatalf("a session route asked for a bearer: %q", h.Header.Value)
 		}
+	}
+}
+
+// A program refused on a route that takes a token is told what is called for
+// and where the entry's metadata is, in an answer that is not plain text: the
+// Gateway replaces a plain-text 401 with the page that restarts a browser's
+// sign-in, and the challenge would be lost with it. A session route's refusal
+// carries no challenge and stays as it was.
+func TestARefusalOnATokenRouteKeepsItsChallenge(t *testing.T) {
+	d := New(Options{
+		Verifier: fakeVerifier{}, Store: &fakeStore{}, Table: table(), CacheTTL: time.Minute,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s := &Server{Decider: d}
+	check := func(host string, headers map[string]string) map[string]string {
+		t.Helper()
+		h := map[string]string{":authority": host}
+		for k, v := range headers {
+			h[k] = v
+		}
+		resp, err := s.Check(context.Background(), &authv3.CheckRequest{Attributes: &authv3.AttributeContext{
+			Request: &authv3.AttributeContext_Request{Http: &authv3.AttributeContext_HttpRequest{
+				Id: "r1", Host: host, Path: "/", Headers: h,
+			}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		denied := resp.GetDeniedResponse()
+		if denied.GetStatus().GetCode() != typev3.StatusCode_Unauthorized {
+			t.Fatalf("%s: answer = %v", host, resp)
+		}
+		got := map[string]string{"body": denied.GetBody()}
+		for _, hv := range denied.GetHeaders() {
+			got[hv.Header.Key] = hv.Header.Value
+		}
+		return got
+	}
+
+	for name, headers := range map[string]map[string]string{
+		"no token":       nil,
+		"a forged token": {"authorization": "Bearer forged"},
+	} {
+		got := check("api.k.example", headers)
+		if !strings.HasPrefix(got["www-authenticate"], "Bearer") {
+			t.Fatalf("%s: challenge = %q", name, got["www-authenticate"])
+		}
+		if got["content-type"] != "application/json" || got["body"] != challengeBody {
+			t.Fatalf("%s: the refusal is %q as %q; plain text is replaced at the Gateway", name, got["body"], got["content-type"])
+		}
+	}
+
+	got := check("argocd.k.example", nil)
+	if _, there := got["www-authenticate"]; there || got["content-type"] == "application/json" || got["body"] == challengeBody {
+		t.Fatalf("a session route's refusal changed: %v", got)
 	}
 }
