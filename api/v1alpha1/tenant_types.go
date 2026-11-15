@@ -982,7 +982,24 @@ type TenantTokenEntries struct {
 	// +optional
 	// +kubebuilder:validation:Enum=required;waived
 	Approval string `json:"approval,omitempty"`
+
+	// SessionMaxHours is how long a sign-in through one of this tenant's
+	// token entries lasts before the person signs in again. Unset, it is 4
+	// hours (DefaultTokenEntrySessionHours). Longer takes effect only on a
+	// cluster whose claim allows tenants the choice
+	// (spec.tokenEntries.tenantsMayExtendSessions), and never past the
+	// tenant's own sign-in (spec.session.maxHours); a profile that states a
+	// shorter sessionMaxAge keeps it. A program keeps what renews its tokens
+	// on the person's computer, so this bounds what a copy of it is worth.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=24
+	SessionMaxHours *int32 `json:"sessionMaxHours,omitempty"`
 }
+
+// DefaultTokenEntrySessionHours is how long a sign-in through a token entry
+// lasts when the tenant states nothing, or the cluster does not let it.
+const DefaultTokenEntrySessionHours int32 = 4
 
 // TokenEntryApprovalWaived is spec.tokenEntries.approval of a tenant whose
 // token entries need no approval.

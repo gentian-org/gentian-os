@@ -759,7 +759,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// for it.
 		if e := tokenEntryOf(comp, profile); e != nil && (tokenEntryApproved(comp, e, time.Now()) ||
 			tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))) {
-			in.TokenEntry = &apprender.TokenEntry{Host: exposureHost(zone, comp, e), RedirectURIs: e.ClientRedirectURIs}
+			in.TokenEntry = &apprender.TokenEntry{
+				Host:          exposureHost(zone, comp, e),
+				RedirectURIs:  e.ClientRedirectURIs,
+				SessionMaxAge: tokenEntrySessionMaxAge(tenant, clusterAllowsTokenEntrySessions(ctx, r.Client)),
+			}
 			for _, p := range e.ExchangedBy {
 				in.TokenEntry.Exchangers = append(in.TokenEntry.Exchangers, VouchingAlias(p))
 			}

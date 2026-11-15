@@ -1894,6 +1894,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.storeTerms.version` | string | yes | `Version` is the version of the terms the store named when they were accepted. |
 | `spec.tokenEntries` | object |  | `TokenEntries` is how this tenant's token entries come to be served: a component's address that takes a token of the tenant's realm in place of a session. |
 | `spec.tokenEntries.approval` | string |  | `Approval` says whether a token entry needs the perimeter approver's approval before it is served. |
+| `spec.tokenEntries.sessionMaxHours` | integer (int32) |  | `SessionMaxHours` is how long a sign-in through one of this tenant's token entries lasts before the person signs in again. |
 | `status` | object |  | TenantStatus holds the observed state of a Tenant. |
 | `status.adminEmail` | string |  | `AdminEmail` is the resolved contact address for this tenant, and the administrator's login: admin@\<effectiveDomain>. |
 | `status.appCount` | integer |  | `AppCount` is the total number of apps requested in spec. |

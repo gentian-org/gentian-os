@@ -940,6 +940,16 @@ spec:
                         Tenant). false, which is the default, and a tenant's
                         own setting has no effect: every token entry waits
                         for its approval.
+                    tenantsMayExtendSessions:
+                      type: boolean
+                      default: false
+                      description: >
+                        true lets a tenant make a sign-in through its token
+                        entries last longer than 4 hours, up to its own
+                        sign-in (spec.tokenEntries.sessionMaxHours on the
+                        Tenant). false, which is the default, and a tenant's
+                        own setting has no effect: such a sign-in ends after
+                        4 hours.
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.

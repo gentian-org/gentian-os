@@ -226,6 +226,17 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		}
 	}
 	in.Profile.SessionMaxAge = nil
+	// The tenant's extension, as the operator settled it, sets the entry's
+	// cap; a profile's shorter one still holds.
+	in.TokenEntry.SessionMaxAge = 12 * time.Hour
+	if got, _, _ := unstructured.NestedString(render()[client].Object, "spec", "forProvider", "clientSessionMaxLifespan"); got != "12h0m0s" {
+		t.Errorf("an entry extended to 12h: the sessions last %s", got)
+	}
+	in.Profile.SessionMaxAge = &metav1.Duration{Duration: time.Hour}
+	if got, _, _ := unstructured.NestedString(render()[client].Object, "spec", "forProvider", "clientSessionMaxLifespan"); got != "1h0m0s" {
+		t.Errorf("an extended entry of a profile capped at 1h: the sessions last %s", got)
+	}
+	in.Profile.SessionMaxAge, in.TokenEntry.SessionMaxAge = nil, 0
 	// The component's own client is not named: it exchanges nothing.
 	for name, o := range objs {
 		if aud, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "config", "included.custom.audience"); aud == "agent-door" {

@@ -26,6 +26,9 @@ type TokenEntry struct {
 	// Exchangers are the realm clients that may exchange the entry's
 	// tokens, by client id.
 	Exchangers []string
+	// SessionMaxAge is how long a sign-in through the entry lasts, as the
+	// tenant and the cluster settle it; zero is tokenEntrySessionMaxAge.
+	SessionMaxAge time.Duration
 }
 
 // TokenEntryClientID is the realm client the programs that connect to a
@@ -34,7 +37,8 @@ type TokenEntry struct {
 func TokenEntryClientID(app string) string { return "token-entry-" + app }
 
 // tokenEntrySessionMaxAge is how long a sign-in through a token entry's
-// client may be used before the person signs in again.
+// client may be used before the person signs in again, where the tenant
+// settles nothing else (TokenEntry.SessionMaxAge).
 const tokenEntrySessionMaxAge = 4 * time.Hour
 
 // tokenEntryAudience is what the entry's tokens are made out to, and what the
@@ -79,10 +83,13 @@ func (id *identityScope) tokenEntryClient() []*unstructured.Unstructured {
 	}
 	// A program keeps what renews its tokens on the person's computer, and
 	// the realm rotates that for no single client. So the client's sessions
-	// end after tokenEntrySessionMaxAge whatever the realm's own limit, or
-	// sooner where the profile says so: past it the realm refuses the
-	// renewal and the person signs in again.
+	// end after the entry's SessionMaxAge (4 hours unless the tenant extends
+	// it where the cluster allows), or sooner where the profile says so:
+	// past it the realm refuses the renewal and the person signs in again.
 	max := tokenEntrySessionMaxAge
+	if entry.SessionMaxAge > 0 {
+		max = entry.SessionMaxAge
+	}
 	if own := id.profile.SessionMaxAge; own != nil && own.Duration > 0 && own.Duration < max {
 		max = own.Duration
 	}

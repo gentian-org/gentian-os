@@ -626,7 +626,10 @@ The realm issues such a token to one public client, `token-entry-<component>`,
 which exists while the entry is served: authorization code with PKCE and the
 person's consent, no other grant, no role of the person in the token, no
 offline token, and a sign-in through it ends after four hours (sooner where
-the profile's `sessionMaxAge` is shorter). A program is sent back only to an
+the profile's `sessionMaxAge` is shorter). A tenant may make it last longer,
+up to its own sign-in (`spec.tokenEntries.sessionMaxHours` on the Tenant),
+which counts only where the Cluster claim allows tenants the choice
+(`spec.tokenEntries.tenantsMayExtendSessions`, off by default). A program is sent back only to an
 address the entry declares (`clientRedirectURIs`): an exact `https` address,
 or a loopback address for a program on the person's computer. Where to obtain
 a token is published on the entry's host at
