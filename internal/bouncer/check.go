@@ -42,6 +42,11 @@ type Checker struct {
 	// tenant's evidence. Nil for every key but the evidence service's and its
 	// console's.
 	Audit *CheckerAudit `json:"audit,omitempty"`
+	// BreakGlass, when set, lets the key ask one question more about a
+	// person of the platform tenant: do they hold break_glass on the
+	// cluster now. Nil for every key but that of a component which hands
+	// such a person a short-lived credential.
+	BreakGlass *CheckerAudit `json:"breakGlass,omitempty"`
 }
 
 // CheckerAudit is what the audit questions are asked against: the cluster,
@@ -60,6 +65,8 @@ const (
 	relationCanAudit        = "can_audit"
 	relationCanReadEvidence = "can_read_evidence"
 	relationCanConfigure    = "can_configure"
+	// relationBreakGlass is asked of a key with BreakGlass only.
+	relationBreakGlass = "break_glass"
 )
 
 // appNamePattern is a profile name: a DNS label. Holding the name to it is
@@ -69,10 +76,13 @@ var appNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
 func validateCheckers(checkers []Checker) error {
 	return componentkeys.Check(checkers, "route table", "checker", func(i int, c Checker) error {
-		if c.Audit != nil {
-			if _, err := authz.HolderUser(c.Audit.Realm, "x"); err != nil || strings.TrimSpace(c.Audit.Cluster) == "" ||
-				strings.ContainsAny(c.Audit.Cluster, ":#/ ") {
-				return fmt.Errorf("route table: checker %d (%s/%s) asks the audit questions and needs a cluster and a realm", i, c.Tenant, c.Component)
+		for what, a := range map[string]*CheckerAudit{"the audit questions": c.Audit, "the break-glass question": c.BreakGlass} {
+			if a == nil {
+				continue
+			}
+			if _, err := authz.HolderUser(a.Realm, "x"); err != nil || strings.TrimSpace(a.Cluster) == "" ||
+				strings.ContainsAny(a.Cluster, ":#/ ") {
+				return fmt.Errorf("route table: checker %d (%s/%s) asks %s and needs a cluster and a realm", i, c.Tenant, c.Component, what)
 			}
 		}
 		return nil
@@ -96,7 +106,7 @@ type checkRequest struct {
 	App string `json:"app,omitempty"`
 	// Relation, instead of App, asks an audit question of a key that may:
 	// can_audit or can_configure, of the cluster, or can_read_evidence, of
-	// Tenant.
+	// Tenant; or, of a key that may, break_glass of the cluster.
 	Relation string `json:"relation,omitempty"`
 	Tenant   string `json:"tenant,omitempty"`
 }
@@ -137,6 +147,9 @@ func questionOf(checker *Checker, req checkRequest) (question, int, string) {
 		}
 		return question{user: user, relation: "can_use", object: authz.App(checker.Tenant, req.App), tenant: checker.Tenant}, 0, ""
 	}
+	if req.Relation == relationBreakGlass {
+		return breakGlassQuestion(checker, req, user)
+	}
 	if checker.Audit == nil {
 		return question{}, http.StatusForbidden, "this key asks about the apps of its tenant only"
 	}
@@ -167,6 +180,27 @@ func questionOf(checker *Checker, req checkRequest) (question, int, string) {
 	return q, 0, ""
 }
 
+// breakGlassQuestion is the break-glass question: does a person of the
+// platform tenant hold break_glass on the cluster -- through the realm's
+// group, or by name until the time their entry ends, after which the store
+// no longer holds the tuple.
+func breakGlassQuestion(checker *Checker, req checkRequest, user string) (question, int, string) {
+	if checker.BreakGlass == nil {
+		return question{}, http.StatusForbidden, "this key does not ask the break-glass question"
+	}
+	if req.App != "" {
+		return question{}, http.StatusBadRequest, "ask about an app or a relation, not both"
+	}
+	if req.Tenant != "" {
+		return question{}, http.StatusBadRequest, "break_glass is asked of the cluster, with no tenant"
+	}
+	holder, err := authz.HolderUser(checker.BreakGlass.Realm, req.Person)
+	if err != nil {
+		return question{}, http.StatusBadRequest, "person must be a subject"
+	}
+	return question{user: user, holder: holder, relation: relationBreakGlass, object: authz.Cluster(checker.BreakGlass.Cluster)}, 0, ""
+}
+
 func (d *Decider) check(w http.ResponseWriter, r *http.Request) {
 	checker := d.Table().checker(bearer(r.Header.Get("Authorization")))
 	if checker == nil {
@@ -194,8 +228,8 @@ func (d *Decider) check(w http.ResponseWriter, r *http.Request) {
 		outcome = audit.Allowed
 	}
 	// The person asked about is the subject: a component asked whether they
-	// may use the app, audit, or read the evidence, and the answer is a
-	// decision about them.
+	// may use the app, audit, read the evidence, or break glass, and the
+	// answer is a decision about them.
 	audit.Write(r.Context(), d.log, audit.Record{
 		Source: "bouncer", Kind: audit.KindDecision, RequestID: r.Header.Get("x-request-id"),
 		Tenant: q.tenant, Subject: req.Person, Object: q.object, Action: q.relation, Outcome: outcome,

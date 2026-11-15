@@ -1926,6 +1926,15 @@ spec:
                                 honored for a component of the platform tenant only: anywhere else
                                 the key asks the app question alone.
                               type: boolean
+                            breakGlass:
+                              description: |-
+                                BreakGlass lets the same key ask one question more, for a person of
+                                the platform tenant: do they hold break_glass on the cluster now
+                                (cluster#break_glass): through the realm's break-glass group, or by
+                                name until their expiresAt. It is for a component that hands such a
+                                person a short-lived credential, and is honored for a component of the
+                                platform tenant only, as Audit is.
+                              type: boolean
                           type: object
                         runs:
                           description: |-
@@ -4243,6 +4252,15 @@ spec:
                               service that keeps the evidence and the console that shows it, and is
                               honored for a component of the platform tenant only: anywhere else
                               the key asks the app question alone.
+                            type: boolean
+                          breakGlass:
+                            description: |-
+                              BreakGlass lets the same key ask one question more, for a person of
+                              the platform tenant: do they hold break_glass on the cluster now
+                              (cluster#break_glass): through the realm's break-glass group, or by
+                              name until their expiresAt. It is for a component that hands such a
+                              person a short-lived credential, and is honored for a component of the
+                              platform tenant only, as Audit is.
                             type: boolean
                         type: object
                       runs:

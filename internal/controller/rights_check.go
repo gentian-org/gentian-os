@@ -180,11 +180,21 @@ func wantsAuditCheck(profile *gentianov1alpha1.ComponentProfile) bool {
 		profile.Spec.TrustTier == gentianov1alpha1.TrustTierPlatform
 }
 
+// wantsBreakGlassCheck reports whether a profile asks the break-glass
+// question with its key (requires.services.rights.breakGlass), at platform
+// trust; rightsCheckers holds it to the platform tenant.
+func wantsBreakGlassCheck(profile *gentianov1alpha1.ComponentProfile) bool {
+	services := profile.Services()
+	return services != nil && services.Rights != nil && services.Rights.BreakGlass &&
+		profile.Spec.TrustTier == gentianov1alpha1.TrustTierPlatform
+}
+
 // rightsCheckers are the checkers the bouncer's table must hold: one per
 // component that declares the requirement and holds its key. A component of
 // the platform tenant whose profile asks the audit questions has them, asked
-// against audit; one of any other tenant asks the app question alone,
-// whatever its profile says.
+// against audit, and so has the break-glass question when its profile asks
+// it; one of any other tenant asks the app question alone, whatever its
+// profile says.
 func rightsCheckers(ctx context.Context, c client.Reader, audit bouncer.CheckerAudit) ([]bouncer.Checker, error) {
 	keys, err := componentKeys(ctx, c, rightsCheckKeys, wantsRightsCheck)
 	if err != nil {
@@ -194,17 +204,29 @@ func rightsCheckers(ctx context.Context, c client.Reader, audit bouncer.CheckerA
 	if err != nil {
 		return nil, err
 	}
-	audits := map[string]bool{}
-	for _, k := range auditing {
-		if k.Tenant == authz.PlatformTenant {
-			audits[k.KeyHash] = true
-		}
+	breaking, err := componentKeys(ctx, c, rightsCheckKeys, wantsBreakGlassCheck)
+	if err != nil {
+		return nil, err
 	}
+	platformKeys := func(ks []componentKey) map[string]bool {
+		out := map[string]bool{}
+		for _, k := range ks {
+			if k.Tenant == authz.PlatformTenant {
+				out[k.KeyHash] = true
+			}
+		}
+		return out
+	}
+	audits, breaks := platformKeys(auditing), platformKeys(breaking)
 	var out []bouncer.Checker
 	for _, k := range keys {
 		checker := bouncer.Checker{Key: componentkeys.Key{Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash}}
 		if audits[k.KeyHash] {
 			checker.Audit = &audit
+		}
+		if breaks[k.KeyHash] {
+			bg := audit
+			checker.BreakGlass = &bg
 		}
 		out = append(out, checker)
 	}
