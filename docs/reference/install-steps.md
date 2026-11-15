@@ -39,7 +39,7 @@ The options `install.sh` accepts, in the order it parses them, with the help `in
 | `--no-config-files` | ignore install.env entirely; take everything from the environment |
 | `--verify-only` | run post-install verification and print the summary |
 | `--activate-admin` | issue a new activation link for the cluster administrator (admin@\<kernel-domain>), mailed or shown once — for a lost password when nobody can sign in to ask the director |
-| `--validate, --check` | check the step files, report which settings and credentials this configuration has, then run the pre-flight (tools, cluster reachable, Kubernetes version, operator image). Asks no question, collects no credential and runs no step's check(). Changes nothing, on the same terms as --dry-run |
+| `--validate, --check` | check the step files, report which settings and credentials this configuration has, then run the pre-flight (tools, cluster reachable, Kubernetes version, the images built from the operator's commit). Asks no question, collects no credential and runs no step's check(). Changes nothing, on the same terms as --dry-run |
 | `-h, --help` | this message |
 
 ## 2. Steps
