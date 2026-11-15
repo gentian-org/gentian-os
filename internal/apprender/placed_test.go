@@ -98,3 +98,68 @@ func TestAnAppNamedPastItsOverrideGetsItsAPIAlias(t *testing.T) {
 		t.Fatal("fellwort-ee-api is not made")
 	}
 }
+
+// A component the platform places that provides a contract is handed the
+// contract's credential like any other provider: read from the tenant's own
+// store at the contract's path and set at the key its profile names. Nothing
+// else of a placed component's is read from the store.
+func TestAPlacedProviderIsHandedItsContractCredential(t *testing.T) {
+	in := &Input{
+		App: "desktop", Namespace: "tenant-acme", TenantName: "acme", Domain: "acme.example",
+		ReleaseObject: "tenant-acme-desktop", HelmRelease: "tenant-acme-desktop",
+		KeepVolumes: "desktop-keep-volumes", Composite: "tenant-acme-desktop",
+		ProfileName: "desktop", Placed: true,
+		Profile: &gentianov1alpha1.ComponentProfileSpec{
+			Package: gentianov1alpha1.PackageSpec{
+				Chart: &gentianov1alpha1.ChartRef{Repository: "oci://example.invalid/charts", Name: "desktop", Version: "1.0.0"},
+				ValueMapping: &gentianov1alpha1.ValueMapping{
+					Database: &gentianov1alpha1.DatabaseValueMapping{SecretNameKey: "existingSecret.name"},
+					Integrations: map[string]gentianov1alpha1.IntegrationValueMapping{
+						"notices": {PasswordKey: "notices.key"},
+					},
+				},
+			},
+			Provides: []gentianov1alpha1.ContractRef{{Name: "notices", Protocol: "http-json",
+				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "desktop-api", Port: 8000, Path: "/contracts/v1/notices"}}},
+		},
+	}
+	out, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var release, secret *unstructured.Unstructured
+	for _, obj := range out.Objects {
+		switch obj.GetKind() {
+		case "Release":
+			release = obj
+		case "ExternalSecret":
+			secret = obj
+		}
+	}
+	if release == nil || secret == nil {
+		t.Fatalf("release = %v, external secret = %v: want both", release != nil, secret != nil)
+	}
+	if got := secret.GetName(); got != "desktop-sensitive-values" {
+		t.Fatalf("external secret = %q", got)
+	}
+	data, _, _ := unstructured.NestedSlice(secret.Object, "spec", "data")
+	if len(data) != 1 {
+		t.Fatalf("external secret reads %v, want the contract's credential and nothing else", data)
+	}
+	entry := data[0].(map[string]interface{})
+	ref, _ := entry["remoteRef"].(map[string]interface{})
+	if entry["secretKey"] != "integration-notices-password" ||
+		ref["key"] != "gentian-os/tenants/acme/contracts/notices" || ref["property"] != "password" {
+		t.Fatalf("external secret entry = %v", entry)
+	}
+	set, _, _ := unstructured.NestedSlice(release.Object, "spec", "forProvider", "set")
+	if len(set) != 1 {
+		t.Fatalf("release sets %v, want the contract's credential and nothing else", set)
+	}
+	item := set[0].(map[string]interface{})
+	key, _, _ := unstructured.NestedString(item, "valueFrom", "secretKeyRef", "key")
+	name, _, _ := unstructured.NestedString(item, "valueFrom", "secretKeyRef", "name")
+	if item["name"] != "notices.key" || key != "integration-notices-password" || name != "desktop-sensitive-values" {
+		t.Fatalf("release set entry = %v", item)
+	}
+}
