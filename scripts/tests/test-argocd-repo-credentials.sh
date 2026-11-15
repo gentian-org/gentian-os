@@ -82,6 +82,7 @@ case "${verb}:${kind}" in
         case "${jsonpath}" in
             *server*insecure*) printf 'false' ;;
             *diff*server*side*) printf 'true' ;;
+            *hard*reconciliation*) printf '15m' ;;
             *subjects*) printf '%s' "${GITOPS_NS}" ;;
             # The versions check() compares with the pins: an installed Argo
             # CD at the pinned manifest, the updater at the pinned chart.
