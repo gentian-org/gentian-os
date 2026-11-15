@@ -1354,9 +1354,14 @@ Who may read what:
     `gentianos.io/tenant: <tenant>` and `gentianos.io/tier` `tenant` or
     `tenant-runs`: the one the tenant's apps run in and the one its runs are
     started in. Every `ExternalSecret` the Compositions and the operator put
-    in a tenant's namespace names it. In the namespace for runs the only one
-    is a repository's pull Secret (§5.1); a tenant applies nothing there, and
-    a run's pod holds no account that reads a Secret.
+    in a tenant's namespace names it. In the namespace for runs there are two
+    kinds: a repository's pull Secret (§5.1), and for each installed action
+    that asks a person for credentials one Secret, `run-credentials-<action>`,
+    read from the action's own `apps/<action>/supplied/`. The dispatcher's
+    table names that Secret for the action, and the pods of that action's
+    runs mount it read-only; the dispatcher holds no right to read a Secret.
+    A tenant applies nothing there, and a run's pod holds no account that
+    reads a Secret.
 
   The platform tenant is no exception. Its desktop keeps its data on the
   kernel's PostgreSQL, in a database of its own (`portal_shell`) under a role

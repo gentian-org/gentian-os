@@ -61,6 +61,8 @@ func TestATableThatIsNotOneIsRefused(t *testing.T) {
 		"an own run at a tag":                func(t *Table) { t.Callers[0].Own[0].Digest = "" },
 		"a tenant named twice":               func(t *Table) { t.Tenants = append(t.Tenants, t.Tenants[0]) },
 		"a pull Secret that is not a name":   func(t *Table) { t.Tenants[0].Actions[0].PullSecrets = []string{"../other"} },
+		"credentials that are not a name":    func(t *Table) { t.Tenants[0].Actions[0].Credentials = "../other" },
+		"an own run with credentials":        func(t *Table) { t.Callers[0].Own[0].Credentials = "run-credentials-ocr" },
 	} {
 		changed := table()
 		change(&changed)

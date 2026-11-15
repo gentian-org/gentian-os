@@ -498,6 +498,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// on this cluster, and what it asked for is answered; there is nothing
 	// to roll out. A run of it is the dispatcher's.
 	if comp.Spec.Class == gentianov1alpha1.ComponentClassAction {
+		// Its credentials are files a run reads: a field that names no
+		// variable cannot be written, and one a person has not set yet
+		// holds every run (run_credentials.go).
+		if refusal := actionCredentialsRefusal(profile); refusal != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", refusal, 0)
+		}
+		if awaits := actionAwaits(ctx, r.Client, tenant.Name, comp, profile); awaits != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "CredentialsPending", awaits, componentRequeue)
+		}
 		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
 	}
 

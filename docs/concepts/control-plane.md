@@ -1125,7 +1125,9 @@ programs ask the kernel's OpenFGA, which the arbiter does not stand before.
   once (Secret `runs-<component>`) and writes its hash into a table
   (ConfigMap `dispatcher-runs`) with what may run in each tenant: the
   installed actions that are Ready, and each caller's own runs, every one an
-  image at its pinned build. The dispatcher re-reads the table every five
+  image at its pinned build. An action that waits for a credential a person
+  sets is not Ready; one that has them is named with the Secret its runs
+  mount. The dispatcher re-reads the table every five
   seconds. The tenant and the component are the table's for that key, never
   anything a request says.
 - Carries nothing of a run. Inputs, outputs, progress, a question to a

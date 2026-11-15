@@ -639,6 +639,27 @@ it through the dispatcher; the run's pod reaches that component and, where the a
 `requires.privileges.egress` was granted, what that names. The command's contract and what a run is
 told are in [reference/dispatcher-api.md](../reference/dispatcher-api.md).
 
+An action that calls a service outside the cluster declares the credential it needs under
+`spec.secrets.supplied`, as an app does, with one difference: a field's `valuePath` is the name
+the value has in the credential's file.
+
+```yaml
+  secrets:
+    supplied:
+    - name: cloud                       # the file /run/credentials/cloud.env
+      displayName: Cloud account
+      description: A token of the account the step works in.
+      fields:
+      - key: token
+        valuePath: CLOUD_TOKEN          # a line CLOUD_TOKEN='…' in that file
+        format: token
+```
+
+The tenant's Admin Console lists it under Credentials once the action is installed. Until it is
+set the action is not Ready (`CredentialsPending`) and no run of it starts. A run of that action,
+and of no other, reads the files; a value changed in the console reaches the next runs within the
+hour. Removing the action removes what was asked for.
+
 ### 4.1a An app with no single sign-on: declare the sign-in sidecar
 
 For an app that, in the edition you publish, can do neither OIDC nor SAML. Only in a catalog of
