@@ -577,6 +577,12 @@ What the platform does with it, and nothing needs granting for:
 - An adapter may be an `api` instead of a chart: a tool server outside the cluster. It adapts no app
   of the tenant and runs nothing in it, so the egress granted to it is given to the components that
   call it.
+- An adapter may run in the tenant and adapt none of its apps, reaching a service elsewhere as the
+  person: it leaves out `adapts` and names the service's realm among its partners
+  (`requires.services.partners.call`). A call through it is then for the adapter itself: the rights
+  check asks `can_use` on the adapter, and the token it is handed (scope `app-<adapter>`) names its
+  partner client, which exchanges it for an assertion towards the partner. Its pods reach the
+  tenant's realm for that exchange; the service itself is granted egress.
 
 An adapter that says where its tool server answers is made known to the components that may call
 it:
@@ -589,7 +595,7 @@ it:
 
 Each of those components finds a ConfigMap `adapters-<component>` in its namespace. Its one key,
 `ADAPTERS`, is a JSON object from an adapter's install name to its address inside the tenant and
-the app it adapts: `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
+the app a call through it is for, the app it adapts or the adapter itself: `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
 The list follows what is installed. It grants nothing: the way to an adapter is the network
 policy above, and an adapter without an `endpoint` is installed and on no list.
 

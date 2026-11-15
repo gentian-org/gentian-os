@@ -640,8 +640,8 @@ token on to no app. Where the entry names a component that exchanges
 `requires.services.vouching.exchange`), the entry's tokens name that
 component's client, and it exchanges one at the realm for a token of the one
 app it calls, by that app's scope `app-<profile>`: the realm holds one for
-every app an exposure of which says `exchangeToken`, and for every app an
-installed adapter adapts. No other client can exchange them, and that component can
+every app an exposure of which says `exchangeToken`, for every app an
+installed adapter adapts, and for every installed adapter that adapts none. No other client can exchange them, and that component can
 exchange no token that did not come in through such an entry.
 
 A token entry is served once the tenant's perimeter approver approved it

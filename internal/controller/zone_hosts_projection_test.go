@@ -230,6 +230,11 @@ func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
 		Adapts:   &gentianov1alpha1.AdaptedApp{Profile: "ledger"},
 		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "ledger-adapter", Port: 8765, Path: "/mcp"},
 	}
+	// Adapts nothing of the tenant: calls through it are for itself.
+	partner := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "store-adapter"}}
+	partner.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
+		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"},
+	}
 	quiet := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet-adapter"}}
 	quiet.Spec.Adapter = &gentianov1alpha1.AdapterSpec{Adapts: &gentianov1alpha1.AdaptedApp{Profile: "quiet"}}
 	comp := func(name string) *gentianov1alpha1.Component {
@@ -239,14 +244,15 @@ func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
 		return c
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(), app, adapter, quiet, comp("ledger"), comp("ledger-adapter"), comp("quiet-adapter"),
+		tenant.DeepCopy(), app, adapter, partner, quiet,
+		comp("ledger"), comp("ledger-adapter"), comp("store-adapter"), comp("quiet-adapter"),
 	).Build()
 	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := exchangeProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "ledger" {
-		t.Fatalf("exchange profiles = %v, want the adapted app alone", got)
+	if got := exchangeProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != "ledger" || got[1] != "store-adapter" {
+		t.Fatalf("exchange profiles = %v, want the adapted app and the adapter that adapts none", got)
 	}
 }
 

@@ -36,7 +36,8 @@ func adapterListProfile(classes []gentianov1alpha1.ComponentClass, mutate func(*
 
 // Every component that may call the tenant's adapters is told which there
 // are: the installed adapters that say where they answer, each with its
-// address inside the tenant and the app it adapts. A caller the platform
+// address inside the tenant and the app a call through it is for: the app it
+// adapts, or the adapter itself where it adapts none. A caller the platform
 // places is told like an installed one; a component that may not call them
 // is told nothing; and the list follows what is installed, down to the list
 // of a component that is a caller no more.
@@ -67,6 +68,13 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "odoo-adapter", Port: 8765, Path: "/mcp"},
 			}
 		}),
+		// Adapts none of the tenant's apps and reaches a service elsewhere:
+		// a call through it is for the adapter itself.
+		"store-adapter": adapterListProfile(adapter, func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
+				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"},
+			}
+		}),
 		// Installed, and silent about where it answers: on nobody's list.
 		"silent-adapter": adapterListProfile(adapter, func(p *gentianov1alpha1.ComponentProfile) {
 			p.Spec.Adapter = &gentianov1alpha1.AdapterSpec{Adapts: &gentianov1alpha1.AdaptedApp{Profile: "odoo"}}
@@ -77,6 +85,7 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 		TenantName: "acme", Namespace: "tenant-acme", Profiles: profiles,
 		Apps: []gentianov1alpha1.TenantApp{
 			{Profile: "odoo"}, {Profile: "chaperone"}, {Profile: "odoo-adapter"}, {Profile: "silent-adapter"},
+			{Profile: "store-adapter"},
 		},
 		Placed: []string{"usher", "desktop"},
 	}
@@ -102,7 +111,8 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 	if err := tr.ensureAdapterLists(ctx, tenant, in); err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"odoo-adapter":{"url":"http://odoo-adapter.tenant-acme.svc.cluster.local:8765/mcp","app":"odoo"}}`
+	const want = `{"odoo-adapter":{"url":"http://odoo-adapter.tenant-acme.svc.cluster.local:8765/mcp","app":"odoo"},` +
+		`"store-adapter":{"url":"http://store-adapter.tenant-acme.svc.cluster.local:8765/mcp","app":"store-adapter"}}`
 	for _, caller := range []string{"chaperone", "usher"} {
 		if got, ok := list(caller); !ok || got != want {
 			t.Fatalf("%s is told %q (present %v), want %s", caller, got, ok, want)

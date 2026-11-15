@@ -53,8 +53,8 @@ const (
 	// zoneExchangeProfilesKey is the second thing the zone's realm has to be
 	// told about the components, in the same shape: the sorted,
 	// newline-separated names of the profiles whose exposures ask for an
-	// exchanged token (exchangeToken), and of the apps an installed adapter
-	// adapts. The Composition makes one client scope
+	// exchanged token (exchangeToken), and of the apps calls through an
+	// installed adapter are for (adapterApp). The Composition makes one client scope
 	// in the realm per name, called what AppTokenScope calls it, and that
 	// scope is what the bouncer asks for on the component's routes.
 	//
@@ -176,7 +176,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// components of one profile share the one audience.
 			exchange[tenant][profile.Name] = true
 		}
-		if app := adaptedApp(profile); app != "" {
+		if app := adapterApp(profile.Name, profile); app != "" {
 			// An installed adapter's app is handed tokens too: a component
 			// that vouches for people obtains one for it, by this scope, to
 			// call the adapter as the person. Without it the realm refuses
@@ -228,12 +228,20 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	return nil
 }
 
-// adaptedApp is the profile of the app an adapter adapts, where the adapter
-// is called (it names an endpoint), and empty for anything else.
-func adaptedApp(profile *gentianov1alpha1.ComponentProfile) string {
+// adapterApp is the app a call through an adapter is for, where the adapter
+// is called (it names an endpoint), and empty for anything else: the app it
+// adapts, or, for an adapter that adapts none of its tenant's apps and
+// reaches a service elsewhere, the adapter itself (name, its install name).
+// The rights check asks can_use on this app, and the token the adapter is
+// handed is for it (scope app-<app>): so a person may use an adapter of the
+// second kind exactly where they were given the adapter.
+func adapterApp(name string, profile *gentianov1alpha1.ComponentProfile) string {
 	a := profile.Spec.Adapter
-	if a == nil || a.Adapts == nil || a.Endpoint == nil {
+	if a == nil || a.Endpoint == nil {
 		return ""
+	}
+	if a.Adapts == nil {
+		return name
 	}
 	return a.Adapts.Profile
 }
