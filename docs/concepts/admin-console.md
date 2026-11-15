@@ -351,6 +351,11 @@ records who published it. Notices are stored in the tenant's own database,
 in the table the desktop reads; the console keeps no copy and reads the
 history through the usher.
 
+The desktop also provides the contract `notices`: a component of the tenant
+that the administrator granted the contract to puts a notice in the inbox of
+the people or groups it names, at the desktop's API, with the contract's
+credential.
+
 ---
 
 ## 6. App access
