@@ -353,8 +353,8 @@ history through the usher.
 
 The desktop also provides the contract `notices`: a component of the tenant
 that the administrator granted the contract to puts a notice in the inbox of
-the people or groups it names, at the desktop's API, with the contract's
-credential.
+the people or groups it names, with the contract's credential. The route
+is reached from inside the cluster only: the edge does not route it.
 
 ---
 

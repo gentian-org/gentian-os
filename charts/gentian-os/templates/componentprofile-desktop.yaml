@@ -114,7 +114,8 @@ spec:
         port: 8000
     # A notice in a person's inbox, from a component of the same tenant: it
     # is addressed to people by name, to groups of the tenant, or to both.
-    # It is called with the contract's credential and no person's token. A
+    # It is called with the contract's credential and no person's token, at
+    # a path the api entry below does not route from the edge. A
     # component reaches it once the tenant's administrator has granted it
     # the contract.
     - name: notices
@@ -122,7 +123,7 @@ spec:
       endpoint:
         service: desktop-gentian-portal-api
         port: 8000
-        path: /api/v1/notices
+        path: /contracts/v1/notices
   expose:
     # The BFF: the same-origin relay the shell talks to. It relays to the
     # director with the user's own token, which is why this entry -- and

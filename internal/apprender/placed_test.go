@@ -120,7 +120,7 @@ func TestAPlacedProviderIsHandedItsContractCredential(t *testing.T) {
 				},
 			},
 			Provides: []gentianov1alpha1.ContractRef{{Name: "notices", Protocol: "http-json",
-				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "desktop-api", Port: 8000, Path: "/api/v1/notices"}}},
+				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "desktop-api", Port: 8000, Path: "/contracts/v1/notices"}}},
 		},
 	}
 	out, err := Render(in)
