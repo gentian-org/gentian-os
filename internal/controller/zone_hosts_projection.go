@@ -53,7 +53,8 @@ const (
 	// zoneExchangeProfilesKey is the second thing the zone's realm has to be
 	// told about the components, in the same shape: the sorted,
 	// newline-separated names of the profiles whose exposures ask for an
-	// exchanged token (exchangeToken). The Composition makes one client scope
+	// exchanged token (exchangeToken), and of the apps an installed adapter
+	// adapts. The Composition makes one client scope
 	// in the realm per name, called what AppTokenScope calls it, and that
 	// scope is what the bouncer asks for on the component's routes.
 	//
@@ -175,6 +176,13 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// components of one profile share the one audience.
 			exchange[tenant][profile.Name] = true
 		}
+		if app := adaptedApp(profile); app != "" {
+			// An installed adapter's app is handed tokens too: a component
+			// that vouches for people obtains one for it, by this scope, to
+			// call the adapter as the person. Without it the realm refuses
+			// that exchange for an app with no exchangeToken entry of its own.
+			exchange[tenant][app] = true
+		}
 		if wantsVouching(profile) {
 			// By the profile's name, as above and for the same reason: the
 			// realm knows the component as VouchingAlias(profile), and two
@@ -218,6 +226,16 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// adaptedApp is the profile of the app an adapter adapts, where the adapter
+// is called (it names an endpoint), and empty for anything else.
+func adaptedApp(profile *gentianov1alpha1.ComponentProfile) string {
+	a := profile.Spec.Adapter
+	if a == nil || a.Adapts == nil || a.Endpoint == nil {
+		return ""
+	}
+	return a.Adapts.Profile
 }
 
 // asksForExchangedToken reports whether any exposure of the profile declares

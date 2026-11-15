@@ -215,6 +215,41 @@ func TestExchangeProfilesFollowTheComponentsThatAsk(t *testing.T) {
 	}
 }
 
+// An installed adapter's app is handed tokens by the components that vouch
+// for people, so it has a scope whether or not an entry of its own asks: by
+// the adapted profile's name, and only for an adapter that is called.
+func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := platformTenantFixture()
+	app := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger"}}
+	adapter := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger-adapter"}}
+	adapter.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
+		Adapts:   &gentianov1alpha1.AdaptedApp{Profile: "ledger"},
+		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "ledger-adapter", Port: 8765, Path: "/mcp"},
+	}
+	quiet := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet-adapter"}}
+	quiet.Spec.Adapter = &gentianov1alpha1.AdapterSpec{Adapts: &gentianov1alpha1.AdaptedApp{Profile: "quiet"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tenant.NamespaceName()}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), app, adapter, quiet, comp("ledger"), comp("ledger-adapter"), comp("quiet-adapter"),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := exchangeProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "ledger" {
+		t.Fatalf("exchange profiles = %v, want the adapted app alone", got)
+	}
+}
+
 func vouchingProfilesOf(t *testing.T, r *TileProjectionReconciler, tenant string) []string {
 	t.Helper()
 	cm := &corev1.ConfigMap{}
