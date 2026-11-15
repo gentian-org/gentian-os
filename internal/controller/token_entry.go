@@ -189,6 +189,24 @@ func tokenEntryApprovalWaived(tenant *gentianov1alpha1.Tenant, clusterAllows boo
 		tenant.Spec.TokenEntries.Approval == gentianov1alpha1.TokenEntryApprovalWaived
 }
 
+// tokenEntrySessionMaxAge is how long a sign-in through the tenant's token
+// entries lasts: 4 hours, or what the tenant says where the cluster lets it,
+// and never past the tenant's own sign-in. The tenant's word alone extends
+// nothing.
+func tokenEntrySessionMaxAge(tenant *gentianov1alpha1.Tenant, clusterAllows bool) time.Duration {
+	hours := gentianov1alpha1.DefaultTokenEntrySessionHours
+	if clusterAllows && tenant != nil && tenant.Spec.TokenEntries != nil &&
+		tenant.Spec.TokenEntries.SessionMaxHours != nil && *tenant.Spec.TokenEntries.SessionMaxHours > 0 {
+		hours = *tenant.Spec.TokenEntries.SessionMaxHours
+	}
+	if tenant != nil {
+		if own := tenant.SessionMaxHours(); own > 0 && own < hours {
+			hours = own
+		}
+	}
+	return time.Duration(hours) * time.Hour
+}
+
 // servedTokenEntry says whether the component's token entry is served, and
 // writes the condition that says so (in memory: the caller's status update
 // carries it). It is served when the tenant's perimeter approver approved the

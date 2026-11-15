@@ -151,6 +151,7 @@ spec:
         tenant.limitRange.defaultRequest.cpu: 100m
         tenant.limitRange.defaultRequest.memory: 128Mi
         tokenEntries.tenantsMayWaiveApproval: "false"
+        tokenEntries.tenantsMayExtendSessions: "false"
       kind: ConfigMap
       metadata:
         labels:

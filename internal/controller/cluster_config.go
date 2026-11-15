@@ -40,11 +40,15 @@ const (
 	// (spec.tokenEntries.tenantsMayWaiveApproval). No environment fallback:
 	// a ConfigMap that cannot answer means no.
 	clusterConfigTokenEntryWaiverKey = "tokenEntries.tenantsMayWaiveApproval"
-	clusterConfigTenancyKey          = "tenancyMode"
-	clusterConfigMailModeKey         = "mail.serviceMode"
-	clusterConfigMailEgressKey       = "mail.egressHost"
-	clusterConfigSecretModeKey       = "secretMode"
-	clusterConfigMainAddressKey      = "mainAddress.tenant"
+	// Whether a tenant may make a sign-in through its token entries last
+	// longer than the default (spec.tokenEntries.tenantsMayExtendSessions).
+	// No environment fallback: absent means no.
+	clusterConfigTokenEntrySessionsKey = "tokenEntries.tenantsMayExtendSessions"
+	clusterConfigTenancyKey            = "tenancyMode"
+	clusterConfigMailModeKey           = "mail.serviceMode"
+	clusterConfigMailEgressKey         = "mail.egressHost"
+	clusterConfigSecretModeKey         = "secretMode"
+	clusterConfigMainAddressKey        = "mainAddress.tenant"
 	// The tenant whose people also have the cluster's domain as their mail
 	// domain (spec.mainAddress.mailTenant); read on every sync of the mail
 	// maps, not at start.
@@ -171,6 +175,13 @@ func clusterMonitoringEnabled(ctx context.Context, c client.Reader) bool {
 // that its token entries need no approval. Off unless the claim says so.
 func clusterAllowsTokenEntryWaiver(ctx context.Context, c client.Reader) bool {
 	return clusterConfigValueOr(ctx, c, clusterConfigTokenEntryWaiverKey, "") == "true"
+}
+
+// clusterAllowsTokenEntrySessions says whether the cluster's claim lets a
+// tenant make a sign-in through its token entries last longer than the
+// default.
+func clusterAllowsTokenEntrySessions(ctx context.Context, c client.Reader) bool {
+	return clusterConfigValueOr(ctx, c, clusterConfigTokenEntrySessionsKey, "") == "true"
 }
 
 // kernelConsoles are the kernel consoles a claim may switch on: each is

@@ -1697,6 +1697,9 @@ spec:
                     # Whether a tenant may say its token entries need no
                     # approval. The operator reads it; absent means no.
                     tokenEntries.tenantsMayWaiveApproval: {{ default false (dig "tokenEntries" "tenantsMayWaiveApproval" false $spec) | quote }}
+                    # Whether a tenant may make a sign-in through its token
+                    # entries last longer than 4 hours. Absent means no.
+                    tokenEntries.tenantsMayExtendSessions: {{ default false (dig "tokenEntries" "tenantsMayExtendSessions" false $spec) | quote }}
                     # Where the edge runs, which is the one kernel namespace a
                     # Composition has to name. The Gateway, its SecurityPolicies
                     # and the zone client secrets they read all live there, and
