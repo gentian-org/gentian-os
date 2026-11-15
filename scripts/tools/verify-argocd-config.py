@@ -4,8 +4,9 @@
 # the way the installer configures one
 # =============================================================================
 # Argo CD's own settings are not under Argo CD. argocd-cm, argocd-cmd-params-cm
-# and argocd-rbac-cm are written by scripts/lib/argocd.sh with `kubectl patch`
-# during install, and nothing reconciles them afterwards.
+# and argocd-rbac-cm are written by scripts/lib/argocd.sh and
+# scripts/steps/A-06-argocd.sh with `kubectl patch` during install, and nothing
+# reconciles them afterwards.
 #
 # That is a deliberate choice rather than an oversight. These are bootstrap
 # settings: they must be right before the thing that would reconcile them is
@@ -25,8 +26,8 @@
 #
 # WHAT IT CHECKS
 #
-# Every ConfigMap key scripts/lib/argocd.sh patches must be present on the
-# cluster with the same value.
+# Every ConfigMap key those two scripts patch must be present on the cluster
+# with the same value.
 #
 # WHAT IT DOES NOT CHECK
 #
@@ -59,7 +60,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-INSTALLER = ROOT / "scripts/lib/argocd.sh"
+INSTALLERS = (ROOT / "scripts/lib/argocd.sh", ROOT / "scripts/steps/A-06-argocd.sh")
 NAMESPACE = "kernel-gitops"
 
 RED = "\033[0;31m"
@@ -100,7 +101,7 @@ def declared():
     A None value means the patch interpolates a shell variable, so the value
     here cannot be compared with the cluster's — only the key's presence.
     """
-    src = INSTALLER.read_text()
+    src = "\n".join(path.read_text() for path in INSTALLERS)
     out: dict[str, dict[str, str | None]] = {}
 
     for m in PATCH_STATIC.finditer(src):
@@ -151,9 +152,10 @@ def main() -> int:
                       capture_output=True).returncode != 0:
         print(f"{YELLOW}SKIP{NC} — no reachable cluster.")
         return 0
-    if not INSTALLER.is_file():
-        sys.exit(f"{INSTALLER.relative_to(ROOT)} is missing — nothing to check "
-                 f"against, which is not the same as passing")
+    for installer in INSTALLERS:
+        if not installer.is_file():
+            sys.exit(f"{installer.relative_to(ROOT)} is missing — nothing to check "
+                     f"against, which is not the same as passing")
 
     wanted = declared()
     if not wanted:
@@ -201,7 +203,7 @@ def main() -> int:
         print(f"{DIM}Nothing reconciles these ConfigMaps, so neither side is{NC}")
         print(f"{DIM}authoritative by default. A key the script gained wants{NC}")
         print(f"{DIM}applying here; a key this cluster gained wants adding to{NC}")
-        print(f"{DIM}scripts/lib/argocd.sh, or the next cluster is built without it.{NC}")
+        print(f"{DIM}scripts/lib/argocd.sh or A-06, or the next cluster is built without it.{NC}")
         return 1
     print(f"{GREEN}Every setting the installer writes is on the cluster{NC} "
           f"({checked} compared, {len(unchecked)} present but not comparable).")

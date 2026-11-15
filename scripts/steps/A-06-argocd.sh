@@ -14,6 +14,11 @@
 
 _argocd_ns() { ns_kernel gitops; }
 
+# How often the application controller compares every Application with a
+# fresh checkout of its repository, whatever its caches hold (argocd-cm
+# timeout.hard.reconciliation; see _a06_install).
+_A06_HARD_RECONCILIATION="15m"
+
 check() {
     local ns; ns="$(_argocd_ns)"
     kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1 &&
@@ -34,6 +39,9 @@ check() {
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.server\.insecure}' 2>/dev/null)" == "false" ]] &&
         # And the diff computed the way the sync applies: see _a06_install.
         [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.controller\.diff\.server\.side}' 2>/dev/null)" == "true" ]] &&
+        # And the periodic hard refresh, without which a stale comparison
+        # holds until somebody asks for one: see _a06_install.
+        [[ "$(kubectl get configmap argocd-cm -n "${ns}" -o jsonpath='{.data.timeout\.hard\.reconciliation}' 2>/dev/null)" == "${_A06_HARD_RECONCILIATION}" ]] &&
         [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]] &&
         # And the versions: a cluster behind the pin is upgraded by a re-run,
         # which is the whole of how a cluster takes a newer release
@@ -136,13 +144,25 @@ _a06_install() {
     # parameter anyway: an empty value falls back to the default.
     kubectl patch configmap argocd-cmd-params-cm -n "${ns}" --type merge \
         -p '{"data":{"server.insecure":"false","reposerver.repo.cache.expiration":"3m","controller.diff.server.side":"true"}}' >/dev/null
+    # A periodic hard refresh. An Application once reported Synced at its
+    # repository's newest revision while the live objects matched an older
+    # one, and stayed so for as long as nobody asked for a hard refresh: the
+    # director had pushed several commits within seconds, one comparison
+    # failed, and every one after it -- manifests regenerated, not cached --
+    # rendered the tenant without the apps just installed, so the install
+    # waited with every status green. A hard refresh fetches the repository
+    # afresh and synced it at once. Doing that on a timer bounds whatever
+    # leaves a comparison stale to this interval, on every cluster. The
+    # controller reads the key at start, and is restarted below.
+    kubectl patch configmap argocd-cm -n "${ns}" --type merge \
+        -p "{\"data\":{\"timeout.hard.reconciliation\":\"${_A06_HARD_RECONCILIATION}\"}}" >/dev/null
     kubectl rollout restart deployment argocd-server argocd-repo-server -n "${ns}" >/dev/null
     # The application controller is what diffs, and reads its parameters at start.
     kubectl rollout restart statefulset argocd-application-controller -n "${ns}" >/dev/null
     kubectl rollout status statefulset argocd-application-controller -n "${ns}" --timeout=180s >/dev/null
     kubectl rollout status deployment argocd-server -n "${ns}" --timeout=180s >/dev/null
     kubectl rollout status deployment argocd-repo-server -n "${ns}" --timeout=180s >/dev/null
-    success "Argo CD serving plain HTTP behind the Gateway, with a 3-minute repo cache and server-side diff."
+    success "Argo CD serving plain HTTP behind the Gateway, with a 3-minute repo cache, server-side diff and a hard refresh every ${_A06_HARD_RECONCILIATION}."
 
     banner "Argo CD Image Updater"
     helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
