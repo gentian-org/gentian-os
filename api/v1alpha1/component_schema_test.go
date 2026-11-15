@@ -498,6 +498,18 @@ spec:
 		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
 	}
 
+	// An adapter that runs in the tenant and calls a partner as the person
+	// adapts no app of the tenant either: a call through it is for the
+	// adapter itself. Naming no partner leaves it an adapter of nothing.
+	chart := "  package: {chart: {repository: \"oci://charts.example\", name: tools, version: \"1.0.0\"}}\n"
+	for _, c := range []struct{ name, spec, want string }{
+		{"an adapter that calls a partner", chart + "  requires:\n    services:\n      partners: {call: [store]}\n", ""},
+		{"an adapter that calls no partner", chart + "  requires:\n    services:\n      partners: {call: []}\n", "spec.adapter.adapts names the app"},
+		{"an adapter that only accepts partners", chart + "  requires:\n    services:\n      partners: {accept: true}\n", "spec.adapter.adapts names the app"},
+	} {
+		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
+	}
+
 	// A Component of the class: the class is the profile's, and is immutable.
 	cv := loadCRD(t, "gentianos.io_components.yaml")
 	comp := "apiVersion: gentianos.io/v1alpha1\nkind: Component\nmetadata: {name: x, namespace: tenant-a}\nspec:\n  profileRef: {name: x}\n  class: %s\n"

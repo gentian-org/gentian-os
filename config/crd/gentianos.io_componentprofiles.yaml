@@ -4862,8 +4862,12 @@ spec:
               rule: '!has(self.adapter) || !has(self.__package__.addon)'
             - message: spec.adapter.adapts names the app the adapter uses; only an
                 adapter packaged as an api, which reaches a service outside the cluster,
-                adapts none
-              rule: '!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)'
+                or one that calls a partner (requires.services.partners.call) adapts
+                none
+              rule: '!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)
+                || (has(self.requires) && has(self.requires.services) && has(self.requires.services.partners)
+                && has(self.requires.services.partners.call) && self.requires.services.partners.call.size()
+                > 0)'
             - message: 'an adapter is never placed by default: a tenant''s administrator
                 installs it'
               rule: '!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants)
