@@ -184,6 +184,9 @@ type tenantRuns struct {
 	tenant  *gentianov1alpha1.Tenant
 	callers []runCaller
 	actions []installedAction
+	// asking are the installed actions, Ready or not, whose profile asks a
+	// person for credentials (run_credentials.go).
+	asking []installedAction
 }
 
 // RunsReconciler keeps what a run needs before it starts: each tenant's
@@ -213,6 +216,8 @@ type RunsReconciler struct {
 // +kubebuilder:rbac:groups=kyverno.io,resources=policies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=gentian-dispatcher-runs
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=credentialrequirements,verbs=get;list;watch;create;update;patch;delete
 
 var runsRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: dispatcher.TableConfigMap}}
 
@@ -310,8 +315,7 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 	}
 	for i := range components.Items {
 		comp := &components.Items[i]
-		if comp.Spec.Class != gentianov1alpha1.ComponentClassAction || comp.DeletionTimestamp != nil ||
-			!meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready") {
+		if comp.Spec.Class != gentianov1alpha1.ComponentClassAction || comp.DeletionTimestamp != nil {
 			continue
 		}
 		holder := gentianov1alpha1.TenantInNamespace(tenants.Items, comp.Namespace)
@@ -333,6 +337,14 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 			profile.Spec.Action.Command, profile.Spec.Action.DeadlineSeconds, profile.Spec.Action.Resources)
 		if runnable.PullSecrets, err = pulledWith(holder.Name, profile); err != nil {
 			return nil, err
+		}
+		if runnable.Credentials = credentialsOf(comp, profile); runnable.Credentials != "" {
+			of(holder).asking = append(of(holder).asking, installedAction{comp: comp, profile: profile, runnable: runnable})
+		}
+		// Only a Ready action runs: one that waits for an approval or for
+		// its credentials is installed and not in the table.
+		if !meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready") {
+			continue
 		}
 		of(holder).actions = append(of(holder).actions, installedAction{comp: comp, profile: profile, runnable: runnable})
 	}
@@ -380,6 +392,10 @@ func (r *RunsReconciler) callbackPort(ctx context.Context, callback dispatcher.C
 func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	gathered, err := r.gather(ctx)
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureActionRequirements(ctx, gathered); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -434,6 +450,9 @@ func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		}
 		if err := r.ensureRunNamespace(ctx, runs, namespace); err != nil {
 			return ctrl.Result{}, fmt.Errorf("the namespace for runs of %s: %w", tenant.Name, err)
+		}
+		if err := r.ensureRunCredentials(ctx, runs, namespace); err != nil {
+			return ctrl.Result{}, fmt.Errorf("the credentials of the actions of %s: %w", tenant.Name, err)
 		}
 		if len(runs.callers) == 0 {
 			continue

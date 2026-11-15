@@ -2052,7 +2052,8 @@ const AppSecretFormatECP256 AppSecretFormat = "ec-p256"
 // CredentialRequirement of the tenant the app is installed in, shown in that
 // tenant's Admin Console under Credentials and set there, and the app's
 // values carry the fields once they are. Until then the app waits, with the
-// requirement listed as unsatisfied.
+// requirement listed as unsatisfied. An action is not Ready until then, and
+// a run of it reads the credential as a file.
 //
 // Stored at gentian-os/tenants/{tenant}/apps/{app}/supplied/{name}, one
 // property per field, with the app's other credentials: purging the app
@@ -2093,7 +2094,9 @@ type SuppliedField struct {
 	Key string `json:"key"`
 
 	// ValuePath is the Helm value key that receives the value, as for a
-	// generated secret.
+	// generated secret. For an action, which has no chart, it is the name
+	// the value has in the credential's file, /run/credentials/{name}.env
+	// in a run's pod: letters, digits and underscores.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	ValuePath string `json:"valuePath"`

@@ -92,6 +92,13 @@ One pod in `tenant-<t>-runs`, deleted ten minutes after it ended:
   ([store-contract.md §2](../concepts/store-contract.md)): those of the whole
   tenant, or the one bound to the action's profile. The kubelet reads them;
   the pod does not;
+- for an installed action whose profile asks a person for credentials
+  (`spec.secrets.supplied`), those credentials as files it can read and not
+  write, under `/run/credentials`: one file per credential, `<name>.env`, a
+  line `NAME='value'` per field, quoted as a shell reads it. They are one
+  Secret of the namespace for runs, which the kubelet mounts; the dispatcher
+  reads no Secret. A run of another action, and a caller's own run, has none
+  of them;
 - `activeDeadlineSeconds` set to the run's deadline, and no restart;
 - the platform's run program as the first process, around the action's
   `command`.

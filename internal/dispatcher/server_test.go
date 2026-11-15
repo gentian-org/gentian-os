@@ -99,6 +99,7 @@ func twoTenants() *Table {
 	t := table()
 	t.Callers[0].KeyHash = componentkeys.Hash(flowKey)
 	t.Tenants[0].Actions[0].PullSecrets = []string{"repository-vendor-pull"}
+	t.Tenants[0].Actions[0].Credentials = "run-credentials-ocr"
 	other := Caller{Callback: Callback{Service: "flow", Namespace: "tenant-other", Port: 80}, Concurrency: 2}
 	other.Tenant, other.Component, other.KeyHash = "other", "flow", componentkeys.Hash(otherKey)
 	t.Callers = append(t.Callers, other)
@@ -202,6 +203,27 @@ func TestARunIsOnePodOfThePinnedImage(t *testing.T) {
 		t.Fatalf("pull Secrets = %v", spec.ImagePullSecrets)
 	}
 
+	// The credentials a person set for the action are files the pod reads
+	// and cannot write, in its one container for the action's command.
+	var held *corev1.Volume
+	for i := range spec.Volumes {
+		if spec.Volumes[i].Secret != nil {
+			held = &spec.Volumes[i]
+		}
+	}
+	if held == nil || held.Secret.SecretName != "run-credentials-ocr" || *held.Secret.DefaultMode != 0o440 {
+		t.Fatalf("volumes = %+v", spec.Volumes)
+	}
+	mounted := false
+	for _, m := range main.VolumeMounts {
+		if m.Name == held.Name {
+			mounted = m.MountPath == CredentialsPath && m.ReadOnly
+		}
+	}
+	if !mounted || len(init.VolumeMounts) != 1 {
+		t.Fatalf("mounts = %+v / %+v", main.VolumeMounts, init.VolumeMounts)
+	}
+
 	// Asking again starts nothing, and a run of the caller's own carries no
 	// action's label: it is given no action's egress.
 	if status, again := h.run(flowKey, "invoice 7", "ocr"); status != http.StatusOK || again.ID != "invoice 7" || len(h.cluster.pods) != 1 {
@@ -216,6 +238,9 @@ func TestARunIsOnePodOfThePinnedImage(t *testing.T) {
 	}
 	if len(own.Spec.ImagePullSecrets) != 0 {
 		t.Fatalf("own run's pull Secrets = %v", own.Spec.ImagePullSecrets)
+	}
+	if len(own.Spec.Volumes) != 1 || len(own.Spec.Containers[0].VolumeMounts) != 1 {
+		t.Fatalf("own run's volumes = %+v", own.Spec.Volumes)
 	}
 	if !strings.Contains(h.audit.String(), `"action":"start"`) || !strings.Contains(h.audit.String(), `"person":"ada"`) {
 		t.Fatalf("no record of the start: %s", h.audit.String())

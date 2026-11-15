@@ -77,6 +77,12 @@ type Runnable struct {
 	// image is pulled with, by name: the cluster's own, then those of the
 	// repositories the tenant declared.
 	PullSecrets []string `json:"pullSecrets,omitempty"`
+	// Credentials is the Secret of the tenant's namespace for runs that
+	// holds the credentials a person set for an installed action, by name:
+	// one file per credential. A run's pod is given its files to read, at
+	// CredentialsPath. Empty for an action that asks for none; a caller's
+	// own run never has one.
+	Credentials string `json:"credentials,omitempty"`
 }
 
 // Ref is the image a pod names: the repository at the digest.
@@ -146,6 +152,9 @@ func (r Runnable) check() error {
 			return fmt.Errorf("%s is pulled with %q, which is not a Secret's name", r.Name, secret)
 		}
 	}
+	if r.Credentials != "" && !secretName.MatchString(r.Credentials) {
+		return fmt.Errorf("%s is given the credentials in %q, which is not a Secret's name", r.Name, r.Credentials)
+	}
 	return nil
 }
 
@@ -200,6 +209,11 @@ func ParseTable(raw []byte) (*Table, error) {
 		}
 		if err := unique(who, c.Own); err != nil {
 			return nil, fmt.Errorf("the dispatcher's table: %w", err)
+		}
+		for _, own := range c.Own {
+			if own.Credentials != "" {
+				return nil, fmt.Errorf("the dispatcher's table gives %s's own run %s credentials: only an installed action has them", who, own.Name)
+			}
 		}
 	}
 	return t, nil

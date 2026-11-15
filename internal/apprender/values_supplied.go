@@ -13,6 +13,7 @@ package apprender
 import (
 	"errors"
 	"fmt"
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
@@ -37,73 +38,81 @@ func (r *valuesRender) suppliedCredentials() ([]*unstructured.Unstructured, erro
 	if kernelNs == "" {
 		return nil, errors.New("cluster-config carries no kernel.controlNamespace, which the credential probes of a supplied secret are placed in")
 	}
-	app := r.in.App
 	var objs []*unstructured.Unstructured
 	for _, sc := range supplied {
-		if sc.Name == "" || len(sc.Fields) == 0 {
-			continue
-		}
-		reqName := fmt.Sprintf("app-%s-%s-%s", r.tenant, app, sc.Name)
-		path := r.appPath("supplied/" + sc.Name)
-		display := sc.DisplayName
-		if display == "" {
-			display = sc.Name
-		}
-		var fields, data []interface{}
-		for _, f := range sc.Fields {
-			if f.Key == "" || f.ValuePath == "" {
-				continue
-			}
-			format := f.Format
-			if format == "" {
-				format = "string"
-			}
-			field := map[string]interface{}{"key": f.Key, "format": format, "secret": !f.Public}
-			if f.Example != "" {
-				field["example"] = f.Example
-			}
-			fields = append(fields, field)
-			data = append(data, secrets.RemoteRef(f.Key, path, f.Key))
-		}
-
-		req := valuesObject("gentianos.io/v1alpha1", "CredentialRequirement", reqName, "")
-		// Tenant-scoped, and grouped under the app in the console by the
-		// provider label.
-		req.SetLabels(map[string]string{
-			"gentianos.io/credential-phase":    "runtime",
-			"gentianos.io/credential-scope":    "tenant",
-			"gentianos.io/credential-provider": app,
-			"gentianos.io/tenant":              r.tenant,
-		})
-		spec := map[string]interface{}{
-			"displayName": display,
-			"description": strings.TrimSpace(fmt.Sprintf("%s The app %s waits for it until it is set here.", strings.TrimSpace(sc.Description), app)),
-			"phase":       "runtime",
-			"scope":       "tenant",
-			"tenant":      r.tenant,
-			"vaultPath":   path,
-			"validate":    map[string]interface{}{"type": "noop"},
-			"consumedBy": []interface{}{map[string]interface{}{
-				"kind": r.in.Consumer.Kind,
-				"name": r.in.Consumer.Name,
-			}},
-		}
-		// A credential with no mapped field has a null field list, as the
-		// Composition wrote it.
-		spec["fields"] = nil
-		if fields != nil {
-			spec["fields"] = fields
-		}
-		req.Object["spec"] = spec
-
-		probe := secrets.ExternalSecret(credentialprobe.Prefix+reqName, kernelNs, secrets.KernelStore,
-			map[string]interface{}{"creationPolicy": "None"}, data)
-		probe.SetLabels(map[string]string{
-			"gentianos.io/credential-requirement": reqName,
-			"gentianos.io/credential-phase":       "runtime",
-			"gentianos.io/credential-scope":       "tenant",
-		})
-		objs = append(objs, req, probe)
+		waits := fmt.Sprintf("The app %s waits for it until it is set here.", r.in.App)
+		objs = append(objs, SuppliedRequirement(r.tenant, r.in.App, kernelNs, r.in.Consumer, sc, waits)...)
 	}
 	return objs, nil
+}
+
+// SuppliedRequirement is the CredentialRequirement of one supplied
+// credential of one component of a tenant, and its probe in the namespace
+// the custodian looks for probes in. waits says, for the person who sets
+// it, what waits for it. Nil for an entry that names no field.
+func SuppliedRequirement(tenant, app, kernelNs string, consumer gentianov1alpha1.CredentialConsumer, sc gentianov1alpha1.SuppliedSecret, waits string) []*unstructured.Unstructured {
+	if sc.Name == "" || len(sc.Fields) == 0 {
+		return nil
+	}
+	reqName := secrets.SuppliedRequirementName(tenant, app, sc.Name)
+	path := secrets.CategoryPath(tenant, app, "supplied/"+sc.Name)
+	display := sc.DisplayName
+	if display == "" {
+		display = sc.Name
+	}
+	var fields, data []interface{}
+	for _, f := range sc.Fields {
+		if f.Key == "" || f.ValuePath == "" {
+			continue
+		}
+		format := f.Format
+		if format == "" {
+			format = "string"
+		}
+		field := map[string]interface{}{"key": f.Key, "format": format, "secret": !f.Public}
+		if f.Example != "" {
+			field["example"] = f.Example
+		}
+		fields = append(fields, field)
+		data = append(data, secrets.RemoteRef(f.Key, path, f.Key))
+	}
+
+	req := valuesObject("gentianos.io/v1alpha1", "CredentialRequirement", reqName, "")
+	// Tenant-scoped, and grouped under the app in the console by the
+	// provider label.
+	req.SetLabels(map[string]string{
+		"gentianos.io/credential-phase":    "runtime",
+		"gentianos.io/credential-scope":    "tenant",
+		"gentianos.io/credential-provider": app,
+		"gentianos.io/tenant":              tenant,
+	})
+	spec := map[string]interface{}{
+		"displayName": display,
+		"description": strings.TrimSpace(strings.TrimSpace(sc.Description) + " " + waits),
+		"phase":       "runtime",
+		"scope":       "tenant",
+		"tenant":      tenant,
+		"vaultPath":   path,
+		"validate":    map[string]interface{}{"type": "noop"},
+		"consumedBy": []interface{}{map[string]interface{}{
+			"kind": consumer.Kind,
+			"name": consumer.Name,
+		}},
+	}
+	// A credential with no mapped field has a null field list, as the
+	// Composition wrote it.
+	spec["fields"] = nil
+	if fields != nil {
+		spec["fields"] = fields
+	}
+	req.Object["spec"] = spec
+
+	probe := secrets.ExternalSecret(credentialprobe.Prefix+reqName, kernelNs, secrets.KernelStore,
+		map[string]interface{}{"creationPolicy": "None"}, data)
+	probe.SetLabels(map[string]string{
+		"gentianos.io/credential-requirement": reqName,
+		"gentianos.io/credential-phase":       "runtime",
+		"gentianos.io/credential-scope":       "tenant",
+	})
+	return []*unstructured.Unstructured{req, probe}
 }

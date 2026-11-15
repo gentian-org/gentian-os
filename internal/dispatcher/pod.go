@@ -44,6 +44,11 @@ const (
 	// ProgramSource is the run program in the platform's image.
 	ProgramSource = "/run-program"
 
+	// CredentialsPath is where a run of an installed action reads the
+	// credentials a person set for that action: one file per credential,
+	// <name>.env, a line NAME='value' per field.
+	CredentialsPath = "/run/credentials"
+
 	// Container is the container a run's command runs in.
 	Container = "run"
 
@@ -117,6 +122,19 @@ func Pod(tenant *Tenant, caller *Caller, runnable Runnable, own bool, start Star
 	for _, secret := range runnable.PullSecrets {
 		pull = append(pull, corev1.LocalObjectReference{Name: secret})
 	}
+	volumes := []corev1.Volume{{Name: program.Name, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+	mounts := []corev1.VolumeMount{{Name: program.Name, MountPath: ProgramVolume, ReadOnly: true}}
+	// The credentials of the action the run is of, and of no other: the
+	// table names one Secret per action, and a caller's own run has none.
+	// The kubelet reads it; neither the dispatcher nor the pod's account
+	// could.
+	if !own && runnable.Credentials != "" {
+		mode := int32(0o440)
+		volumes = append(volumes, corev1.Volume{Name: "credentials", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: runnable.Credentials, DefaultMode: &mode},
+		}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "credentials", MountPath: CredentialsPath, ReadOnly: true})
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: PodName(hash, start.Attempt), Namespace: tenant.Namespace, Labels: labels, Annotations: annotations,
@@ -135,7 +153,7 @@ func Pod(tenant *Tenant, caller *Caller, runnable Runnable, own bool, start Star
 				RunAsNonRoot: &yes, RunAsUser: &user, RunAsGroup: &user, FSGroup: &user,
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
-			Volumes: []corev1.Volume{{Name: program.Name, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+			Volumes: volumes,
 			InitContainers: []corev1.Container{{
 				Name: "run-program", Image: programImage,
 				Command:         []string{ProgramSource, "--install", ProgramPath},
@@ -153,7 +171,7 @@ func Pod(tenant *Tenant, caller *Caller, runnable Runnable, own bool, start Star
 					{Name: EnvToken, Value: start.Token},
 				},
 				Resources:       resources,
-				VolumeMounts:    []corev1.VolumeMount{{Name: program.Name, MountPath: ProgramVolume, ReadOnly: true}},
+				VolumeMounts:    mounts,
 				SecurityContext: restricted,
 			}},
 		},
