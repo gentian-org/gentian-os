@@ -370,6 +370,33 @@ func TestAnAppBehindTheSignInSidecarDoesNotReachTheIdentityProvider(t *testing.T
 	}
 }
 
+// A component that calls partners, or accepts their assertions, reaches the
+// realm, which both go through, and nothing else for it: an adapter that
+// calls a partner signs nobody in and would not reach the realm otherwise. A
+// component that only commissions partners talks to the director, not the
+// realm.
+func TestACallerOfPartnersReachesTheIdentityProvider(t *testing.T) {
+	t.Parallel()
+	cfg := netpolicy.Config{ServicesNamespace: "kernel-edge"}
+	want := []string{layout.Namespace(layout.Authentication) + ":*"}
+	for name, partners := range map[string]*gentianov1alpha1.PartnersRequirement{
+		"calls":   {Call: []string{"store"}},
+		"accepts": {Accept: true},
+	} {
+		np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "store-adapter",
+			profileRequiring(gentianov1alpha1.ServiceRequirements{Partners: partners}, nil), cfg)
+		if got := opened(t, np); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: opened = %v, want %v", name, got, want)
+		}
+	}
+	if np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "registry",
+		profileRequiring(gentianov1alpha1.ServiceRequirements{
+			Partners: &gentianov1alpha1.PartnersRequirement{Commission: true},
+		}, nil), cfg); np != nil {
+		t.Errorf("a component that only commissions partners is opened to %v", opened(t, np))
+	}
+}
+
 // An app that declares an authorization store reaches the arbiter's pods on
 // the arbiter's port, and nothing else of the arbiter's namespace: the app
 // instance of OpenFGA beside it listens on the same port number.

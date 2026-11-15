@@ -31,7 +31,9 @@ import (
 // else (netpolicy/adapter.go). What it cannot know by itself is which
 // adapters its tenant has: so each caller is given a ConfigMap,
 // adapters-<component>, whose one key is the list as JSON, from an adapter's
-// install name to its address inside the tenant and the app it adapts:
+// install name to its address inside the tenant and the app a call through
+// it is for (adapterApp): the app it adapts, or the adapter itself where it
+// adapts none:
 //
 //	{"odoo-adapter": {"url": "<its Service, port and path>", "app": "odoo"}}
 //
@@ -62,14 +64,14 @@ func adapterList(namespace string, adapters []string, profiles map[string]*genti
 	list := map[string]adapterListEntry{}
 	for _, name := range adapters {
 		profile := profiles[name]
-		if profile == nil || profile.Spec.Adapter == nil || profile.Spec.Adapter.Endpoint == nil {
+		if profile == nil {
 			continue
 		}
-		entry := adapterListEntry{URL: contractURL(profile.Spec.Adapter.Endpoint, namespace)}
-		if profile.Spec.Adapter.Adapts != nil {
-			entry.App = profile.Spec.Adapter.Adapts.Profile
+		app := adapterApp(name, profile)
+		if app == "" {
+			continue
 		}
-		list[name] = entry
+		list[name] = adapterListEntry{URL: contractURL(profile.Spec.Adapter.Endpoint, namespace), App: app}
 	}
 	raw, err := json.Marshal(list)
 	return string(raw), err

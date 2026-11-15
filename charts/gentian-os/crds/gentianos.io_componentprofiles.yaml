@@ -195,7 +195,10 @@ spec:
                       the adapter opens the way from its pods to that app's pods and nowhere
                       else in the tenant; the app is not asked to cooperate. Absent for an
                       adapter packaged as an API, which reaches a service outside the cluster
-                      and no app of the tenant.
+                      and no app of the tenant, and for one that runs in the tenant and
+                      reaches a partner's service as the person
+                      (requires.services.partners.call): a call through either is for the
+                      adapter itself.
                     properties:
                       profile:
                         description: Profile is the ComponentProfile of the app.
