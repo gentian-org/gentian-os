@@ -390,7 +390,7 @@ func TestABridgesRealmClientComesAndGoesWithItsApproval(t *testing.T) {
 	if fp["clientId"] != "token-entry-nextcloud-dav" || fp["realmId"] != "acme" || fp["accessType"] != "PUBLIC" {
 		t.Fatalf("the client: %v", fp)
 	}
-	if got, _, _ := unstructured.NestedStringSlice(client.Object, "spec", "forProvider", "validRedirectUris"); !reflect.DeepEqual(got, bridgeRedirectURIs) {
+	if got, _, _ := unstructured.NestedStringSlice(client.Object, "spec", "forProvider", "validRedirectUris"); !reflect.DeepEqual(got, bridgeEntryOf(profile).ClientRedirectURIs) {
 		t.Fatalf("redirects %v", got)
 	}
 	// Its two audience mappers, by the names the render gives them.

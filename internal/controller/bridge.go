@@ -13,7 +13,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -42,11 +41,11 @@ import (
 const (
 	// BridgeDoorLabel is the host label of a tenant's door: <label>.<the
 	// tenant's domain>. Kept from every app (internal/hostnames).
-	BridgeDoorLabel = "sync"
+	BridgeDoorLabel = gentianov1alpha1.BridgeDoorLabel
 
 	// bridgeEntryName names a bridge in the tenant's approvals, where a
 	// token entry is named by its exposure: a bridge has one entry.
-	bridgeEntryName = "bridge"
+	bridgeEntryName = gentianov1alpha1.BridgeEntryName
 
 	// bouncerDoorPathsAnnotation makes a route that takes a token one app
 	// of a door: the path prefixes it serves, comma-separated. The route's
@@ -64,10 +63,6 @@ const (
 	ConditionBridge = "Bridge"
 )
 
-// bridgeRedirectURIs are where a program on a person's own computer is sent
-// back to after the person signed in: a loopback address, on any port.
-var bridgeRedirectURIs = []string{"http://127.0.0.1/", "http://localhost/"}
-
 // BridgeTokenScope is the client scope of a tenant's realm a token is
 // exchanged for at the door before a bridged app sees a request: it names the
 // app's own sign-in client as the audience and carries what that app's
@@ -84,54 +79,19 @@ func isBridge(profile *gentianov1alpha1.ComponentProfile) bool {
 		classIncludes(profile, gentianov1alpha1.ComponentClassBridge)
 }
 
-// bridgePaths are the path prefixes a bridge answers under, over all its
-// protocols, each once and in one order.
+// bridgePaths are the path prefixes a bridge answers under.
 func bridgePaths(profile *gentianov1alpha1.ComponentProfile) []string {
 	if !isBridge(profile) {
 		return nil
 	}
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range profile.Spec.Bridge.Protocols {
-		for _, path := range p.Paths {
-			path = strings.TrimSuffix(strings.TrimSpace(path), "/")
-			if path == "" || seen[path] {
-				continue
-			}
-			seen[path] = true
-			out = append(out, path)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return profile.BridgePaths()
 }
 
-// bridgeEntryOf is a served bridge as the entry the edge routes: on the
-// tenant's door, taking a token, to the Service the bridge names. Nil for
-// every component that is not an external bridge routed to a Service.
-//
-// The profile declares no such exposure and may not (a bridge exposes
-// nothing of its own): the entry is the platform's reading of spec.bridge,
-// so that what is approved, routed and held against a token is one thing
-// with what any token entry is.
+// bridgeEntryOf is a served bridge as the entry the edge routes
+// (ComponentProfile.BridgeEntry). Nil for every component that is not an
+// external bridge routed to a Service.
 func bridgeEntryOf(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ExposureSpec {
-	if !isBridge(profile) || profile.Spec.Bridge.Kind != gentianov1alpha1.BridgeKindExternal {
-		return nil
-	}
-	api := profile.Spec.Package.API
-	paths := bridgePaths(profile)
-	if api == nil || api.Backend == nil || len(paths) == 0 {
-		return nil
-	}
-	return &gentianov1alpha1.ExposureSpec{
-		Name:               bridgeEntryName,
-		Surface:            gentianov1alpha1.SurfaceGateway,
-		AuthMode:           gentianov1alpha1.AuthModeBearer,
-		SubDomain:          BridgeDoorLabel,
-		Paths:              paths,
-		Backend:            gentianov1alpha1.BackendRef{Service: api.Backend.Service, Port: api.Backend.Port},
-		ClientRedirectURIs: bridgeRedirectURIs,
-	}
+	return profile.BridgeEntry()
 }
 
 // bridgeDoor is what a bridge's route says to the bouncer beside what a

@@ -351,14 +351,32 @@ func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	return out
 }
 
+// entriesOf are the entries of a profile an approver may be asked about: the
+// ones it declares, and, for a bridge, the one entry it is served as at the
+// tenant's door. A bridge declares no exposure; what is approved of it is
+// that programs reach the app it connects, under its paths, with a token of
+// the tenant's realm.
+func entriesOf(profile *gentianov1alpha1.ComponentProfile) []*gentianov1alpha1.ExposureSpec {
+	if profile == nil {
+		return nil
+	}
+	var out []*gentianov1alpha1.ExposureSpec
+	for i := range profile.Spec.Expose {
+		out = append(out, &profile.Spec.Expose[i])
+	}
+	if bridge := profile.BridgeEntry(); bridge != nil {
+		out = append(out, bridge)
+	}
+	return out
+}
+
 // approvableEntry is the profile's entry of this name that asks a perimeter
 // approver for something, or nil: a perimeter entry in a mode the platform
 // serves, or an entry behind sign-in that declares the Authorization header
 // the app's own. exists says the profile has an entry of the name at all,
 // and declared names the entries that do ask, for a refusal.
 func approvableEntry(profile *gentianov1alpha1.ComponentProfile, name string) (entry *gentianov1alpha1.ExposureSpec, exists bool, declared []string) {
-	for i := range profile.Spec.Expose {
-		e := &profile.Spec.Expose[i]
+	for _, e := range entriesOf(profile) {
 		asks := e.RequestKind() != ""
 		if asks {
 			declared = append(declared, e.Name)
@@ -480,8 +498,7 @@ func (v *exposureView) entries() []exposureEntry {
 	matched := map[string]bool{}
 
 	for install, profile := range v.profiles {
-		for i := range profile.Spec.Expose {
-			entry := &profile.Spec.Expose[i]
+		for _, entry := range entriesOf(profile) {
 			if entry.RequestKind() == "" {
 				// Asks for nothing: an ordinary entry behind sign-in, or
 				// one in a mode the platform does not serve.
@@ -500,6 +517,13 @@ func (v *exposureView) entries() []exposureEntry {
 				}
 			}
 			v.describe(&e, entry)
+			// A bridge: what the approval lets programs reach, and by
+			// what right.
+			if b := profile.Spec.Bridge; b != nil && entry.Name == gentianov1alpha1.BridgeEntryName && len(profile.Spec.Expose) == 0 {
+				e.Note = strings.TrimSpace(fmt.Sprintf(
+					"A bridge to %s: programs on a person's own devices reach these paths of %s as that person, who is asked the right to use %s as at its own address. %s",
+					b.App.Profile, b.App.Profile, b.App.Profile, e.Note))
+			}
 			if changed != "" {
 				e.Note = strings.TrimSpace(changed + ". " + e.Note)
 				e.Note = strings.TrimSuffix(e.Note, ". ")
@@ -579,9 +603,9 @@ func (v *exposureView) unmatched(install, name string) string {
 
 // surfaceOf is the surface of the profile's entry of this name.
 func surfaceOf(profile *gentianov1alpha1.ComponentProfile, name string) gentianov1alpha1.SurfaceKind {
-	for i := range profile.Spec.Expose {
-		if profile.Spec.Expose[i].Name == name {
-			return profile.Spec.Expose[i].Surface
+	for _, e := range entriesOf(profile) {
+		if e.Name == name {
+			return e.Surface
 		}
 	}
 	return ""
