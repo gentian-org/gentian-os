@@ -25,6 +25,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // A token entry is the one gateway entry with no session in front: a host of
@@ -97,7 +98,8 @@ func tokenEntryMetadataName(component, entry string) string {
 }
 
 // tokenEntryMetadata is the entry's Protected Resource Metadata (RFC 9728):
-// the address tokens are made out to and the realm that issues them. It is
+// the address tokens are made out to, the realm that issues them, and the
+// scope to ask for (bouncer.EntryScope, which the 401 names too). It is
 // what the bouncer's 401 points a program at, and it says nothing a person
 // who knows the tenant's name could not work out.
 func tokenEntryMetadata(host, kernelDomain, realm string) (string, error) {
@@ -105,6 +107,7 @@ func tokenEntryMetadata(host, kernelDomain, realm string) (string, error) {
 		"resource":                 tokenEntryAudience(host),
 		"authorization_servers":    []string{fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, realm)},
 		"bearer_methods_supported": []string{"header"},
+		"scopes_supported":         []string{bouncer.EntryScope},
 	})
 	return string(doc), err
 }
