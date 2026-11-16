@@ -12,8 +12,11 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -64,10 +67,60 @@ func (r *TenantReconciler) quiesceApp(ctx context.Context, tenantName, appName s
 		}
 	}
 
-	if err := r.scaleAppWorkloads(ctx, tenantName, appName, 0); err != nil {
+	err := r.scaleAppWorkloads(ctx, tenantName, appName, 0)
+	if errors.Is(err, errNoWorkload) {
+		// No workload to pause is a refusal only while something of the app
+		// could still be running unseen. An app the platform deploys nothing
+		// for -- an action, or one whose release was never rendered -- writes
+		// nothing, so it is captured as it stands, and empty when it holds
+		// nothing.
+		nothing, nErr := r.appDeploysNothing(ctx, tenantName, appName)
+		if nErr != nil {
+			return requested, nErr
+		}
+		if nothing {
+			return gentianov1alpha1.BackupQuiesceNone, nil
+		}
+	}
+	if err != nil {
 		return requested, err
 	}
 	return gentianov1alpha1.BackupQuiesceScaleDown, nil
+}
+
+// errNoWorkload is a pause that found no Deployment or StatefulSet of the app.
+var errNoWorkload = errors.New("no Deployment or StatefulSet to scale down")
+
+// appDeploysNothing reports whether the platform deployed nothing that runs
+// for an app: its Component's inventory, rendered and taken over, names no Helm
+// release. An inventory that cannot be read, or no Component at all, is not
+// taken as nothing: the pause is refused then, as before.
+func (r *TenantReconciler) appDeploysNothing(ctx context.Context, tenantName, appName string) (bool, error) {
+	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil {
+		return false, err
+	}
+	comp := &gentianov1alpha1.Component{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: appName}, comp); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	for _, annotation := range []string{renderedAnnotation, takenAnnotation} {
+		raw := comp.Annotations[annotation]
+		if raw == "" {
+			continue
+		}
+		var keys []string
+		if err := json.Unmarshal([]byte(raw), &keys); err != nil {
+			return false, nil
+		}
+		for _, key := range keys {
+			// "apiVersion|kind|namespace|name"
+			if parts := strings.Split(key, "|"); len(parts) == 4 && parts[1] == "Release" {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 // unquiesceApp reverses quiesceApp for the mode that was actually used.
@@ -292,7 +345,7 @@ func (r *TenantReconciler) scaleAppWorkloads(ctx context.Context, tenantName, ap
 	// is captured or replaced underneath it, so it is refused rather than
 	// reported as done. Resuming one never paused is fine.
 	if replicas >= 0 && matched == 0 {
-		return fmt.Errorf("no Deployment or StatefulSet of app %q in %s to scale down", appName, ns)
+		return fmt.Errorf("app %q in %s: %w", appName, ns, errNoWorkload)
 	}
 	return nil
 }
