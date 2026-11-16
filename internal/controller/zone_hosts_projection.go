@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -94,6 +95,18 @@ const (
 	// Here for the reason the exchange profiles are: a component every tenant
 	// is given may vouch as well as an installed one may.
 	zoneVouchingProfilesKey = "vouchingProfiles"
+	// zoneBridgeScopesKey is what the realm is told of the tenant's served
+	// bridges: per app a bridge connects, the scope a token presented at
+	// the door is exchanged for before that app sees a request. A JSON
+	// document (bridgeScopesDoc), because a scope carries protocol mappers
+	// and a line cannot.
+	//
+	// The Composition makes the client scope BridgeTokenScope names, puts
+	// the audience and the mappers on it, and adds it to the exchange
+	// client's optional scopes: that list is replaced wholesale, so it has
+	// one writer. The key is absent while no bridge is served, and the
+	// realm then holds none of this.
+	zoneBridgeScopesKey = "bridgeScopes"
 	// vouchingExchangeWord is, in the fifth field of a vouching line, the
 	// word that switches token exchange on at the component's client.
 	vouchingExchangeWord = "exchange"
@@ -143,11 +156,13 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	// need nothing added", and its absence would be indistinguishable from
 	// "the operator has not looked yet".
 	hosts := map[string]map[string]bool{}
+	bridged := map[string]map[string]bool{}
 	exchange := map[string]map[string]bool{}
 	vouching := map[string]map[string]string{}
 	partners := map[string]map[string]string{}
 	for i := range tenants.Items {
 		hosts[tenants.Items[i].Name] = map[string]bool{}
+		bridged[tenants.Items[i].Name] = map[string]bool{}
 		exchange[tenants.Items[i].Name] = map[string]bool{}
 		vouching[tenants.Items[i].Name] = map[string]string{}
 		partners[tenants.Items[i].Name] = map[string]string{}
@@ -169,6 +184,14 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 				continue
 			}
 			return err
+		}
+		// The app a served bridge connects is handed a token at the door.
+		// Only while the bridge is served: approved, its app installed and
+		// its paths its own.
+		if bridgeEntryOf(profile) != nil &&
+			apimeta.IsStatusConditionTrue(comp.Status.Conditions, ConditionTokenEntry) &&
+			apimeta.IsStatusConditionTrue(comp.Status.Conditions, ConditionBridge) {
+			bridged[tenant][profile.Spec.Bridge.App.Profile] = true
 		}
 		if asksForExchangedToken(profile) {
 			// The profile's name and not the component's: the route builder
@@ -221,7 +244,11 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		// Every line starts with its profile's name and no two share one, so
 		// sorting the lines sorts by profile.
 		sort.Strings(vouchingLines)
-		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines, sortedValues(partners[tenant])); err != nil {
+		bridgeScopes, err := r.bridgeScopes(ctx, sortedKeys(bridged[tenant]))
+		if err != nil {
+			return err
+		}
+		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines, sortedValues(partners[tenant]), bridgeScopes); err != nil {
 			return err
 		}
 	}
@@ -320,7 +347,7 @@ func sortedKeys(set map[string]bool) []string {
 // writeZoneHosts creates the ConfigMap the first time and patches it only
 // when the content differs, so a projection that did not change does not wake
 // every Composition that reads it.
-func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles, partnerProfiles []string) error {
+func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles, partnerProfiles []string, bridgeScopes string) error {
 	key := types.NamespacedName{
 		Name:      zoneHostsConfigMapName(tenant),
 		Namespace: layout.Namespace(layout.Control),
@@ -341,6 +368,9 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 			zoneVouchingProfilesKey: strings.Join(vouchingProfiles, "\n"),
 			partnerProfilesKey:      strings.Join(partnerProfiles, "\n"),
 		},
+	}
+	if bridgeScopes != "" {
+		desired.Data[zoneBridgeScopesKey] = bridgeScopes
 	}
 
 	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {

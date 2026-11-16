@@ -251,3 +251,51 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		t.Fatalf("optional scopes = %v: a client asking for offline_access is refused", scopes)
 	}
 }
+
+// A bridge installs nothing and is still signed in to: its render is the
+// client of its entry and no other object, and nothing while the entry is not
+// served.
+func TestABridgesRenderIsTheClientOfItsEntryAlone(t *testing.T) {
+	in := &Input{
+		App: "nextcloud-dav", Namespace: "tenant-demo", TenantName: "demo", ProfileName: "nextcloud-dav",
+		Profile:  &gentianov1alpha1.ComponentProfileSpec{},
+		Observed: map[string]*unstructured.Unstructured{},
+	}
+	out, err := RenderTokenEntryClient(in)
+	if err != nil || len(out.Objects) != 0 {
+		t.Fatalf("not served: %v %d objects", err, len(out.Objects))
+	}
+	in.TokenEntry = &TokenEntry{
+		Host: "sync.demo.example.org", RedirectURIs: []string{"http://127.0.0.1/", "http://localhost/"},
+		Exchangers: []string{"gentian-edge-exchange"},
+	}
+	out, err = RenderTokenEntryClient(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audiences := map[string]bool{}
+	clients := 0
+	for _, o := range out.Objects {
+		switch o.GetKind() {
+		case "Client":
+			clients++
+			fp, _, _ := unstructured.NestedMap(o.Object, "spec", "forProvider")
+			if fp["clientId"] != "token-entry-nextcloud-dav" || fp["accessType"] != "PUBLIC" || fp["directAccessGrantsEnabled"] != false || fp["serviceAccountsEnabled"] != false {
+				t.Errorf("the client: %v", fp)
+			}
+		case "ProtocolMapper":
+			aud, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "config", "included.custom.audience")
+			audiences[aud] = true
+		case "ClientOptionalScopes":
+		default:
+			t.Errorf("a bridge's render carries a %s", o.GetKind())
+		}
+	}
+	// Made out to the door, and to the one client that may exchange it.
+	if clients != 1 || len(audiences) != 2 || !audiences["https://sync.demo.example.org"] || !audiences["gentian-edge-exchange"] {
+		t.Fatalf("%d clients, audiences %v", clients, audiences)
+	}
+	if _, err := RenderTokenEntryClient(&Input{App: "x"}); err == nil {
+		t.Fatal("rendered with no profile")
+	}
+}

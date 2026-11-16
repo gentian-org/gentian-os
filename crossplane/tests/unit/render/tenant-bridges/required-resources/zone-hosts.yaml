@@ -1,0 +1,63 @@
+# What the operator projects for a tenant with served bridges, beside what
+# tenant-default has: bridgeScopes, the apps its bridges connect.
+#
+# "files" has a sign-in client and a pack of two mappers, and its scope has
+# been observed: it gets the audience mapper, a mapper per claim, and a place
+# among the exchange client's optional scopes. "contacts" was projected a
+# moment ago: its scope is made, and nothing hangs off it or names it until
+# the scope's id is known.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-zone-hosts-render-fixture
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: zone-hosts
+    gentianos.io/tenant: render-fixture
+data:
+  hosts: |
+    admin
+    desktop
+  exchangeProfiles: |
+    notes
+    wiki
+  vouchingProfiles: |
+    scribe scribe 8080 /.well-known/jwks.json
+    steward steward-keys 8443 /keys/current.json exchange
+    warden - 0 - exchange
+  bridgeScopes: |
+    {
+      "scopes": [
+        {
+          "profile": "contacts",
+          "audience": "gentian-contacts",
+          "mappers": []
+        },
+        {
+          "profile": "files",
+          "audience": "gentian-files",
+          "mappers": [
+            {
+              "name": "email",
+              "slug": "email",
+              "type": "oidc-usermodel-property-mapper",
+              "config": {
+                "claim.name": "email",
+                "jsonType.label": "String",
+                "user.attribute": "username"
+              }
+            },
+            {
+              "name": "gentian_username",
+              "slug": "gentian-username",
+              "type": "oidc-usermodel-attribute-mapper",
+              "config": {
+                "claim.name": "gentian_username",
+                "jsonType.label": "String",
+                "user.attribute": "username"
+              }
+            }
+          ]
+        }
+      ]
+    }

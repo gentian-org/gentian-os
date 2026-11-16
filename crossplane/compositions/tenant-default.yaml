@@ -1413,6 +1413,120 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Which app a token presented at the tenant's door is for: the
+                 scope "bridge-<profile>".
+
+                 One per app a served bridge connects, as the operator
+                 projects them (bridgeScopes, a JSON document: a scope carries
+                 mappers and a line cannot), named exactly what
+                 BridgeTokenScope in the operator (bridge.go) returns. That
+                 function writes the name onto the bridge's route for the
+                 bouncer to ask for, so the two agree letter for letter.
+
+                 Not the app scope above, which names the profile for an app
+                 that has no sign-in of its own. An app behind a bridge
+                 verifies the token as it verifies its own sign-in's: so the
+                 audience is its own sign-in client, and the claims are the
+                 ones its own sign-in tokens carry of a person -- the mappers
+                 of its OIDC pack, read by the operator, and none that a
+                 profile could add for the occasion. Into the access token
+                 only.
+
+                 A custom audience although a client is named, as at the
+                 director's: Keycloak drops a client audience whose client is
+                 absent or disabled, and the token would then arrive with no
+                 audience where it should be refused for a wrong one.
+
+                 Absent while no bridge is served: the key is not written,
+                 nothing here renders, and the realm is what it was. The
+                 scope's observed id rather than a ref, and no external-name,
+                 for the reasons given at the app scope. */}}
+            {{- $bridgeDoc := dig "bridgeScopes" "" $zhData }}
+            {{- $bridgeScopes := list }}
+            {{- /* The bridge scopes that have been observed, kept apart from
+                 the app scopes: only the edge's exchange client may ask for
+                 one. A component that vouches for people is given the app
+                 scopes further down, and must not come by a token an app
+                 takes for its own sign-in's. */}}
+            {{- $bridgeScopeNames := list }}
+            {{- if $bridgeDoc }}
+            {{- $bridgeScopes = dig "scopes" list (fromJson $bridgeDoc) }}
+            {{- end }}
+            {{- range $b := $bridgeScopes }}
+            {{- $p := $b.profile }}
+            {{- $scope := printf "bridge-%s" $p }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-edge-bridge-scope-{{ $p }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-bridge-scope-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $scope }}
+                description: {{ printf "A token of the person at the tenant's door, for %s and nothing else" $p | quote }}
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- $scopeID := dig "resources" (printf "keycloak-edge-bridge-scope-%s" $p) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $scopeID }}
+            {{- $bridgeScopeNames = append $bridgeScopeNames $scope }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-bridge-scope-{{ $p }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-bridge-scope-{{ $p }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: app-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $b.audience | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- range $m := (default list $b.mappers) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-bridge-scope-{{ $p }}-claim-{{ $m.slug }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-bridge-scope-{{ $p }}-claim-{{ $m.slug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: {{ $m.name | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.type | quote }}
+                config:
+                  {{- range $k, $v := (default dict $m.config) }}
+                  {{ $k | quote }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* The app scopes as the exchange client's OPTIONAL scopes, and
                  its only ones.
 
@@ -1442,7 +1556,8 @@ spec:
                  the rest. Neither is reachable: the bouncer asks only for
                  the scope a route names, and a route names one only while
                  its profile asks. */}}
-            {{- if gt (len $exchangeScopes) 0 }}
+            {{- $edgeExchangeScopes := concat $exchangeScopes $bridgeScopeNames }}
+            {{- if gt (len $edgeExchangeScopes) 0 }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientOptionalScopes
@@ -1459,7 +1574,7 @@ spec:
                   policy:
                     resolve: Always
                 optionalScopes:
-                  {{- range $scope := $exchangeScopes }}
+                  {{- range $scope := $edgeExchangeScopes }}
                   - {{ $scope }}
                   {{- end }}
               providerConfigRef:
