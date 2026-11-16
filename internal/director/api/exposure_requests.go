@@ -360,7 +360,7 @@ func entriesOf(profile *gentianov1alpha1.ComponentProfile) []*gentianov1alpha1.E
 	if profile == nil {
 		return nil
 	}
-	out := make([]*gentianov1alpha1.ExposureSpec, 0, len(profile.Spec.Expose)+1)
+	var out []*gentianov1alpha1.ExposureSpec
 	for i := range profile.Spec.Expose {
 		out = append(out, &profile.Spec.Expose[i])
 	}
