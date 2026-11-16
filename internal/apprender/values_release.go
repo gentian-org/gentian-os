@@ -195,9 +195,9 @@ func (r *valuesRender) serviceAliases(values map[string]interface{}) (objs, obse
 	alias(service, strings.TrimPrefix(service, r.in.App+"-"), int64(port),
 		fullnameOverride != "" && strings.HasPrefix(service, chartsOwn))
 	// The API alias is the chart's own only when it is exactly
-	// <fullnameOverride>-api: an app named past its override (fellwort-ee,
-	// override fellwort) starts with it too, but its chart makes
-	// fellwort-api, and an observed alias nobody creates is never there.
+	// <fullnameOverride>-api: an app named past its override (voles-ee,
+	// override voles) starts with it too, but its chart makes
+	// voles-api, and an observed alias nobody creates is never there.
 	api := r.in.App + "-api"
 	alias(api, "api", 8000, fullnameOverride != "" && api == fullnameOverride+"-api")
 	return objs, observe
