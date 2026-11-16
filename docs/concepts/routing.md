@@ -627,9 +627,12 @@ made out to the entry is refused at the director and at every app.
 
 The realm issues such a token to one public client, `token-entry-<component>`,
 which exists while the entry is served: authorization code with PKCE and the
-person's consent, no other grant, no role of the person in the token, no
-offline token, and a sign-in through it ends after four hours (sooner where
-the profile's `sessionMaxAge` is shorter). A tenant may make it last longer,
+person's consent, no other grant, no role of the person in the token, and a
+sign-in through it ends after four hours (sooner where the profile's
+`sessionMaxAge` is shorter). A program may ask for an offline token
+(`offline_access`): it outlives the sign-in and ends after the realm's offline
+idle timeout without use (30 days), or when the person removes the program's
+access in their account (Applications) or an administrator revokes it. A tenant may make it last longer,
 up to its own sign-in (`spec.tokenEntries.sessionMaxHours` on the Tenant),
 which counts only where the Cluster claim allows tenants the choice
 (`spec.tokenEntries.tenantsMayExtendSessions`, off by default). A program is sent back only to an
