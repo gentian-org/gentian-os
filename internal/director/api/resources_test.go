@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -801,4 +802,128 @@ func TestADelegatedTokenMovesATenantWithinItsScopes(t *testing.T) {
 	if code, _ := h.do(t, http.MethodPut, tenantPlanPath, delegated("tenant-demo", "tom", "director-plans-apply"), `{"plan":"nodes-2"}`); code != http.StatusForbidden {
 		t.Fatalf("a delegated token did more than its person may: %d", code)
 	}
+}
+
+// tenantRequestPath is where a tenant's administrator asks for another plan.
+const tenantRequestPath = tenantPlanPath + "/request"
+
+// A tenant's administrator asks for a plan; the cluster's administrator
+// answers by moving the tenant, which takes the request away in the same
+// commit.
+func TestATenantAdministratorRequestsAPlanAndMovingTheTenantAnswersIt(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom") // administers demo
+	alice := h.token(t, "gentian", "alice") // configures the cluster
+
+	code, body := h.do(t, "PUT", tenantRequestPath, tom, `{"plan":"nodes-3","reason":"Odoo needs room"}`)
+	if code != http.StatusAccepted || body["plan"] != "nodes-3" || body["commit"] != h.tip(t) {
+		t.Fatalf("request: %d %v", code, body)
+	}
+	request := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/plan-request.yaml")
+	for _, want := range []string{
+		`gentianos.io/plan-request: "nodes-3"`,
+		`gentianos.io/plan-request-by: "tom@example.com"`,
+		"gentianos.io/plan-request-at: ",
+		`gentianos.io/plan-request-reason: "Odoo needs room"`,
+	} {
+		if !strings.Contains(request, want) {
+			t.Errorf("request is missing %q:\n%s", want, request)
+		}
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- path: plan-request.yaml") {
+		t.Fatalf("kustomization:\n%s", kustomization)
+	}
+
+	if code, body := h.do(t, "PUT", tenantPlanPath, alice, `{"plan":"nodes-3"}`); code != http.StatusAccepted {
+		t.Fatalf("approve: %d %v", code, body)
+	}
+	if remoteHas(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/plan-request.yaml") {
+		t.Fatal("moving the tenant left its request behind")
+	}
+	kustomization = dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if strings.Contains(kustomization, "plan-request.yaml") || !strings.Contains(kustomization, "- path: resource-plan.yaml") {
+		t.Fatalf("kustomization after the move:\n%s", kustomization)
+	}
+}
+
+// The tenant's administrator withdraws; the cluster's administrator declines.
+// Both remove the request, and the commit says which.
+func TestARequestIsWithdrawnOrDeclined(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	alice := h.token(t, "gentian", "alice")
+
+	for _, c := range []struct {
+		who, says string
+	}{{tom, "Withdraw"}, {alice, "Decline"}} {
+		if code, body := h.do(t, "PUT", tenantRequestPath, tom, `{"plan":"nodes-3"}`); code != http.StatusAccepted {
+			t.Fatalf("request: %d %v", code, body)
+		}
+		if code, body := h.do(t, "DELETE", tenantRequestPath, c.who, ""); code != http.StatusAccepted {
+			t.Fatalf("%s: %d %v", c.says, code, body)
+		}
+		if remoteHas(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/plan-request.yaml") {
+			t.Fatalf("%s left the request", c.says)
+		}
+		if subject := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%s", "main"); !strings.HasPrefix(subject, c.says) {
+			t.Fatalf("commit = %q, want %s…", subject, c.says)
+		}
+	}
+	// Nothing pending: nothing to remove, and no commit.
+	before := h.tip(t)
+	if code, body := h.do(t, "DELETE", tenantRequestPath, tom, ""); code != http.StatusOK || body["status"] != "unchanged" || h.tip(t) != before {
+		t.Fatalf("withdrawing nothing: %d %v", code, body)
+	}
+}
+
+func TestARequestIsRefusedForWhatCannotBeOrdered(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+	for body, want := range map[string]int{
+		`{"plan":"nodes-2"}`:  http.StatusConflict, // the plan it is on
+		`{"plan":"nodes-4"}`:  http.StatusConflict, // retired
+		`{"plan":"nodes-99"}`: http.StatusNotFound,
+		`{}`:                  http.StatusBadRequest,
+		`{"plan":"nodes-3","reason":"` + strings.Repeat("x", 501) + `"}`: http.StatusBadRequest,
+	} {
+		if code, _ := h.do(t, "PUT", tenantRequestPath, tom, body); code != want {
+			t.Errorf("%s: %d, want %d", body, code, want)
+		}
+	}
+	// A plan the tenant does not fit under may be asked for: forcing it is
+	// the cluster's administrator's decision when they answer.
+	if code, body := h.do(t, "PUT", tenantRequestPath, tom, `{"plan":"nodes-1"}`); code != http.StatusAccepted {
+		t.Fatalf("a smaller plan: %d %v", code, body)
+	}
+	if h.tip(t) == before {
+		t.Fatal("no commit")
+	}
+}
+
+// Only the tenant's own administrator asks for it, and only they or the
+// cluster's administrator take the request away.
+func TestOnlyTheTenantsAdministratorRequestsForIt(t *testing.T) {
+	h, _ := startWithOperator(t)
+	paul := h.token(t, "tenant-solo", "paul") // administers solo, not demo
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", tenantRequestPath, paul, `{"plan":"nodes-3"}`); code != http.StatusForbidden {
+		t.Fatalf("another tenant's administrator requested: %d", code)
+	}
+	if code, _ := h.do(t, "DELETE", tenantRequestPath, paul, ""); code != http.StatusForbidden {
+		t.Fatalf("another tenant's administrator withdrew: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/clusters/elsewhere/tenants/demo/resources/request", h.token(t, "tenant-demo", "tom"), `{"plan":"nodes-3"}`); code == http.StatusAccepted {
+		t.Fatal("a request on another cluster's id was committed")
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+}
+
+// remoteHas reports whether the remote's main branch holds a path.
+func remoteHas(t *testing.T, remote, path string) bool {
+	t.Helper()
+	return exec.Command("git", "--git-dir", remote, "cat-file", "-e", "main:"+path).Run() == nil
 }
