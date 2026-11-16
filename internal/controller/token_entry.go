@@ -270,7 +270,7 @@ func servedTokenEntry(
 // moment at which this one exists without the bouncer in front.
 func (r *ComponentReconciler) ensureTokenEntry(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant,
-	profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, served, held bool,
+	profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, door *bridgeDoor, served, held bool,
 ) error {
 	keep, metadata := "", ""
 	if served {
@@ -295,7 +295,13 @@ func (r *ComponentReconciler) ensureTokenEntry(
 		}
 		host := exposureHost(zone, comp, e)
 		authz := exposureAuthz(tenant, comp, profile, r.Cluster, false)
+		// A bridge asks the question of the app it connects, under its own
+		// paths, and its app is handed a token made out to it (bridge.go).
+		if door != nil {
+			authz = door.authz
+		}
 		route := buildExposureRoute(comp, tenant.Name, keep, host, zone, e, authz, r.KernelDomain, nil)
+		door.annotate(route)
 		route.Labels[tokenEntryRouteLabel] = "true"
 		if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 			return err

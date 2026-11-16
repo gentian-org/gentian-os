@@ -60,6 +60,10 @@ type Reserved struct {
 // that no app can stand where people expect the platform -- its former
 // address, or a name a sign-in or account page would have.
 //
+// One is the platform's own address and no component's: sync, the tenant's
+// door, where its bridges answer and no app's exposure may (a bridge exposes
+// nothing; the operator routes it there).
+//
 // Short on purpose. Names that are an app's business (mail, chat, files,
 // docs, wiki, api, www -- a tenant's website is rightly www.<its domain>)
 // are not here, and neither is operations: the Operations Console is a
@@ -80,6 +84,7 @@ var platformLabels = []Reserved{
 	{Label: "sso", Why: "a name a sign-in page would have"},
 	{Label: "account", Why: "a name a page for one's account and password would have"},
 	{Label: "accounts", Why: "a name a page for one's account and password would have"},
+	{Label: "sync", Why: "the tenant's door for programs that sync files, calendars and contacts, where its bridges answer"},
 }
 
 // kernelLabels are the names directly under the cluster's domain that the

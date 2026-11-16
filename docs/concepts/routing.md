@@ -252,6 +252,7 @@ tenant of a single-tenancy cluster, or a custom domain:
 | `sso` | nothing | a name a sign-in page would have |
 | `account` | nothing | a name a page for one's account and password would have |
 | `accounts` | nothing | a name a page for one's account and password would have |
+| `sync` | nothing | the tenant's door for programs that sync files, calendars and contacts, where its bridges answer |
 <!-- reserved-names:platform:end -->
 
 **The kernel's own hosts**, refused where a tenant's domain is the cluster's

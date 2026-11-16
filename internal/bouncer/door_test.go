@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	doorHost     = "dav.acme.example"
-	doorAudience = "https://dav.acme.example"
-	doorMetadata = "https://dav.acme.example/.well-known/oauth-protected-resource"
+	doorHost     = "sync.acme.example"
+	doorAudience = "https://sync.acme.example"
+	doorMetadata = "https://sync.acme.example/.well-known/oauth-protected-resource"
 )
 
 func doorRoute() Route {
