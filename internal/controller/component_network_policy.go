@@ -211,7 +211,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 		}
 		outside = append(outside, keys...)
 	}
-	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
+	preApproved, err := r.preApprovedEgress(ctx, profile)
+	if err != nil {
+		return err
+	}
+	rules := append(outside, security.GrantedEgressRulesUnder(profile, comp, time.Now(), preApproved)...)
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is
 	// the edge's pods, which those rules do not name (own_public_address.go).

@@ -484,7 +484,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	comp.Status.PendingPrivileges = security.PendingPrivileges(profile, comp, time.Now())
+	// Egress the cluster's policy answers for the profile's catalog counts as
+	// granted (PlatformSecurityPolicy spec.preApprovedEgressCatalogs).
+	preApproved, err := r.preApprovedEgress(ctx, profile)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	comp.Status.PendingPrivileges = security.PendingPrivilegesUnder(profile, comp, time.Now(), preApproved)
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
@@ -2155,6 +2161,9 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
 			builder.WithPredicates(edgeAddressChanged()))
+	// The catalogs whose egress the cluster answers are the policy's: a change
+	// there is a change to what each asking component may do.
+	b = b.Watches(&gentianov1alpha1.PlatformSecurityPolicy{}, componentsAskingForEgressPrivileges(mgr.GetClient()))
 	if len(r.clusterRoleSet()) > 0 {
 		// What the cluster permits is another object's: a role it stops
 		// permitting is unbound when the policy changes, not when something

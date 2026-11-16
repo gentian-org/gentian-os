@@ -201,3 +201,40 @@ func TestPrivilegeReasonIsTheProfilesOwn(t *testing.T) {
 		t.Fatalf("a ref the profile does not ask for had reason %q", got)
 	}
 }
+
+// A catalog the cluster's policy lists has its apps' egress answered without
+// an approver: every egress request, and nothing else.
+func TestAListedCatalogsEgressIsAnsweredByThePolicy(t *testing.T) {
+	profile := profileAsking()
+	profile.Annotations = map[string]string{security.OriginAnnotation: "cluster/acme"}
+
+	policy := security.PreApprovedEgress(profile, []string{"cluster/acme"})
+	got := security.PendingPrivilegesUnder(profile, componentGranting(), time.Now(), policy)
+	want := []string{"clusterRoles/read-nodes", "podSecurity/run-as-root"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("pending = %v, want %v: egress only, and all of it", got, want)
+	}
+	if rules := security.GrantedEgressRulesUnder(profile, componentGranting(), time.Now(), policy); len(rules) != 2 {
+		t.Fatalf("the policy opened %d egress rules, want both the profile asks for", len(rules))
+	}
+
+	// Another catalog, a tenant's catalog of the same name, no origin, or no
+	// list: nothing is answered.
+	for _, c := range []struct {
+		origin string
+		list   []string
+	}{
+		{"cluster/other", []string{"cluster/acme"}},
+		{"tenant/t1/acme", []string{"cluster/acme"}},
+		{"", []string{"cluster/acme"}},
+		{"cluster/acme", nil},
+	} {
+		profile.Annotations = map[string]string{}
+		if c.origin != "" {
+			profile.Annotations[security.OriginAnnotation] = c.origin
+		}
+		if p := security.PreApprovedEgress(profile, c.list); p != nil {
+			t.Fatalf("origin %q, list %v answered %v", c.origin, c.list, p)
+		}
+	}
+}

@@ -50,6 +50,17 @@ type PlatformSecurityPolicySpec struct {
 	// only where it is also granted on the install.
 	// +optional
 	AllowedClusterRoles []AllowedClusterRole `json:"allowedClusterRoles,omitempty"`
+
+	// PreApprovedEgressCatalogs lists catalogs, by the origin a materialized
+	// profile records ("cluster/<source>" or "tenant/<tenant>/<source>"),
+	// whose apps' egress requests this cluster
+	// answers itself: such a request is granted without an approver, for as
+	// long as its catalog is listed here. Egress only; every other privilege
+	// still needs its approver. Removing a catalog makes its apps' egress
+	// requests pending again.
+	// +optional
+	// +listType=set
+	PreApprovedEgressCatalogs []string `json:"preApprovedEgressCatalogs,omitempty"`
 }
 
 // PlatformSecurityPolicyStatus reports observed policy state.
