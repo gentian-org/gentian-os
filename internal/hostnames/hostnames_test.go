@@ -48,7 +48,7 @@ var (
 // The two lists, pinned: a name added to or taken off either is a decision,
 // and this is where it is made twice.
 func TestTheReservedNamesAreTheseAndNoOthers(t *testing.T) {
-	if got, want := Names(PlatformLabels()), "desktop, admin, store, console, platform, id, auth, login, signin, sign-in, sso, account, accounts"; got != want {
+	if got, want := Names(PlatformLabels()), "desktop, admin, store, console, platform, id, auth, login, signin, sign-in, sso, account, accounts, sync"; got != want {
 		t.Errorf("platform labels = %s\nwant            %s", got, want)
 	}
 	if got, want := Names(KernelLabels()), "argocd, headlamp, id, imap, llm, mail, mail-egress, monitoring, platform, www"; got != want {

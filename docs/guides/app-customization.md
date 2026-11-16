@@ -947,7 +947,7 @@ changes an approved entry from `none` to `app`, or adds
 either surface, may use one of the platform's names as its `subDomain` (or as
 the component's name, where it states none): `desktop`, `admin`, `store`,
 `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
-`account`, `accounts`, or anything below one (`x.admin`). `desktop`, `admin`
+`account`, `accounts`, `sync`, or anything below one (`x.admin`). `desktop`, `admin`
 and `store` are taken by the platform's own component for each and by nothing
 else; the others by nothing at all. Where the tenant's domain is the cluster's
 own -- the user tenant of a single-tenancy cluster -- the kernel's addresses

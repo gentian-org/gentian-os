@@ -371,6 +371,47 @@ type bouncerRoute struct {
 	// home of a tenant whose signed-up people have no desktop
 	// (spec.signUp.home), on that tenant's desktop host only.
 	DeniedRedirect string `json:"deniedRedirect,omitempty"`
+	// Paths make a route that takes a token a door: the apps behind it,
+	// each under its own prefix with its own question (internal/bouncer,
+	// Route.Paths). One per path of every bridge served on the host.
+	Paths []bouncerPath `json:"paths,omitempty"`
+}
+
+// bouncerPath is one app behind a door (internal/bouncer, PathRoute).
+type bouncerPath struct {
+	Prefix        string `json:"prefix"`
+	Relation      string `json:"relation"`
+	Object        string `json:"object"`
+	ExchangeScope string `json:"exchangeScope,omitempty"`
+}
+
+// doorPaths reads the paths a bridge's route serves at a door, each with the
+// route's question and exchange scope.
+func doorPaths(ann map[string]string) []bouncerPath {
+	var out []bouncerPath
+	for _, p := range splitDenyPaths(ann[bouncerDoorPathsAnnotation]) {
+		out = append(out, bouncerPath{
+			Prefix: p, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
+			ExchangeScope: ann[bouncerExchangeScopeAnnotation],
+		})
+	}
+	return out
+}
+
+// addDoorPaths adds a bridge's paths to a door, leaving out a prefix that is
+// under or over one the door already serves: the bouncer refuses a table
+// that lists a prefix twice, and with it every route of the cluster.
+func addDoorPaths(have, add []bouncerPath) []bouncerPath {
+	for _, p := range add {
+		clash := false
+		for _, h := range have {
+			clash = clash || pathsOverlap(h.Prefix, p.Prefix)
+		}
+		if !clash {
+			have = append(have, p)
+		}
+	}
+	return have
 }
 
 // bouncerRouteTable renders the bouncer's table from the routes that carry an
@@ -495,6 +536,19 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 	if err := c.List(ctx, list, client.MatchingLabels{bouncerRouteLabel: "true"}); err != nil {
 		return nil, err
 	}
+	// Oldest first, then by name: where two routes disagree about a host or
+	// a path the first keeps it, as at the Gateway, and the table is the
+	// same however the routes were listed.
+	sort.SliceStable(list.Items, func(i, j int) bool {
+		a, b := &list.Items[i], &list.Items[j]
+		if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
+			return a.CreationTimestamp.Before(&b.CreationTimestamp)
+		}
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		return a.Name < b.Name
+	})
 	byHost := map[string]*bouncerRoute{}
 	var order []string
 	for i := range list.Items {
@@ -535,6 +589,15 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			// path denied by any of them is denied for the host, because
 			// deny wins.
 			if cur, ok := byHost[host]; ok {
+				// A door takes the paths of every bridge on it. A host is
+				// a door or it is not: a route that disagrees with the
+				// first adds nothing.
+				if paths := doorPaths(ann); len(cur.Paths) > 0 || (mode == "bearer" && len(paths) > 0) {
+					if mode == "bearer" && len(cur.Paths) > 0 && len(paths) > 0 {
+						cur.Paths = addDoorPaths(cur.Paths, paths)
+					}
+					continue
+				}
 				cur.ForwardToken = cur.ForwardToken || ann[bouncerForwardAnnotation] == "true"
 				if cur.ExchangeScope == "" {
 					cur.ExchangeScope = ann[bouncerExchangeScopeAnnotation]
@@ -555,12 +618,20 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]bouncer
 			// A route that takes a token has no session to forward or to
 			// exchange a token of, and says what its token is held against.
 			if mode == "bearer" {
-				byHost[host] = &bouncerRoute{
+				entry := &bouncerRoute{
 					Host: host, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
 					AuthMode: mode, DenyPaths: denied,
 					Audience: ann[bouncerTokenAudienceAnnotation], Realm: ann[bouncerTokenRealmAnnotation],
 					ResourceMetadata: ann[bouncerResourceMetadataAnnotation],
 				}
+				// A bridge's route: the host is a door, recorded as the
+				// tenant, and the route's question is asked under its
+				// paths alone.
+				if paths := doorPaths(ann); len(paths) > 0 && ann[bouncerDoorObjectAnnotation] != "" {
+					entry.Relation, entry.Object = doorRelation, ann[bouncerDoorObjectAnnotation]
+					entry.Paths = addDoorPaths(nil, paths)
+				}
+				byHost[host] = entry
 				order = append(order, host)
 				continue
 			}

@@ -291,10 +291,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// by the same checks, and stops where a release would begin
 	// (actionInstalled).
 	switch comp.Spec.Class {
-	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction:
+	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction,
+		gentianov1alpha1.ComponentClassBridge:
 	default:
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters and actions are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters, actions and bridges are", comp.Spec.Class), 0)
 	}
 	// The instance runs under one of the modes its profile is certified for.
 	// A Component written before its profile was on the cluster was given
@@ -710,6 +711,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.ensureImagePins(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("image pins: %w", err)
 	}
+	// A bridge is served by routing to the Service of the app it connects.
+	// One that would run a workload of its own, to speak a protocol the app
+	// does not, has nothing here that routes to it: held, and said so,
+	// rather than deployed where no caller can reach it.
+	if isBridge(profile) && bridgeEntryOf(profile) == nil {
+		return r.status(ctx, comp, metav1.ConditionFalse, "PackageUnsupported",
+			"a bridge is served when it is packaged as an api that names the Service of the app it connects (package.api.backend); one that runs a workload of its own is not served yet", 0)
+	}
 	switch {
 	case profile.Spec.Package.Chart != nil && appComposition(comp, profile) != "":
 		// A profile that brings its own Composition is rendered by it, and
@@ -831,6 +840,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				"an API entry with runtime portal-proxy needs a publishing proxy, which is not built yet", 0)
 		}
 		releaseMessage = "external service at " + profile.Spec.Package.API.BaseURL
+		// A bridge routed to the Service of the app it connects: nothing
+		// runs for it, and what is served of it is settled with its entry
+		// at the door, below.
+		if b := profile.Spec.Package.API.Backend; b != nil {
+			releaseMessage = fmt.Sprintf("routes to %s:%d", b.Service, b.Port)
+		}
 
 	default:
 		// A composition package: the claim chooses the Composition and
@@ -915,7 +930,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// realm in place of a session, served once the tenant's perimeter
 	// approver approved it and removed when that ends. Asked of every
 	// component, so the condition and the route go when the declaration does.
+	//
+	// A bridge is served the same way, at the tenant's door (bridge.go):
+	// its entry is read from what it connects, and its route says what the
+	// bouncer asks under its paths.
 	tokenEntry := tokenEntryOf(comp, profile)
+	door := bridgeDoorOf(tenant, profile)
+	if door != nil {
+		tokenEntry = bridgeEntryOf(profile)
+	}
 	tokenHost := ""
 	sessionHosts := map[string]bool{}
 	if tokenEntry != nil {
@@ -924,6 +947,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			sessionHosts[exposureHost(zone, comp, e)] = true
 		}
 	}
+	bridgeOK, err := r.bridgeServable(ctx, comp, profile, tokenHost)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("bridge: %w", err)
+	}
 	// A component that declares none, never did and routes nothing has no
 	// such route to look for: an API entry, an addon. One whose profile
 	// stopped declaring it still carries the condition, and is asked once
@@ -931,8 +958,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	hadTokenEntry := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil
 	tokenWaived := tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
 	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	// A bridge whose app is gone, or whose path is another's, has no route
+	// whatever was approved.
+	if door != nil && !bridgeOK {
+		tokenServed = false
+	}
 	if tokenEntry != nil || hadTokenEntry || len(routable) > 0 {
-		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, tokenServed, held); err != nil {
+		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, door, tokenServed, held); err != nil {
 			return ctrl.Result{}, fmt.Errorf("token entry: %w", err)
 		}
 	}

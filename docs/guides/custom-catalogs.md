@@ -317,7 +317,7 @@ like `notes` will collide sooner or later and `acme-notes` will not.
 its own name where an entry states no `subDomain`. These names are the platform's in every tenant,
 and no entry of an app or an add-on may use one, or anything below one (`x.admin`): `desktop`,
 `admin`, `store`, `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
-`account`, `accounts`. On a single-tenancy cluster, where the tenant's hosts are directly under the
+`account`, `accounts`, `sync`. On a single-tenancy cluster, where the tenant's hosts are directly under the
 cluster's domain, the kernel's own are refused as well: `argocd`, `corp`, `headlamp`, `imap`, `llm`,
 `mail`, `mail-egress`, `www`. The install is refused with `422`:
 
