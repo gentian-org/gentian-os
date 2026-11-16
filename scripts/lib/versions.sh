@@ -30,9 +30,12 @@ GENTIAN_VERSIONS_FILE="${GENTIAN_VERSIONS_FILE:-$(cd "$(dirname "${BASH_SOURCE[0
 
 # _gentian_yq <filter> <file> — tolerate either yq flavor (mikefarah's `eval`
 # subcommand, or kislyuk's jq-style filter); both are seen in the wild as `yq`.
+# -N: mikefarah's prints a `---` between the results of different documents,
+# which a caller would read as a value. kislyuk's does not know the option
+# and, having failed on it, waits for standard input: hence </dev/null.
 _gentian_yq() {
     local filter="$1" file="$2" out
-    if out=$(yq eval "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+    if out=$(yq eval -N "${filter}" "${file}" 2>/dev/null </dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
         echo "${out}"; return 0
     fi
     if out=$(yq -r "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
