@@ -450,6 +450,68 @@ func TestComponentRules(t *testing.T) {
 	}
 }
 
+// A bridge is a class of its own, reached through the platform's door and by
+// nothing else. These are the rules the class carries at admission.
+func TestBridgeProfileRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	head := `
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata: {name: x}
+spec:
+  version: "1.0.0"
+  trustTier: certified
+`
+	class := "  classes: [bridge]\n  launch: none\n"
+	bridge := `  bridge:
+    kind: external
+    app: {profile: nextcloud-base-ce, versions: ["33.0.10"]}
+    protocols:
+    - {name: webdav, paths: [/remote.php/dav/files/]}
+    - {name: caldav, paths: [/remote.php/dav/calendars/, /remote.php/dav/principals/]}
+`
+	api := "  package: {api: {backend: {service: nextcloud, port: 8080}}}\n"
+	chart := "  package: {chart: {repository: \"oci://charts.example\", name: carddav, version: \"1.0.0\"}}\n"
+	protocols := func(p string) string {
+		return "  bridge:\n    kind: external\n    app: {profile: nextcloud-base-ce}\n    protocols:\n" + p
+	}
+	cases := []struct{ name, spec, want string }{
+		{"a bridge routed to the app's own Service", class + bridge + api, ""},
+		{"a bridge that runs a translator", class + bridge + chart, ""},
+
+		{"a bridge that is also an app", "  classes: [bridge, app]\n  launch: none\n" + bridge + api, "bridge is exclusive"},
+		{"a bridge without its block", class + api, "spec.bridge is for class bridge"},
+		{"an app with a bridge block", "  classes: [app]\n  launch: none\n" + bridge + chart, "spec.bridge is for class bridge"},
+		{"a bridge someone opens", "  classes: [bridge]\n  launch: from\n" + bridge + api, "a bridge has launch none"},
+		{"a bridge on the gateway", class + bridge + api + "  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge on the perimeter", class + bridge + api + "  expose:\n  - {name: dav, surface: perimeter, authMode: app, paths: [/dav/], backend: {service: x, port: 80}}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge that provides a contract", class + bridge + api + "  provides:\n  - {name: files}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge that integrates", class + bridge + api + "  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge that vouches", "  classes: [bridge]\n  launch: none\n" + bridge + api + "  requires:\n    services:\n      vouching: {}\n", "a bridge does not vouch for people"},
+		{"a bridge placed on every tenant", class + bridge + api + "  defaultForTenants: true\n", "never placed by default"},
+		{"a bridge that is an addon", class + bridge + "  package: {addon: {id: dav, of: nextcloud-base-ce}}\n", "a bridge is deployed or routed to"},
+
+		{"a bridge pointed outside the cluster", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\"}}\n", "names the Service that answers it"},
+		{"a bridge with a tile", class + bridge + "  package: {api: {backend: {service: nextcloud, port: 8080}, tile: {displayName: Files, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_launch}}}\n", "carries no tile"},
+		{"an api that names both", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\", backend: {service: nextcloud, port: 8080}}}\n", "names where it is answered once"},
+		{"an app routed to a Service by an api", "  classes: [app]\n  launch: none\n  package: {api: {backend: {service: nextcloud, port: 8080}}}\n", "package.api.backend is for a bridge"},
+		{"an api that names neither", "  classes: [app]\n  launch: none\n  package: {api: {}}\n", "names where it is answered once"},
+
+		{"a kind that is not one", class + strings.Replace(bridge, "kind: external", "kind: agent", 1) + api, "Unsupported value"},
+		{"a bridge that names no app", class + "  bridge:\n    kind: external\n    protocols:\n    - {name: webdav, paths: [/dav/]}\n" + api, "app"},
+		{"a bridge that offers nothing", class + "  bridge:\n    kind: external\n    app: {profile: nextcloud-base-ce}\n    protocols: []\n" + api, "protocols"},
+		{"a protocol that is not one", class + protocols("    - {name: imap, paths: [/mail/]}\n") + api, "Unsupported value"},
+		{"a protocol with no path", class + protocols("    - {name: webdav, paths: []}\n") + api, "paths"},
+		{"the app's root", class + protocols("    - {name: webdav, paths: [/]}\n") + api, "paths"},
+		{"a path that climbs", class + protocols("    - {name: webdav, paths: [/dav/../admin/]}\n") + api, "paths"},
+		{"a path with a query", class + protocols("    - {name: webdav, paths: [\"/dav?x=1\"]}\n") + api, "paths"},
+		{"a path that does not begin at the root", class + protocols("    - {name: webdav, paths: [dav/]}\n") + api, "paths"},
+	}
+	for _, c := range cases {
+		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)
+	}
+}
+
 // An adapter is a class of its own, reached by nothing but the component that
 // speaks as a person. These are the rules the class carries at admission.
 func TestAdapterProfileRules(t *testing.T) {

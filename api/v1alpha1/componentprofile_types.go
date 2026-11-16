@@ -32,7 +32,7 @@ import (
 // description -- serves contracts to other components, serves no human -- is
 // the definition of a service.
 //
-// +kubebuilder:validation:Enum=service;app;shared-app;adapter;action
+// +kubebuilder:validation:Enum=service;app;shared-app;adapter;action;bridge
 type ComponentClass string
 
 const (
@@ -54,6 +54,11 @@ const (
 	// ComponentClassAction is a step another component runs: one pinned
 	// image, started per run by the dispatcher. Installing it deploys nothing.
 	ComponentClassAction ComponentClass = "action"
+	// ComponentClassBridge connects one app to callers that act for a
+	// person and cannot hold the browser's session. It is installed in
+	// tenant-<t> beside the app, nobody opens it, and its callers reach it
+	// through a door of the platform's (bridge_types.go).
+	ComponentClassBridge ComponentClass = "bridge"
 )
 
 // ComponentLaunch is how a person reaches a component. It exists because the
@@ -229,6 +234,20 @@ type ComponentPlacement struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api) || (has(self.requires) && has(self.requires.services) && has(self.requires.services.partners) && has(self.requires.services.partners.call) && self.requires.services.partners.call.size() > 0)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, or one that calls a partner (requires.services.partners.call) adapts none"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
+// A bridge is reached through a door of the platform's that checks every
+// caller, and by nothing else: no person opens it, it exposes nothing of its
+// own, no other app is handed a contract to call it, and it holds no
+// credential of the app it connects.
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('bridge' in self.classes) || self.classes.size() == 1",message="bridge is exclusive: a bridge is a component of its own, never also the app it connects"
+// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'bridge' in self.classes) == has(self.bridge)",message="spec.bridge is for class bridge, and class bridge needs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || self.launch == 'none'",message="a bridge has launch none: nobody opens it"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || ((!has(self.expose) || self.expose.size() == 0) && (!has(self.provides) || self.provides.size() == 0) && (!has(self.integrations) || self.integrations.size() == 0))",message="a bridge exposes, provides and integrates nothing: its callers reach it through the platform's door, which checks every one of them"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)",message="a bridge does not vouch for people: the door hands it the person's own credential for the app"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.__package__.addon)",message="a bridge is deployed or routed to: a chart, a composition, or an api -- not an addon inside another component"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.__package__.api) || (has(self.__package__.api.backend) && !has(self.__package__.api.tile))",message="a bridge packaged as an api names the Service that answers it (package.api.backend) and carries no tile"
+// +kubebuilder:validation:XValidation:rule="has(self.bridge) || !has(self.__package__.api) || !has(self.__package__.api.backend)",message="package.api.backend is for a bridge: every other entry packaged as an api names a baseUrl"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="a bridge is never placed by default: a tenant's administrator installs it"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.placement)",message="a bridge is never placed: a tenant's administrator installs it"
 // An action is run and never deployed, opened or reached: it is one image at
 // one build, and a run of it speaks to the component that started it and to
 // nothing the platform provides.
@@ -297,6 +316,11 @@ type ComponentProfileSpec struct {
 	// adapter.
 	// +optional
 	Adapter *AdapterSpec `json:"adapter,omitempty"`
+
+	// Bridge is what a bridge connects. Present exactly when the class is
+	// bridge.
+	// +optional
+	Bridge *BridgeSpec `json:"bridge,omitempty"`
 
 	// Action is what an action takes, returns and runs. Present exactly when
 	// the class is action.
@@ -432,7 +456,8 @@ type PackageSpec struct {
 
 	// API describes a component the platform routes to rather than runs. It
 	// does not mean external: the catalog's own example points at a Service
-	// inside the cluster. Delivery: api.
+	// inside the cluster, and a bridge names the Service of the app it
+	// connects (api.backend). Delivery: api.
 	// +optional
 	API *APIIntegration `json:"api,omitempty"`
 

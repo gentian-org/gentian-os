@@ -492,6 +492,87 @@ spec:
                             type: array
                         type: object
                     type: object
+                  bridge:
+                    description: |-
+                      Bridge is what a bridge connects. Present exactly when the class is
+                      bridge.
+                    properties:
+                      app:
+                        description: |-
+                          App names the app on the near side: the app's ComponentProfile, which
+                          must be installed in the same tenant. A caller of the bridge is asked
+                          the question a person opening that app is asked.
+                        properties:
+                          profile:
+                            description: Profile is the ComponentProfile of the app.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                          versions:
+                            description: |-
+                              Versions are the catalog versions of the app this bridge was reviewed
+                              against. Empty means the reviewer named none.
+                            items:
+                              maxLength: 64
+                              type: string
+                            maxItems: 32
+                            type: array
+                            x-kubernetes-list-type: set
+                        required:
+                        - profile
+                        type: object
+                      kind:
+                        description: Kind is who is on the far side.
+                        enum:
+                        - external
+                        type: string
+                      protocols:
+                        description: |-
+                          Protocols are what the bridge offers of the app, each under the paths
+                          it answers at. A protocol is named once.
+                        items:
+                          description: BridgeProtocol is one protocol a bridge offers,
+                            and where.
+                          properties:
+                            name:
+                              description: Name is the protocol.
+                              enum:
+                              - webdav
+                              - caldav
+                              - carddav
+                              type: string
+                            paths:
+                              description: |-
+                                Paths are the path prefixes the protocol is answered under. A caller
+                                asks for them as they are written here and the backend is asked for the
+                                same: answers of these protocols name paths of their own, and a path
+                                rewritten on the way in would not match them. Nothing outside these
+                                paths is reached through the bridge, and none of them is the app's
+                                root: a bridge opens what a protocol needs and no more.
+                              items:
+                                maxLength: 128
+                                pattern: ^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$
+                                type: string
+                              maxItems: 8
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-type: set
+                          required:
+                          - name
+                          - paths
+                          type: object
+                        maxItems: 8
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                    required:
+                    - app
+                    - kind
+                    - protocols
+                    type: object
                   classes:
                     description: |-
                       Classes lists the modes this component may be deployed under. It is a
@@ -513,6 +594,7 @@ spec:
                       - shared-app
                       - adapter
                       - action
+                      - bridge
                       type: string
                     maxItems: 2
                     minItems: 1
@@ -2559,11 +2641,37 @@ spec:
                         description: |-
                           API describes a component the platform routes to rather than runs. It
                           does not mean external: the catalog's own example points at a Service
-                          inside the cluster. Delivery: api.
+                          inside the cluster, and a bridge names the Service of the app it
+                          connects (api.backend). Delivery: api.
                         properties:
+                          backend:
+                            description: |-
+                              Backend is the Service of the tenant a bridge is answered by: the
+                              Service of the app it connects, which speaks the bridge's protocols
+                              itself. Runtime, TenantBinding and Tile say nothing of such an entry.
+                            properties:
+                              port:
+                                description: Port is the Service's port.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              service:
+                                description: Service is the Service's name in the
+                                  tenant's namespace.
+                                maxLength: 63
+                                minLength: 1
+                                pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - port
+                            - service
+                            type: object
                           baseUrl:
-                            description: BaseURL is the external service origin (e.g.
-                              https://service.example).
+                            description: |-
+                              BaseURL is the external service origin (e.g. https://service.example).
+                              Every entry packaged as an api names one, except a bridge, which names
+                              a backend.
                             minLength: 1
                             pattern: ^https?://.+
                             type: string
@@ -2727,9 +2835,11 @@ spec:
                             - logo
                             - relation
                             type: object
-                        required:
-                        - baseUrl
                         type: object
+                        x-kubernetes-validations:
+                        - message: 'an api names where it is answered once: baseUrl,
+                            or backend for a bridge'
+                          rule: has(self.baseUrl) != has(self.backend)
                       chart:
                         description: 'Chart is the Helm chart or OCI artifact. Delivery:
                           workload.'
@@ -4982,6 +5092,43 @@ spec:
                 - message: 'an adapter is never placed: a tenant''s administrator
                     installs it'
                   rule: '!has(self.adapter) || !has(self.placement)'
+                - message: 'bridge is exclusive: a bridge is a component of its own,
+                    never also the app it connects'
+                  rule: '!has(self.classes) || !(''bridge'' in self.classes) || self.classes.size()
+                    == 1'
+                - message: spec.bridge is for class bridge, and class bridge needs
+                    it
+                  rule: (has(self.classes) && 'bridge' in self.classes) == has(self.bridge)
+                - message: 'a bridge has launch none: nobody opens it'
+                  rule: '!has(self.bridge) || self.launch == ''none'''
+                - message: 'a bridge exposes, provides and integrates nothing: its
+                    callers reach it through the platform''s door, which checks every
+                    one of them'
+                  rule: '!has(self.bridge) || ((!has(self.expose) || self.expose.size()
+                    == 0) && (!has(self.provides) || self.provides.size() == 0) &&
+                    (!has(self.integrations) || self.integrations.size() == 0))'
+                - message: 'a bridge does not vouch for people: the door hands it
+                    the person''s own credential for the app'
+                  rule: '!has(self.bridge) || !has(self.requires) || !has(self.requires.services)
+                    || !has(self.requires.services.vouching)'
+                - message: 'a bridge is deployed or routed to: a chart, a composition,
+                    or an api -- not an addon inside another component'
+                  rule: '!has(self.bridge) || !has(self.__package__.addon)'
+                - message: a bridge packaged as an api names the Service that answers
+                    it (package.api.backend) and carries no tile
+                  rule: '!has(self.bridge) || !has(self.__package__.api) || (has(self.__package__.api.backend)
+                    && !has(self.__package__.api.tile))'
+                - message: 'package.api.backend is for a bridge: every other entry
+                    packaged as an api names a baseUrl'
+                  rule: has(self.bridge) || !has(self.__package__.api) || !has(self.__package__.api.backend)
+                - message: 'a bridge is never placed by default: a tenant''s administrator
+                    installs it'
+                  rule: '!has(self.bridge) || !((has(self.defaultForTenants) && self.defaultForTenants)
+                    || (has(self.defaultForPlatform) && self.defaultForPlatform) ||
+                    (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))'
+                - message: 'a bridge is never placed: a tenant''s administrator installs
+                    it'
+                  rule: '!has(self.bridge) || !has(self.placement)'
                 - message: 'action is exclusive: an action is a component of its own,
                     never also the app that runs it'
                   rule: '!has(self.classes) || !(''action'' in self.classes) || self.classes.size()

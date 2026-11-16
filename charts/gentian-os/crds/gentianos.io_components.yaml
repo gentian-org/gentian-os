@@ -139,6 +139,7 @@ spec:
                 - shared-app
                 - adapter
                 - action
+                - bridge
                 type: string
               config:
                 description: |-

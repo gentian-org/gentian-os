@@ -339,6 +339,14 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.volumes` | object |  | `Volumes` narrows what is captured from the app's PersistentVolumeClaims. |
 | `spec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `spec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
+| `spec.bridge` | object |  | `Bridge` is what a bridge connects. |
+| `spec.bridge.app` | object | yes | `App` names the app on the near side: the app's ComponentProfile, which must be installed in the same tenant. |
+| `spec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
+| `spec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
+| `spec.bridge.kind` | string | yes | `Kind` is who is on the far side. |
+| `spec.bridge.protocols` | []object | yes | `Protocols` are what the bridge offers of the app, each under the paths it answers at. |
+| `spec.bridge.protocols[].name` | string | yes | `Name` is the protocol. |
+| `spec.bridge.protocols[].paths` | []string | yes | `Paths` are the path prefixes the protocol is answered under. |
 | `spec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `spec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `spec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
@@ -570,7 +578,10 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.package.addon.id` | string | yes | `ID` is what the hosting component's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
 | `spec.package.addon.of` | string | yes | `Of` is the ComponentProfile this addon activates into. |
 | `spec.package.api` | object |  | `API` describes a component the platform routes to rather than runs. |
-| `spec.package.api.baseUrl` | string | yes | `BaseURL` is the external service origin (e.g. |
+| `spec.package.api.backend` | object |  | `Backend` is the Service of the tenant a bridge is answered by: the Service of the app it connects, which speaks the bridge's protocols itself. |
+| `spec.package.api.backend.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `spec.package.api.backend.service` | string | yes | `Service` is the Service's name in the tenant's namespace. |
+| `spec.package.api.baseUrl` | string |  | `BaseURL` is the external service origin (e.g. |
 | `spec.package.api.runtime` | string |  | `Runtime` selects how the tenant reaches the external service. |
 | `spec.package.api.tenantBinding` | string |  | `TenantBinding` declares how the tenant is identified to the external service. |
 | `spec.package.api.tile` | object |  | `Tile` puts this entry on the desktop of whoever holds its relation. |
@@ -1182,6 +1193,14 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.volumes` | object |  | `Volumes` narrows what is captured from the app's PersistentVolumeClaims. |
 | `status.profileSpec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `status.profileSpec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
+| `status.profileSpec.bridge` | object |  | `Bridge` is what a bridge connects. |
+| `status.profileSpec.bridge.app` | object | yes | `App` names the app on the near side: the app's ComponentProfile, which must be installed in the same tenant. |
+| `status.profileSpec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
+| `status.profileSpec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
+| `status.profileSpec.bridge.kind` | string | yes | `Kind` is who is on the far side. |
+| `status.profileSpec.bridge.protocols` | []object | yes | `Protocols` are what the bridge offers of the app, each under the paths it answers at. |
+| `status.profileSpec.bridge.protocols[].name` | string | yes | `Name` is the protocol. |
+| `status.profileSpec.bridge.protocols[].paths` | []string | yes | `Paths` are the path prefixes the protocol is answered under. |
 | `status.profileSpec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `status.profileSpec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `status.profileSpec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
@@ -1413,7 +1432,10 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.package.addon.id` | string | yes | `ID` is what the hosting component's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
 | `status.profileSpec.package.addon.of` | string | yes | `Of` is the ComponentProfile this addon activates into. |
 | `status.profileSpec.package.api` | object |  | `API` describes a component the platform routes to rather than runs. |
-| `status.profileSpec.package.api.baseUrl` | string | yes | `BaseURL` is the external service origin (e.g. |
+| `status.profileSpec.package.api.backend` | object |  | `Backend` is the Service of the tenant a bridge is answered by: the Service of the app it connects, which speaks the bridge's protocols itself. |
+| `status.profileSpec.package.api.backend.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `status.profileSpec.package.api.backend.service` | string | yes | `Service` is the Service's name in the tenant's namespace. |
+| `status.profileSpec.package.api.baseUrl` | string |  | `BaseURL` is the external service origin (e.g. |
 | `status.profileSpec.package.api.runtime` | string |  | `Runtime` selects how the tenant reaches the external service. |
 | `status.profileSpec.package.api.tenantBinding` | string |  | `TenantBinding` declares how the tenant is identified to the external service. |
 | `status.profileSpec.package.api.tile` | object |  | `Tile` puts this entry on the desktop of whoever holds its relation. |
