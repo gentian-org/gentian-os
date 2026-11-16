@@ -348,3 +348,69 @@ func TestABridgeIsServedWhileItsAppIsInstalledAndItsPathsAreFree(t *testing.T) {
 		t.Fatalf("no bridge: %v %v %+v", ok, err, plain.Status.Conditions)
 	}
 }
+
+// The realm holds a client for a bridge's programs while the bridge is
+// approved, made out to the door and to the edge's exchange client, and holds
+// none once the approval is gone.
+func TestABridgesRealmClientComesAndGoesWithItsApproval(t *testing.T) {
+	ctx := context.Background()
+	scheme := perimeterScheme()
+	profile, tenant := nextcloudBridge(), acmeTenantFixture()
+	comp := componentFor(profile.Name, "tenant-"+tenant.Name)
+	comp.UID = "uid-bridge"
+	comp.Spec.Class = gentianov1alpha1.ComponentClassBridge
+	comp.Spec.ProfileRef.Name = profile.Name
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(profile, comp).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel", TenancyMode: "multi", Cluster: "c1"}
+	zone := r.zoneOf(tenant)
+
+	client := &unstructured.Unstructured{}
+	client.SetAPIVersion("openidclient.keycloak.crossplane.io/v1alpha1")
+	client.SetKind("Client")
+	key := types.NamespacedName{Name: tenant.Name + "-" + comp.Name + "-token-entry-client"}
+	held := func() bool {
+		t.Helper()
+		if _, _, err := r.ensureBridgeClient(ctx, comp, profile, tenant, zone, pullSecrets{}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		return c.Get(ctx, key, client) == nil
+	}
+
+	if held() {
+		t.Fatal("a client for a bridge nobody approved")
+	}
+	comp.Spec.Exposures = []gentianov1alpha1.ExposureEnablement{{
+		ExposureName: bridgeEntryName, Kind: gentianov1alpha1.ExposureKindTokenEntry, Owner: "u-tom",
+		ReviewAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+	}}
+	if !held() {
+		t.Fatal("no client for an approved bridge")
+	}
+	fp, _, _ := unstructured.NestedMap(client.Object, "spec", "forProvider")
+	if fp["clientId"] != "token-entry-nextcloud-dav" || fp["realmId"] != "acme" || fp["accessType"] != "PUBLIC" {
+		t.Fatalf("the client: %v", fp)
+	}
+	if got, _, _ := unstructured.NestedStringSlice(client.Object, "spec", "forProvider", "validRedirectUris"); !reflect.DeepEqual(got, bridgeRedirectURIs) {
+		t.Fatalf("redirects %v", got)
+	}
+	mappers := &unstructured.UnstructuredList{}
+	mappers.SetAPIVersion("client.keycloak.crossplane.io/v1alpha1")
+	mappers.SetKind("ProtocolMapperList")
+	if err := c.List(ctx, mappers); err != nil {
+		t.Fatal(err)
+	}
+	audiences := map[string]bool{}
+	for i := range mappers.Items {
+		aud, _, _ := unstructured.NestedString(mappers.Items[i].Object, "spec", "forProvider", "config", "included.custom.audience")
+		audiences[aud] = true
+	}
+	if len(audiences) != 2 || !audiences["https://sync.acme.k.example"] || !audiences[bouncer.ExchangeClientID] {
+		t.Fatalf("a token of the client is made out to %v", audiences)
+	}
+
+	// Approved as something else is not approved.
+	comp.Spec.Exposures[0].Kind = gentianov1alpha1.ExposureKindPublic
+	if held() {
+		t.Fatal("the client outlived the approval")
+	}
+}

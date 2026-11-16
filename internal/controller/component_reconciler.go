@@ -845,6 +845,16 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// at the door, below.
 		if b := profile.Spec.Package.API.Backend; b != nil {
 			releaseMessage = fmt.Sprintf("routes to %s:%d", b.Service, b.Port)
+			// The one thing the realm holds for a bridge: the client a
+			// program signs a person in through, for as long as the bridge
+			// is approved.
+			ready, message, err := r.ensureBridgeClient(ctx, comp, profile, tenant, zone, pull, signIn, operatorValues)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("bridge client: %w", err)
+			}
+			if !ready {
+				releaseReady, releaseMessage = false, message
+			}
 		}
 
 	default:

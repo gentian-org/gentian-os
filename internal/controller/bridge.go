@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,6 +23,8 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/apprender"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // An external bridge (api/v1alpha1/bridge_types.go) is served at the tenant's
@@ -275,4 +278,41 @@ func (r *ComponentReconciler) doorPathTaken(
 		}
 	}
 	return "", "", nil
+}
+
+// ensureBridgeClient keeps the realm client programs sign people in through
+// to reach a bridge, while the bridge is approved, and removes it when it is
+// not: without the approval the realm issues nobody a token for the door in
+// this bridge's name.
+//
+// The client's tokens are made out to the door, and name the edge's exchange
+// client beside it: the bouncer exchanges one for a token of the app the
+// bridge connects, and the realm exchanges a token only for a client the
+// token names.
+func (r *ComponentReconciler) ensureBridgeClient(
+	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+	tenant *gentianov1alpha1.Tenant, zone edgeZone, pull pullSecrets, signIn *signInSidecar, operatorValues map[string]interface{},
+) (ready bool, message string, err error) {
+	e := bridgeEntryOf(profile)
+	if e == nil {
+		return true, "", nil
+	}
+	in, err := r.renderInput(ctx, comp, profile, tenant, zone, pull, false, signIn, operatorValues)
+	if err != nil {
+		return false, "", err
+	}
+	if tokenEntryApproved(comp, e, time.Now()) || tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client)) {
+		in.TokenEntry = &apprender.TokenEntry{
+			Host:          exposureHost(zone, comp, e),
+			RedirectURIs:  e.ClientRedirectURIs,
+			Exchangers:    []string{bouncer.ExchangeClientID},
+			SessionMaxAge: tokenEntrySessionMaxAge(tenant, clusterAllowsTokenEntrySessions(ctx, r.Client)),
+		}
+	}
+	rendered, err := apprender.RenderTokenEntryClient(in)
+	if err != nil {
+		return false, "", err
+	}
+	ready, _, message, err = r.applyRendered(ctx, comp, tenant.Name, rendered)
+	return ready, message, err
 }
