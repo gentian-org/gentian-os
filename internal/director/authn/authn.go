@@ -43,6 +43,45 @@ import (
 // 401 and log the wrapped reason; the reason is never returned to the client.
 var ErrUnauthenticated = errors.New("unauthenticated")
 
+// Refusal is a refused token with its cause as a word a log can count: the
+// error text can quote what the token held, the cause cannot. errors.As finds
+// it on any error the Verifier returns; errors.Is still finds
+// ErrUnauthenticated through it.
+type Refusal struct {
+	// Cause is one of the Cause* words.
+	Cause string
+	// Late is how long ago the token expired, on CauseExpired.
+	Late time.Duration
+	// Err is the refusal itself.
+	Err error
+}
+
+func (r *Refusal) Error() string { return r.Err.Error() }
+func (r *Refusal) Unwrap() error { return r.Err }
+
+// The causes a token is refused for.
+const (
+	CauseNoToken         = "no-token"
+	CauseMalformed       = "malformed"
+	CauseIssuer          = "issuer"
+	CauseUnknownKey      = "unknown-key"
+	CauseKeysUnavailable = "keys-unavailable"
+	CauseSignature       = "signature"
+	CauseExpired         = "expired"
+	CauseNotYetValid     = "not-yet-valid"
+	CauseAudience        = "audience"
+	CauseTokenType       = "token-type"
+	CauseNoTarget        = "no-target"
+)
+
+// errNoSuchRealm is a key set Keycloak answers 404 for.
+var errNoSuchRealm = errors.New("status 404: no such realm")
+
+// refuse is ErrUnauthenticated for a cause, the detail after it.
+func refuse(cause, format string, args ...any) error {
+	return &Refusal{Cause: cause, Err: fmt.Errorf("%w: "+format, append([]any{ErrUnauthenticated}, args...)...)}
+}
+
 // Identity is what a verified token says about its bearer.
 type Identity struct {
 	// Subject is the token's sub: the stable user id, and the OpenFGA user.
@@ -142,7 +181,7 @@ func (v *Verifier) FromRequest(r *http.Request) (*Identity, error) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "
 	if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
-		return nil, fmt.Errorf("%w: no bearer token", ErrUnauthenticated)
+		return nil, refuse(CauseNoToken, "no bearer token")
 	}
 	return v.Verify(r.Context(), strings.TrimSpace(h[len(prefix):]))
 }
@@ -171,7 +210,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 // entry passes nowhere Verify is asked.
 func (v *Verifier) VerifyFor(ctx context.Context, raw, audience string) (*Identity, error) {
 	if audience == "" {
-		return nil, fmt.Errorf("%w: no audience to hold the token against", ErrUnauthenticated)
+		return nil, refuse(CauseNoTarget, "no audience to hold the token against")
 	}
 	return v.verify(ctx, raw, audience, tokenAccess)
 }
@@ -187,7 +226,7 @@ func (v *Verifier) VerifyFor(ctx context.Context, raw, audience string) (*Identi
 // session there is to read.
 func (v *Verifier) VerifyIDToken(ctx context.Context, raw, client string) (*Identity, error) {
 	if client == "" {
-		return nil, fmt.Errorf("%w: no client to hold the ID token against", ErrUnauthenticated)
+		return nil, refuse(CauseNoTarget, "no client to hold the ID token against")
 	}
 	return v.verify(ctx, raw, client, tokenID)
 }
@@ -202,17 +241,17 @@ const (
 func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Identity, error) {
 	tok, err := jwt.ParseSigned(raw, algorithms)
 	if err != nil {
-		return nil, fmt.Errorf("%w: parse: %v", ErrUnauthenticated, err)
+		return nil, refuse(CauseMalformed, "parse: %v", err)
 	}
 	if len(tok.Headers) != 1 || tok.Headers[0].KeyID == "" {
-		return nil, fmt.Errorf("%w: token names no key", ErrUnauthenticated)
+		return nil, refuse(CauseMalformed, "token names no key")
 	}
 
 	// The issuer is read before the signature is checked, because it says
 	// which keys to check against. Nothing else is taken from these claims.
 	var unverified jwt.Claims
 	if err := tok.UnsafeClaimsWithoutVerification(&unverified); err != nil {
-		return nil, fmt.Errorf("%w: claims: %v", ErrUnauthenticated, err)
+		return nil, refuse(CauseMalformed, "claims: %v", err)
 	}
 	realm, err := v.realmOf(unverified.Issuer)
 	if err != nil {
@@ -226,20 +265,25 @@ func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Ide
 	var std jwt.Claims
 	var kc keycloakClaims
 	if err := tok.Claims(key, &std, &kc); err != nil {
-		return nil, fmt.Errorf("%w: signature: %v", ErrUnauthenticated, err)
+		return nil, refuse(CauseSignature, "signature: %v", err)
 	}
 	if std.Expiry == nil {
-		return nil, fmt.Errorf("%w: token has no expiry", ErrUnauthenticated)
+		return nil, refuse(CauseMalformed, "token has no expiry")
 	}
+	now := v.cfg.Now()
 	if err := std.ValidateWithLeeway(jwt.Expected{
 		Issuer:      v.cfg.IssuerBase + "/realms/" + realm,
 		AnyAudience: jwt.Audience{audience},
-		Time:        v.cfg.Now(),
+		Time:        now,
 	}, leeway); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnauthenticated, err)
+		refusal := refuse(claimsCause(err), "%v", err).(*Refusal)
+		if refusal.Cause == CauseExpired {
+			refusal.Late = now.Sub(std.Expiry.Time())
+		}
+		return nil, refusal
 	}
 	if std.Subject == "" {
-		return nil, fmt.Errorf("%w: token has no subject", ErrUnauthenticated)
+		return nil, refuse(CauseMalformed, "token has no subject")
 	}
 	// Keycloak marks access tokens "Bearer" and ID tokens "ID". A token of
 	// another kind is signed by the same keys and must not pass for the one
@@ -248,11 +292,11 @@ func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Ide
 	switch kind {
 	case tokenID:
 		if !strings.EqualFold(kc.Type, tokenID) {
-			return nil, fmt.Errorf("%w: token type %q is not an ID token", ErrUnauthenticated, kc.Type)
+			return nil, refuse(CauseTokenType, "token type %q is not an ID token", kc.Type)
 		}
 	default:
 		if kc.Type != "" && !strings.EqualFold(kc.Type, tokenAccess) {
-			return nil, fmt.Errorf("%w: token type %q is not an access token", ErrUnauthenticated, kc.Type)
+			return nil, refuse(CauseTokenType, "token type %q is not an access token", kc.Type)
 		}
 	}
 
@@ -272,14 +316,30 @@ func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Ide
 	}, nil
 }
 
+// claimsCause is the cause of a claims check that failed.
+func claimsCause(err error) string {
+	switch {
+	case errors.Is(err, jwt.ErrExpired):
+		return CauseExpired
+	case errors.Is(err, jwt.ErrNotValidYet), errors.Is(err, jwt.ErrIssuedInTheFuture):
+		return CauseNotYetValid
+	case errors.Is(err, jwt.ErrInvalidAudience):
+		return CauseAudience
+	case errors.Is(err, jwt.ErrInvalidIssuer):
+		return CauseIssuer
+	default:
+		return CauseMalformed
+	}
+}
+
 func (v *Verifier) realmOf(issuer string) (string, error) {
 	prefix := v.cfg.IssuerBase + "/realms/"
 	if !strings.HasPrefix(issuer, prefix) {
-		return "", fmt.Errorf("%w: issuer %q is not this platform's", ErrUnauthenticated, issuer)
+		return "", refuse(CauseIssuer, "issuer %q is not this platform's", issuer)
 	}
 	realm := issuer[len(prefix):]
 	if !realmName.MatchString(realm) {
-		return "", fmt.Errorf("%w: issuer names no valid realm", ErrUnauthenticated)
+		return "", refuse(CauseIssuer, "issuer names no valid realm")
 	}
 	return realm, nil
 }
@@ -296,20 +356,26 @@ func (v *Verifier) key(ctx context.Context, realm, kid string) (*jose.JSONWebKey
 			return k, nil
 		}
 		if now.Sub(rk.fetched) < refetchFloor {
-			return nil, fmt.Errorf("%w: unknown key id", ErrUnauthenticated)
+			return nil, refuse(CauseUnknownKey, "unknown key id")
 		}
 	}
 	set, err := v.fetch(ctx, realm)
 	if err != nil {
 		// A realm that does not exist, or a Keycloak that is down, cannot vouch
 		// for anyone. Both are a 401 to the caller; the log has the difference.
-		return nil, fmt.Errorf("%w: keys for realm %q: %v", ErrUnauthenticated, realm, err)
+		// A realm Keycloak does not know is a token naming the wrong issuer;
+		// anything else is Keycloak not answering for its keys.
+		cause := CauseKeysUnavailable
+		if errors.Is(err, errNoSuchRealm) {
+			cause = CauseIssuer
+		}
+		return nil, refuse(cause, "keys for realm %q: %v", realm, err)
 	}
 	v.keys[realm] = &realmKeys{set: *set, fetched: now}
 	if k := find(*set, kid); k != nil {
 		return k, nil
 	}
-	return nil, fmt.Errorf("%w: unknown key id", ErrUnauthenticated)
+	return nil, refuse(CauseUnknownKey, "unknown key id")
 }
 
 func find(set jose.JSONWebKeySet, kid string) *jose.JSONWebKey {
@@ -333,6 +399,9 @@ func (v *Verifier) fetch(ctx context.Context, realm string) (*jose.JSONWebKeySet
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errNoSuchRealm
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}

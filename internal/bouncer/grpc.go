@@ -42,13 +42,16 @@ func deniedPage(brandingBase string, status int) string {
 	if strings.HasPrefix(brandingBase, "https://") {
 		brand = `<link rel="stylesheet" href="` + html.EscapeString(brandingBase+"brand.css") + `">`
 	}
-	title, heading, text, link := "Not available to you", "This is not available to you",
+	title, heading, text, href, link := "Not available to you", "This is not available to you",
 		"Your session does not carry the access this page needs. If you have "+
 			"just been given it, or you are signed in as someone else, sign out and "+
-			"sign in again.", "Sign out"
+			"sign in again.", LogoutPath, "Sign out"
+	// A session that could not be read here may well be alive at the realm:
+	// a reload has the Gateway renew it, or sign in again where it has
+	// ended. Signing out would end the realm's session too.
 	if status == http.StatusUnauthorized {
-		title, heading, text, link = "Signed out", "Your sign-in has ended",
-			"This page could not renew your session. Sign in again to continue.", "Sign in again"
+		title, heading, text, href, link = "Session not renewed", "Your session could not be renewed",
+			"This page could not renew your session. Reload the page to continue.", "", "Reload"
 	}
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
@@ -60,7 +63,7 @@ func deniedPage(brandingBase string, status int) string {
 		`p{margin:0 0 1rem;color:var(--brand-color-ink-3,#45486b);line-height:1.5}` +
 		`a{display:inline-block;background:var(--brand-color-brand-500,#262696);color:#fff;text-decoration:none;` +
 		`padding:.55rem 1rem;border-radius:var(--brand-radius-1,.5rem)}</style></head><body><main>` +
-		`<h1>` + heading + `</h1><p>` + text + `</p><a href="` + LogoutPath + `">` + link + `</a></main></body></html>`
+		`<h1>` + heading + `</h1><p>` + text + `</p><a href="` + href + `">` + link + `</a></main></body></html>`
 }
 
 // BrandingBase is where the cluster's brand is published, from the issuer

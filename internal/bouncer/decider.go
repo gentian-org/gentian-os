@@ -100,6 +100,10 @@ type Decision struct {
 	restart bool
 	// client is the client a token on a bearer route was issued to.
 	client string
+	// cause is why the session was not accepted, as a word (authn.Refusal),
+	// and late how long ago its token expired, when that is the cause.
+	cause string
+	late  time.Duration
 }
 
 type identity struct {
@@ -257,6 +261,14 @@ func (d *Decider) record(ctx context.Context, req Request, dec Decision) {
 	if dec.client != "" {
 		detail["client"] = dec.client
 	}
+	// Why a session was not accepted: the cause and not the verifier's text,
+	// which can quote the token.
+	if dec.cause != "" {
+		detail["cause"] = dec.cause
+	}
+	if dec.late > 0 {
+		detail["expired_by_ms"] = dec.late.Milliseconds()
+	}
 	audit.Write(ctx, d.log, audit.Record{
 		Source: "bouncer", Kind: audit.KindDecision, RequestID: req.ID,
 		Subject: dec.subject, Object: dec.object, Action: dec.relation, Outcome: outcome,
@@ -312,16 +324,20 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 		// ended, whose refresh the realm refuses, reaches this service with
 		// the filter's cookies and no token. A page the person opens is
 		// then signed in again rather than refused (restartSignIn).
-		if dec, ok := restartSignIn(route, req, err.Error()); ok {
-			return about(route, "", dec)
+		dec, ok := restartSignIn(route, req, err.Error())
+		if !ok {
+			dec = challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error())))
 		}
-		return about(route, "", challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error()))))
+		dec.cause, dec.late = causeOf(err)
+		return about(route, "", dec)
 	}
 	if id.SessionID == "" {
-		if dec, ok := restartSignIn(route, req, "token names no session"); ok {
-			return about(route, id.Subject, dec)
+		dec, ok := restartSignIn(route, req, "token names no session")
+		if !ok {
+			dec = challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session")))
 		}
-		return about(route, id.Subject, challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session"))))
+		dec.cause = causeNoSession
+		return about(route, id.Subject, dec)
 	}
 	if route.AuthMode == AuthModeBearer {
 		dec := d.decideFor(ctx, route, req, id)
@@ -446,10 +462,10 @@ func isIdentityHeader(name string) bool {
 func (d *Decider) session(ctx context.Context, route *Route, req Request) (*authn.Identity, error) {
 	if route.AuthMode == AuthModeOIDC && (route.KeepClientToken || route.IDTokenSession) {
 		if route.IDTokenAudience == "" {
-			return nil, errors.New("route names no client to hold its session against")
+			return nil, &authn.Refusal{Cause: causeRoute, Err: errors.New("route names no client to hold its session against")}
 		}
 		if req.IDToken == "" {
-			return nil, errors.New("no session token")
+			return nil, &authn.Refusal{Cause: authn.CauseNoToken, Err: errors.New("no session token")}
 		}
 		id, err := d.verify.VerifyIDToken(ctx, req.IDToken, route.IDTokenAudience)
 		if err != nil {
@@ -459,20 +475,20 @@ func (d *Decider) session(ctx context.Context, route *Route, req Request) (*auth
 	}
 	raw := bearer(req.Authorization)
 	if raw == "" {
-		return nil, errors.New("no token")
+		return nil, &authn.Refusal{Cause: authn.CauseNoToken, Err: errors.New("no token")}
 	}
 	if route.AuthMode == AuthModeBearer {
 		// A token made out to this entry, by the tenant's own realm. The
 		// table refuses a bearer route that names neither, and so does this.
 		if route.Audience == "" || route.Realm == "" {
-			return nil, errors.New("route names nothing to hold a token against")
+			return nil, &authn.Refusal{Cause: causeRoute, Err: errors.New("route names nothing to hold a token against")}
 		}
 		id, err := d.verify.VerifyFor(ctx, raw, route.Audience)
 		if err != nil {
 			return nil, fmt.Errorf("token refused: %w", err)
 		}
 		if id.Realm != route.Realm {
-			return nil, errors.New("token refused: issued by another realm")
+			return nil, &authn.Refusal{Cause: authn.CauseIssuer, Err: errors.New("token refused: issued by another realm")}
 		}
 		return id, nil
 	}
@@ -481,6 +497,26 @@ func (d *Decider) session(ctx context.Context, route *Route, req Request) (*auth
 		return nil, fmt.Errorf("token refused: %w", err)
 	}
 	return id, nil
+}
+
+// The causes a session is not accepted for that are this service's own; the
+// rest are the verifier's (authn.Cause*).
+const (
+	// causeNoSession is a verified token that names no session.
+	causeNoSession = "no-session"
+	// causeRoute is a route the table describes too little of to judge.
+	causeRoute = "route"
+)
+
+// causeOf is the cause of a session that was not accepted, and how long ago
+// its token expired when that is the cause. An error that carries none is
+// "other": every refusal of a session has a cause in the log.
+func causeOf(err error) (string, time.Duration) {
+	var refusal *authn.Refusal
+	if errors.As(err, &refusal) {
+		return refusal.Cause, refusal.Late
+	}
+	return "other", 0
 }
 
 // EntryScope is the scope a program asks for when it signs a person in to
