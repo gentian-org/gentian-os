@@ -195,10 +195,10 @@ func TestEnvoyGetsTheRestartAndItsCookies(t *testing.T) {
 	if location != "/applications" || cookies != 5 {
 		t.Fatalf("location %q, %d set-cookie headers", location, cookies)
 	}
-	// Restarted already: the page says the sign-in ended, not that access is missing.
+	// Restarted already: the page says the session was not renewed, not that access is missing.
 	again := check(endedSession + "; " + RestartCookie + "=1").GetDeniedResponse()
 	if again.GetStatus().GetCode() != typev3.StatusCode_Unauthorized ||
-		!strings.Contains(again.GetBody(), "Your sign-in has ended") || strings.Contains(again.GetBody(), "not available to you") {
+		!strings.Contains(again.GetBody(), "Your session could not be renewed") || strings.Contains(again.GetBody(), "not available to you") {
 		t.Fatalf("after a restart = %v", again)
 	}
 }

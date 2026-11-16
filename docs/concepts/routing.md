@@ -517,8 +517,10 @@ which comes straight back while the realm still has a session for the person
 and shows the login form otherwise. That happens only for a `GET` the browser
 marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
 (`gentian-edge-restart` cookie, never passed to a backend). A page that comes
-back still without a session gets a page saying the sign-in has ended. The page
-for a person who lacks the access is shown only for a `403`. The one path of an app that takes no
+back still without a session gets a page saying the session could not be
+renewed, with a link that reloads the page; it never signs out, which would
+end the realm's session too. The page for a person who lacks the access is
+shown only for a `403`. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the

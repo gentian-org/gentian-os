@@ -87,7 +87,7 @@ is empty rather than writing it empty. `kind` is one of `decision`, `change`,
 
 | Source | What it writes |
 | --- | --- |
-| bouncer | one envelope per decision in `internal/bouncer/decider.go`, allows and refusals, with the reason (no-session, unpublished, refused, allowed) and whether it was cached; on an entry that takes a token, the client the token was issued to |
+| bouncer | one envelope per decision in `internal/bouncer/decider.go`, allows and refusals, with the reason (no-session, unpublished, refused, allowed) and whether it was cached; on an entry that takes a token, the client the token was issued to; for a session it did not accept, the cause as a word (`no-token`, `expired`, `signature`, `unknown-key`, `keys-unavailable`, `audience`, `issuer`, …, never the verifier's text) and, for an expired token, `expired_by_ms` |
 | director | one envelope per commit after the write in `internal/director/gitops`: request id, subject, relation, object, commit, files |
 | registrar | identity actions in its record table |
 | custodian, usher | JSON logs with `request_id` |
