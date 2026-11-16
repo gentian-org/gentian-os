@@ -42,17 +42,18 @@ echo "yq: $(yq --version 2>&1 | head -1)"
 filter='select(.kind == "Function") | .metadata.name'
 want="first second"
 
-got="$(_gentian_yq "${filter}" "${SANDBOX}/several.yaml" | tr '\n' ' ')"
-check "_gentian_yq answers the names of several documents and no separator" \
-    '[[ "${got% }" == "${want}" ]]' "    got: ${got}"
+# names <what> <the helper>: it answers the two names and nothing else.
+names() {
+    local got
+    got="$("$2" "${filter}" "${SANDBOX}/several.yaml" | tr '\n' ' ')"
+    if [[ "${got% }" == "${want}" ]]; then ok "$1"; else bad "$1" "    got: ${got}"; fi
+}
+names "_gentian_yq answers the names of several documents and no separator" _gentian_yq
+names "yq_get answers the names of several documents and no separator" yq_get
 
-got="$(yq_get "${filter}" "${SANDBOX}/several.yaml" | tr '\n' ' ')"
-check "yq_get answers the names of several documents and no separator" \
-    '[[ "${got% }" == "${want}" ]]' "    got: ${got}"
-
-names="$(_gentian_yq "${filter}" crossplane/providers/providers.yaml)"
-check "the providers file declares functions" '[[ -n "${names}" ]]'
-odd="$(grep -vE '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' <<<"${names}" || true)"
-check "every function B-05 waits for is a name" '[[ -z "${odd}" ]]' "    not a name: ${odd}"
+declared="$(_gentian_yq "${filter}" crossplane/providers/providers.yaml)"
+if [[ -n "${declared}" ]]; then ok "the providers file declares functions"; else bad "the providers file declares functions"; fi
+odd="$(grep -vE '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' <<<"${declared}" || true)"
+if [[ -z "${odd}" ]]; then ok "every function B-05 waits for is a name"; else bad "every function B-05 waits for is a name" "    not a name: ${odd}"; fi
 
 finish
