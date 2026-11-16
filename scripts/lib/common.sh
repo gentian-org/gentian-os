@@ -2853,13 +2853,13 @@ _verify_gentian_os_ref_exists() {
 # checkout's build (_v5_os_build_pinned). `./install.sh --only B-01` is that
 # and nothing else.
 # =============================================================================
-# gentian_os_build_images — the images CI builds from one gentian-os commit and
-# tags alike (.github/workflows/ci.yaml: the docker job's gentian-os, the images
-# job's matrix), one per line. A run pins each of them to the operator's tag:
-# the operator chart its own and storage-tools, the identity appset
-# keycloak-event-listener. They are published by separate jobs, so one can be
-# missing while the operator's exists. scripts/tests/test-build-images.sh keeps
-# the list in step with both.
+# gentian_os_build_images — the images CI builds from one gentian-os commit
+# (.github/workflows/ci.yaml: the docker job's gentian-os, the images job's
+# matrix), one per line. A run pins the operator chart's and storage-tools to
+# the operator's tag; the identity appset names keycloak-event-listener by the
+# hash of its sources (scripts/tools/listener-tag.sh). They are published by
+# separate jobs, so one can be missing while the operator's exists.
+# scripts/tests/test-build-images.sh keeps the list in step with both.
 gentian_os_build_images() {
     printf '%s\n' gentian-os keycloak-event-listener storage-tools
 }
@@ -2872,20 +2872,30 @@ gentian_os_build_images() {
 # does not. A run that checked the operator's alone moved Keycloak to a listener
 # image that was never published, and nobody could sign in.
 check_build_images() {
-    local values="$1" t img seen=" " rc=0
+    local values="$1" t want img seen=" " asked=" " rc=0 listener
     shift
+    # The listener is named by its sources, not by the operator's tag: one
+    # tag for every TAG given, asked for once.
+    listener="$(bash "${SCRIPT_DIR}/scripts/tools/listener-tag.sh" "${SCRIPT_DIR}")" || {
+        error "  Could not work out the Keycloak event listener's tag from ${SCRIPT_DIR}."
+        return 1
+    }
     for t in "$@"; do
         [[ -n "${t}" && "${seen}" != *" ${t} "* ]] || continue
         seen+="${t} "
         while IFS= read -r img; do
-            if validate_image_tag "ghcr.io/gentian-org/${img}" "${t}"; then
+            want="${t}"
+            [[ "${img}" == "keycloak-event-listener" ]] && want="${listener}"
+            [[ "${asked}" != *" ${img}:${want} "* ]] || continue
+            asked+="${img}:${want} "
+            if validate_image_tag "ghcr.io/gentian-org/${img}" "${want}"; then
                 if [[ "${img}" == "gentian-os" ]]; then
-                    success "Operator image ghcr.io/gentian-org/${img}:${t} exists"
+                    success "Operator image ghcr.io/gentian-org/${img}:${want} exists"
                 else
-                    success "Image ghcr.io/gentian-org/${img}:${t} exists"
+                    success "Image ghcr.io/gentian-org/${img}:${want} exists"
                 fi
             else
-                error "  ghcr.io/gentian-org/${img}:${t} does not exist."
+                error "  ghcr.io/gentian-org/${img}:${want} does not exist."
                 if [[ "${img}" == "gentian-os" ]]; then
                     error "  Set image.tag in ${values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
                 else
