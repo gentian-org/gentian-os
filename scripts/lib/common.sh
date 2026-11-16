@@ -2984,12 +2984,13 @@ gentian_os_revision() {
 # "eval" subcommand, or kislyuk/yq's jq-style filter) since both are seen in
 # the wild as `yq`. Echoes the value and returns 0, or returns 1 (nothing
 # echoed) if the field is absent/null or the file doesn't exist.
+# -N and </dev/null: as _gentian_yq (scripts/lib/versions.sh).
 # =============================================================================
 yq_get() {
     local filter="$1" file="$2"
     [[ -f "${file}" ]] || return 1
     local out
-    if out=$(yq eval "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+    if out=$(yq eval -N "${filter}" "${file}" 2>/dev/null </dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
         echo "${out}"
         return 0
     fi
