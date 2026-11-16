@@ -25,4 +25,39 @@ data:
     scribe scribe 8080 /.well-known/jwks.json
     steward steward-keys 8443 /keys/current.json exchange
     warden - 0 - exchange
-  bridgeScopes: '{"scopes":[{"profile":"contacts","audience":"gentian-contacts","mappers":[]},{"profile":"files","audience":"gentian-files","mappers":[{"name":"email","slug":"email","type":"oidc-usermodel-property-mapper","config":{"claim.name":"email","jsonType.label":"String","user.attribute":"username"}},{"name":"gentian_username","slug":"gentian-username","type":"oidc-usermodel-attribute-mapper","config":{"claim.name":"gentian_username","jsonType.label":"String","user.attribute":"username"}}]}]}'
+  bridgeScopes: |
+    {
+      "scopes": [
+        {
+          "profile": "contacts",
+          "audience": "gentian-contacts",
+          "mappers": []
+        },
+        {
+          "profile": "files",
+          "audience": "gentian-files",
+          "mappers": [
+            {
+              "name": "email",
+              "slug": "email",
+              "type": "oidc-usermodel-property-mapper",
+              "config": {
+                "claim.name": "email",
+                "jsonType.label": "String",
+                "user.attribute": "username"
+              }
+            },
+            {
+              "name": "gentian_username",
+              "slug": "gentian-username",
+              "type": "oidc-usermodel-attribute-mapper",
+              "config": {
+                "claim.name": "gentian_username",
+                "jsonType.label": "String",
+                "user.attribute": "username"
+              }
+            }
+          ]
+        }
+      ]
+    }
