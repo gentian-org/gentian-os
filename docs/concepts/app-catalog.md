@@ -726,6 +726,16 @@ lacks adds it in the same step
 ([security/design.md §3.0](../security/design.md)). One requirement block with one approval
 path means egress is held to the same standard as a waiver, by construction.
 
+A cluster may answer egress itself for catalogs it trusts: the
+`PlatformSecurityPolicy` lists them in `spec.preApprovedEgressCatalogues`, by
+the origin a materialized profile records (`gentianos.io/catalogue-origin`,
+`cluster/<source>` or `tenant/<tenant>/<source>`). Every egress request of a
+profile from a listed catalog counts as granted, for its install and its runs,
+for as long as the catalog is listed; the list is the cluster operator's, in
+the cluster's repository, and the director keeps it across its own writes of
+the file. Removing a catalog makes its apps' egress requests pending again.
+Every other kind of privilege still needs its approver.
+
 ---
 
 ## 16. Secrets: three kinds

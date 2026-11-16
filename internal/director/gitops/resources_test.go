@@ -333,3 +333,38 @@ func TestConcurrentSecurityPolicySavesBothLand(t *testing.T) {
 		t.Fatalf("one save was lost:\n%s", file)
 	}
 }
+
+// The catalogs whose egress the cluster answers are written by hand, never by
+// the director; its writes of the other two lists carry them across.
+func TestTheDirectorKeepsThePreApprovedEgressCatalogues(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	path := "clusters/" + dt.Cluster + "/kernel/claims/" + gitops.PlatformSecurityFile
+	dt.Commit(t, remote, map[string]string{path: `apiVersion: gentianos.io/v1alpha1
+kind: PlatformSecurityPolicy
+metadata:
+  name: default
+spec:
+  allowedMacWaivers: []
+  preApprovedEgressCatalogues:
+  - cluster/acme
+`})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	meta := gitops.Meta{Author: gitops.Person{Name: "Beth", Email: "beth@example.com"}, Subject: "beth"}
+
+	if _, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{
+		{Profile: "element", Policy: "gentian-require-non-root", Scope: "synapse"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{
+		{Profile: "dashboard", Role: "read-nodes"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	written := dt.RemoteFile(t, remote, path)
+	if !strings.Contains(written, "preApprovedEgressCatalogues:\n  - \"cluster/acme\"") &&
+		!strings.Contains(written, "preApprovedEgressCatalogues:\n  - cluster/acme") {
+		t.Fatalf("the director's writes dropped the pre-approved catalogs:\n%s", written)
+	}
+}

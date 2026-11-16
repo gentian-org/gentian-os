@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package security
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -190,6 +191,12 @@ func EgressRulesFor(profile *gentianov1alpha1.ComponentProfile, granted map[stri
 // here and not applied anywhere: an uninstalled request cannot be dangerous,
 // and deleting the grant would destroy the record that somebody once said yes.
 func PendingPrivileges(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time) []string {
+	return PendingPrivilegesUnder(profile, comp, now, nil)
+}
+
+// PendingPrivilegesUnder is PendingPrivileges with the requests the cluster's
+// policy answers (PreApprovedEgress) counted as granted.
+func PendingPrivilegesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
 	requested := RequestedPrivileges(profile)
 	if len(requested) == 0 {
 		return nil
@@ -199,6 +206,9 @@ func PendingPrivileges(profile *gentianov1alpha1.ComponentProfile, comp *gentian
 		grants = comp.Spec.Privileges
 	}
 	granted := LiveGrants(profile, grants, now)
+	for ref := range policy {
+		granted[ref] = struct{}{}
+	}
 	var out []string
 	for _, ref := range requested {
 		if _, ok := granted[ref]; !ok {
@@ -217,7 +227,47 @@ func GrantedEgressRules(profile *gentianov1alpha1.ComponentProfile, comp *gentia
 	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
 		return nil
 	}
-	return EgressRulesFor(profile, GrantedPrivileges(comp, now))
+	return GrantedEgressRulesUnder(profile, comp, now, nil)
+}
+
+// GrantedEgressRulesUnder is GrantedEgressRules with the requests the
+// cluster's policy answers (PreApprovedEgress) counted as granted.
+func GrantedEgressRulesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []networkingv1.NetworkPolicyEgressRule {
+	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
+		return nil
+	}
+	granted := GrantedPrivileges(comp, now)
+	if granted == nil {
+		granted = map[string]struct{}{}
+	}
+	for ref := range policy {
+		granted[ref] = struct{}{}
+	}
+	return EgressRulesFor(profile, granted)
+}
+
+// OriginAnnotation is where a materialized profile records the catalog it
+// was fetched from (profilebundle.OriginAnnotation, which the director
+// writes and a catalog source never states).
+const OriginAnnotation = "gentianos.io/catalogue-origin"
+
+// PreApprovedEgress are the egress requests of profile that the cluster's
+// policy answers: all of them where the profile's catalog is one of
+// catalogues (PlatformSecurityPolicy spec.preApprovedEgressCatalogues), none
+// otherwise. A profile with no recorded origin is of no listed catalog.
+func PreApprovedEgress(profile *gentianov1alpha1.ComponentProfile, catalogues []string) map[string]struct{} {
+	if profile == nil || len(catalogues) == 0 || profile.Privileges() == nil {
+		return nil
+	}
+	origin := profile.Annotations[OriginAnnotation]
+	if origin == "" || !slices.Contains(catalogues, origin) {
+		return nil
+	}
+	out := map[string]struct{}{}
+	for i := range profile.Privileges().Egress {
+		out[PrivilegeRef(PrivilegeEgress, profile.Privileges().Egress[i].Name)] = struct{}{}
+	}
+	return out
 }
 
 // PrivilegeReason is what the profile said it needs the privilege for, which
