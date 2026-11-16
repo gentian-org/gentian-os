@@ -23,6 +23,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/modelgateway"
 )
 
 // withLiteLLM points the package's proxy URL at a stub for the duration of a test.
@@ -41,7 +42,7 @@ func withLiteLLM(t *testing.T, h http.Handler) {
 // one. Getting this wrong is silent: an unrecognized envelope reads as "no
 // teams", and /team/new then fails on every reconcile for a tenant that already
 // has a team.
-func TestLiteLLMTeamExistsAcceptsBothEnvelopes(t *testing.T) {
+func TestLiteLLMTeamListAcceptsBothEnvelopes(t *testing.T) {
 	for name, body := range map[string]string{
 		"bare array": `[{"team_alias":"acme","team_id":"t-1"}]`,
 		"wrapped":    `{"teams":[{"team_alias":"acme","team_id":"t-1"}]}`,
@@ -57,17 +58,17 @@ func TestLiteLLMTeamExistsAcceptsBothEnvelopes(t *testing.T) {
 				_, _ = w.Write([]byte(body))
 			}))
 
-			got, err := litellmTeamExists(context.Background(), "sk-master", "acme")
+			_, got, err := litellmGateway("sk-master").TeamID(context.Background(), "acme")
 			if err != nil {
-				t.Fatalf("litellmTeamExists: %v", err)
+				t.Fatalf("TeamID: %v", err)
 			}
 			if !got {
 				t.Fatal("existing team reported as absent")
 			}
 
-			got, err = litellmTeamExists(context.Background(), "sk-master", "other")
+			_, got, err = litellmGateway("sk-master").TeamID(context.Background(), "other")
 			if err != nil {
-				t.Fatalf("litellmTeamExists: %v", err)
+				t.Fatalf("TeamID: %v", err)
 			}
 			if got {
 				t.Fatal("absent team reported as present")
@@ -78,15 +79,17 @@ func TestLiteLLMTeamExistsAcceptsBothEnvelopes(t *testing.T) {
 
 // An envelope neither decode understands must be an error, not a false "no
 // teams" that sends /team/new at a team that exists.
-func TestLiteLLMTeamExistsRejectsUnknownEnvelope(t *testing.T) {
+func TestLiteLLMTeamListRejectsUnknownEnvelope(t *testing.T) {
 	withLiteLLM(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"detail":{"error":"no teams"}}`))
 	}))
 
-	if _, err := litellmTeamExists(context.Background(), "sk-master", "acme"); err == nil {
+	if _, _, err := litellmGateway("sk-master").TeamID(context.Background(), "acme"); err == nil {
 		t.Fatal("expected an error for an unrecognized /team/list response")
 	}
 }
+
+var everyTenantsTeam = modelgateway.Team{Models: []string{modelgateway.EveryTenantGroup}}
 
 // The whole point of asking first: /team/new on an existing alias is an error
 // in LiteLLM, so a second reconcile of the same tenant must not call it.
@@ -99,7 +102,8 @@ func TestEnsureLiteLLMTeamIsIdempotent(t *testing.T) {
 				_, _ = w.Write([]byte(`[]`))
 				return
 			}
-			_, _ = w.Write([]byte(`[{"team_alias":"acme","team_id":"t-1"}]`))
+			_, _ = w.Write([]byte(`[{"team_alias":"acme","team_id":"t-1","models":["gentian:every-tenant"],` +
+				`"max_budget":null,"budget_duration":null,"rpm_limit":null,"tpm_limit":null}]`))
 		case "/team/new":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -107,6 +111,9 @@ func TestEnsureLiteLLMTeamIsIdempotent(t *testing.T) {
 			}
 			if body["team_alias"] != "acme" {
 				t.Errorf("team_alias = %v, want acme", body["team_alias"])
+			}
+			if models, _ := body["models"].([]any); len(models) != 1 || models[0] != modelgateway.EveryTenantGroup {
+				t.Errorf("models = %v, want the models every tenant may use", body["models"])
 			}
 			created++
 			_, _ = w.Write([]byte(`{"team_id":"t-1"}`))
@@ -116,7 +123,7 @@ func TestEnsureLiteLLMTeamIsIdempotent(t *testing.T) {
 	}))
 
 	for i := 0; i < 3; i++ {
-		if err := ensureLiteLLMTeam(context.Background(), "sk-master", "acme"); err != nil {
+		if _, err := litellmGateway("sk-master").EnsureTeam(context.Background(), "acme", everyTenantsTeam); err != nil {
 			t.Fatalf("reconcile %d: %v", i, err)
 		}
 	}
@@ -137,7 +144,7 @@ func TestEnsureLiteLLMTeamSurfacesFailure(t *testing.T) {
 		_, _ = w.Write([]byte(`{"detail":"boom"}`))
 	}))
 
-	err := ensureLiteLLMTeam(context.Background(), "sk-master", "acme")
+	_, err := litellmGateway("sk-master").EnsureTeam(context.Background(), "acme", everyTenantsTeam)
 	if err == nil {
 		t.Fatal("expected an error when /team/new fails")
 	}

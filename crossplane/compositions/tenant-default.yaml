@@ -407,6 +407,14 @@ spec:
                           matchLabels:
                             gentianos.io/tier: tenant
                             gentianos.io/tenant: {{ $tenant }}
+                      # The tenant's namespace for runs, where the pull
+                      # Secrets of its repositories are delivered as well
+                      # (repository-default.yaml). Tenants apply nothing
+                      # there.
+                      - namespaceSelector:
+                          matchLabels:
+                            gentianos.io/tier: tenant-runs
+                            gentianos.io/tenant: {{ $tenant }}
                     provider:
                       vault:
                         server: {{ $openbaoServer }}
@@ -440,7 +448,11 @@ spec:
                 name: kubernetes
               forProvider:
                 manifest:
-                  {{- $job | toYaml | nindent 18 }}
+                  {{- /* As JSON, on one line: written as YAML and indented
+                       again, a script that begins with a line break or a
+                       space is a block scalar whose indentation no longer
+                       holds, and the whole tenant stops rendering. */}}
+                  {{ $job | toJson }}
             {{- end }}
 
             {{- range $obj := $objects }}
@@ -458,7 +470,7 @@ spec:
                 name: kubernetes
               forProvider:
                 manifest:
-                  {{- $obj | toYaml | nindent 18 }}
+                  {{ $obj | toJson }}
             {{- end }}
 
             {{- /* ── the zone's edge client and its secret ──────────────────
@@ -615,15 +627,17 @@ spec:
             {{- if and (or (eq (len $f) 4) (eq (len $f) 5)) (not (has (index $f 0) $vouchingSeen)) }}
             {{- $vouchingSeen = append $vouchingSeen (index $f 0) }}
             {{- $director := list }}
+            {{- $exchanges := false }}
             {{- if eq (len $f) 5 }}
             {{- range $d := (splitList "," (index $f 4)) }}
+            {{- if eq $d "exchange" }}{{- $exchanges = true }}{{- end }}
             {{- if and (has $d (list "plans-read" "plans-apply")) (not (has $d $director)) }}
             {{- $director = append $director $d }}
             {{- if not (has $d $directorScopes) }}{{- $directorScopes = append $directorScopes $d }}{{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "keyless" (eq (index $f 1) "-")) }}
             {{- end }}
             {{- end }}
             {{- /* The components that call partners or accept their
@@ -1591,6 +1605,11 @@ spec:
             {{- $vouchIssuer := printf "https://%s.%s.svc" $vouchAlias $ns }}
             {{- $vouchSecret := printf "vouching-%s" $p }}
 
+            {{- /* A component that names no keys exchanges a present
+                 person's own token and signs nothing. It is no issuer: the
+                 entry below is not made for it, and its client further down
+                 may not use the JWT authorization grant. */}}
+            {{- if not $v.keyless }}
             {{- /* The component as an issuer the realm believes.
 
                  The issuer is a name and is never fetched. It is what the
@@ -1677,6 +1696,7 @@ spec:
                   key: client_secret
               providerConfigRef:
                 name: keycloak
+            {{- end }}
 
             {{- /* The client's secret, generated exactly as the exchange
                  client's is and for the reasons given at the zone client's:
@@ -1771,7 +1791,9 @@ spec:
                           labels:
                             app.kubernetes.io/managed-by: gentian-os
                         data:
+                          {{- if not $v.keyless }}
                           VOUCHING_ISSUER: {{ $vouchIssuer | quote }}
+                          {{- end }}
                           VOUCHING_CLIENT_ID: {{ $vouchAlias | quote }}
                           VOUCHING_CLIENT_SECRET: "{{ `{{ .secret }}` }}"
                           VOUCHING_TOKEN_URL: {{ printf "%s/realms/%s/protocol/openid-connect/token" $kcInternal $realm | quote }}
@@ -1823,9 +1845,19 @@ spec:
                 directAccessGrantsEnabled: false
                 serviceAccountsEnabled: false
                 fullScopeAllowed: false
+                {{- /* requires.services.vouching.exchange: the client may
+                     also turn a person's own token into one for a single
+                     app. The realm does that only for a token that names
+                     this client, and only a token entry that says so makes
+                     its tokens out to it. */}}
+                {{- if $v.exchange }}
+                standardTokenExchangeEnabled: true
+                {{- end }}
                 extraConfig:
+                  {{- if not $v.keyless }}
                   oauth2.jwt.authorization.grant.enabled: "true"
                   oauth2.jwt.authorization.grant.idp: {{ $vouchAlias }}
+                  {{- end }}
                   gentianos.io/managed-by: platform
                 clientSecretSecretRef:
                   name: {{ $vouchSecret }}
@@ -2553,11 +2585,14 @@ spec:
                  realm signs, with the JWT authorization grant on, so the
                  partner's apps' assertions become the linked account here
                  (single use, at most two minutes old, ten seconds of clock
-                 skew). Hidden on the login page, trusts no address, maps
-                 nothing. What a first arrival becomes is accept.accounts:
-                 link (gentian-link-existing), create
-                 (gentian-create-account) or organization (a member of an
-                 organization with the domain given).
+                 skew). Hidden on the login page, maps nothing. What a
+                 first arrival becomes is accept.accounts: link
+                 (gentian-link-existing), create (gentian-create-account) or
+                 organization (a member of an organization with the domain
+                 given). Only organization trusts the partner's address
+                 (trustEmail): Keycloak grants membership by domain only to
+                 a verified address, and without the trust it would ask every
+                 partner's person to verify theirs here by mail first.
 
                  Delete and not Orphan: a partner taken away must stop, not
                  linger in the realm. */}}
@@ -3027,7 +3062,7 @@ spec:
                 displayName: {{ dig "accept" "displayName" $b.name $b | quote }}
                 providerId: oidc
                 enabled: true
-                trustEmail: false
+                trustEmail: {{ eq $accounts "organization" }}
                 storeToken: false
                 hideOnLoginPage: true
                 linkOnly: false

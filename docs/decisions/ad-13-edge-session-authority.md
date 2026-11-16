@@ -12,7 +12,10 @@ or holds a client secret, with one exception: the bouncer holds each realm's
 valid at a single app (`exchangeToken`). The Gateway forwards the edge token
 only on a route whose entry sets `forwardToken`; every other backend receives
 identity headers. An approved entry may keep the app's own `Authorization`
-header (`clientAuthorization: app`); the session stays required. Ending a
+header (`clientAuthorization: app`); the session stays required. A token
+entry is the one address that takes a token in place of the session: a host
+of its own, a token of the tenant's realm made out to that host and verified
+by the bouncer, for a profile of platform trust. Ending a
 session at Keycloak is what ends it: the access token's lifetime is the bound
 on how long a signed-out person is still let through, so that lifetime is the
 control, and no revocation list exists. The sign-in sidecar is the one

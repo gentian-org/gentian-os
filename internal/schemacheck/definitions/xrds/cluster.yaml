@@ -154,6 +154,57 @@ spec:
                           issuer:
                             type: string
                             pattern: '^https://[^/\s]+/[^\s?#]*[^/\s?#]$'
+                release:
+                  type: object
+                  description: >-
+                    The platform release this cluster runs
+                    (docs/concepts/versioning.md §2). One of two: track, a
+                    gentian-os branch the cluster follows build by build (a
+                    development cluster), or version, a release tag the
+                    cluster runs exactly (a production cluster). The operator
+                    applies it: every Application on the gentian-os
+                    repository, the operator's own image, the gentian-ui
+                    charts and the catalog of that release move together.
+                    The director writes it, as a signed commit: for a person
+                    who sets a version, and by autoUpgrade inside the
+                    maintenance window (catalogue.updates.window). Absent, the
+                    cluster stays on what the installer rendered.
+                  x-kubernetes-validations:
+                    - rule: has(self.track) != has(self.version)
+                      message: >-
+                        release names either track (a branch to follow) or
+                        version (a release to run), not both and not neither.
+                    - rule: "!(has(self.autoUpgrade) && has(self.track))"
+                      message: >-
+                        autoUpgrade has no meaning with track: a cluster on a
+                        branch follows every build of it.
+                  properties:
+                    track:
+                      type: string
+                      pattern: '^[A-Za-z0-9._/-]+$'
+                      description: >-
+                        A branch of the gentian-os repository, "develop". The
+                        cluster moves to each build of it once CI has
+                        published the build's image, and reads the
+                        development catalog.
+                    version:
+                      type: string
+                      pattern: '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+                      description: >-
+                        A release tag, "v0.5.1", listed in the release index.
+                        The cluster runs this release, its gentian-ui charts
+                        and its catalog, and nothing else.
+                    autoUpgrade:
+                      type: string
+                      enum: [none, patch, minor]
+                      description: >-
+                        How far the director moves version on its own, inside
+                        the maintenance window. Absent, none: a person sets
+                        every version. patch: the next patch of the cluster's line,
+                        never a minor. minor: the next minor too, where the
+                        release index says it is applied in place from this
+                        line; a release that is not stays pending for a
+                        person. There is no automatic major.
                 catalogue:
                   type: object
                   description: >
@@ -653,6 +704,21 @@ spec:
                         and sign-in. Name a tenant only where the cluster's
                         operator controls that website's scripts, as on a
                         cluster of one organisation.
+                    mailTenant:
+                      type: string
+                      pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+                      description: >
+                        The one tenant whose people also have the cluster's
+                        domain as their mail domain: ada@team.example.org
+                        receives at ada@example.org in the mailbox they
+                        have, and may send from it. The addresses of the
+                        kernel realm's people and the role addresses keep
+                        their own mailboxes. Their login does not change.
+
+                        Unset: the cluster's domain receives only for the
+                        kernel realm's people and the role addresses. A tenant
+                        whose mail domain is the cluster's already (the user
+                        tenant of a single-tenancy cluster) needs nothing.
                 networkMode:
                   type: string
                   description: >
@@ -857,6 +923,33 @@ spec:
                                 systemServices.objectStore.size cannot shrink:
                                 a volume is grown in place and never made
                                 smaller.
+                tokenEntries:
+                  type: object
+                  description: >
+                    Token entries: a component's address that takes a token of
+                    the tenant's realm in place of a session
+                    (docs/concepts/routing.md). Each is served once the
+                    tenant's perimeter approver approved it.
+                  properties:
+                    tenantsMayWaiveApproval:
+                      type: boolean
+                      default: false
+                      description: >
+                        true lets a tenant say that its token entries need no
+                        approval (spec.tokenEntries.approval: waived on the
+                        Tenant). false, which is the default, and a tenant's
+                        own setting has no effect: every token entry waits
+                        for its approval.
+                    tenantsMayExtendSessions:
+                      type: boolean
+                      default: false
+                      description: >
+                        true lets a tenant make a sign-in through its token
+                        entries last longer than 4 hours, up to its own
+                        sign-in (spec.tokenEntries.sessionMaxHours on the
+                        Tenant). false, which is the default, and a tenant's
+                        own setting has no effect: such a sign-in ends after
+                        4 hours.
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.
@@ -1425,6 +1518,23 @@ spec:
                     starttls:
                       type: boolean
                       default: true
+                    listeners:
+                      type: object
+                      description: >
+                        Which ports the mail edge serves to mail clients when
+                        serviceMode is system. Port 25, where other servers
+                        deliver, is always served. Setting one to true approves
+                        serving it; the signed commit that sets it is the
+                        record. A claim the installer writes sets both to
+                        false. A claim that names neither keeps both served,
+                        as a cluster did before this setting existed.
+                      properties:
+                        submission:
+                          type: boolean
+                          description: Port 587, where mail clients send.
+                        imaps:
+                          type: boolean
+                          description: Port 993, where mail clients read.
 
             status:
               type: object
@@ -1452,6 +1562,45 @@ spec:
                       type: string
                       description: The newest release the platform's feed publishes, "0.6.0"; what a person compares versionLine with.
                     latestReleaseNotes:
+                      type: string
+                      description: Where that release's notes are.
+                release:
+                  type: object
+                  description: >-
+                    What the operator made of spec.release: the revision and
+                    image it applied, when, and what the release index offers
+                    this cluster. Read, never set.
+                  properties:
+                    desired:
+                      type: string
+                      description: The ref spec.release asked for, "v0.5.1" or the branch.
+                    revision:
+                      type: string
+                      description: The git revision the cluster's Applications follow, the tag or the branch's commit.
+                    image:
+                      type: string
+                      description: The operator image tag applied, "0.5.1" or "develop-abc1234".
+                    appliedAt:
+                      type: string
+                      description: When the operator last applied the release.
+                    state:
+                      type: string
+                      description: >-
+                        Applied (the Applications follow spec.release), Pending
+                        (a branch build whose image is not published yet, or
+                        an index that cannot be read), Refused (a version the
+                        index does not list), or Unmanaged (spec.release is
+                        absent).
+                    message:
+                      type: string
+                      description: Why the state is what it is, for a person.
+                    available:
+                      type: string
+                      description: The newest release the cluster's autoUpgrade mode takes by itself, "v0.5.2"; absent when there is none.
+                    pending:
+                      type: string
+                      description: The newest release the mode does not take, waiting for a person, "v0.6.0"; absent when there is none.
+                    pendingNotes:
                       type: string
                       description: Where that release's notes are.
                 openbaoSnapshots:

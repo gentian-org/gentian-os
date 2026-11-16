@@ -62,8 +62,10 @@ enters through. These are the *kernel* of the OS; the pages under
 ## 4. What it runs on
 
 Kubernetes, the system that schedules programs across a set of machines and
-restarts them when they fail. Gentian OS is installed onto a Kubernetes
-cluster with one script and needs a domain name whose records it may manage.
+restarts them when they fail. In Gentian OS that is one kernel function among
+others. Gentian OS is installed onto a Kubernetes cluster with one script;
+from then on the cluster is part of the operating system. It needs a domain
+name whose records it may manage.
 The cluster can be in a data center of your choosing or one you operate
 yourself. Everything is open source; the editions of an app say who
 maintains and supports it, and the OS puts no license gate in front of any
@@ -93,7 +95,12 @@ of them.
 | Catalog | A published list of profiles a cluster or a tenant reads. |
 | App Store | An optional service that lists catalogs with a shop front. |
 | Edition | Who maintains and supports an app: `ce` community, `me` maintained, `ie` the operator's own, `pe` proprietary and free, `ee` paid. |
-| Kernel | The shared services every tenant depends on: sign-in, permissions, secrets, data, the edge. |
+| Component | One installed instance of a profile in a tenant: a catalog app, or the desktop and console every tenant gets. |
+| Kernel | The shared services every tenant depends on: sign-in, permissions, secrets, data, the edge, and the programs that run the cluster. They live in the `kernel-*` namespaces. |
+| System engine | A shared service tenants' apps use through a declared requirement: PostgreSQL, MariaDB, the cache, the object store. One `system-*` namespace each; PostgreSQL and the object store on every cluster, the rest when an app asks. |
+| Kernel extension | A kernel function a cluster can switch on or leave out: mail. |
+| Default install | What a cluster has before any app is installed: the kernel, the engines that run on every cluster, and each tenant's desktop and console. |
+| Platform tenant | The tenant the platform administrators belong to. It runs the sign-in page and the administrators' desktop and console, under the same rules as any tenant. |
 | Director | The program that commits every change to the cluster's repository. |
 | Operator | The program that makes the cluster match what the repository declares. |
 | Gateway | The front door every request passes; it holds the one sign-in session. |

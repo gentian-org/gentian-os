@@ -28,6 +28,19 @@ Cluster claim's spec.llm and from nothing else.
   been supplied yet is listed and answers an authentication error until it
   is.
 
+Every model is in an access group, which is what a tenant's team at the
+gateway names (internal/modelgateway): an instance's model is in
+gentian:every-tenant, a provider's model in gentian:provider:<provider>. A
+team names gentian:every-tenant and the groups of the providers its tenant
+opted in to, so a provider's model reaches a tenant only when the tenant
+opted in to that provider.
+
+A request may name other models to fall back to. The gateway checks each of
+them against the caller's team and key before it is tried
+(enforce_fallback_model_access), so a fallback reaches no model the caller
+could not ask for. The file configures no fallbacks and no aliases of its
+own.
+
 The gateway reads this file when it starts, and reads models from nowhere
 else (STORE_MODEL_IN_DB is off): a model removed from the claim is gone with
 the pods that knew it, and none can be added at the gateway's console or its
@@ -43,7 +56,8 @@ pods.
       "model" (printf "openai/%s" $i.modelId)
       "api_base" (printf "http://vllm-%s-inference.%s.svc.cluster.local:8000/v1" $i.name $.Values.servicesNamespace)
       "api_key" "not-needed" -}}
-{{- $models = append $models (dict "model_name" ($i.modelId | lower | replace "/" "-") "litellm_params" $params) -}}
+{{- $info := dict "access_groups" (list "gentian:every-tenant") -}}
+{{- $models = append $models (dict "model_name" ($i.modelId | lower | replace "/" "-") "litellm_params" $params "model_info" $info) -}}
 {{- end -}}
 {{- end -}}
 {{- range $p := $llm.providers -}}
@@ -53,13 +67,13 @@ pods.
       "model" (printf "openai/%s" $m.model)
       "api_base" ($p.apiBase | trimSuffix "/")
       "api_key" (printf "os.environ/LLM_PROVIDER_KEY_%s" $p.apiKeyProperty) -}}
-{{- $info := dict "mode" ($m.mode | default "chat") -}}
+{{- $info := dict "mode" ($m.mode | default "chat") "access_groups" (list (printf "gentian:provider:%s" $p.name)) -}}
 {{- if $m.maxTokens }}{{ $_ := set $info "max_tokens" (int $m.maxTokens) }}{{ end -}}
 {{- $models = append $models (dict "model_name" (printf "%s/%s" $p.name $m.name) "litellm_params" $params "model_info" $info) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- $config := dict "model_list" $models -}}
+{{- $config := dict "model_list" $models "general_settings" (dict "enforce_fallback_model_access" true) -}}
 {{- /* What one person may spend, when the claim says (person-budget.yaml). */ -}}
 {{- if dig "personBudget" dict $llm -}}
 {{- $_ := set $config "litellm_settings" (dict "max_end_user_budget_id" "gentian-person") -}}

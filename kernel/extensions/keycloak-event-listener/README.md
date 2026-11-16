@@ -52,6 +52,16 @@ openssl genpkey -algorithm ed25519 -out listener.pem
 openssl pkey -in listener.pem -pubout -outform DER | tail -c 32 | base64
 ```
 
+## Client logins at their own level
+
+`QuietClientLoginLoggingFactory` takes the id of Keycloak's own `jboss-logging`
+listener and replaces it in every realm that lists it, with no change to the
+realm. It is the built-in listener, except that a successful `CLIENT_LOGIN` (a
+client taking a token for itself: the operator and provider-keycloak, dozens of
+times a minute) is written at `client-login-level`, `debug` unless set
+(`KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_CLIENT_LOGIN_LEVEL`). Every other event,
+and a failed client login, keeps the built-in's levels and line.
+
 ## Build
 
 ```sh

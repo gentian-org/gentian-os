@@ -17,12 +17,12 @@
 # _derived <context> <purpose> — the derived value, whatever the secret mode.
 #
 # The key reaches python3 through the environment and the message through
-# stdin; neither is an argument. DERIVATION_SALT must be set: a run that never
-# settled its salt stops here instead of deriving values no cluster holds. It
-# may be empty, which is what a cluster seeded before salts existed holds.
+# stdin; neither is an argument. Both must be set and not empty: a run that
+# never settled its salt stops here instead of deriving values no cluster
+# holds, and the operator refuses to derive with an empty salt too.
 _derived() {
-    : "${MASTER_PASSWORD?_derived: MASTER_PASSWORD is not set}"
-    : "${DERIVATION_SALT?_derived: DERIVATION_SALT is not set}"
+    : "${MASTER_PASSWORD:?_derived: MASTER_PASSWORD is not set}"
+    : "${DERIVATION_SALT:?_derived: DERIVATION_SALT is not set}"
     printf '%s:%s' "${1}" "${2}" \
         | GENTIAN_DERIVE_KEY="${MASTER_PASSWORD}${DERIVATION_SALT}" python3 -I -c '
 import hashlib, hmac, os, sys
@@ -38,12 +38,13 @@ sys.stdout.write(hmac.new(key, sys.stdin.buffer.read(), hashlib.sha256).hexdiges
 #
 #   - a stored master password replaces MASTER_PASSWORD;
 #   - a stored salt replaces DERIVATION_SALT;
-#   - a stored master password without a salt is a cluster seeded before salts
-#     existed, and its salt is empty;
+#   - a stored master password without a salt is refused: the operator derives
+#     only with a salt, so the two would not agree;
 #   - a store with neither keeps DERIVATION_SALT, and a run with none draws a
 #     new one: the first install.
 #
 # DERIVATION_SALT is exported; MASTER_PASSWORD is left as the caller had it.
+# Returns 1, with the reason on stderr, when it refuses.
 gentian_settle_derivation() {
     if [[ -n "${1}" ]]; then
         MASTER_PASSWORD="${1}"
@@ -51,7 +52,8 @@ gentian_settle_derivation() {
     if [[ -n "${2}" ]]; then
         DERIVATION_SALT="${2}"
     elif [[ -n "${1}" ]]; then
-        DERIVATION_SALT=""
+        echo "The stored master password has no salt; the operator derives only with one." >&2
+        return 1
     elif [[ -z "${DERIVATION_SALT:-}" ]]; then
         DERIVATION_SALT="$(openssl rand -hex 16)"
     fi

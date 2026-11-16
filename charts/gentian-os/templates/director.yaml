@@ -268,6 +268,15 @@ spec:
             # and is read from this file on every request.
             - name: DIRECTOR_LIFECYCLE_TOKEN_FILE
               value: /var/run/secrets/gentian/operator/token
+            {{- if .Values.dispatcher.enabled }}
+            # The dispatcher carries out what is done once and follows nothing
+            # declared: a backup taken, a backup deleted. It admits the
+            # director by a token projected below for its own audience.
+            - name: DIRECTOR_DISPATCHER_TOKEN_FILE
+              value: /var/run/secrets/gentian/dispatcher/token
+            - name: DIRECTOR_DISPATCHER_URL
+              value: {{ printf "http://%s-dispatcher.%s.svc.cluster.local:8081" (include "gentian-os.fullname" .) .Release.Namespace | quote }}
+            {{- end }}
             - name: DIRECTOR_APP_LIFECYCLE_URL
               value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
             {{- if .Values.director.signingKeySecret }}
@@ -411,6 +420,11 @@ spec:
             - name: operator-token
               mountPath: /var/run/secrets/gentian/operator
               readOnly: true
+            {{- if .Values.dispatcher.enabled }}
+            - name: dispatcher-token
+              mountPath: /var/run/secrets/gentian/dispatcher
+              readOnly: true
+            {{- end }}
             - name: commission-keys
               mountPath: /etc/gentian/commission
               readOnly: true
@@ -440,6 +454,17 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- include "gentian-os.operatorTokenVolume" . | nindent 8 }}
+        {{- if .Values.dispatcher.enabled }}
+        # A token of this pod's ServiceAccount for the dispatcher's listener
+        # for acts and for nothing else.
+        - name: dispatcher-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ required "dispatcher.audience must be set" .Values.dispatcher.audience | quote }}
+                  expirationSeconds: 600
+                  path: token
+        {{- end }}
         # The operator's list of the components that commission
         # partners. Optional and followed rather than read once: before
         # the operator writes it, and where nothing commissions, no component

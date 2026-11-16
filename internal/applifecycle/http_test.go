@@ -364,8 +364,6 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 	directorOnly := []struct{ method, path string }{
 		{"GET", "/v1/tenants/demo"},
 		{"GET", "/v1/tenants/demo/backups/b1/download"},
-		{"POST", "/v1/tenants/demo/actions/backup"},
-		{"POST", "/v1/tenants/demo/actions/delete-backup"},
 		{"POST", "/v1/tenants/demo/actions/restore"},
 		{"POST", "/v1/tenants/demo/actions/notify"},
 		{"POST", "/v1/tenants/demo/actions/purge-app"},

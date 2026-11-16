@@ -222,7 +222,7 @@ func seedGeneratedSecrets(ctx context.Context, seeder *secrets.Seeder, tenantNam
 		if s.Name == "" {
 			continue
 		}
-		if _, err := seeder.SeedAppSecret(ctx, tenantName, appName, s.Name); err != nil {
+		if _, err := seeder.SeedAppSecretAs(ctx, tenantName, appName, s.Name, string(s.Format)); err != nil {
 			return err
 		}
 	}
@@ -232,7 +232,7 @@ func seedGeneratedSecrets(ctx context.Context, seeder *secrets.Seeder, tenantNam
 			if s.Name == "" {
 				continue
 			}
-			if _, err := seeder.SeedAppSecret(ctx, tenantName, scAppName, s.Name); err != nil {
+			if _, err := seeder.SeedAppSecretAs(ctx, tenantName, scAppName, s.Name, string(s.Format)); err != nil {
 				return err
 			}
 		}

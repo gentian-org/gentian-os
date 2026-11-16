@@ -190,6 +190,46 @@ type Identity struct {
 	TenancyMode string
 }
 
+// named is how a report names a tenant: its address, its uid and its realm's
+// issuer, with no apps yet. False for a tenant that is not reported: one
+// being deleted, or one with no host, which has no address to be reported
+// under and whose name is not sent in the address's place.
+func named(tenant *gentianov1alpha1.Tenant, id Identity) (Tenant, bool) {
+	if !tenant.DeletionTimestamp.IsZero() {
+		return Tenant{}, false
+	}
+	host := tenant.EffectiveDomain(id.KernelDomain, id.TenancyMode)
+	if host == "" {
+		return Tenant{}, false
+	}
+	entry := Tenant{URL: "https://" + host, UID: string(tenant.UID), Apps: []App{}}
+	if id.KernelDomain != "" {
+		realm := tenant.Name
+		if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm != "" {
+			realm = tenant.Spec.Isolation.KeycloakRealm
+		}
+		entry.Issuer = "https://id." + id.KernelDomain + "/auth/realms/" + realm
+	}
+	return entry, true
+}
+
+// Names is every reported tenant as a report names it, keyed by uid: what
+// the receiving end finds a tenant by. A change here is what makes a report
+// go before its day is out.
+func Names(ctx context.Context, c client.Reader, id Identity) (map[string]string, error) {
+	var list gentianov1alpha1.TenantList
+	if err := c.List(ctx, &list); err != nil {
+		return nil, fmt.Errorf("list tenants: %w", err)
+	}
+	out := map[string]string{}
+	for i := range list.Items {
+		if entry, ok := named(&list.Items[i], id); ok {
+			out[entry.UID] = entry.URL + " " + entry.Issuer
+		}
+	}
+	return out, nil
+}
+
 // Build assembles the tenants' part of a report from what the cluster holds.
 //
 // Only an entry of spec.apps that carries a digest is listed. The director
@@ -218,22 +258,9 @@ func Build(ctx context.Context, c client.Reader, counter Counter, id Identity, u
 	out := []Tenant{}
 	for i := range list.Items {
 		tenant := &list.Items[i]
-		if !tenant.DeletionTimestamp.IsZero() {
+		entry, ok := named(tenant, id)
+		if !ok {
 			continue
-		}
-		host := tenant.EffectiveDomain(id.KernelDomain, id.TenancyMode)
-		if host == "" {
-			// A tenant with no host has no address to be reported under, and
-			// its name is not sent in the address's place.
-			continue
-		}
-		entry := Tenant{URL: "https://" + host, UID: string(tenant.UID), Apps: []App{}}
-		if id.KernelDomain != "" {
-			realm := tenant.Name
-			if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm != "" {
-				realm = tenant.Spec.Isolation.KeycloakRealm
-			}
-			entry.Issuer = "https://id." + id.KernelDomain + "/auth/realms/" + realm
 		}
 		if terms := tenant.Spec.StoreTerms; terms != nil && terms.Version != "" {
 			entry.Terms = &Terms{Version: terms.Version, AcceptedAt: terms.AcceptedAt.UTC().Format(time.RFC3339)}

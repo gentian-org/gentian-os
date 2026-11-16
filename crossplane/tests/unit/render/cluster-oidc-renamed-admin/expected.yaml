@@ -135,6 +135,7 @@ spec:
         mail.egressHost: ""
         mail.serviceMode: ""
         mail.smtpHost: ""
+        mainAddress.mailTenant: ""
         mainAddress.tenant: ""
         monitoring.enabled: "false"
         network.edgeNamespace: kernel-edge
@@ -149,6 +150,8 @@ spec:
         tenant.limitRange.default.memory: 512Mi
         tenant.limitRange.defaultRequest.cpu: 100m
         tenant.limitRange.defaultRequest.memory: 128Mi
+        tokenEntries.tenantsMayExtendSessions: "false"
+        tokenEntries.tenantsMayWaiveApproval: "false"
       kind: ConfigMap
       metadata:
         labels:
@@ -485,7 +488,7 @@ spec:
   forProvider:
     chart:
       name: seaweedfs
-      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/v0.5.0/charts/infra/packages
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/v0.5.1/charts/infra/packages
       version: 4.48.0-gentian.1
     namespace: system-s3
     set:

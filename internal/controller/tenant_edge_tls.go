@@ -151,6 +151,13 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 	if err := r.Delete(ctx, wildcardCert); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
+	apexCert := &unstructured.Unstructured{}
+	apexCert.SetGroupVersionKind(certManagerCertGVK)
+	apexCert.SetName(tenantApexCertName(tenant.Name))
+	apexCert.SetNamespace(nsName)
+	if err := r.Delete(ctx, apexCert); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete tenant apex Certificate: %w", err)
+	}
 
 	// Not for the user tenant of a single-tenancy cluster: its domain is the
 	// cluster's, and these two names are the kernel's own routes.
@@ -184,6 +191,10 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 	if err := r.Delete(ctx, tenantWildcardTLS); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete tenant wildcard TLS secret: %w", err)
 	}
+	apexTLS := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: tenantApexSecretName(tenant.Name), Namespace: nsName}}
+	if err := r.Delete(ctx, apexTLS); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete tenant apex TLS secret: %w", err)
+	}
 	return nil
 }
 
@@ -195,3 +206,35 @@ func tenantWildcardSecretName(tenantName string) string {
 	return fmt.Sprintf("tenant-%s-wildcard-tls", tenantName)
 }
 
+// ownDomainApex reports a tenant domain whose bare name no certificate of the
+// cluster covers: a domain of the tenant's own. The cluster's certificate
+// names <kernel> and *.<kernel>, so a tenant's zone under the cluster's domain
+// (<tenant>.<kernel>, platform.<kernel>) and the cluster's domain itself are
+// covered already, and the tenant's wildcard leaves its bare name out on
+// purpose (buildTenantWildcardCertificate).
+func ownDomainApex(domain, kernelDomain string) bool {
+	return domain != "" && kernelDomain != "" && !directlyUnder(domain, kernelDomain)
+}
+
+func tenantApexCertName(tenantName string) string {
+	return fmt.Sprintf("tenant-%s-apex", tenantName)
+}
+
+func tenantApexSecretName(tenantName string) string {
+	return fmt.Sprintf("tenant-%s-apex-tls", tenantName)
+}
+
+// buildTenantApexCertificate names the bare domain of a tenant's own domain,
+// and nothing else.
+//
+// Its own certificate, served on its own listener for exactly that name on the
+// perimeter Gateway (perimeterTenantListeners). Not a second name on the
+// wildcard: a certificate must cover exactly what its listener can route, and
+// the wildcard's listener cannot route the bare name. Kept apart, neither
+// connection can be reused for the other's name, so the coalescing fault
+// described at the wildcard cannot happen.
+func buildTenantApexCertificate(tenant *gentianov1alpha1.Tenant, nsName, domain, clusterIssuer string) *unstructured.Unstructured {
+	obj := buildTenantWildcardCertificate(tenant, nsName, tenantApexCertName(tenant.Name), tenantApexSecretName(tenant.Name), domain, clusterIssuer)
+	_ = unstructured.SetNestedStringSlice(obj.Object, []string{domain}, "spec", "dnsNames")
+	return obj
+}

@@ -1,0 +1,60 @@
+# Who may write the patch a release is rendered through.
+#
+# The operator keeps, in the tenant's namespace, what provider-helm applies to
+# a release after its chart is rendered: the ConfigMap <release>-keep-volumes,
+# which holds the keep rule for the app's volumes and the label rule that says
+# which app its pods belong to (internal/apprender). A chart may give its
+# ServiceAccount a Role over ConfigMaps, so the patch is held here to its
+# writers: the operator and provider-kubernetes. The account a tenant's charts
+# are installed as is none, so no chart ships one either. The cluster's own
+# controllers (kube-system) are not looked at, nor is a person: a person with
+# kubectl here is break-glass.
+{{- $operator := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "gentian-os.serviceAccountName" .) }}
+{{- $provisioning := default "kernel-provisioning" .Values.layout.provisioning }}
+{{- $providerKubernetes := printf "system:serviceaccount:%s:%s" $provisioning .Values.appLabelGuard.providerKubernetesServiceAccount }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gentian-release-patches
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+      - key: gentianos.io/tier
+        operator: In
+        values: ["tenant", "tenant-dmz"]
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["configmaps"]
+  matchConditions:
+  - name: a-release-patch
+    expression: >-
+      request.name.endsWith('-keep-volumes')
+      || (object != null && has(object.metadata.name) && object.metadata.name.endsWith('-keep-volumes'))
+  - name: a-service-account-that-does-not-write-patches
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:')
+      && !request.userInfo.username.startsWith('system:serviceaccount:kube-system:')
+      && !(request.userInfo.username in {{ list $operator $providerKubernetes | toJson }})
+  validations:
+  - expression: "false"
+    reason: Forbidden
+    messageExpression: >-
+      'ConfigMap ' + request.namespace + '/' + request.name
+      + ' holds what the platform applies to a release after its chart is rendered; '
+      + request.userInfo.username + ' may not write or delete it'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gentian-release-patches
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  policyName: gentian-release-patches
+  validationActions: [Deny]

@@ -34,7 +34,7 @@ func TestAPlacedComponentGetsTheSecretsItsProfileHasGenerated(t *testing.T) {
 	}
 	h := startDigestHarness(t, profile, "")
 	vault := memVault{}
-	h.r.Seeder = secrets.NewSeeder(vault, nil)
+	h.r.Seeder = secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master"))
 
 	h.reconcile()
 	path := secrets.InternalPath("acme", h.comp.Name, "key_seed")
@@ -61,7 +61,7 @@ func TestAnInstalledComponentsGeneratedSecretsAreNotSeededHere(t *testing.T) {
 	}
 	h := startDigestHarness(t, profile, "")
 	vault := memVault{}
-	h.r.Seeder = secrets.NewSeeder(vault, nil)
+	h.r.Seeder = secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master"))
 	h.reconcile()
 	if v, ok := vault[secrets.InternalPath("acme", h.comp.Name, "key_seed")]; ok {
 		t.Fatalf("the Component reconciler seeded an installed app's secret: %v", v)

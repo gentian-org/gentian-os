@@ -173,14 +173,20 @@ mailServiceMode: external
 # The name mail leaves from, when the cluster sends from an address it owns
 # (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""
+# Whether the mail edge serves mail clients on 587 (submission) and 993
+# (imaps), from the Cluster claim (spec.mail.listeners). "true" or "false";
+# empty, for a claim that names neither, keeps both served.
+mailSubmission: ""
+mailImaps: ""
 
-# Whether the shared stores of the system tier -- PostgreSQL, MariaDB, Redis,
+# Whether the shared stores of the system tier -- PostgreSQL, MariaDB, the cache,
 # SeaweedFS -- each get the NetworkPolicy that says who may connect to them. On by
 # default. "false" removes all four, and a connection is then checked by its
 # credentials alone. The installer passes STORE_NETWORK_POLICIES.
 # The same switch covers the policies on the kernel's own PostgreSQL
 # (kernel-postgres, whose policy is kept and admits everything when off) and
-# on the mail servers of a cluster that runs its own.
+# on the mail servers of a cluster that runs its own, and the operator, which
+# writes the egress policy of the model gateway's PostgreSQL by it.
 storeNetworkPolicies: "true"
 
 # Whether the kernel namespaces refuse an ingress their NetworkPolicies do not

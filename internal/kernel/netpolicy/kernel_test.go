@@ -116,7 +116,7 @@ func TestADeclaredStoreOpensItsOwnServerAndNoOther(t *testing.T) {
 			services{Cache: &gentianov1alpha1.CacheRequirement{}},
 			[]string{redis + ":6379"}},
 		// Memcached is the tenant's own, in the tenant's namespace: the
-		// tenant-cache policies open it, and the shared Redis is not its.
+		// tenant-cache policies open it, and the shared cache is not its.
 		"memcached": {
 			services{Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineMemcached}},
 			nil},
@@ -300,7 +300,7 @@ func TestTheModelGatewayIsOpenedForADeclaringAppOnItsPortAlone(t *testing.T) {
 	}, nil)
 	got := opened(t, netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "chat", both, netpolicy.Config{}))
 	want := []string{
-		fmt.Sprintf("%s:%d", layout.System("cache"), provisioner.RedisPort),
+		fmt.Sprintf("%s:%d", layout.System("cache"), provisioner.CachePort),
 		fmt.Sprintf("%s:%d", llm, provisioner.ModelGatewayPort),
 	}
 	sort.Strings(want)
@@ -367,6 +367,33 @@ func TestAnAppBehindTheSignInSidecarDoesNotReachTheIdentityProvider(t *testing.T
 		Identity: &gentianov1alpha1.IdentityRequirement{Sidecar: &gentianov1alpha1.SignInSidecarSpec{}},
 	}, nil), cfg); only != nil {
 		t.Errorf("an app that declares the sidecar and nothing else is opened to %v", opened(t, only))
+	}
+}
+
+// A component that calls partners, or accepts their assertions, reaches the
+// realm, which both go through, and nothing else for it: an adapter that
+// calls a partner signs nobody in and would not reach the realm otherwise. A
+// component that only commissions partners talks to the director, not the
+// realm.
+func TestACallerOfPartnersReachesTheIdentityProvider(t *testing.T) {
+	t.Parallel()
+	cfg := netpolicy.Config{ServicesNamespace: "kernel-edge"}
+	want := []string{layout.Namespace(layout.Authentication) + ":*"}
+	for name, partners := range map[string]*gentianov1alpha1.PartnersRequirement{
+		"calls":   {Call: []string{"store"}},
+		"accepts": {Accept: true},
+	} {
+		np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "store-adapter",
+			profileRequiring(gentianov1alpha1.ServiceRequirements{Partners: partners}, nil), cfg)
+		if got := opened(t, np); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: opened = %v, want %v", name, got, want)
+		}
+	}
+	if np := netpolicy.KernelAccessNetworkPolicy("acme", "tenant-acme", "registry",
+		profileRequiring(gentianov1alpha1.ServiceRequirements{
+			Partners: &gentianov1alpha1.PartnersRequirement{Commission: true},
+		}, nil), cfg); np != nil {
+		t.Errorf("a component that only commissions partners is opened to %v", opened(t, np))
 	}
 }
 

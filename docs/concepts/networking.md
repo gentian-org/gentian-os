@@ -20,7 +20,7 @@ passes them top to bottom; a lower layer never re-answers a higher one.
 
 | # | Layer | Question | Enforced by | Identity it sees |
 | --- | --- | --- | --- | --- |
-| L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | the Envoy listener; a local limit per client address on sign-in posts, to a realm's sign-in pages and to a sign-in sidecar's answer path (`BackendTrafficPolicy`); the publishing proxy's own limits per client address on a published entry ([security/design.md §2.14](../security/design.md)) | none |
+| L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | the Envoy listener; a local limit per client address on sign-in posts, to a realm's sign-in pages and to a sign-in sidecar's answer path, and on the requests to each route behind a session (`BackendTrafficPolicy`); the publishing proxy's own limits per client address on a published entry ([security/design.md §2.14](../security/design.md)) | none |
 | L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc`: one confidential client per tenant zone in that tenant's realm, the kernel realm for the platform tenant's zone and the kernel UIs ([routing.md §4.1](routing.md)) | the realm's token: `sub`, realm |
 | L1′ | Perimeter | which paths, how much, and does a credential pass? | the publishing proxy in the tenant's DMZ, a named enforcement point: it forwards the declared paths and nothing else, holds a request to one reading of its path, a method, a size and a time, removes every identity header, `Cookie` and `Set-Cookie`, and removes `Authorization` unless the entry was approved as `authMode: app`, where the app alone checks it. It verifies no caller | none, or the credential the app issued |
 | L2 | Reachability | may this person reach this component at all? | the ext-auth bouncer, asking OpenFGA `can_use` on the app (or the relation the route names) over the stored membership projection (AD-12); cached per `(sub, sid, route)`, evicted on OpenFGA's change log | the same token |
@@ -72,7 +72,19 @@ writes one by hand.
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
 | `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
-| the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared Valkey store through `kernel-access-<app>` instead |
+| the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared cache (Valkey) through `kernel-access-<app>` instead |
+
+A component that is told the realm's issuer
+(`valueMapping.platform.issuerKey`) and is handed no token by an exposure of
+its own has one more rule in `component-<app>`: the edge Service's pods on
+the port its https port forwards to, where the issuer answers from inside the
+cluster. It fetches the realm's signing keys there; nothing else of the edge
+namespace is opened.
+
+A component that starts runs (`requires.services.runs`) has two more:
+`component-<app>` opens the way to the dispatcher's pods on its port, and
+`runs-<app>` admits that component's own runs, from the tenant's namespace
+for runs, on the port its callback Service sends to (§2.1).
 
 Network rules only ever add: a pod the baseline selects cannot be closed again
 by another policy, which is why an adapter's pods are left out of the baseline
@@ -83,6 +95,30 @@ same tenant reaches it only where an integration between the two was granted,
 and a pod of another tenant never. The rule holds only on a cluster whose
 network plugin enforces NetworkPolicy; the installer refuses a cluster whose
 plugin does not (§3).
+
+### 2.1 The namespace for runs
+
+A tenant with a component that starts runs has a second namespace,
+`tenant-<t>-runs`, of tier `tenant-runs`. The operator makes it and writes
+every rule in it; the dispatcher starts every pod in it, and admission refuses
+a pod from any other account (`gentian-run-pods`).
+
+| Policy | Selects | Opens |
+| --- | --- | --- |
+| `runs-default-deny` | every pod of the namespace | Nothing in. Out, the cluster's DNS and nothing else |
+| `action-<name>` | the pods of runs of that installed action | the egress rules of the action's `requires.privileges.egress` that were granted on its install |
+| `caller-<app>` | the pods of runs that component started | the component's pods in `tenant-<t>`, on the port its callback Service sends to |
+
+No rule reaches an adapter, an engine, a store or the kernel: what a run needs
+of them it asks of the component that started it. A run of a component's own
+image is selected by no `action-<name>` policy and has no egress beyond its
+caller.
+
+The namespace enforces the `restricted` pod security standard, holds a quota
+and a default of its own (`runsMaxPods`, `runsCpu`, `runsMemory` of the
+tenant's quotas), and admits only the pinned builds of the tenant's installed
+actions, its callers' own runs and the platform's run program (`run-images`).
+It goes with its tenant.
 
 ## 3. The kernel's rules
 

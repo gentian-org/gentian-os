@@ -45,9 +45,9 @@ func ensureKernelGatewayTunnelIngress(
 		return fmt.Errorf("list tenants for kernel tunnel ingress: %w", err)
 	}
 	effectiveDomains, tenantNames := zonedTenantDomains(tenantList.Items, kernelDomain, tenancyMode)
-	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, c, tenantList.Items)
+	framers, err := signInFramers(ctx, c, tenantList.Items, kernelDomain, tenancyMode, kernelRealm)
 	if err != nil {
-		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
+		return fmt.Errorf("collect the pages that may frame sign-in: %w", err)
 	}
 
 	hosts := map[string]struct{}{
@@ -56,7 +56,7 @@ func ensureKernelGatewayTunnelIngress(
 	// The hostnames are the routes': a kernel UI is published only once it
 	// is routed, which is only once the kernel zone exists. The cluster id
 	// does not reach a hostname.
-	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
+	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, framers, tenantNames,
 		kernelConsolesRouted(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c),
 		kernelFrontDoorOf(tenantList.Items, kernelDomain, kernelRealm, tenancyMode)) {
 		if spec.host != "" {

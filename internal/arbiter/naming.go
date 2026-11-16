@@ -55,13 +55,15 @@ func GroupObject(realm, name string) (string, error) {
 }
 
 // groupType is the type a mirrored group is of, and the one no component's
-// key may write a tuple of.
+// key may write a tuple about.
 const groupType = "group"
 
-// isGroupTyped reports whether a tuple's user or object is of type group:
-// a group, a group's members (group:x#member), or every group (group:*).
-func isGroupTyped(t Tuple) bool {
-	return strings.HasPrefix(t.User, groupType+":") || strings.HasPrefix(t.Object, groupType+":")
+// isAboutGroup reports whether a tuple's object is of type group: a tuple
+// that says something of a group, such as who is in it. A tuple whose user
+// is a group or a group's members (group:x#member) says something of the
+// component's own object, and is the component's to write.
+func isAboutGroup(t Tuple) bool {
+	return strings.HasPrefix(t.Object, groupType+":")
 }
 
 // MaxStartingTuples bounds a profile's starting tuples.

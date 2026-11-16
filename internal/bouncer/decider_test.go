@@ -29,12 +29,22 @@ import (
 // fakeVerifier knows two kinds of token and keeps them apart, as the real one
 // does: an access token is not an ID token and the reverse.
 type fakeVerifier struct {
-	tokens   map[string]*authn.Identity
-	idTokens map[string]map[string]*authn.Identity // client -> raw -> identity
+	tokens map[string]*authn.Identity
+	// entryTokens are access tokens made out to another audience than the
+	// edge's own: audience -> raw -> identity.
+	entryTokens map[string]map[string]*authn.Identity
+	idTokens    map[string]map[string]*authn.Identity // client -> raw -> identity
 }
 
 func (f fakeVerifier) Verify(_ context.Context, raw string) (*authn.Identity, error) {
 	if id, ok := f.tokens[raw]; ok {
+		return id, nil
+	}
+	return nil, authn.ErrUnauthenticated
+}
+
+func (f fakeVerifier) VerifyFor(_ context.Context, raw, audience string) (*authn.Identity, error) {
+	if id, ok := f.entryTokens[audience][raw]; ok {
 		return id, nil
 	}
 	return nil, authn.ErrUnauthenticated
@@ -74,12 +84,19 @@ func (f *fakeStore) Changes(_ context.Context, _, token string) ([]authz.Change,
 
 const kernelClient = "gentian-edge-kernel"
 
+// What the token entry of the test table holds a token against.
+const (
+	entryAudience = "https://api.k.example"
+	entryMetadata = "https://api.k.example/.well-known/oauth-protected-resource"
+)
+
 func table() *Table {
 	return &Table{Routes: []Route{
 		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AuthMode: AuthModeOIDC},
 		{Host: "desktop.k.example", Relation: "can_enter", Object: "tenant:platform", ForwardToken: true, AuthMode: AuthModeOIDC},
 		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", KeepClientToken: true, IDTokenAudience: kernelClient, AuthMode: AuthModeOIDC},
-		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
+		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer,
+			Audience: entryAudience, Realm: "kernel", ResourceMetadata: entryMetadata},
 		{Host: "shop.k.example", Relation: "can_use", Object: "app:acme/odoo", AuthMode: AuthModeOIDC,
 			DenyPaths: []string{"/web/database", "/admin"}},
 	}}
@@ -96,6 +113,18 @@ func decider(store *fakeStore) *Decider {
 				"root-token-refreshed": root,
 				"mia-token":            {Subject: "mia", Realm: "kernel", SessionID: "s2"},
 				"no-session-token":     {Subject: "root", Realm: "kernel"},
+			},
+			entryTokens: map[string]map[string]*authn.Identity{
+				entryAudience: {
+					"root-entry-token": {Subject: "root", Realm: "kernel", SessionID: "s1", Client: "gentian-mcp"},
+					"mia-entry-token":  {Subject: "mia", Realm: "kernel", SessionID: "s2", Client: "gentian-mcp"},
+					// The same words as the audience, from another tenant's realm.
+					"acme-entry-token":       {Subject: "root", Realm: "acme", SessionID: "s9", Client: "gentian-mcp"},
+					"no-session-entry-token": {Subject: "root", Realm: "kernel", Client: "gentian-mcp"},
+				},
+				"https://other.k.example": {
+					"root-other-entry-token": {Subject: "root", Realm: "kernel", SessionID: "s1", Client: "gentian-mcp"},
+				},
 			},
 			idTokens: map[string]map[string]*authn.Identity{kernelClient: {
 				"root-id-token": root,
@@ -246,31 +275,101 @@ func TestASessionRouteWithoutAVerifiedTokenIsRefused(t *testing.T) {
 	}
 }
 
-// What has no route class is refused, and a bearer route is what it was: the
-// caller's own token, verified, or a 401.
-func TestWhatHasNoRouteClassIsRefusedAndABearerRouteIsUnchanged(t *testing.T) {
-	store := &fakeStore{allow: map[string]bool{"user:root|can_view|tenant:platform": true}}
-	d := decider(store)
+// What has no route class is refused.
+func TestWhatHasNoRouteClassIsRefused(t *testing.T) {
+	d := decider(&fakeStore{allow: map[string]bool{"user:root|can_view|tenant:platform": true}})
 	if dec := d.Decide(context.Background(), Request{Host: "nothing.k.example", Authorization: "Bearer root-token"}); dec.Allow || dec.Status != http.StatusForbidden {
 		t.Fatalf("no class: %+v", dec)
 	}
-	if dec := d.Decide(context.Background(), Request{Host: "api.k.example"}); dec.Allow || dec.Status != http.StatusUnauthorized {
-		t.Fatalf("no token on a bearer route: %+v", dec)
+}
+
+// A route that takes a token takes one made out to it by its tenant's realm,
+// and nothing else that the platform signs.
+func TestATokenRouteTakesOnlyATokenMadeOutToItByItsRealm(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_view|tenant:platform": true}}
+	d := decider(store)
+	for name, req := range map[string]Request{
+		"no token":                          {Host: "api.k.example"},
+		"a forged token":                    {Host: "api.k.example", Authorization: "Bearer forged"},
+		"the edge's session token":          {Host: "api.k.example", Authorization: "Bearer root-token"},
+		"a token for another entry":         {Host: "api.k.example", Authorization: "Bearer root-other-entry-token"},
+		"a token of another tenant's realm": {Host: "api.k.example", Authorization: "Bearer acme-entry-token"},
+		"a token naming no session":         {Host: "api.k.example", Authorization: "Bearer no-session-entry-token"},
+		"an ID token header":                {Host: "api.k.example", IDToken: "root-id-token"},
+		"an ID token as the bearer":         {Host: "api.k.example", Authorization: "Bearer root-id-token"},
+		// The old sign-out alias is a session route's. Here it is a path.
+		"the sign-out path": {Host: "api.k.example", Path: SignOutPath},
+	} {
+		dec := d.Decide(context.Background(), req)
+		if dec.Allow || dec.Status != http.StatusUnauthorized || dec.Redirect != "" || dec.Browser {
+			t.Errorf("%s: %+v", name, dec)
+		}
+		want := `Bearer resource_metadata="` + entryMetadata + `"`
+		if req.Authorization != "" {
+			want = `Bearer error="invalid_token", resource_metadata="` + entryMetadata + `"`
+		}
+		if dec.Challenge != want {
+			t.Errorf("%s: challenge %q, want %q", name, dec.Challenge, want)
+		}
 	}
-	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", Authorization: "Bearer forged"}); dec.Allow || dec.Status != http.StatusUnauthorized {
-		t.Fatalf("forged on a bearer route: %+v", dec)
+	if store.checks != 0 {
+		t.Fatalf("the store was asked %d times about requests with no verified token", store.checks)
 	}
-	// An ID token header means nothing on a bearer route.
-	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", IDToken: "root-id-token"}); dec.Allow {
-		t.Fatalf("an ID token header opened a bearer route: %+v", dec)
+
+	dec := d.Decide(context.Background(), Request{
+		Host: "api.k.example", Path: "/mcp", Authorization: "Bearer root-entry-token", Cookie: "OauthHMAC=x; theme=dark",
+	})
+	if !dec.Allow || dec.Headers[HeaderSubject] != "root" || dec.Headers[HeaderRealm] != "kernel" {
+		t.Fatalf("a token made out to the entry: %+v", dec)
 	}
-	dec := d.Decide(context.Background(), Request{Host: "api.k.example", Path: "/v1/things", Authorization: "Bearer root-token"})
-	if !dec.Allow || dec.Headers[HeaderSubject] != "root" || !removes(dec, "authorization") {
-		t.Fatalf("a valid bearer on a bearer route: %+v", dec)
+	// The token is the entry's own and goes on to its backend; no cookie does.
+	if removes(dec, "authorization") || !removes(dec, HeaderCookie) || !removes(dec, HeaderIDToken) {
+		t.Fatalf("removes %v", dec.RemoveHeaders)
 	}
-	// The old sign-out alias is a session route's. Here it is a path.
-	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", Path: SignOutPath}); dec.Redirect != "" || dec.Status != http.StatusUnauthorized {
-		t.Fatalf("sign-out on a bearer route: %+v", dec)
+	if _, set := dec.Headers[HeaderCookie]; set {
+		t.Fatalf("a cookie header was written on a token route: %v", dec.Headers)
+	}
+	// The store decides as on any route, and a refusal there is no challenge:
+	// another token would not change it.
+	dec = d.Decide(context.Background(), Request{Host: "api.k.example", Authorization: "Bearer mia-entry-token"})
+	if dec.Allow || dec.Status != http.StatusForbidden || dec.Challenge != "" || dec.Browser {
+		t.Fatalf("a valid token without the relation: %+v", dec)
+	}
+}
+
+// And a token made out to an entry is a session nowhere else.
+func TestATokenMadeOutToAnEntryOpensNoSessionRoute(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{
+		"user:root|can_configure|cluster:c1": true, "user:root|can_enter|tenant:platform": true,
+	}}
+	d := decider(store)
+	for _, host := range []string{"argocd.k.example", "desktop.k.example", "id.k.example", "shop.k.example"} {
+		dec := d.Decide(context.Background(), Request{Host: host, Path: "/", Authorization: "Bearer root-entry-token"})
+		if dec.Allow || dec.Status != http.StatusUnauthorized || dec.Challenge != "" {
+			t.Errorf("%s: %+v", host, dec)
+		}
+	}
+}
+
+func TestATokenRouteNeedsWhatItHoldsATokenAgainst(t *testing.T) {
+	base := "{host: a.example, relation: r, object: o, authMode: bearer"
+	for name, entry := range map[string]string{
+		"no audience":              base + ", realm: t}",
+		"no realm":                 base + ", audience: 'https://a.example'}",
+		"a forwarded token":        base + ", audience: 'https://a.example', realm: t, forwardToken: true}",
+		"the page's own header":    base + ", audience: 'https://a.example', realm: t, keepClientToken: true}",
+		"an ID token session":      base + ", audience: 'https://a.example', realm: t, idTokenSession: true}",
+		"metadata over http":       base + ", audience: 'https://a.example', realm: t, resourceMetadata: 'http://a.example/m'}",
+		"metadata with a quote":    base + ", audience: 'https://a.example', realm: t, resourceMetadata: 'https://a.example/m\"x'}",
+		"an audience on a session": "{host: a.example, relation: r, object: o, authMode: oidc, audience: 'https://a.example'}",
+		"a realm on a session":     "{host: a.example, relation: r, object: o, authMode: oidc, realm: t}",
+	} {
+		if _, err := ParseTable([]byte("routes:\n- " + entry + "\n")); err == nil {
+			t.Errorf("%s: the table loaded", name)
+		}
+	}
+	if _, err := ParseTable([]byte("routes:\n- " + base + ", audience: 'https://a.example', realm: t, resourceMetadata: 'https://a.example/.well-known/oauth-protected-resource'}\n")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -504,7 +603,7 @@ func TestARefusedBrowserOnARouteWithAHomeIsSentThere(t *testing.T) {
 			t.Fatalf("%q accepted", bad)
 		}
 	}
-	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o, authMode: bearer, deniedRedirect: '" + home + "'}\n")); err == nil {
+	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o, authMode: bearer, audience: 'https://a.example', realm: t, deniedRedirect: '" + home + "'}\n")); err == nil {
 		t.Fatal("a bearer route sends nobody anywhere")
 	}
 }
@@ -692,5 +791,25 @@ func TestEveryDecisionWritesOneAuditRecordWithACodeNotTheRefusalsText(t *testing
 	}
 	if lines[0]["tenant"] != "acme" {
 		t.Errorf("tenant = %v, want acme from the object", lines[0]["tenant"])
+	}
+}
+
+// On a route that takes a token the record names the program that presented
+// it; on a session route there is no such program to name.
+func TestATokenRoutesAuditRecordNamesTheClient(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_view|tenant:platform": true, "user:root|can_use|app:acme/odoo": true}}
+	lines := auditLines(t, store,
+		Request{ID: "r1", Host: "api.k.example", Authorization: "Bearer root-entry-token"},
+		Request{ID: "r2", Host: "api.k.example", Authorization: "Bearer mia-entry-token"},
+		Request{ID: "r3", Host: "shop.k.example", Path: "/", Authorization: "Bearer root-token"},
+	)
+	if len(lines) != 3 {
+		t.Fatalf("%d audit lines, want 3", len(lines))
+	}
+	for i, want := range []any{"gentian-mcp", "gentian-mcp", nil} {
+		detail, _ := lines[i]["detail"].(map[string]any)
+		if detail["client"] != want {
+			t.Errorf("line %d: client %v, want %v", i, detail["client"], want)
+		}
 	}
 }

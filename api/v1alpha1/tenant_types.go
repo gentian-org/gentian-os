@@ -332,6 +332,14 @@ type TenantSpec struct {
 	// +optional
 	Quotas *TenantQuotas `json:"quotas,omitempty"`
 
+	// LLM is what the tenant's apps may use at the platform's model gateway:
+	// which external providers' models, and how much. Unset, they use the
+	// models every tenant may use, without a cap. Written by the director
+	// for the cluster's administrator, and for the tenant's own
+	// administrator while it delegates the providers to them.
+	// +optional
+	LLM *TenantLLM `json:"llm,omitempty"`
+
 	// Security is the realm policy this tenant runs under: how strong a
 	// password has to be, how long a session lasts, what happens after
 	// repeated failures. Unset leaves Keycloak's own defaults.
@@ -358,6 +366,12 @@ type TenantSpec struct {
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// TokenEntries is how this tenant's token entries come to be served: a
+	// component's address that takes a token of the tenant's realm in place
+	// of a session. Unset, each waits for the perimeter approver's approval.
+	// +optional
+	TokenEntries *TenantTokenEntries `json:"tokenEntries,omitempty"`
 
 	// Catalogue is where this tenant may install from beside the catalogs
 	// the whole cluster offers: the catalogs only this tenant sees, and
@@ -530,19 +544,19 @@ type TenantExposure struct {
 	// +optional
 	LastReviewedAt *metav1.Time `json:"lastReviewedAt,omitempty"`
 
-	// Apex is the approver saying that this surface is for the cluster's
-	// main address: the bare domain. The profile's entry must say apex too;
-	// neither alone publishes anything. It is honored for the one tenant
-	// that may hold the main address -- the one the Cluster claim names, or
-	// the user tenant of a single-tenancy cluster -- and for one surface at
-	// a time.
+	// Apex is the approver saying that this surface is for the tenant's
+	// bare name: the cluster's main address for the one tenant that may hold
+	// it -- the one the Cluster claim names, or the user tenant of a
+	// single-tenancy cluster -- and the tenant's own zone or domain for any
+	// other. The profile's entry must say apex too; neither alone publishes
+	// anything. One surface per tenant at a time.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
 
 	// ApexAcknowledgedBy is the subject that acknowledged the rule for a
-	// website on the main address, and ApexAcknowledgedAt when: only a site
-	// whose scripts the organization itself controls. A script on the bare
-	// domain can set cookies the browser sends to the sign-in addresses, and
+	// website on a bare name, and ApexAcknowledgedAt when: only a site
+	// whose scripts the organization itself controls. A script on a bare
+	// name can set cookies the browser sends to the sign-in addresses, and
 	// the platform cannot check what a site loads, so the approver is told
 	// and says so. Set by the director from the caller's token, on an apex
 	// entry only. It is a record: the operator publishes by Apex, and an
@@ -730,6 +744,64 @@ type TenantMail struct {
 	SmtpCredentialsSecret string `json:"smtpCredentialsSecret,omitempty"`
 }
 
+// TenantLLM is what a tenant's apps may use at the model gateway.
+//
+// Every tenant may use the models the cluster serves itself (the Cluster
+// claim's spec.llm.instances). A provider's models are the tenant's only
+// when Providers names the provider: a prompt sent to one leaves the
+// cluster.
+type TenantLLM struct {
+	// Providers are the external providers, by their name in the Cluster
+	// claim's spec.llm.providers, whose models this tenant's apps may use. A
+	// name the claim does not list gives nothing.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:items:MaxLength=40
+	Providers []string `json:"providers,omitempty"`
+
+	// Budget caps the tenant's use of the gateway, all its apps together.
+	// Unset, nothing is capped for the tenant as a whole. Set by the
+	// cluster's administrator only.
+	// +optional
+	Budget *TenantLLMBudget `json:"budget,omitempty"`
+
+	// Delegated says the tenant's own administrators may change Providers
+	// as well. Off unless the cluster's administrator turns it on; a
+	// tenant's administrator cannot, nor change Budget.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
+}
+
+// TenantLLMBudget is a tenant's cap at the model gateway. Each field is
+// optional; a field left out caps nothing. The gateway refuses a request of
+// the tenant's apps once a limit is reached.
+type TenantLLMBudget struct {
+	// MaxBudget is what the tenant may spend per period, in whole US dollars
+	// at the gateway's prices. A model the cluster serves itself costs
+	// nothing; the limits per minute hold for it.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxBudget *int64 `json:"maxBudget,omitempty"`
+
+	// BudgetDuration is the period after which spend starts again from
+	// nothing, e.g. 30d or 1mo. Unset, it never does.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[0-9]+(s|m|h|d|w|mo)$`
+	BudgetDuration string `json:"budgetDuration,omitempty"`
+
+	// RPMLimit is the requests per minute.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	RPMLimit *int64 `json:"rpmLimit,omitempty"`
+
+	// TPMLimit is the tokens per minute.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	TPMLimit *int64 `json:"tpmLimit,omitempty"`
+}
+
 // TenantQuotas defines resource consumption limits for this tenant.
 type TenantQuotas struct {
 	// MaxApps is the maximum number of apps this tenant may install.
@@ -780,6 +852,23 @@ type TenantQuotas struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxPods int32 `json:"maxPods,omitempty"`
+
+	// RunsMaxPods caps the number of pods in the tenant's namespace for
+	// runs. Runs have a quota of their own, so that they cannot take the
+	// capacity of the tenant's apps, nor the apps theirs.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	RunsMaxPods int32 `json:"runsMaxPods,omitempty"`
+
+	// RunsCPU caps the sum of container CPU in the tenant's namespace for
+	// runs. A run reserves what it may use, so this is both.
+	// +optional
+	RunsCPU *resource.Quantity `json:"runsCpu,omitempty"`
+
+	// RunsMemory caps the sum of container memory in the tenant's namespace
+	// for runs.
+	// +optional
+	RunsMemory *resource.Quantity `json:"runsMemory,omitempty"`
 }
 
 // TenantOrganization is who a tenant is, as its apps are told it. Its
@@ -880,6 +969,41 @@ type TenantPlatformAccess struct {
 func (t *Tenant) PlatformAdminsEnter() bool {
 	return t.Spec.PlatformAccess != nil && t.Spec.PlatformAccess.AdminsEnter
 }
+
+// TenantTokenEntries is a tenant's choice for its token entries.
+type TenantTokenEntries struct {
+	// Approval says whether a token entry needs the perimeter approver's
+	// approval before it is served. "required", and unset, it does. "waived"
+	// serves a token entry as soon as its component is installed, and takes
+	// effect only on a cluster whose claim allows tenants the choice
+	// (spec.tokenEntries.tenantsMayWaiveApproval); elsewhere it changes
+	// nothing. Only a profile of trustTier platform declares a token entry,
+	// and a person still needs the right to use the component.
+	// +optional
+	// +kubebuilder:validation:Enum=required;waived
+	Approval string `json:"approval,omitempty"`
+
+	// SessionMaxHours is how long a sign-in through one of this tenant's
+	// token entries lasts before the person signs in again. Unset, it is 4
+	// hours (DefaultTokenEntrySessionHours). Longer takes effect only on a
+	// cluster whose claim allows tenants the choice
+	// (spec.tokenEntries.tenantsMayExtendSessions), and never past the
+	// tenant's own sign-in (spec.session.maxHours); a profile that states a
+	// shorter sessionMaxAge keeps it. A program keeps what renews its tokens
+	// on the person's computer, so this bounds what a copy of it is worth.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=24
+	SessionMaxHours *int32 `json:"sessionMaxHours,omitempty"`
+}
+
+// DefaultTokenEntrySessionHours is how long a sign-in through a token entry
+// lasts when the tenant states nothing, or the cluster does not let it.
+const DefaultTokenEntrySessionHours int32 = 4
+
+// TokenEntryApprovalWaived is spec.tokenEntries.approval of a tenant whose
+// token entries need no approval.
+const TokenEntryApprovalWaived = "waived"
 
 // TenantCatalogue is a tenant's own catalogs and who may add them.
 type TenantCatalogue struct {
@@ -1071,6 +1195,16 @@ type TenantApp struct {
 	// +optional
 	Placed bool `json:"placed,omitempty"`
 
+	// CameWith names the app this one was installed together with: that
+	// app's profile names this one (ComponentProfile spec.comesWith), and
+	// the tenant did not have it. The director writes the key and removes
+	// the entry with the app it names; it is not uninstalled by hand. In
+	// every other respect the entry is an installed app.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	CameWith string `json:"cameWith,omitempty"`
+
 	// AddonGrants says which addons of this app every member of the tenant
 	// has access to by default. An addon is entitled by its own group, as an
 	// app is, and defaultGrant on an entry here is that addon's defaultGrant:
@@ -1250,6 +1384,20 @@ type PasswordPolicy struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=3650
 	MaxAgeDays int32 `json:"maxAgeDays,omitempty"`
+}
+
+// DefaultSessionMaxHours is how long a sign-in lasts when the tenant states
+// nothing: the twelve hours crossplane/compositions/tenant-default.yaml
+// writes into a tenant's realm, and the kernel realm's, which the installer
+// sets (scripts/lib/portal-login-bootstrap.sh).
+const DefaultSessionMaxHours int32 = 12
+
+// SessionMaxHours is how long this tenant's sign-ins last at most.
+func (t *Tenant) SessionMaxHours() int32 {
+	if t.Spec.Security != nil && t.Spec.Security.Session != nil && t.Spec.Security.Session.MaxHours > 0 {
+		return t.Spec.Security.Session.MaxHours
+	}
+	return DefaultSessionMaxHours
 }
 
 // SessionPolicy is how long a sign-in lasts.

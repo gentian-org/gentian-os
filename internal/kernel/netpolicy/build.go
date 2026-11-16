@@ -46,6 +46,11 @@ type BuildInput struct {
 	// built for these. A component the platform places writes its own and
 	// is not among them.
 	Apps []gentianov1alpha1.TenantApp
+	// Placed are the install names of the components the platform places
+	// in the tenant, which Apps leaves out. One of them that may speak as a
+	// person is a caller of the tenant's adapters like an installed one;
+	// nothing else is derived from them here.
+	Placed []string
 	// Profiles are the profiles by install name. They may name more than
 	// Apps -- a placed component's, for the pod selectors of a contract.
 	Profiles map[string]*gentianov1alpha1.ComponentProfile
@@ -114,7 +119,7 @@ func cacheAppNames(in BuildInput) []string {
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
 		// Memcached only: it is the cache that lives in the tenant's own
-		// namespace. A Redis app has no business with it.
+		// namespace. An app on the shared cache has no business with it.
 		if provisioner.CacheEngineOf(profile) != gentianov1alpha1.CacheEngineMemcached {
 			continue
 		}
@@ -185,11 +190,11 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 }
 
 // forPods points one app's policy at the pods the app has: built for the app
-// label the operator gives the pods of every chart it does not place
-// (podLabels), and given the labels in PodSelectors instead for a chart the
-// platform places, whose pods carry its release's. Every selector in the policy
-// that names the app by its label is replaced, the peers of its in-app
-// policy included.
+// label the operator gives the pods of every chart it does not place (the
+// label rule of its release), and given the labels in PodSelectors instead
+// for a chart the platform places, whose pods carry its release's. Every
+// selector in the policy that names the app by its label is replaced, the
+// peers of its in-app policy included.
 func (in BuildInput) forPods(app string, np *networkingv1.NetworkPolicy) *networkingv1.NetworkPolicy {
 	labels := in.PodSelectors[app]
 	if len(labels) == 0 {

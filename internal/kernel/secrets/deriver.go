@@ -13,6 +13,7 @@ package secrets
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 
 	"golang.org/x/crypto/hkdf"
@@ -35,9 +36,8 @@ type Deriver struct {
 }
 
 // NewDeriver constructs a Deriver from the master password and an optional
-// per-cluster derivation salt. An empty master is allowed (the operator falls
-// back to a random generator in that case), but callers should treat NewDeriver("")
-// as a misconfiguration in production.
+// per-cluster derivation salt. It checks neither; DeriverFromRecord is what
+// the operator builds its Deriver with.
 func NewDeriver(master string, salts ...string) *Deriver {
 	var salt string
 	if len(salts) > 0 {
@@ -47,6 +47,20 @@ func NewDeriver(master string, salts ...string) *Deriver {
 		master: []byte(master),
 		salt:   []byte(salt),
 	}
+}
+
+// DeriverFromRecord constructs a Deriver from the record at
+// MasterPasswordPath: its "value" is the master password and its "salt" the
+// cluster's derivation salt. A record without either is an error, as values
+// derived from it would not be the cluster's.
+func DeriverFromRecord(rec map[string]string) (*Deriver, error) {
+	switch {
+	case rec["value"] == "":
+		return nil, errors.New("the record holds no master password")
+	case rec["salt"] == "":
+		return nil, errors.New("the record holds no derivation salt")
+	}
+	return NewDeriver(rec["value"], rec["salt"]), nil
 }
 
 // HasMaster reports whether the deriver has a non-empty master password.

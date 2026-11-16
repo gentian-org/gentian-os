@@ -1029,7 +1029,7 @@ load_deployments_cluster_settings() {
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
              LETSENCRYPT_EMAIL KV_MOUNT OPENBAO_STORAGE ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
-             MAIL_EGRESS_HOST; do
+             MAIL_EGRESS_HOST MAIL_SUBMISSION MAIL_IMAPS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1044,6 +1044,8 @@ load_deployments_cluster_settings() {
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
+        claim_setting MAIL_SUBMISSION   mail.listeners.submission "${claim_file}"
+        claim_setting MAIL_IMAPS        mail.listeners.imaps "${claim_file}"
         claim_setting SECRETS_AT_REST   controlPlane.secretsAtRest "${claim_file}"
         claim_setting MONITORING_ENABLED monitoring.enabled "${claim_file}"
         claim_setting MONITORING_ALERTS_WEBHOOK monitoring.alerts.webhook "${claim_file}"
@@ -1731,7 +1733,7 @@ cleanup_orphaned_kyverno_webhooks() {
 # Globbing committed kernel/services/*/manifests/${env}/release.yaml files
 # (as the deleted update.sh --reconcile-releases did) misses most Release
 # CRs in this cluster: they are Crossplane-composition-generated (owned by
-# XApp/XCluster, e.g. the system tier's mariadb, redis and seaweedfs), which
+# XApp/XCluster, e.g. the system tier's mariadb, cache and seaweedfs), which
 # a file-globbing approach can't see at all.
 # This checks live Release objects directly instead, regardless of how
 # they were created, and force-reconciles (annotate + let Crossplane retry)
@@ -2110,17 +2112,8 @@ check_prereqs() {
     # wins is the Application's business, not this check's. Checking one and
     # announcing it as "the operator image" is how a run reported a tag the
     # cluster was never going to pull. Both are checked, and each is named.
-    local _os_ok=1 _t
-    for _t in "${_os_tag}" "${GENTIAN_OS_IMAGE_TAG:-}"; do
-        [[ -n "${_t}" ]] || continue
-        if validate_image_tag "${_os_repo}" "${_t}"; then
-            success "Operator image ${_os_repo}:${_t} exists"
-        else
-            error "  ${_os_repo}:${_t} does not exist."
-            error "  Set image.tag in ${_os_values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
-            _os_ok=0
-        fi
-    done
+    local _os_ok=1
+    check_build_images "${_os_values}" "${_os_tag}" "${GENTIAN_OS_IMAGE_TAG:-}" || _os_ok=0
     if [[ -n "${_os_tag}" && -n "${GENTIAN_OS_IMAGE_TAG:-}" && "${_os_tag}" != "${GENTIAN_OS_IMAGE_TAG}" ]]; then
         info "  The cluster's values file says ${_os_tag}; this run renders ${GENTIAN_OS_IMAGE_TAG}."
     fi
@@ -2622,12 +2615,50 @@ gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
 # their own -- main, develop and the checkout's branch -- so a run with
 # GENTIAN_OS_BRANCH unset could describe three different refs.
 gentian_os_ref() {
-    local ref="${GENTIAN_OS_BRANCH:-}"
+    local ref
+    # The claim first: spec.release is where a cluster's release is declared
+    # once it exists (docs/concepts/versioning.md §2), and the installer
+    # renders what the claim says. install.env names the ref of the first
+    # install, which the scaffold writes into the claim.
+    ref="$(claim_release_ref || true)"
+    [[ -n "${ref}" ]] || ref="${GENTIAN_OS_BRANCH:-}"
     if [[ -z "${ref}" ]]; then
         ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
         [[ "${ref}" != "HEAD" ]] || ref=""
     fi
     printf '%s\n' "${ref}"
+}
+
+# cluster_claim_path -- this cluster's Cluster claim in the deployments
+# checkout, whether or not it exists yet.
+cluster_claim_path() {
+    printf '%s/clusters/%s/kernel/claims/cluster.yaml\n' \
+        "${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}" \
+        "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
+}
+
+# claim_release_ref -- the ref the Cluster claim's spec.release names: its
+# version (a tag) or its track (a branch). Nothing when the claim does not
+# exist or names no release. Read with yq where there is one, else with awk
+# over the two-space indented block, which is the shape the scaffold and the
+# director write.
+claim_release_ref() {
+    local claim out
+    claim="$(cluster_claim_path)"
+    [[ -f "${claim}" ]] || return 1
+    if out="$(yq_get '.spec.release.version // .spec.release.track' "${claim}" 2>/dev/null)" && [[ -n "${out}" ]]; then
+        printf '%s\n' "${out}"
+        return 0
+    fi
+    out="$(awk '
+        /^  release:[[:space:]]*$/ { inblock = 1; next }
+        inblock && /^  [^ #]/ { inblock = 0 }
+        inblock && /^    (version|track):/ {
+            sub(/^    (version|track):[[:space:]]*/, ""); sub(/[[:space:]]*#.*$/, ""); gsub(/["'"'"']/, "")
+            if ($0 != "") { print; exit }
+        }' "${claim}")"
+    [[ -n "${out}" ]] || return 1
+    printf '%s\n' "${out}"
 }
 
 # The gentian-ui refs a cluster follows when install.env names none, each
@@ -2638,11 +2669,38 @@ gentian_os_ref() {
 GENTIAN_UI_DEFAULT_BRANCH="main"
 GENTIAN_UI_DEFAULT_CHART_BRANCH="develop"
 gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_BRANCH}}"; }
-gentian_ui_chart_branch()  { printf '%s\n' "${PORTAL_IMAGE_TAG:-${GENTIAN_UI_DEFAULT_CHART_BRANCH}}"; }
+# The UI charts follow the release: a cluster on a release tag installs the
+# charts gentian-ui published under that tag, a cluster on a branch the
+# branch's. PORTAL_IMAGE_TAG overrides, for a cluster whose UIs are
+# deliberately elsewhere.
+gentian_ui_chart_branch() {
+    if [[ -n "${PORTAL_IMAGE_TAG:-}" ]]; then
+        printf '%s\n' "${PORTAL_IMAGE_TAG}"
+        return 0
+    fi
+    local ref
+    ref="$(claim_release_ref || true)"
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "${ref}" ;;
+        "") printf '%s\n' "${GENTIAN_UI_DEFAULT_CHART_BRANCH}" ;;
+        *) printf '%s\n' "${ref}" ;;
+    esac
+}
 
 resolve_gentian_os_branch() {
-    local branch
-    if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
+    local branch declared
+    declared="$(claim_release_ref || true)"
+    if [[ -n "${declared}" && -n "${GENTIAN_OS_BRANCH:-}" && "${declared}" != "${GENTIAN_OS_BRANCH}" ]]; then
+        error "install.env names GENTIAN_OS_BRANCH=${GENTIAN_OS_BRANCH}, and the Cluster claim's"
+        error "  spec.release names ${declared}. The claim is where the cluster's release is"
+        error "  declared, and this run renders what it says. To move the cluster:"
+        error "    kubectl gentian release set vX.Y.Z    (or: release track <branch>)"
+        error "  then remove GENTIAN_OS_BRANCH from install.env, or set it to ${declared}."
+        return 1
+    fi
+    if [[ -n "${declared}" ]]; then
+        branch="${declared}"
+    elif [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
         branch="${GENTIAN_OS_BRANCH}"
     else
         branch="$(gentian_os_ref)"
@@ -2795,6 +2853,52 @@ _verify_gentian_os_ref_exists() {
 # checkout's build (_v5_os_build_pinned). `./install.sh --only B-01` is that
 # and nothing else.
 # =============================================================================
+# gentian_os_build_images — the images CI builds from one gentian-os commit and
+# tags alike (.github/workflows/ci.yaml: the docker job's gentian-os, the images
+# job's matrix), one per line. A run pins each of them to the operator's tag:
+# the operator chart its own and storage-tools, the identity appset
+# keycloak-event-listener. They are published by separate jobs, so one can be
+# missing while the operator's exists. scripts/tests/test-build-images.sh keeps
+# the list in step with both.
+gentian_os_build_images() {
+    printf '%s\n' gentian-os keycloak-event-listener storage-tools
+}
+
+# check_build_images VALUES_FILE TAG... — every image of gentian_os_build_images
+# exists at every TAG given (empty ones and repeats skipped); each missing one is
+# named. Returns 1 when any is missing.
+#
+# CI publishes them in separate jobs, so the operator's can exist while another
+# does not. A run that checked the operator's alone moved Keycloak to a listener
+# image that was never published, and nobody could sign in.
+check_build_images() {
+    local values="$1" t img seen=" " rc=0
+    shift
+    for t in "$@"; do
+        [[ -n "${t}" && "${seen}" != *" ${t} "* ]] || continue
+        seen+="${t} "
+        while IFS= read -r img; do
+            if validate_image_tag "ghcr.io/gentian-org/${img}" "${t}"; then
+                if [[ "${img}" == "gentian-os" ]]; then
+                    success "Operator image ghcr.io/gentian-org/${img}:${t} exists"
+                else
+                    success "Image ghcr.io/gentian-org/${img}:${t} exists"
+                fi
+            else
+                error "  ghcr.io/gentian-org/${img}:${t} does not exist."
+                if [[ "${img}" == "gentian-os" ]]; then
+                    error "  Set image.tag in ${values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
+                else
+                    error "  CI builds it beside the operator's image from the same commit. Wait until"
+                    error "  that CI run is green, or re-run its failed job, before installing this tag."
+                fi
+                rc=1
+            fi
+        done < <(gentian_os_build_images)
+    done
+    return "${rc}"
+}
+
 # gentian_os_image_tag_moves TAG — true when TAG is not one CI publishes once
 # and never again: a release version (1.2.3) or <branch>-<short-sha>.
 gentian_os_image_tag_moves() {
@@ -2880,12 +2984,13 @@ gentian_os_revision() {
 # "eval" subcommand, or kislyuk/yq's jq-style filter) since both are seen in
 # the wild as `yq`. Echoes the value and returns 0, or returns 1 (nothing
 # echoed) if the field is absent/null or the file doesn't exist.
+# -N and </dev/null: as _gentian_yq (scripts/lib/versions.sh).
 # =============================================================================
 yq_get() {
     local filter="$1" file="$2"
     [[ -f "${file}" ]] || return 1
     local out
-    if out=$(yq eval "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+    if out=$(yq eval -N "${filter}" "${file}" 2>/dev/null </dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
         echo "${out}"
         return 0
     fi

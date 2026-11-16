@@ -252,6 +252,95 @@ type ServiceRequirements struct {
 	// through the platform's TURN edge. See TURNRequirement.
 	// +optional
 	TURN *TURNRequirement `json:"turn,omitempty"`
+
+	// Runs declares that the component starts runs: of the actions installed
+	// in its tenant, and of images of its own. See RunsRequirement.
+	// +optional
+	Runs *RunsRequirement `json:"runs,omitempty"`
+}
+
+// RunsRequirement declares that the component starts runs through the
+// dispatcher. It is given a key of its own for that (Secret runs-<component>,
+// RUNS_URL and RUNS_KEY), good for its tenant's runs and nothing else.
+//
+// A run is one pod in the tenant's namespace for runs. It reaches the
+// component that started it, at Callback, and nothing else of the platform:
+// its inputs and outputs, a question to a person and a call to an adapter all
+// go through the component, with a credential the component made for that
+// run.
+type RunsRequirement struct {
+	// Callback is where a run reaches this component.
+	Callback RunsCallback `json:"callback"`
+
+	// Concurrency is the most runs the component has under way at once.
+	// +optional
+	// +kubebuilder:default=4
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=64
+	Concurrency int32 `json:"concurrency,omitempty"`
+
+	// Own are runs of the component's own images, such as a runner that is
+	// not an action of a catalog. Each is started like an action, by this
+	// component alone.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=8
+	Own []OwnRun `json:"own,omitempty"`
+}
+
+// RunsCallback is the Service of the component a run calls back to. A run's
+// pod is let through to the component's pods on that port and to nothing else.
+type RunsCallback struct {
+	// Service is the name of the Service, in the component's namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Service string `json:"service"`
+
+	// Port is the Service's port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Path is put before the paths a run calls. Empty means none.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^(/[A-Za-z0-9._~-]+)*$`
+	Path string `json:"path,omitempty"`
+}
+
+// OwnRun is one run of the component's own.
+type OwnRun struct {
+	// Name is what the component asks for.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// Image is the repository of the image, which package.images pins.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Image string `json:"image"`
+
+	// Command is what a run starts in the image, as an action's is.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=1024
+	// +listType=atomic
+	Command []string `json:"command"`
+
+	// DeadlineSeconds is the longest one attempt may take.
+	// +optional
+	// +kubebuilder:default=600
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=86400
+	DeadlineSeconds int32 `json:"deadlineSeconds,omitempty"`
+
+	// Resources is what one attempt is given.
+	// +optional
+	Resources *ActionResources `json:"resources,omitempty"`
 }
 
 // TURNRequirement declares that the component's clients relay real-time
@@ -418,10 +507,19 @@ type PartnersRequirement struct {
 //
 // A component that can obtain a person's token for any app of the tenant is
 // of platform trust.
+//
+// A component that only exchanges the token of a person who is present
+// (exchange, below) signs no statements and names no keys. It is given the
+// client and the Secret, without VOUCHING_ISSUER, and is not entered as an
+// issuer: the realm believes nothing it says about anybody.
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || (has(self.exchange) && self.exchange)",message="vouching.keys is required: only a component that does nothing but exchange a present person's token (exchange: true) may leave it out"
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.director) || size(self.director) == 0",message="vouching.director needs vouching.keys: a token for the director is obtained with a signed statement"
 type VouchingRequirement struct {
 	// Keys says where the component publishes the keys its statements are
-	// signed with, as a JWKS. The realm fetches them from there.
-	Keys VouchingKeys `json:"keys"`
+	// signed with, as a JWKS. The realm fetches them from there. Left out
+	// only by a component that exchanges and does not vouch.
+	// +optional
+	Keys *VouchingKeys `json:"keys,omitempty"`
 
 	// Director names what a token the component obtains for a person may do
 	// at the platform's own API, beside the apps: plans-read reads the
@@ -435,6 +533,16 @@ type VouchingRequirement struct {
 	// +kubebuilder:validation:MaxItems=2
 	// +listType=set
 	Director []DirectorScope `json:"director,omitempty"`
+
+	// Exchange lets the component's client also exchange a person's own
+	// token for one valid at a single app (RFC 8693), for the same scopes it
+	// may ask for when it vouches. The realm exchanges a token only for a
+	// client the token names, and only a token entry that says so
+	// (exchangedBy on the entry) names this one. So what the component can
+	// exchange is what came in through such an entry: a person present, who
+	// connected a program and need not be linked.
+	// +optional
+	Exchange bool `json:"exchange,omitempty"`
 }
 
 // DirectorScope is one thing a vouched token may do at the director.
@@ -531,8 +639,9 @@ type RightsRequirement struct {
 // Being present is the declaration.
 //
 // The gateway speaks the OpenAI API. The component receives its base address
-// and a key of its own -- random, per tenant and component, never derived
-// from their names -- in the Secret llm-credentials-<component> of the
+// and a key of its own -- made in the vault per tenant and component, derived
+// from the cluster's master password in derived mode and random otherwise, never
+// from their names alone -- in the Secret llm-credentials-<component> of the
 // tenant's namespace (OPENAI_API_BASE, OPENAI_API_BASE_URL, OPENAI_API_KEY),
 // and, where its chart takes them as values, through valueMapping.llm.
 //
@@ -1920,7 +2029,22 @@ type AppSecret struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	ValuePath string `json:"valuePath"`
+
+	// Format is what the value is. Left out, it is a random string of 40 hex
+	// characters. ec-p256 makes it a private key instead: an EC P-256 key as
+	// PKCS #8 in PEM, for a component that signs what it issues and has to
+	// keep signing with the same key across upgrades. A key is held,
+	// delivered, kept and destroyed exactly as any other generated secret.
+	// +optional
+	// +kubebuilder:validation:Enum=ec-p256
+	Format AppSecretFormat `json:"format,omitempty"`
 }
+
+// AppSecretFormat is what a generated secret's value is.
+type AppSecretFormat string
+
+// AppSecretFormatECP256 is an EC P-256 private key, PKCS #8 in PEM.
+const AppSecretFormatECP256 AppSecretFormat = "ec-p256"
 
 // SuppliedSecret declares a credential an app needs that only a person can
 // provide: a payment provider's keys, an API token of a service outside the
@@ -1928,7 +2052,8 @@ type AppSecret struct {
 // CredentialRequirement of the tenant the app is installed in, shown in that
 // tenant's Admin Console under Credentials and set there, and the app's
 // values carry the fields once they are. Until then the app waits, with the
-// requirement listed as unsatisfied.
+// requirement listed as unsatisfied. An action is not Ready until then, and
+// a run of it reads the credential as a file.
 //
 // Stored at gentian-os/tenants/{tenant}/apps/{app}/supplied/{name}, one
 // property per field, with the app's other credentials: purging the app
@@ -1969,7 +2094,9 @@ type SuppliedField struct {
 	Key string `json:"key"`
 
 	// ValuePath is the Helm value key that receives the value, as for a
-	// generated secret.
+	// generated secret. For an action, which has no chart, it is the name
+	// the value has in the credential's file, /run/credentials/{name}.env
+	// in a run's pod: letters, digits and underscores.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	ValuePath string `json:"valuePath"`

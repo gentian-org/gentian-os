@@ -1107,9 +1107,9 @@ echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a pas
 		shellSingleQuote(keycloak.PlatformGroupPattern), shellSingleQuote(source.hostMoves()),
 		shellSingleQuote(keycloak.PlatformMarkerAttribute), shellSingleQuote(keycloak.PlatformMarkerValue)))
 	restore.Env = keycloakAdminEnv()
-	return restoreJob(p, []corev1.Container{
+	return keycloak.AsProvisioner(restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "realm.tar.gz"),
-	}, restore, nil)
+	}, restore, nil))
 }
 
 func quotedRealm(realm string) string { return shellSingleQuote(realm) }

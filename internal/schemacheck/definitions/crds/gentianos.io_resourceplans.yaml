@@ -177,6 +177,32 @@ spec:
                       namespace — reserved capacity, priced, as RequestsCPU is.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
+                  runsCpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RunsCPU caps the sum of container CPU in the tenant's namespace for
+                      runs. A run reserves what it may use, so this is both.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  runsMaxPods:
+                    description: |-
+                      RunsMaxPods caps the number of pods in the tenant's namespace for
+                      runs. Runs have a quota of their own, so that they cannot take the
+                      capacity of the tenant's apps, nor the apps theirs.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  runsMemory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RunsMemory caps the sum of container memory in the tenant's namespace
+                      for runs.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
                   storage:
                     anyOf:
                     - type: integer

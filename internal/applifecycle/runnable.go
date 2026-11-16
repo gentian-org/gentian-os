@@ -20,6 +20,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/releaseindex"
 	"github.com/gentian-org/gentian-os/internal/usagestatistics"
 )
 
@@ -47,6 +48,7 @@ func NewRunnableFromEnv(mgr manager.Manager, tenancyMode string) (*Runnable, err
 		LiveReader:        mgr.GetAPIReader(),
 		TenancyMode:       tenancyMode,
 		DeploymentsRepo:   os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
+		ReleaseFeed:       releaseindex.FeedFromEnv(),
 	})
 	if err != nil {
 		return nil, err

@@ -191,6 +191,16 @@ openbaoNamespace: "kernel-secrets"
 # namespaces.
 servicesNamespace: "kernel-edge"
 
+# The accounts, beside the operator, that deliver what the platform rendered
+# into a tenant's namespace, by the ServiceAccounts they act as in the
+# provisioning namespace (crossplane/providers/). The guard of the app labels
+# and the guard of a release's patch
+# (templates/app-label-guard.yaml, templates/release-patch-guard.yaml) name
+# them.
+appLabelGuard:
+  providerKubernetesServiceAccount: provider-kubernetes
+  tenantAppsHelmServiceAccount: provider-helm-tenant-apps
+
 # Where each kernel function runs, from kernel/namespaces.yaml. An install
 # passes every entry; empty means the operator answers from internal/layout's
 # own table, which is the same layout -- so a chart that forgot to set these
@@ -358,6 +368,23 @@ bouncer:
     limits:
       memory: 128Mi
 
+# The dispatcher: what a component that declares requires.services.runs asks
+# to start a run. It runs in the control namespace from this image, and its
+# rights at the Kubernetes API are pods in the tenants' namespaces for runs.
+dispatcher:
+  enabled: true
+  replicas: 2
+  # The audience of the token the director presents at the dispatcher's
+  # listener for acts. The one place it is named: the dispatcher requires it
+  # in the API server's answer, and the director's token is projected for it.
+  audience: gentian-os-dispatcher
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
 # The usher: the reads a signed-in person's desktop asks for -- what is here
 # and what they may open -- run in the control namespace from this image,
 # beside the director. It holds no git credential and no Kubernetes access.
@@ -392,7 +419,7 @@ usher:
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
-  redisHost: ""
+  cacheHost: ""
   # Empty → http://gentian-idp-keycloak-keycloakx-http.<authentication namespace>.svc.cluster.local:8080
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
@@ -482,6 +509,13 @@ networkMode: ""
 # follow the same switch (internal/controller/tenant_network_policy.go).
 kernelNetworkPolicies: "true"
 
+# The cluster's switch for the policies on the system tier's servers (the
+# installer's STORE_NETWORK_POLICIES, through the bootstrap chart), which the
+# model gateway's chart renders its policies by. The operator writes the
+# egress policy of the gateway's PostgreSQL by the same switch
+# (internal/controller/model_gateway_database_egress.go). On unless "false".
+storeNetworkPolicies: "true"
+
 # Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
 # programs the tunnel's routing rules for kernel and tenant hostnames, and
 # annotates the kernel Gateway so external-dns publishes records that reach it.
@@ -556,7 +590,7 @@ openbao:
 database:
   clusterName: postgres
 
-# Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
+# Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/cache).
 # The postgres client major must be >= the CNPG server major (pg_dump refuses
 # a newer server); CNPG's operator default is 17.x today.
 # The mariadb client is the server's own image (charts/infra/mariadb): a newer
@@ -564,7 +598,8 @@ database:
 provisioners:
   postgres: "postgres:17-alpine"
   mariadb: "mariadb:11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
-  redis: "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
+  # The cache's client, redis-cli: the cache's own image (charts/infra/cache).
+  cache: "docker.io/valkey/valkey:8.1.11-alpine@sha256:2602ace2be6569bc2bbb06f873776516ab9089821525be34f4305c67eb9db02a"
   # The image of the Jobs that move a tenant's objects and of the identity
   # Jobs (realm provisioning, export, import). Empty:
   # ghcr.io/gentian-org/storage-tools at the operator's own image tag
@@ -804,9 +839,12 @@ membershipListener:
 
 # A NetworkPolicy on the operator's own pods, and on nothing else. It leaves
 # the app-lifecycle port (appLifecycle.port) reachable only from the
-# director's and the usher's pods in this namespace, and lists the operator's
-# other ports -- metrics, health, the membership listener, the admission
-# webhook -- as open as they are without a policy. Needs a CNI that enforces
+# director's and the usher's pods in this namespace, the membership
+# listener's only from the Keycloak pods of the authentication namespace,
+# the metrics port only from the Prometheus pods of the observability
+# namespace, lists the admission webhook as open as it is without a policy,
+# and lists the health port nowhere (the kubelet's probes come from the pod's
+# own node, which NetworkPolicy always admits). Needs a CNI that enforces
 # NetworkPolicy; on one that does not it has no effect. Off removes the
 # policy and leaves the callers' ServiceAccount identity as the only check.
 networkPolicy:

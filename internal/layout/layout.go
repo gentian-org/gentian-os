@@ -33,6 +33,9 @@ const (
 	TierShared    Tier = "shared"
 	TierTenant    Tier = "tenant"
 	TierTenantDMZ Tier = "tenant-dmz"
+	// TierTenantRuns is a tenant's namespace for runs: pods the dispatcher
+	// starts for one call each, and nothing else.
+	TierTenantRuns Tier = "tenant-runs"
 )
 
 // Function names what a kernel namespace is for.
@@ -96,6 +99,9 @@ func Tenant(name string) string { return "tenant-" + name }
 // TenantDMZ returns a tenant's perimeter namespace.
 func TenantDMZ(name string) string { return "tenant-" + name + "-dmz" }
 
+// TenantRuns returns a tenant's namespace for runs.
+func TenantRuns(name string) string { return "tenant-" + name + "-runs" }
+
 // System returns a system function's namespace.
 func System(fn string) string { return "system-" + fn }
 
@@ -108,6 +114,7 @@ func TenantLabels(tenant string, dmz bool) map[string]string {
 	return map[string]string{LabelTier: string(tier), LabelFunction: "tenant", LabelTenant: tenant}
 }
 
-// MaxTenantName bounds a tenant name so that tenant-<t>-dmz is a valid
-// namespace name (63 characters).
-const MaxTenantName = 63 - len("tenant-") - len("-dmz")
+// MaxTenantName bounds a tenant name so that tenant-<t>-dmz and
+// tenant-<t>-runs, the longer of the two, are valid namespace names (63
+// characters).
+const MaxTenantName = 63 - len("tenant-") - len("-runs")

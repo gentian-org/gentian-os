@@ -621,7 +621,9 @@ func (s *Server) write(ctx context.Context, ids StoreIDs, _ Entry, r *http.Reque
 			// Who is in a group is the realm's to say, through the
 			// platform: a component that could write it could make
 			// anybody a member of anything its model lets a group hold.
-			if isGroupTyped(t) {
+			// What a group's members hold of the component's own objects
+			// is the component's to say.
+			if isAboutGroup(t) {
 				return nil, &refusal{status: http.StatusForbidden, code: "forbidden",
 					message: fmt.Sprintf("%s[%d]: %v", name, i, errForbiddenGroupTuple)}
 			}

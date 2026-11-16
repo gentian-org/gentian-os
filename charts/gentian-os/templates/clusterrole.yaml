@@ -591,6 +591,14 @@ rules:
     resources:
     - clusterroles
     resourceNames:
+    - gentian-dispatcher-runs
+    verbs:
+    - bind
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - clusterroles
+    resourceNames:
     - gentian-profile-role-tenant-exports
     verbs:
     - bind

@@ -210,7 +210,8 @@ func (r *ComponentReconciler) ownPublicAddressRule(ctx context.Context, granted 
 }
 
 // componentsAskingForEgress maps a change of the edge's Service to every
-// component whose profile asks for egress or is told the store: the rule above follows the
+// component whose profile asks for egress, is told the store or fetches the
+// issuer's keys (issuer_keys.go): the rules follow the
 // Service's address, ports and selector, and a LoadBalancer address arrives
 // after the components that would reach it were reconciled.
 func componentsAskingForEgress(c client.Client) handler.EventHandler {
@@ -221,7 +222,7 @@ func componentsAskingForEgress(c client.Client) handler.EventHandler {
 		}
 		asking := map[string]struct{}{}
 		for i := range profiles.Items {
-			if p := profiles.Items[i].Privileges(); (p != nil && len(p.Egress) > 0) || wantsStore(&profiles.Items[i]) {
+			if p := profiles.Items[i].Privileges(); (p != nil && len(p.Egress) > 0) || wantsStore(&profiles.Items[i]) || wantsIssuerKeys(&profiles.Items[i]) {
 				asking[profiles.Items[i].Name] = struct{}{}
 			}
 		}

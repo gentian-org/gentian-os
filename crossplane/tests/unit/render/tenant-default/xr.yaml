@@ -60,5 +60,10 @@ spec:
     storage: 50Gi
     maxApps: 10
     maxPods: 100
+    # Applied by the operator to the namespace for runs, not by the
+    # Composition: carried so that every quota of a tenant is on the XTenant.
+    runsMaxPods: 10
+    runsCpu: "2"
+    runsMemory: 4Gi
   compositeDeletePolicy: Background
   resourceRefs: []

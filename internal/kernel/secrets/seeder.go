@@ -12,10 +12,16 @@ package secrets
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
+	"sync"
 )
 
 // Writer is the narrow slice of KVClient that the Seeder needs. It exists so
@@ -53,8 +59,10 @@ type ModeFunc func(ctx context.Context) (Mode, error)
 // info=field) — fully deterministic, so an app uninstalled and reinstalled
 // gets identical credentials back without external state. Tenant-app salts
 // include the tenant component (CategoryPath/InternalPath); kernel-shared
-// salts do not (KernelPath). When the master password is unavailable the
-// seeder falls back to crypto/rand.
+// salts do not (KernelPath). The master password and salt are read from the
+// vault when a value is first derived (see deriver); while they cannot be
+// read no value is made, and the error wraps ErrNoMasterPassword, so the
+// reconcile that asked fails and is retried.
 //
 // In ModeRandom every value is drawn from crypto/rand and the master password
 // is not used, whether or not the Seeder holds it.
@@ -66,13 +74,16 @@ type ModeFunc func(ctx context.Context) (Mode, error)
 // made afterwards follows the new mode.
 type Seeder struct {
 	w    Writer
-	d    *Deriver
 	mode ModeFunc
+
+	mu sync.Mutex
+	d  *Deriver
 }
 
 // NewSeeder constructs a Seeder backed by w (typically a *KVClient) and
-// derivation backed by d. d may be nil, in which case credentials are
-// generated with crypto/rand instead of derived. The Seeder is in
+// derivation backed by d. d may be nil, and the operator passes nil: the
+// Seeder then reads the master password and salt from w at
+// MasterPasswordPath when it first derives a value. The Seeder is in
 // ModeDerived until WithMode says where the mode is read from.
 func NewSeeder(w Writer, d *Deriver) *Seeder {
 	return &Seeder{w: w, d: d}
@@ -92,25 +103,55 @@ func (s *Seeder) KV() *KVClient {
 	return kv
 }
 
-// derives reports whether a value made now is computed from the master
-// password, and so comes out the same whenever it is made again.
-func (s *Seeder) derives(ctx context.Context) (bool, error) {
+// derivation returns the Deriver a value made now is computed with: one in
+// ModeDerived, nil in ModeRandom, where values are drawn from crypto/rand.
+func (s *Seeder) derivation(ctx context.Context) (*Deriver, error) {
 	mode := ModeDerived
 	if s.mode != nil {
 		m, err := s.mode(ctx)
 		if err != nil {
-			return false, fmt.Errorf("secret mode: %w", err)
+			return nil, fmt.Errorf("secret mode: %w", err)
 		}
 		mode = m
 	}
 	switch mode {
 	case ModeDerived:
-		return s.d != nil && s.d.HasMaster(), nil
+		return s.deriver(ctx)
 	case ModeRandom:
-		return false, nil
+		return nil, nil
 	default:
-		return false, fmt.Errorf("secret mode: %q is neither %q nor %q", mode, ModeDerived, ModeRandom)
+		return nil, fmt.Errorf("secret mode: %q is neither %q nor %q", mode, ModeDerived, ModeRandom)
 	}
+}
+
+// CheckDerivation reports whether a value made now could be made: in
+// ModeDerived, whether the master password and salt can be read. It changes
+// nothing; the operator asks it once at start so a missing master password
+// shows in the log before the first reconcile needs it.
+func (s *Seeder) CheckDerivation(ctx context.Context) error {
+	_, err := s.derivation(ctx)
+	return err
+}
+
+// deriver returns the Seeder's Deriver: the one it was built with, or else
+// one from the master password and salt at MasterPasswordPath, read when first
+// needed and kept once read. Until a master password and a salt can be read
+// the error wraps ErrNoMasterPassword and says why; the next call reads again.
+func (s *Seeder) deriver(ctx context.Context) (*Deriver, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.d != nil && s.d.HasMaster() {
+		return s.d, nil
+	}
+	rec, err := s.w.Get(ctx, MasterPasswordPath)
+	if err == nil {
+		var d *Deriver
+		if d, err = DeriverFromRecord(rec); err == nil {
+			s.d = d
+			return d, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: read %s: %w", ErrNoMasterPassword, MasterPasswordPath, err)
 }
 
 // generated is a value the Seeder made, and whether making it again would
@@ -120,20 +161,53 @@ type generated struct {
 	reproducible bool
 }
 
-// gen returns n hex characters: HKDF-derived from (salt, info) in ModeDerived
-// when a master is configured, otherwise crypto/rand.
+// gen returns n hex characters: HKDF-derived from (salt, info) in ModeDerived,
+// crypto/rand in ModeRandom.
 func (s *Seeder) gen(ctx context.Context, salt, info string, n int) (generated, error) {
 	if n <= 0 {
 		n = 40
 	}
-	derives, err := s.derives(ctx)
+	d, err := s.derivation(ctx)
 	if err != nil {
 		return generated{}, err
 	}
-	if derives {
-		return generated{value: s.d.Derive(salt, info, n), reproducible: true}, nil
+	if d != nil {
+		return generated{value: d.Derive(salt, info, n), reproducible: true}, nil
 	}
 	return generated{value: randomHex(n)}, nil
+}
+
+// genKey returns an EC P-256 private key, PKCS #8 in PEM: in ModeDerived the
+// key whose secret number is HKDF-derived from the salt, in ModeRandom one
+// from crypto/rand.
+//
+// 32 derived bytes are a P-256 secret number unless they are zero or not
+// below the curve's order, which one draw in four billion is; the next
+// draw, under the next info, is taken then.
+func (s *Seeder) genKey(ctx context.Context, salt string) (generated, error) {
+	d, err := s.derivation(ctx)
+	if err != nil {
+		return generated{}, err
+	}
+	var key *ecdsa.PrivateKey
+	if d == nil {
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return generated{}, err
+		}
+	}
+	for draw := 0; key == nil; draw++ {
+		number, err := hex.DecodeString(d.Derive(salt, fmt.Sprintf("ec-p256/%d", draw), 64))
+		if err != nil {
+			return generated{}, err
+		}
+		key, _ = ecdsa.ParseRawPrivateKey(elliptic.P256(), number)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return generated{}, err
+	}
+	value := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	return generated{value: value, reproducible: d != nil}, nil
 }
 
 // randomHex returns n hex characters from crypto/rand.
@@ -383,7 +457,7 @@ func (s *Seeder) SeedS3(ctx context.Context, path string, base S3Creds) (S3Creds
 	}, nil
 }
 
-// --- Cache (Redis) -----------------------------------------------------------
+// --- Cache -------------------------------------------------------------------
 
 // CacheCreds is the set of values written to …/cache.
 type CacheCreds struct {
@@ -394,7 +468,7 @@ type CacheCreds struct {
 }
 
 // SeedCache derives the cache password from the master. Host and port are refreshed
-// on reconcile so infrastructure moves (e.g. shared Redis in gentian-infra-dev) propagate.
+// on reconcile so a move of the shared cache propagates.
 //
 // User is the per-app ACL user the cache reconciler provisions. It is derived from
 // the tenant and app names rather than generated, but it is recorded here so apps can
@@ -473,8 +547,8 @@ type ModelAccessCreds struct {
 
 // SeedModelAccess makes the key an app presents to the model gateway and
 // records it with the gateway's address. The key is generated as a database
-// password is: derived from the master for this tenant and app, or random
-// where there is no master, and write-once either way -- so an app
+// password is: derived from the master for this tenant and app in derived
+// mode, random in random mode, and write-once either way -- so an app
 // uninstalled and installed again holds the key it held, and nothing about
 // the key follows from the tenant's and the app's names. prefix is what the
 // gateway requires a key to begin with. The address is refreshed on every
@@ -679,8 +753,25 @@ func emptyRecord(rec map[string]string) bool {
 // an app's data back readable after a purge, in another tenant or on another
 // cluster, in both modes.
 func (s *Seeder) SeedAppSecret(ctx context.Context, tenant, app, name string) (string, error) {
+	return s.SeedAppSecretAs(ctx, tenant, app, name, "")
+}
+
+// FormatECP256 is the format of an app secret that is a private key: EC
+// P-256, PKCS #8 in PEM. Any other format is the random string.
+const FormatECP256 = "ec-p256"
+
+// SeedAppSecretAs is SeedAppSecret for a secret whose profile says what the
+// value is. A key is made, stored and kept as the string is: derived or
+// random as the mode says, and the first one stored stays the path's.
+func (s *Seeder) SeedAppSecretAs(ctx context.Context, tenant, app, name, format string) (string, error) {
 	salt := InternalPath(tenant, app, name)
-	g, err := s.gen(ctx, salt, "value", 40)
+	var g generated
+	var err error
+	if format == FormatECP256 {
+		g, err = s.genKey(ctx, salt)
+	} else {
+		g, err = s.gen(ctx, salt, "value", 40)
+	}
 	if err != nil {
 		return "", fmt.Errorf("seed app-secret(%s/%s/%s): %w", tenant, app, name, err)
 	}
@@ -771,25 +862,48 @@ type ContractCreds struct {
 	Password string
 }
 
-// SeedContract writes a unique password into OpenBao for an integration contract.
+// ContractUser is the account the two sides of a contract share the password
+// of. It follows from the contract's name alone and names no address.
+func ContractUser(contract string) string {
+	return "gentian-contract-" + contract
+}
+
+// SeedContract writes a unique password into OpenBao for an integration
+// contract, and the contract's user with it.
 //
-// The endpoint and the user are written empty with it, and are the binding's
-// to fill (IntegrationBindingReconciler): a component that maps them is
-// installed whether or not the other side of the contract is, and the
-// ExternalSecret that reads them fails on a property the path does not hold.
+// The endpoint is written empty, and is the binding's to fill
+// (IntegrationBindingReconciler): a component that maps it is installed
+// whether or not the other side of the contract is, and the ExternalSecret
+// that reads it fails on a property the path does not hold.
+//
+// The user is not the binding's: a provider that makes the account its
+// consumers sign in with is installed before any of them is bound, and a
+// release that maps an empty user is never installed. A path seeded before
+// the user was is given it here.
 func (s *Seeder) SeedContract(ctx context.Context, tenant, contract string) (ContractCreds, error) {
 	salt := ContractPath(tenant, contract)
 	g, err := s.gen(ctx, salt, "password", 40)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
 	}
+	user := ContractUser(contract)
 	got, err := s.seedAndRead(ctx, salt, map[string]string{
 		"password": g.value,
 		"endpoint": "",
-		"user":     "",
+		"user":     user,
 	}, g.reproducible)
 	if err != nil {
 		return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): %w", tenant, contract, err)
+	}
+	if got["user"] != user {
+		with := maps.Clone(got)
+		if with == nil {
+			with = map[string]string{}
+		}
+		with["user"] = user
+		if err := s.w.Put(ctx, salt, with); err != nil {
+			return ContractCreds{}, fmt.Errorf("seed contract(%s/%s): write the user: %w", tenant, contract, err)
+		}
 	}
 	return ContractCreds{Password: got["password"]}, nil
 }

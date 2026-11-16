@@ -215,6 +215,47 @@ func TestExchangeProfilesFollowTheComponentsThatAsk(t *testing.T) {
 	}
 }
 
+// An installed adapter's app is handed tokens by the components that vouch
+// for people, so it has a scope whether or not an entry of its own asks: by
+// the adapted profile's name, and only for an adapter that is called.
+func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := platformTenantFixture()
+	app := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger"}}
+	adapter := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger-adapter"}}
+	adapter.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
+		Adapts:   &gentianov1alpha1.AdaptedApp{Profile: "ledger"},
+		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "ledger-adapter", Port: 8765, Path: "/mcp"},
+	}
+	// Adapts nothing of the tenant: calls through it are for itself.
+	partner := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "store-adapter"}}
+	partner.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
+		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"},
+	}
+	quiet := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet-adapter"}}
+	quiet.Spec.Adapter = &gentianov1alpha1.AdapterSpec{Adapts: &gentianov1alpha1.AdaptedApp{Profile: "quiet"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tenant.NamespaceName()}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), app, adapter, partner, quiet,
+		comp("ledger"), comp("ledger-adapter"), comp("store-adapter"), comp("quiet-adapter"),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := exchangeProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != "ledger" || got[1] != "store-adapter" {
+		t.Fatalf("exchange profiles = %v, want the adapted app and the adapter that adapts none", got)
+	}
+}
+
 func vouchingProfilesOf(t *testing.T, r *TileProjectionReconciler, tenant string) []string {
 	t.Helper()
 	cm := &corev1.ConfigMap{}
@@ -249,7 +290,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 			Vouching: &gentianov1alpha1.VouchingRequirement{
-				Keys: gentianov1alpha1.VouchingKeys{Service: service, Port: port, Path: path},
+				Keys: &gentianov1alpha1.VouchingKeys{Service: service, Port: port, Path: path},
 			},
 		}}
 		return p
@@ -269,8 +310,11 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		// No path: a profile no API server defaulted. The default is
 		// written out.
 		vouching("scribe", "scribe", 8080, ""),
-		vouching("steward", "steward-keys", 8443, "/keys/current.json"),
+		// Exchanges as well: the word that says so follows its line.
+		exchanging(vouching("steward", "steward-keys", 8443, "/keys/current.json")),
 		plain,
+		// Exchanges and names no keys: the line says there are none.
+		keyless("warden"),
 		// Vouches, and no component of this tenant is of it.
 		vouching("elsewhere", "elsewhere", 8080, ""),
 		// Two components of one profile are one issuer with one set of keys.
@@ -278,6 +322,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		comp("scribe-b", "scribe", tenant.NamespaceName()),
 		comp("steward", "steward", tenant.NamespaceName()),
 		comp("plain", "plain", tenant.NamespaceName()),
+		comp("warden", "warden", tenant.NamespaceName()),
 		// A component in nobody's namespace is in nobody's realm.
 		comp("elsewhere", "elsewhere", "system-data"),
 	).Build()
@@ -289,7 +334,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	got := vouchingProfilesOf(t, r, tenant.Name)
 	want := []string{
 		"scribe scribe 8080 " + vouchingKeysDefaultPath,
-		"steward steward-keys 8443 /keys/current.json",
+		"steward steward-keys 8443 /keys/current.json exchange",
+		"warden - 0 - exchange",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("vouching profiles = %q, want %q: sorted, one line per profile, only the ones that vouch", got, want)
@@ -321,8 +367,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != want[0] {
-		t.Fatalf("vouching profiles = %q after steward stopped vouching, want scribe alone", got)
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != want[0] || got[1] != want[2] {
+		t.Fatalf("vouching profiles = %q after steward stopped vouching, want the other two", got)
 	}
 }
 
@@ -339,7 +385,7 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	syncer := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "syncer"}}
 	syncer.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 		Vouching: &gentianov1alpha1.VouchingRequirement{
-			Keys:     gentianov1alpha1.VouchingKeys{Service: "syncer", Port: 8080},
+			Keys:     &gentianov1alpha1.VouchingKeys{Service: "syncer", Port: 8080},
 			Director: []gentianov1alpha1.DirectorScope{gentianov1alpha1.DirectorScopePlansApply, gentianov1alpha1.DirectorScopePlansRead},
 		},
 	}}
@@ -363,4 +409,21 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath {
 		t.Fatalf("another tenant was given director scopes: %q", got)
 	}
+}
+
+// keyless is a profile that exchanges a present person's token and vouches
+// for nobody: it names no keys.
+func keyless(name string) *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Exchange: true},
+	}}
+	return p
+}
+
+// exchanging says the profile's client also exchanges a person's own token
+// (requires.services.vouching.exchange).
+func exchanging(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ComponentProfile {
+	p.Spec.Requires.Services.Vouching.Exchange = true
+	return p
 }

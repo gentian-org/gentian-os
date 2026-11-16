@@ -2,12 +2,14 @@
 # operator selects on and the lints check against. Policies select on the
 # labels, never on names; the names are what a person types.
 #
-# tier: kernel | system | system-dmz | shared | tenant | tenant-dmz
+# tier: kernel | system | system-dmz | shared | tenant | tenant-dmz | tenant-runs
 # function: what the namespace is for. The software behind it can change.
 #
 # Kernel namespaces are created by the installer before anything else exists.
 # System namespaces are composed from the Cluster claim. Tenant namespaces are
-# composed per tenant as tenant-<t> and tenant-<t>-dmz.
+# composed per tenant as tenant-<t> and tenant-<t>-dmz. A tenant's namespace for
+# runs, tenant-<t>-runs, is made by the operator when a component of the tenant
+# starts runs.
 kernel:
   - name: kernel-gitops
     function: gitops

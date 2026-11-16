@@ -1,7 +1,7 @@
 {{- /*
   Who may open a connection to what runs in the model gateway's namespace.
 
-  Four pod sets serve here -- the gateway, its PostgreSQL, its Redis and, on a
+  Four pod sets serve here -- the gateway, its PostgreSQL, its cache and, on a
   cluster without GPUs, the mock model server -- and until these policies
   each took a connection from any pod of any namespace that has no egress
   policy of its own, with a key or a password the only thing in the way. One
@@ -56,7 +56,7 @@
   reports healthy. The metrics port (9187) is listed nowhere and so is
   closed: nothing the platform runs scrapes it.
 
-  The gateway's Redis (llm-cache-ingress) and the mock model server
+  The gateway's cache (llm-cache-ingress) and the mock model server
   (llm-mock-ingress): the gateway, and nobody else.
 
   Each policy selects its server's pods only and says nothing about egress.
@@ -168,7 +168,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: redis-llm
+      app: llm-cache
   policyTypes:
     - Ingress
   ingress:
@@ -178,7 +178,7 @@ spec:
               app: litellm-proxy
       ports:
         - protocol: TCP
-          port: {{ $np.ports.redis }}
+          port: {{ $np.ports.cache }}
 {{- if ne (toString .Values.spec.llm.gpuAcceleration) "true" }}
 ---
 apiVersion: networking.k8s.io/v1

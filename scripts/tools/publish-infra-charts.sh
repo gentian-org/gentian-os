@@ -11,7 +11,7 @@ REPO_URL="${CHART_PACKAGES_REPO_URL:-}"
 
 mkdir -p "${PACKAGES}"
 
-for chart in mariadb redis seaweedfs; do
+for chart in cache mariadb seaweedfs; do
   helm package "${ROOT}/charts/infra/${chart}" -d "${PACKAGES}"
 done
 

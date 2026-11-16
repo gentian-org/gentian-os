@@ -213,6 +213,10 @@ spec:
             matchLabels:
               gentianos.io/tenant: render-fixture
               gentianos.io/tier: tenant
+        - namespaceSelector:
+            matchLabels:
+              gentianos.io/tenant: render-fixture
+              gentianos.io/tier: tenant-runs
         provider:
           vault:
             auth:

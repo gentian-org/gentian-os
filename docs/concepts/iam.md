@@ -348,11 +348,22 @@ master password or on the vault.
 
 What does follow `secretMode` is the credential the link is issued with. The
 installer issues the platform admin's link as Keycloak's own bootstrap
-administrator (the `master` realm, Secret `keycloak-admin`, vault path
+administrator (user `admin` in the `master` realm, Secret
+`keycloak-idp-credentials`, vault path
 `gentian-os/kernel/identity/keycloak-bootstrap`). That password is a machine
 credential like every other kernel one: with `secretMode: derived` it is
 computed from the master password and the cluster's salt, and with
 `secretMode: random` it is drawn once and the vault holds the only copy.
+
+Machines sign in to the `master` realm as service accounts of their own:
+`gentian-operator` (the operator), `keycloak-provisioner` (the Jobs that
+configure realms) and `provider-keycloak` (Crossplane's provider). Only the
+installer makes and repairs them, as the bootstrap administrator: each holds
+the `admin` role, mapped into its token's scope rather than through "Full
+scope allowed", and the `kc-admin-api` client scope, without which the Admin
+REST API refuses its token. Its secret is kept beside that password, in the
+same vault path and under the same `secretMode`. The registrar's client in a
+tenant realm carries `kc-admin-api` too; the operator assigns it.
 
 **Recovery** is a new link, never a recovered password:
 
@@ -577,7 +588,7 @@ Jobs of a tenant are listed with
 
 ### 1.10 Keycloak version, features and upgrades
 
-**Version.** Keycloak 26.8.0, from the `keycloakx` chart 7.3.2. The chart is
+**Version.** Keycloak 26.8.2, from the `keycloakx` chart 7.3.2. The chart is
 vendored under
 [kernel/services/keycloak-idp/manifests/charts/](../../kernel/services/keycloak-idp/manifests/UPSTREAM.md)
 and rendered by Argo CD from the identity ApplicationSet; the image tag in
@@ -591,7 +602,7 @@ What 26.8 enables that 26.0 did not is inert until something asks for it:
 
 | Feature | Stays off because |
 |---|---|
-| Standard token exchange, proof-of-possession (DPoP) tokens | per client; no client the platform creates sets `standard.token.exchange.enabled` or `dpop.bound.access.tokens` |
+| Standard token exchange, proof-of-possession (DPoP) tokens | per client. `standard.token.exchange.enabled` is set on the edge's exchange client and on the client of a component that declares `requires.services.vouching.exchange`; no client the platform creates sets `dpop.bound.access.tokens` |
 | SCIM API, fine-grained admin permissions v2 | per realm (`scimApiEnabled`, `adminPermissionsEnabled`), false in every realm the platform creates |
 | JWT authorization grant, federated client authentication, Kubernetes service-account sign-in | need an identity provider or client authenticator configured for them; none is |
 | Passkeys, update-email, workflows, client secret rotation | per realm policy, required action or client policy; none is configured |

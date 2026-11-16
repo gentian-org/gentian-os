@@ -174,12 +174,13 @@ func TestTheAddressFollowsTheTenantsDomain(t *testing.T) {
 		t.Fatalf("a second website = %v; it has no address while another holds it", other)
 	}
 
-	// On a multi-tenancy cluster no tenant has the main address.
+	// On a multi-tenancy cluster that names nobody for its main address, a
+	// tenant's website takes the bare name of the tenant's own zone.
 	many := startTenancy(t, &residueOperator{}, "multi", websites())
 	_, body = many.do(t, "GET", exposuresPath("user"), many.token(t, "tenant-user", "uma"), "")
-	nowhere := entryOf(t, body, "website", "site")
-	if note, _ := nowhere["note"].(string); nowhere["host"] != nil || !strings.Contains(note, "tenancy mode is multi") {
-		t.Fatalf("a website for the main address on a multi-tenancy cluster = %v", nowhere)
+	own := entryOf(t, body, "website", "site")
+	if own["host"] != "user."+dt.KernelDomain || own["mainAddress"] != true {
+		t.Fatalf("a website for a bare name on a multi-tenancy cluster = %v", own)
 	}
 	if got := entryOf(t, body, "nextcloud", "shares")["host"]; got != "share-nextcloud.user."+dt.KernelDomain {
 		t.Fatalf("a tenant of a multi-tenancy cluster: host = %v", got)
@@ -344,16 +345,16 @@ func TestAnApprovalWhoseMainAddressSettingIsNotTheEntrysIsRefused(t *testing.T) 
 	for what, tc := range map[string]struct{ path, body, says string }{
 		"the main address for an entry under the tenant's own address": {
 			"/v1/tenants/user/exposures/nextcloud/shares", mainAddress,
-			"the profile of nextcloud does not declare entry shares for the main address"},
+			"the profile of nextcloud does not declare entry shares for a bare name"},
 		"the same without the acknowledgement": {
 			"/v1/tenants/user/exposures/nextcloud/shares", unacknowledged,
-			"the profile of nextcloud does not declare entry shares for the main address"},
+			"the profile of nextcloud does not declare entry shares for a bare name"},
 		"a website for the main address, approved as an ordinary entry": {
 			userSitePath, `{"reason":"our public website"}`,
-			"the profile of website declares entry site for the cluster's main address"},
+			"the profile of website declares entry site for a bare name"},
 		"the same with apex false": {
 			userSitePath, `{"apex":false,"acknowledgeMainAddressRule":true}`,
-			"the profile of website declares entry site for the cluster's main address"},
+			"the profile of website declares entry site for a bare name"},
 	} {
 		code, body := h.do(t, "PUT", tc.path, uma, tc.body)
 		msg, _ := body["error"].(string)
@@ -405,7 +406,7 @@ func TestARegistryEntryWithTheWrongMainAddressSettingStaysAndIsNotRenewed(t *tes
 		t.Fatalf("the registry itself changed: live = %v", body["live"])
 	}
 	for name, says := range map[string]string{
-		"nextcloud shares": "the profile does not declare it for that address",
+		"nextcloud shares": "the profile does not declare it for one",
 		"website site":     "is published only when the approver says so",
 	} {
 		f := strings.Fields(name)

@@ -64,7 +64,14 @@ spec:
   # Without it nothing is opened -- the bouncer refuses what arrives with no
   # token -- but nobody can sign in either, which is why A-05 will not report
   # the edge installed without it.
+  #
+  # The rate limit comes ahead of both, so a client is counted before sign-in
+  # or the bouncer does any work for it, with or without a session. The moves
+  # apply in turn: the limit goes before the bouncer, then the session goes
+  # in between.
   filterOrder:
+    - name: envoy.filters.http.local_ratelimit
+      before: envoy.filters.http.ext_authz
     - name: envoy.filters.http.oauth2
       before: envoy.filters.http.ext_authz
   # The access log as JSON, one line per request on stdout, so a forwarder

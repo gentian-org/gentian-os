@@ -209,6 +209,20 @@ func run(log *slog.Logger) error {
 			return client.Definitions(context.Background())
 		}, schemacheck.DefaultSourceTTL, nil)
 	}
+	// The dispatcher carries out what is done once and follows nothing
+	// declared. It admits this process as the operator does, by a token
+	// projected for the dispatcher's own audience.
+	var acts api.Acts
+	if u := os.Getenv("DIRECTOR_DISPATCHER_URL"); u == "" {
+		log.Warn("no dispatcher URL: no backup can be taken or deleted from here", "setting", "DIRECTOR_DISPATCHER_URL")
+	} else {
+		tokenFile := envvar.Or("DIRECTOR_DISPATCHER_TOKEN_FILE", "/var/run/secrets/gentian/dispatcher/token")
+		if _, err := os.Stat(tokenFile); err != nil {
+			log.Warn("no ServiceAccount token for the dispatcher's listener: it will refuse every request from here",
+				"setting", "DIRECTOR_DISPATCHER_TOKEN_FILE", "file", tokenFile)
+		}
+		acts = lifecycle.New(u, lifecycle.TokenFile(tokenFile))
+	}
 	// Every commit is put to what the cluster serves before it is made.
 	//
 	// What this process writes is applied by Argo CD, and a cluster whose
@@ -301,12 +315,14 @@ func run(log *slog.Logger) error {
 	go commissionKeys.Follow(context.Background(),
 		envvar.Or("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
-	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
+	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
 		Catalogue:      entries,
 		StoreURL:       storeURL,
 		Cluster:        cluster,
 		Lifecycle:      lc,
-		CommissionKeys: commissionKeys})
+		Acts:           acts,
+		CommissionKeys: commissionKeys,
+		CallerLimit:    api.CallerLimitFromEnv()})
 	if err != nil {
 		return err
 	}

@@ -449,16 +449,17 @@ func TestEveryReconcilerThatWritesIsBehindTheCheck(t *testing.T) {
 	// Reconcilers that write no object of this API group: they project what
 	// they read into something else.
 	writesNothingOfOurs := map[string]string{
-		"authz_projection_reconciler.go":  "writes the authorization graph",
-		"tile_projection_reconciler.go":   "writes a ConfigMap",
-		"keycloak_platform_reconciler.go": "writes Keycloak's own resources",
-		"gateway_platform_reconciler.go":  "writes Gateway API resources",
-		"concierge_lookup.go":             "writes a ConfigMap",
-		"tenant_apps_helm.go":             "writes a RoleBinding",
-		"bundlefetch_controller.go":       "deletes a fetch's NetworkPolicy",
-		"authorization_engine.go":         "writes the arbiter's workload and policies",
-		"turn_edge.go":                    "writes the TURN edge's workload, policy, certificate and address record",
-		"externalsecret_retry.go":         "writes one annotation on an ExternalSecret",
+		"authz_projection_reconciler.go":   "writes the authorization graph",
+		"tile_projection_reconciler.go":    "writes a ConfigMap",
+		"keycloak_platform_reconciler.go":  "writes Keycloak's own resources",
+		"gateway_platform_reconciler.go":   "writes Gateway API resources",
+		"concierge_lookup.go":              "writes a ConfigMap",
+		"tenant_apps_helm.go":              "writes a RoleBinding",
+		"bundlefetch_controller.go":        "deletes a fetch's NetworkPolicy",
+		"authorization_engine.go":          "writes the arbiter's workload and policies",
+		"turn_edge.go":                     "writes the TURN edge's workload, policy, certificate and address record",
+		"externalsecret_retry.go":          "writes one annotation on an ExternalSecret",
+		"model_gateway_database_egress.go": "writes the model gateway database's egress policy",
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

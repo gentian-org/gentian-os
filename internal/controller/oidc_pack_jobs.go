@@ -330,7 +330,7 @@ func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidc
 	if withSecret {
 		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
-	return newKernelProvisioningJob(jobName, identityNamespace, tenant, cfg.profileName, container)
+	return newKeycloakJob(jobName, tenant, cfg.profileName, container)
 }
 
 // samlAppConfig holds resolved SAML settings for one tenant app profile.

@@ -31,9 +31,31 @@ type AdapterSpec struct {
 	// the adapter opens the way from its pods to that app's pods and nowhere
 	// else in the tenant; the app is not asked to cooperate. Absent for an
 	// adapter packaged as an API, which reaches a service outside the cluster
-	// and no app of the tenant.
+	// and no app of the tenant, and for one that runs in the tenant and
+	// reaches a partner's service as the person
+	// (requires.services.partners.call): a call through either is for the
+	// adapter itself.
 	// +optional
 	Adapts *AdaptedApp `json:"adapts,omitempty"`
+
+	// Endpoint is where the adapter's tool server (MCP) answers inside the
+	// tenant: its Service, the port and the path. With it the platform tells
+	// the tenant's components that may call adapters that this one is there
+	// (the ConfigMap adapters-<component>). Absent, the adapter is installed
+	// and callers are not told of it.
+	// +optional
+	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+
+	// AddonsValuesPath is the dot-separated Helm values path at which the
+	// adapter is told which add-ons are selected into the app it adapts in
+	// its tenant: a list of their IDs (package.addon.id), empty while none is
+	// selected or the app is not installed. The adapter is rendered again
+	// when that selection changes. Absent, it is told nothing about them.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$`
+	AddonsValuesPath string `json:"addonsValuesPath,omitempty"`
 }
 
 // AdaptedApp names the app an adapter fits, and which of its versions.

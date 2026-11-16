@@ -101,7 +101,7 @@ func TestTheAddressShownToAnApproverIsTheAddressPublished(t *testing.T) {
 						main := perimeterMainAddress{held: mainAddressHolder(in) != nil}
 						if !tenantAdoptsKernelRealm(tenant, "kernel") {
 							if verdict, applies := mainAddressVerdictFor(in, tenant, install); applies && verdict.Entry != "" {
-								main.entry, main.host = verdict.Entry, kd
+								main.entry, main.host = verdict.Entry, verdict.Host
 							}
 						}
 						live := livePerimeterExposures(comp, p, edgeZone{zoneNames: zone}, now, main)
@@ -120,8 +120,10 @@ func TestTheAddressShownToAnApproverIsTheAddressPublished(t *testing.T) {
 					// A route needs a listener for the same host.
 					if route != "" {
 						listener := publishedHost(&tenant.Spec.Exposures[len(tenant.Spec.Exposures)-1], profiles, zone, kd)
-						if holder := mainAddressHolder(in); listener == "" && holder != nil && holder.Install == install {
-							listener = kd
+						// A bare name's listener is perimeterTenantListeners' own,
+						// for whichever bare name the holder has.
+						if holder := addresses.HolderOf(in, tenant); listener == "" && holder != nil && holder.Install == install {
+							listener = holder.Host
 						}
 						if listener != route {
 							t.Errorf("%s: the route is for %q and the listener for %q", name, route, listener)

@@ -401,7 +401,7 @@ func TestWhatRemovesAPlacedComponentsKey(t *testing.T) {
 }
 
 // The apps beside a placed component are served as before, and an
-// uninstalled app's generated key is still kept.
+// uninstalled app's key leaves the gateway while the desktop's stays.
 func TestAPlacedComponentDoesNotChangeWhatAppsAreGiven(t *testing.T) {
 	w := newModelAccessWorld(t, []string{"chat", "wiki"}, placedComponent("demo", "desktop"))
 	w.tenant.Spec.Apps = append(w.tenant.Spec.Apps, placedEntry("desktop"))
@@ -415,7 +415,14 @@ func TestAPlacedComponentDoesNotChangeWhatAppsAreGiven(t *testing.T) {
 	}
 	w.tenant.Spec.Apps = w.tenant.Spec.Apps[1:]
 	w.pass(t)
-	if _, kept := w.gateway.keys["demo-chat"]; !kept {
-		t.Error("an uninstalled app's generated key was removed")
+	if _, kept := w.gateway.keys["demo-chat"]; kept {
+		t.Error("an uninstalled app's key still authenticates")
+	}
+	if _, kept := w.gateway.keys["demo-desktop"]; !kept {
+		t.Error("the desktop's key went with the uninstalled app's")
+	}
+	recorded, _ := w.r.provisionedStores(context.Background(), "demo")
+	if recorded["chat"].ModelKey != "demo-chat" {
+		t.Errorf("the uninstalled app's key left the record: %+v", recorded["chat"])
 	}
 }

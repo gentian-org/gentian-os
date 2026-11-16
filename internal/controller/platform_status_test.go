@@ -48,7 +48,7 @@ func TestThePlatformsVersionIsWrittenOnTheClaimsComposite(t *testing.T) {
 		WithRuntimeObjects(claim, xr, orphan).WithStatusSubresource(xr).Build()
 	at := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v0.6.0","html_url":"https://example.org/releases/v0.6.0"}`))
+		_, _ = w.Write([]byte("releases:\n  - version: v0.6.0\n    line: \"0.6\"\n    notes: https://example.org/releases/v0.6.0\n    upgradesFrom: [\"0.5\"]\n  - version: v0.5.0\n    line: \"0.5\"\n"))
 	}))
 	defer feed.Close()
 	w := &PlatformStatusWriter{Reader: c, Writer: c, Build: "abc1234", Now: func() time.Time { return at }, ReleaseFeed: feed.URL}

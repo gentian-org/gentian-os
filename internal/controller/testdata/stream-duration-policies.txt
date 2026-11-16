@@ -1,0 +1,15 @@
+no tenants:
+  authenticated-gateway timeout={"http":{"maxStreamDuration":"12h","requestTimeout":"360s"}}
+  identity-provider-proxy timeout={"http":{"maxStreamDuration":"12h"}}
+  identity-provider-realm timeout={"http":{"maxStreamDuration":"12h"}}
+  sign-in-sidecar-assertion timeout={"http":{"maxStreamDuration":"12h"}}
+default sessions:
+  authenticated-gateway timeout={"http":{"maxStreamDuration":"12h","requestTimeout":"360s"}}
+  identity-provider-proxy timeout={"http":{"maxStreamDuration":"12h"}}
+  identity-provider-realm timeout={"http":{"maxStreamDuration":"12h"}}
+  sign-in-sidecar-assertion timeout={"http":{"maxStreamDuration":"12h"}}
+8h and 24h sessions:
+  authenticated-gateway timeout={"http":{"maxStreamDuration":"24h","requestTimeout":"360s"}}
+  identity-provider-proxy timeout={"http":{"maxStreamDuration":"24h"}}
+  identity-provider-realm timeout={"http":{"maxStreamDuration":"24h"}}
+  sign-in-sidecar-assertion timeout={"http":{"maxStreamDuration":"24h"}}

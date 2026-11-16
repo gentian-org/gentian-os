@@ -214,9 +214,11 @@ the apex in this certificate would advertise a name that listener cannot serve:
 a browser reads the certificate, coalesces apex requests onto an open
 `<sub>.${effectiveDomain}` connection, Envoy picks the filter chain by SNI, and
 the request lands where no route matches — `404 route_not_found`. Leaving it out
-means the apex opens its own connection with its own SNI and is served by the
-hostname-less kernel listener, whose certificate covers
-`<tenant>.<kernelDomain>` already.
+means the apex opens its own connection with its own SNI: a zone under the
+cluster's domain is served by the hostname-less kernel listener, whose
+certificate covers `<tenant>.<kernelDomain>` already, and a domain of the
+tenant's own by a perimeter listener for exactly its bare name, with a
+certificate that names that name alone (§5).
 
 Gateway listeners consume these certificate secrets directly, reading tenant
 secrets across namespaces under the tenant's ReferenceGrant.
@@ -359,6 +361,19 @@ routes, and `crd` (`DNSEndpoint`) for records with no HTTP object behind them,
 which is how mail publishes and how the claim's `certificates.dnsRecords`
 reach a zone. There is no per-provider DNS code in the operator.
 
+**Whether the records are there.** external-dns creates a record only at a
+name where it owns every record, and says nothing at its default log level
+when it does not: a mail-forwarding MX left at a tenant's bare name keeps the
+cluster's MX, SPF and address off that name. So the operator asks each zone's
+authoritative servers every five minutes for every record a `DNSEndpoint`
+asks for, and for the address of every bare name and `www` host it routes.
+It writes the answer per served domain to the ConfigMap `gentian-dns-status`
+in its namespace: each record is `present`, `pending` (within ten minutes of
+being asked for), `missing`, or `heldByOther`, with what is served instead.
+The usher passes it on (`GET /v1/clusters/{c}/domains`, `can_audit`) to
+the Operations Console and to `kubectl gentian domains`. A record held by
+another is never overwritten: whoever owns the zone removes it.
+
 What a tunnel actually lacks is not a writer but a **target**. external-dns
 publishes what a Gateway resolves to, and a tunneled Gateway has no address:
 traffic arrives through `cloudflared`, not a LoadBalancer. So the ingress
@@ -458,7 +473,9 @@ bouncer, which asks OpenFGA whether this person may reach this host.
 Envoy Gateway's own order runs `ext_authz` before the OAuth2 filter. This
 platform reverses it, with `filterOrder` on the edge `EnvoyProxy`
 (`kernel/manifests/gateway/chart`), and installer step A-05 does not report
-the edge installed without it. The reason is that the bouncer must judge a
+the edge installed without it. The same `filterOrder` puts the per-address
+rate limit ahead of both, so a client is counted before sign-in or the
+bouncer does any work for it. The reason is that the bouncer must judge a
 request by a token somebody has validated, and in Envoy Gateway's order there
 is none yet: the session is cookies, the OAuth2 filter encrypts them, and a
 bouncer that ran first could only wave through what it could not read.
@@ -469,7 +486,8 @@ With the OAuth2 filter first, per request on a session route:
 |---|---|---|
 | Valid session | Removes the client's `Authorization` header, sets it to the session's access token | The token. Verifies it, asks the relation, sets `x-gentian-*` |
 | Session whose access token has run out, refresh token present | Fetches new tokens from the realm, then as above with the new token; the new cookies go out with the response | The new token |
-| No session, or the refresh failed | Redirects the browser to the realm | Nothing: the request does not reach it |
+| No session | Redirects the browser to the realm | Nothing: the request does not reach it |
+| Session the realm has ended (a sign-out elsewhere, an administrator), so the refresh is refused | Passes the request on with the session's cookies and no token | No token. A page the person opened is signed in again; anything else gets `401` (below) |
 | `/oauth2/callback` | Completes the code flow and redirects | Nothing |
 | `/oauth2/logout` | Signs out (§4.2) | Nothing |
 
@@ -477,9 +495,29 @@ The bouncer refuses any request on a session route that reaches it without a
 token it can verify, whatever its path. Nothing in the operator's policies
 lets a request past the OAuth2 filter without a session — no
 `passThroughAuthHeader`, no CORS or health path — and if something did, the
-answer would be `401`. `denyRedirect` passes nothing: a request a page makes in
-the background (`Sec-Fetch-Dest: empty`) stops at the filter with `401` rather
-than a redirect it cannot follow. The one path of an app that takes no
+answer would be `401`. `denyRedirect` passes nothing: only a navigation is sent
+to sign in, and every other request (`Sec-Fetch-Mode` other than `navigate`: a
+fetch, an image, a script, a web manifest) stops at the filter with `401`. A
+fetch cannot follow the redirect, and a favicon would start a login of its own
+beside the person's. A login the filter starts stays valid for 30 minutes
+(`csrfTokenTTL`), Keycloak's own login timeout, so a first sign-in that sets a
+password or enrolls a second factor does not come back to a filter that has
+dropped it. A callback the filter refuses anyway — a login page left open
+longer than that — gets a page instead of the filter's bare "OAuth flow
+failed.": it starts a new sign-in once, back to the page the person asked
+for on the same host, and offers a link if that sign-in fails again within
+two minutes (`responseOverride` on the session routes' BackendTrafficPolicy,
+for Envoy-generated `401`s in `text/plain` only; the bouncer's refusals keep
+their own page). A page whose session the realm has ended reaches the bouncer
+with the filter's cookies and no token. The bouncer clears those cookies,
+the ones of earlier policies on the host included, and sends the browser back
+to the address it asked for on the same host. The filter then starts a sign-in,
+which comes straight back while the realm still has a session for the person
+and shows the login form otherwise. That happens only for a `GET` the browser
+marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
+(`gentian-edge-restart` cookie, never passed to a backend). A page that comes
+back still without a session gets a page saying the sign-in has ended. The page
+for a person who lacks the access is shown only for a `403`. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
@@ -564,7 +602,55 @@ the offending bytes replaced. The rewrite touches only the request to the
 backend: the filter has read its cookies before the bouncer is asked, and
 `Set-Cookie` on the way back is the filter's.
 
-A bearer route has no session and its `Cookie` header is not touched.
+**A token entry takes a token in place of the session.** A program with no
+browser, such as an AI assistant on a person's computer, cannot hold the
+session's cookies. A profile of `trustTier: platform` may declare one gateway
+entry with `authMode: bearer` for it, on a `subDomain` of its own. That host
+has a route with a `SecurityPolicy` of its own (`sp-<component>-token`) that
+carries the bouncer and no sign-in filter, so nothing there redirects, reads
+a cookie or replaces the `Authorization` header; every other route of the
+component is as before, and `passThroughAuthHeader` is still set on no
+policy. A host takes a token or has a session, never both.
+
+The bouncer verifies the token on every request: signature, expiry, that it
+is an access token of the tenant's own realm, that it is made out to the
+entry's address (`aud` holds `https://<host>`) and that it names a session of
+the realm, and then asks the route's relation of the person. A refusal is
+`401` with `WWW-Authenticate: Bearer resource_metadata=...`, never a
+redirect. The `Cookie` header is removed before the backend, the token is
+left in `Authorization`, and the audit record names the program's client
+beside the person. The session's own token is refused there, and a token
+made out to the entry is refused at the director and at every app.
+
+The realm issues such a token to one public client, `token-entry-<component>`,
+which exists while the entry is served: authorization code with PKCE and the
+person's consent, no other grant, no role of the person in the token, no
+offline token, and a sign-in through it ends after four hours (sooner where
+the profile's `sessionMaxAge` is shorter). A tenant may make it last longer,
+up to its own sign-in (`spec.tokenEntries.sessionMaxHours` on the Tenant),
+which counts only where the Cluster claim allows tenants the choice
+(`spec.tokenEntries.tenantsMayExtendSessions`, off by default). A program is sent back only to an
+address the entry declares (`clientRedirectURIs`): an exact `https` address,
+or a loopback address for a program on the person's computer. Where to obtain
+a token is published on the entry's host at
+`/.well-known/oauth-protected-resource` (RFC 9728), answered by the Gateway
+on a route that has no backend. The component behind the entry passes the
+token on to no app. Where the entry names a component that exchanges
+(`exchangedBy`, a profile that declares
+`requires.services.vouching.exchange`), the entry's tokens name that
+component's client, and it exchanges one at the realm for a token of the one
+app it calls, by that app's scope `app-<profile>`: the realm holds one for
+every app an exposure of which says `exchangeToken`, for every app an
+installed adapter adapts, and for every installed adapter that adapts none. No other client can exchange them, and that component can
+exchange no token that did not come in through such an entry.
+
+A token entry is served once the tenant's perimeter approver approved it
+(§7). A tenant may waive that approval for its token entries
+(`spec.tokenEntries.approval: waived` on the Tenant), which counts only where
+the Cluster claim allows tenants the choice
+(`spec.tokenEntries.tenantsMayWaiveApproval`, off by default). The
+component's `TokenEntry` condition says which of the two holds, or why the
+entry is not served.
 
 Routes without a session policy are unchanged and never ask the bouncer:
 perimeter surfaces (a tenant's DMZ, the concierge), the identity provider's
@@ -655,9 +741,11 @@ same registrable domain). So:
 - A cluster domain that is itself a public suffix makes every host a site of
   its own, and nothing can be framed. Use a domain below one.
 
-Keycloak's realm endpoints on `id.<kernelDomain>` carry a separate policy,
-reconciled from tenant and domain state, naming the hosts whose pages embed
-its session frames.
+Keycloak's realm endpoints on `id.<kernelDomain>` carry a separate policy:
+they may be framed by the platform's desktop, each tenant's desktop, and the
+hosts of a component that answers on more than one host, because such a
+component may frame one of its hosts in another and the inner host's sign-in
+then runs inside the outer one. No wildcard, and no other app host.
 
 **A frame on a tenant's own domain.** The desktop shows an app in a frame.
 The first time an app's address is opened, the frame is sent to the realm and
@@ -786,8 +874,11 @@ domain, with the cluster's certificate.
    the request (`can_expose`, the same relation as every published surface).
    The entry is in the exposure registry with its owner, publish date and
    review date, marked `apex: true`.
-3. The cluster's mode is `single`, the tenant is the user tenant on the
-   cluster's own domain and is Ready, and no other surface holds the address.
+3. The tenant has the main address as its bare name: the cluster
+   administrator names it (`mainAddress.tenant`), or, where nobody is named,
+   it is the user tenant of a single-tenancy cluster on the cluster's own
+   domain. It is Ready, and no other surface holds the address. Every other
+   tenant's apex entry takes the tenant's own bare name instead (below).
 
 *The rule, and the acknowledgement.* A website goes on the main address only
 if the organization itself controls every script it runs: no third-party
@@ -819,11 +910,12 @@ for one it does. The operator would publish nothing for either. An entry
 recorded that way earlier stays, is listed without an address, can be
 withdrawn, and is renewed only with the setting the entry has.
 
-One surface holds the main address at a time. The director refuses a second
-request with `409` and names the holder. If two entries reach the cluster
+One surface holds the main address at a time, as one holds each tenant's
+bare name. The director refuses a second request with `409` and names the
+holder. If two entries reach the cluster
 anyway, the one published first keeps the address. The component's
 `MainAddress` condition says which case applies (`Published`, `NotRequested`,
-`MultiTenancy`, `NotTheUserTenant`, `OwnDomain`, `Expired`, `ReservedPath`,
+`NotTheMainAddressTenant`, `NoBareName`, `Expired`, `ReservedPath`,
 `TenantNotReady`, `HeldByAnother`, `NotAMainAddressEntry`).
 
 *The platform's paths.* The website can never answer these:
@@ -878,10 +970,36 @@ Nothing is forwarded by the page. The `concierge-lookup` ConfigMap the
 operator keeps in the platform tenant's namespace holds one file per custom
 domain and nothing else; there is no `_single.json`.
 
-A **tenant** apex redirects to `https://desktop.<effectiveDomain>/`, path and
-query kept. Two tenants have none: the platform tenant, whose apex is its
-desktop, and the user tenant of a single-tenancy cluster, whose apex is the
-cluster's.
+A **tenant** apex -- the bare name of its zone or of a domain of its own --
+is the tenant's. A website of the tenant's may take it under the same three
+conditions as the main address, with the tenant's own perimeter approver
+deciding and acknowledging the same rule; only the main address is the
+cluster administrator's to give. The director refuses `apex: true` only where
+the tenant has no bare name: the platform tenant, and a tenant on the
+cluster's own domain that the cluster does not name. The website's route goes
+on the perimeter's listener for the bare name, and the tenant's apex route
+moves to that listener. Once the website's proxy serves, the apex route keeps
+`/sign-in` alone, to the tenant's desktop; the website's proxy refuses the
+platform's other paths, as on the main address. Until then, and without such
+a website, the bare name redirects, path and query kept, to the first of:
+
+1. the home the tenant set for sign-up (`spec.signUp.home`), a choice;
+2. `www.<effectiveDomain>`, when the tenant publishes a public site there
+   whose approval has not expired: whoever types the bare name is looking
+   for the organization, not for its sign-in;
+3. `https://desktop.<effectiveDomain>/`.
+
+Two tenants have none: the platform tenant, whose apex is its desktop, and
+the user tenant of a single-tenancy cluster, whose apex is the cluster's
+until a domain of its own is bound to it.
+
+The bare name of a **domain of the tenant's own** is served on the perimeter
+Gateway, on a listener for exactly that name with a certificate that names it
+alone (`tenant-<name>-apex`, issued like the wildcard). The cluster's
+catch-all listener would answer it with the cluster's certificate, which does
+not name it. A zone under the cluster's domain needs no certificate of its
+own: the cluster's names `<tenant>.<kernelDomain>`. It gets a perimeter
+listener for its bare name only while a website holds it.
 
 Application-specific redirects and rewrites are expressed with Gateway API route
 filters or Envoy extension policies where advanced behavior is needed.
@@ -949,7 +1067,7 @@ main-address setting that is not the entry's, is refused (`422`) and nothing
 is committed (§5). The read is from git: it says where an entry will answer,
 not whether it answers yet.
 
-**Three kinds of entry take an approval**, and the registry records which
+**Four kinds of entry take an approval**, and the registry records which
 one was approved (`kind`):
 
 | Kind | Declared as | Once approved |
@@ -957,6 +1075,7 @@ one was approved (`kind`):
 | `public` | `surface: perimeter`, `authMode: none` | The declared paths are published for anyone. No credential reaches the app |
 | `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
 | `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
+| `tokenEntry` | `surface: gateway`, `authMode: bearer` | Nothing is published. On a host of its own, a program reaches the component as a person, with a token of the tenant's realm made out to that host (§4.1). The approval covers the addresses a program may be sent back to after sign-in |
 
 An approval holds for the kind it was given for. If the app's catalog
 entry later declares another kind, the platform does nothing for the entry
@@ -1153,6 +1272,7 @@ answers 404 at the listener.
 | Class | Hostname | Entry | L1 | L2 | Backend |
 | --- | --- | --- | --- | --- | --- |
 | Tenant app, browser | `<app>.<effectiveDomain>` | `surface: gateway`, `authMode: oidc` | tenant-realm session | `can_use` on the app: the same relation the desktop's tiles resolve, so the route cannot be more open than the tile | the app in `tenant-<t>` |
+| Token entry | `<subDomain>.<effectiveDomain>` | `surface: gateway`, `authMode: bearer`, `trustTier: platform`, once approved | a tenant-realm access token made out to the host, verified by the bouncer | `can_use` on the app, or `can_enter` on the tenant for a component with `launch: none` | the component in `tenant-<t>`; `/.well-known/oauth-protected-resource` is answered by the Gateway |
 | Tenant desktop | `desktop.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | `can_enter` on the tenant: members and administrators both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | the desktop in `tenant-<t>` |
 | Tenant administration console | `admin.<effectiveDomain>` | `oidc`, `forwardToken` | tenant-realm session | as the desktop's | the console in `tenant-<t>`; a relay to the director with the person's token |
 | Platform desktop and console | `platform.<kernelDomain>`, `admin.platform.<kernelDomain>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | the platform tenant's desktop and console in `tenant-platform` (AD-10), on the `*.platform.<kernelDomain>` listener with a wildcard of its own |
@@ -1162,8 +1282,9 @@ answers 404 at the listener.
 | Published entry | `<label>.<effectiveDomain>`, the bare domain (`apex`, §5), or an alias under the cluster's domain (§7) | `surface: perimeter`, `authMode: none` or `app`, once approved | -- | -- | the publishing proxy in `tenant-<t>-dmz`, on a listener for exactly that host. `jwt`, `bearer`, `basic` and `signature` are refused on a perimeter entry by the schema |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | none | -- | -- | cert-manager's solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned surfaces without a session |
 
-A gateway entry is behind the zone's session (`authMode: oidc`); the schema
-admits nothing else there. What needs no session is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
+A gateway entry is behind the zone's session (`authMode: oidc`) or, for a
+profile of platform trust, takes a token of the tenant's realm on a host of
+its own (`authMode: bearer`, §4.1); the schema admits nothing else there. What needs no session is a perimeter surface. A `SecurityPolicy` attaches per `HTTPRoute`, and a
 component has one policy for all its hosts (§4.1).
 
 **Keycloak's administration console shares the issuer's hostname**, and this

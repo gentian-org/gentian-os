@@ -192,7 +192,8 @@ Other options:
   --validate, --check   check the step files, report which settings and
                         credentials this configuration has, then run the
                         pre-flight (tools, cluster reachable, Kubernetes
-                        version, operator image). Asks no question, collects
+                        version, the images built from the operator's
+                        commit). Asks no question, collects
                         no credential and runs no step's check(). Changes
                         nothing, on the same terms as --dry-run
   --verify-only         run post-install verification and print the summary

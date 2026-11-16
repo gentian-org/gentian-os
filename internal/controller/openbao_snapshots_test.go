@@ -200,7 +200,7 @@ const testS3Endpoint = "http://s3.system-s3.svc.cluster.local:9000"
 func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 	ctx := context.Background()
 	c, vault := openBaoSnapshotsFixture(t)
-	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots"}
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil).WithMode(randomMode), Bucket: "gentian-openbao-snapshots"}
 	inst := o.instances()[0]
 	path := inst.StorePath()
 	if path != "gentian-os/kernel/openbao-snapshots/openbao" {
@@ -291,7 +291,7 @@ func TestTheSnapshotStoreIsMadeAsAnAppsBucketIs(t *testing.T) {
 func TestNoRecordMetadataIsAnError(t *testing.T) {
 	ctx := context.Background()
 	c, _ := openBaoSnapshotsFixture(t)
-	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(memVault{}, nil), Bucket: "gentian-openbao-snapshots"}
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(memVault{}, secrets.NewDeriver("unit-test-master")), Bucket: "gentian-openbao-snapshots"}
 	inst := o.instances()[0]
 	if ready, err := o.EnsureStore(ctx, inst, testS3Endpoint); ready || err == nil || !strings.Contains(err.Error(), "metadata") {
 		t.Fatalf("ready %v, error %v; want the metadata error", ready, err)
@@ -306,7 +306,7 @@ func TestNoRecordMetadataIsAnError(t *testing.T) {
 func TestEachInstanceHasAKeyForItsOwnPrefix(t *testing.T) {
 	ctx := context.Background()
 	c, vault := openBaoSnapshotsFixture(t)
-	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots"}
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master")), Bucket: "gentian-openbao-snapshots"}
 	scripts := map[string]string{}
 	for _, inst := range o.instances() {
 		if _, err := o.EnsureStore(ctx, inst, testS3Endpoint); err != nil {
@@ -338,7 +338,7 @@ func TestEachInstanceHasAKeyForItsOwnPrefix(t *testing.T) {
 func TestTheStoreFollowsTheBucket(t *testing.T) {
 	ctx := context.Background()
 	c, vault := openBaoSnapshotsFixture(t)
-	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots"}
+	o := &OpenBaoSnapshots{Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master")), Bucket: "gentian-openbao-snapshots"}
 	inst := o.instances()[0]
 	if _, err := o.EnsureStore(ctx, inst, testS3Endpoint); err != nil {
 		t.Fatal(err)
@@ -437,7 +437,7 @@ func TestADisabledSealIsReportedSoAndGetsNoStore(t *testing.T) {
 	ctx := context.Background()
 	c, vault := openBaoSnapshotsFixture(t)
 	o := &OpenBaoSnapshots{
-		Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, nil), Bucket: "gentian-openbao-snapshots",
+		Client: c, Reader: c, Seeder: secrets.NewSeeder(vault, secrets.NewDeriver("unit-test-master")), Bucket: "gentian-openbao-snapshots",
 		TransitDisabled: true,
 		Storage:         func(context.Context) (string, error) { return "raft", nil },
 		Snapshots:       listed(nil),

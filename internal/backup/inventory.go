@@ -170,8 +170,8 @@ func BackupBucket(tenant *gentianov1alpha1.Tenant) string {
 	return NamesOf(tenant).BucketPrefix + "gentian-backup"
 }
 
-// RedisACLUser returns the Redis ACL username for a tenant + app.
-func RedisACLUser(tenantName, app string) string {
+// CacheACLUser returns the shared cache's ACL username for a tenant + app.
+func CacheACLUser(tenantName, app string) string {
 	return tenantName + "-" + app
 }
 
@@ -268,10 +268,11 @@ type Stores struct {
 	Database gentianov1alpha1.DatabaseEngine
 	// S3 reports whether the app was given an object-storage bucket.
 	S3 bool
-	// Redis reports whether the app was given a cache. Caches are never
-	// captured — a restored cache is at best useless and at worst stale — but
-	// purge needs to know, so the field belongs to the shared inventory.
-	Redis bool
+	// Cache reports whether the app was given a user on the shared cache.
+	// Caches are never captured — a restored cache is at best useless and at
+	// worst stale — but purge needs to know, so the field belongs to the
+	// shared inventory.
+	Cache bool
 }
 
 // ProfileStores reports which kernel stores a profile declares.
@@ -288,7 +289,7 @@ func ProfileStores(profile *gentianov1alpha1.ComponentProfile) Stores {
 		s.S3 = true
 	}
 	if kr.Cache != nil && kr.Cache.Engine == gentianov1alpha1.CacheEngineRedis {
-		s.Redis = true
+		s.Cache = true
 	}
 	return s
 }

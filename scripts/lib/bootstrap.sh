@@ -196,7 +196,7 @@ create_crossplane_secrets() {
         m_val=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
         s_val=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
     fi
-    gentian_settle_derivation "${m_val}" "${s_val}"
+    gentian_settle_derivation "${m_val}" "${s_val}" || exit 1
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key.
     #
@@ -328,12 +328,14 @@ create_crossplane_secrets() {
             --rawfile b <(printf '%s' "$(_derive s3 root_password)") \
             '{root_user:$a,root_password:$b}')"
 
-    # ── identity/keycloak-bootstrap (Keycloak admin password) ──────────────────
+    # ── identity/keycloak-bootstrap (Keycloak admin, its service accounts) ─────
     _kv_secret "gentian-os-kernel-identity-keycloak-bootstrap" \
         "$(jq -nc \
             --rawfile a <(printf '%s' "$(_derive keycloak adminPassword)") \
             --rawfile b <(printf '%s' "$(_derive keycloak operatorClientSecret)") \
-            '{admin_password:$a,operator_client_secret:$b}')" \
+            --rawfile c <(printf '%s' "$(_derive keycloak provisionerClientSecret)") \
+            --rawfile d <(printf '%s' "$(_derive keycloak providerClientSecret)") \
+            '{admin_password:$a,operator_client_secret:$b,provisioner_client_secret:$c,provider_client_secret:$d}')" \
         "gentian-os/kernel/identity/keycloak-bootstrap"
 
     # ── authz/openfga ─────────────────────────────────────────────────────────
@@ -383,6 +385,42 @@ create_crossplane_secrets() {
             '{client_secret:$a}')"
 
     success "All 10 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
+}
+
+# =============================================================================
+# derived_kv_paths — the vault paths create_crossplane_secrets adds missing
+# keys to: the third argument of its _kv_secret calls, read out of the
+# function itself so that a path added there is covered here without being
+# listed twice.
+# =============================================================================
+derived_kv_paths() {
+    sed -n '/^create_crossplane_secrets() {/,/^}/p' "${BASH_SOURCE[0]}" |
+        sed -nE 's/^[[:space:]]+"(gentian-os\/[^"]+)"[[:space:]]*$/\1/p'
+}
+
+# =============================================================================
+# external_secrets_missing_derived_keys — "<namespace>/<name>" of every
+# ExternalSecret that reads one of derived_kv_paths and is not Ready.
+#
+# A release that adds a key to one of those paths ships the ExternalSecret
+# that reads it, and Argo CD applies that on its own. The vault learns the key
+# only from create_crossplane_secrets, which B-07 runs -- and B-07 was
+# satisfied by the master-password Secret alone, so on an installed cluster
+# the key never arrived and the ExternalSecret failed until someone forced
+# the step. Not Ready is the signal rather than the reason given: the
+# condition says only "could not get secret data from provider", and the
+# event naming the missing key expires.
+# =============================================================================
+external_secrets_missing_derived_keys() {
+    local paths
+    paths="$(derived_kv_paths | jq -R . | jq -sc .)" || return 0
+    kubectl get externalsecrets.external-secrets.io -A -o json 2>/dev/null |
+        jq -r --argjson paths "${paths}" '.items[]
+               | select([(.status.conditions // [])[]
+                         | select(.type == "Ready" and .status == "True")] | length == 0)
+               | select([(.spec.data // [])[].remoteRef.key, (.spec.dataFrom // [])[].extract.key]
+                        | any(. as $k | $paths | index($k)))
+               | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null || true
 }
 
 # =============================================================================
@@ -1167,7 +1205,7 @@ resync_credential_consumers() {
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
-    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_s3_ready argocd_url
+    local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_cache_ready infra_s3_ready argocd_url
 
     # Around a dozen cluster queries, and on a remote API server they add up to
     # the better part of a minute. Announce it: the last thing printed before
@@ -1217,7 +1255,7 @@ print_summary_cp() {
     }
     infra_pg_ready=$(_release_ready postgresql)
     infra_mdb_ready=$(_release_ready mariadb)
-    infra_redis_ready=$(_release_ready redis)
+    infra_cache_ready=$(_release_ready cache)
     infra_s3_ready=$(_release_ready seaweedfs)
     # Keycloak and OpenFGA are Argo CD Applications of the identity
     # ApplicationSet (kernel/appsets/raw/09-identity.yaml), not composed:
@@ -1248,7 +1286,7 @@ print_summary_cp() {
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
     echo -e "${GREEN}  System PG      : ${xr_name}-postgresql (Ready=${infra_pg_ready})${NC}"
     echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
-    echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  System cache   : ${xr_name}-cache (Ready=${infra_cache_ready})${NC}"
     echo -e "${GREEN}  System S3      : ${xr_name}-seaweedfs (Ready=${infra_s3_ready})${NC}"
     echo -e "${GREEN}  Keycloak       : keycloak-idp-${GENTIAN_DEPLOYMENTS_STAGE:-dev} (${keycloak_state})${NC}"
     echo -e "${GREEN}  OpenFGA        : openfga-${GENTIAN_DEPLOYMENTS_STAGE:-dev} (${openfga_state})${NC}"
@@ -1658,6 +1696,11 @@ _claim_cluster_fields() {
         printf '    # starttls: true            defaults to true\n'
     else
         printf '    # host:                     not used while serviceMode is system\n'
+        # Mail clients' ports stay closed until the claim says otherwise:
+        # true is the approval to serve one, and the signed commit its record.
+        printf '    listeners:\n'
+        printf '      submission: false         # 587, where mail clients send\n'
+        printf '      imaps: false              # 993, where mail clients read\n'
     fi
 
     # egressHost, in both modes, because load_deployments_cluster_settings reads
@@ -1816,6 +1859,7 @@ _claim_cluster_fields() {
     # access. A cluster with no source still works: it materializes nothing on
     # reference, and its profiles arrive with the kernel.
     _claim_catalogue_section
+    _claim_release_section
     if [[ "$(gentian_extra_services_enabled)" == "true" ]]; then
         _claim_partners_section
     fi
@@ -2089,6 +2133,71 @@ _claim_catalogue_section() {
     printf '        url: %s\n' "$(gentian_catalogue_url)"
     printf '      # - name: in-house\n'
     printf '      #   url: https://git.example.com/profiles\n'
+}
+
+# _claim_release_section -- spec.release: the platform release this cluster
+# runs (docs/concepts/versioning.md §2), from the ref this install renders. A
+# tag is a version the cluster runs exactly; a branch is a track it follows
+# build by build. Written once by the scaffold; from then on the claim is
+# where the release is declared, the director writes it (kubectl gentian
+# release set) and the operator applies it.
+_claim_release_section() {
+    local ref
+    ref="$(gentian_os_ref)"
+    printf '\n'
+    printf '  # The platform release this cluster runs. version: a release tag the\n'
+    printf '  # cluster runs exactly, moved by a person (kubectl gentian release set)\n'
+    printf '  # or, inside the maintenance window, by autoUpgrade: patch takes the\n'
+    printf '  # next patch of the line, minor the next minor too where the release\n'
+    printf '  # index says it is applied in place; absent, none. track: a gentian-os\n'
+    printf '  # branch the cluster follows build by build (a development cluster).\n'
+    printf '  release:\n'
+    case "${ref}" in
+        v[0-9]*.[0-9]*.[0-9]*)
+            printf '    version: %s\n' "${ref}"
+            printf '    # autoUpgrade: patch\n'
+            ;;
+        "")
+            printf '    # version: v0.5.1\n'
+            printf '    track: develop\n'
+            ;;
+        *)
+            printf '    track: %s\n' "${ref}"
+            ;;
+    esac
+}
+
+# ensure_claim_release_section <claim file>
+# A claim written before spec.release existed gets the section, naming the
+# ref this run renders; a claim that has it is left alone -- from then on
+# the claim says what the cluster runs, not install.env.
+ensure_claim_release_section() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    if claim_release_ref >/dev/null 2>&1 || grep -qE '^  release:' "${claim}"; then
+        return 0
+    fi
+    local last
+    last="$(grep -E '^[A-Za-z]' "${claim}" | tail -n 1)"
+    if [[ "${last}" != "spec:" ]]; then
+        warn "claims/cluster.yaml names no release (spec.release), and spec is not its last"
+        warn "  section, so it is not added. Declare it: kubectl gentian release set <vX.Y.Z>"
+        return 0
+    fi
+    [[ -z "$(tail -c 1 "${claim}")" ]] || printf '\n' >> "${claim}"
+    _claim_release_section >> "${claim}"
+    info "claims/cluster.yaml: spec.release added, naming $(gentian_os_ref); the claim declares the cluster's release from here on."
+}
+
+# preview_claim_release_section <claim file> -- what ensure_claim_release_section
+# would do, without doing it.
+preview_claim_release_section() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    if claim_release_ref >/dev/null 2>&1 || grep -qE '^  release:' "${claim}"; then
+        return 0
+    fi
+    info "would add spec.release to claims/cluster.yaml, naming $(gentian_os_ref)"
 }
 
 # _claim_extra_services_lines -- the claim's record of --no-extra-services,
@@ -3425,10 +3534,12 @@ require_cluster_deployment() {
     # (ensure_claim_store_catalogues, catalogue.sh).
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
+        preview_claim_release_section "${claim}"
         preview_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
+        ensure_claim_release_section "${claim}"
         ensure_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
     fi
     if [[ -f "${claim}" ]]; then

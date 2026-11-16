@@ -50,6 +50,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
+	"github.com/gentian-org/gentian-os/internal/releaseindex"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/usage"
@@ -264,9 +265,21 @@ func main() {
 		Build:  buildVersion(),
 		// The platform's releases, so the status says when a newer one
 		// exists. "none" asks nothing: an air-gapped cluster.
-		ReleaseFeed: releaseFeed(),
+		ReleaseFeed: releaseindex.FeedFromEnv(),
 	}); err != nil {
 		setupLog.Error(err, "unable to add the platform status writer to manager")
+		os.Exit(1)
+	}
+
+	// The release the Cluster claim declares (spec.release): the
+	// Applications of the gentian-os repository, the operator's image and
+	// the gentian-ui charts follow it; a branch follows build by build.
+	if err := mgr.Add(&controller.ReleaseReconciler{
+		Reader:   mgr.GetAPIReader(),
+		Client:   mgr.GetClient(),
+		IndexURL: releaseindex.FeedFromEnv(),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the release reconciler to manager")
 		os.Exit(1)
 	}
 
@@ -318,6 +331,12 @@ func main() {
 	if os.Getenv("DNS_PUBLICATION_VERIFY") != "false" {
 		if err := mgr.Add(&controller.DNSPublicationVerifier{
 			Client: mgr.GetClient(),
+			// The status by domain (gentian-dns-status), which the director
+			// reads for the Operations Console and kubectl gentian domains.
+			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			TenancyMode:  tenancyMode,
+			KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+			Namespace:    envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 			// The core-API recorder, deliberately. Its replacement writes
 			// events.k8s.io/v1 Events, which the operator's RBAC does not grant;
 			// the existing rule covers core Events. controller-runtime marks its
@@ -419,6 +438,7 @@ func main() {
 		BouncerService:    envvar.Or("BOUNCER_SERVICE", "gentian-os-bouncer"),
 		DirectorURL:       os.Getenv("DIRECTOR_URL"),
 		UsherURL:          os.Getenv("USHER_URL"),
+		DispatcherURL:     os.Getenv("DISPATCHER_URL"),
 		Seeder:            buildSeeder(),
 		// Runs a profile's verification command in the app's pod after a
 		// move, the way the restore does; nil skips the verification.
@@ -528,10 +548,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The egress policy of the model gateway's PostgreSQL, which names the
+	// API server's addresses.
+	if err := (&controller.ModelGatewayDatabaseEgressReconciler{
+		Client:            mgr.GetClient(),
+		NetworkPolicies:   controller.StoreNetworkPoliciesEnabled(),
+		KubeAPIServerCIDR: controller.KubeAPIServerCIDR(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ModelGatewayDatabaseEgress")
+		os.Exit(1)
+	}
+
 	// The arbiter's table: which component's key opens which authorization
 	// store, and the model each is decided against.
 	if err := (&controller.AuthorizationTableReconciler{Definitions: held, Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AuthorizationTable")
+		os.Exit(1)
+	}
+
+	// What a run needs before it starts: each tenant's namespace for runs
+	// and the dispatcher's table.
+	if err := (&controller.RunsReconciler{
+		Definitions: held, Client: mgr.GetClient(), ProgramImage: os.Getenv("GENTIAN_IMAGE"),
+		Namespace:         envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
+		DispatcherAccount: os.Getenv("DISPATCHER_SA"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Runs")
 		os.Exit(1)
 	}
 
@@ -681,6 +723,16 @@ func main() {
 				os.Exit(1)
 			}
 			setupLog.Info("membership listener enabled", "addr", listener.Addr)
+			// The statements that did not arrive: people no longer in
+			// Keycloak lose their memberships at the next sweep.
+			if err := mgr.Add(&controller.MembershipSweep{
+				Receiver: listener.Receiver,
+				Client:   mgr.GetClient(),
+				Log:      listener.Log,
+			}); err != nil {
+				setupLog.Error(err, "unable to add the membership sweep")
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -816,17 +868,6 @@ func main() {
 // recorded one. An image built from a copy of the sources without their git
 // history records none, and the report then identifies the build by the
 // digest of its definitions alone.
-// releaseFeed is where the operator reads the newest release from:
-// GENTIAN_RELEASE_FEED_URL, the GitHub releases API of gentian-os by
-// default, or nothing for "none".
-func releaseFeed() string {
-	feed := envvar.Or("GENTIAN_RELEASE_FEED_URL", "https://api.github.com/repos/gentian-org/gentian-os/releases/latest")
-	if feed == "none" {
-		return ""
-	}
-	return feed
-}
-
 func buildVersion() string {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
@@ -867,13 +908,14 @@ func kernelRealmOrDefault(realm string) string {
 //	BAO_ADDR  — OpenBao address (e.g. http://openbao.openbao.svc.cluster.local:8200)
 //	BAO_ROLE  — Kubernetes auth role name (default: gentian-os-operator)
 //
-// The platform master password is read once at startup from
-// secrets.MasterPasswordPath and fed into an HKDF-SHA256 deriver so that,
-// on a cluster whose claim says secretMode: derived, every (tenant, app,
-// category) credential the operator generates is fully deterministic —
-// uninstalling and reinstalling an app yields the same credentials. With
-// secretMode: random the deriver is not used and each credential is drawn
-// from crypto/rand once and kept in OpenBao.
+// On a cluster whose claim says secretMode: derived, every (tenant, app,
+// category) credential the operator generates is computed with HKDF-SHA256
+// from the platform master password and salt at secrets.MasterPasswordPath,
+// so uninstalling and reinstalling an app yields the same credentials. The
+// Seeder reads them when it first derives a value, not here: while they
+// cannot be read, no credential is made and the reconcile that asked is
+// retried. With secretMode: random the master password is not read and each
+// credential is drawn from crypto/rand once and kept in OpenBao.
 //
 // Returns nil (with a warning) when BAO_ADDR is unset — in that mode
 // reconcilers skip the seeding step and behave as they did pre-Inc 21a.
@@ -898,36 +940,27 @@ func buildSeeder() *secrets.Seeder {
 	}
 	kv := secrets.NewKVClient(baoAddr, role, "")
 
-	// Fetch the master password once at startup. If it isn't there yet the
-	// seeder still functions (falls back to crypto/rand), but credentials
-	// will not be deterministic — log loudly so the operator notices the
-	// missing bootstrap step.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	master, err := kv.Get(ctx, secrets.MasterPasswordPath)
-	var deriver *secrets.Deriver
-	switch {
-	case err != nil:
-		setupLog.Error(err, "failed to read master password from OpenBao; credentials will be random",
-			"path", secrets.MasterPasswordPath)
-	case master["value"] == "":
-		setupLog.Info("master password not found at expected path; credentials will be random",
-			"path", secrets.MasterPasswordPath)
-	default:
-		deriver = secrets.NewDeriver(master["value"], master["salt"])
-	}
 
 	// How a credential is made is the claim's to say (secretMode), and it is
-	// asked each time one is made: the master password read above is used in
-	// derived mode only.
+	// asked each time one is made.
 	mode := controller.ClusterSecretMode(bootClient())
 	configured, modeErr := mode(ctx)
 	if modeErr != nil {
 		setupLog.Error(modeErr, "the secret mode could not be read; no credential is made until it can be")
 	}
 	setupLog.Info("secret seeder enabled",
-		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil, "secretMode", configured)
-	return secrets.NewSeeder(kv, deriver).WithMode(mode)
+		"bao_addr", baoAddr, "bao_role", role, "secretMode", configured)
+	seeder := secrets.NewSeeder(kv, nil).WithMode(mode)
+	// A check, not a gate: the operator starts either way, and the Seeder
+	// reads again each time it is asked to make a credential.
+	if modeErr == nil {
+		if err := seeder.CheckDerivation(ctx); err != nil {
+			setupLog.Error(err, "no credential can be made yet; reconciles that need one are retried until it can")
+		}
+	}
+	return seeder
 }
 
 // bundleSigningKey reads the cluster's bundle signing key from the vault

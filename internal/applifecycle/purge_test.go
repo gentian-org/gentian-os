@@ -433,7 +433,7 @@ func TestAPurgeDestroysEveryKindTheAppOwnsAndNothingElse(t *testing.T) {
 
 	// The stores, each by its Job, in teardown order: the cache user, the
 	// bucket, then the database -- and the database's record after it.
-	if want := []string{"redis-acl-delete-demo-wiki", "s3-delete-demo-wiki", "pg-delete-demo-wiki"}; !reflect.DeepEqual(w.jobs, want) {
+	if want := []string{"cache-acl-delete-demo-wiki", "s3-delete-demo-wiki", "pg-delete-demo-wiki"}; !reflect.DeepEqual(w.jobs, want) {
 		t.Errorf("deletion Jobs = %v, want %v", w.jobs, want)
 	}
 	if w.recordExists(t, "wiki") || !w.recordExists(t, "drive") {
@@ -500,7 +500,7 @@ func TestAFailingStepFailsThePurgeAndNamesItself(t *testing.T) {
 				return true, nil, errors.New("the storage backend refused")
 			})
 		}, "the storage backend refused"},
-		{KindCache, func(w *purgeWorld) { w.failJob = "redis-acl-delete-demo-wiki" }, "redis-acl-delete-demo-wiki failed"},
+		{KindCache, func(w *purgeWorld) { w.failJob = "cache-acl-delete-demo-wiki" }, "cache-acl-delete-demo-wiki failed"},
 		{KindObjectStorage, func(w *purgeWorld) { w.failJob = "s3-delete-demo-wiki" }, "s3-delete-demo-wiki failed"},
 		{KindDatabase, func(w *purgeWorld) { w.failJob = "pg-delete-demo-wiki" }, "pg-delete-demo-wiki failed"},
 		{KindAccessGroup, func(w *purgeWorld) { w.groups.failDelete = true }, "503"},

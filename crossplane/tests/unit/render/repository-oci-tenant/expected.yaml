@@ -255,6 +255,9 @@ spec:
         - matchLabels:
             gentianos.io/tenant: acme
             gentianos.io/tier: tenant
+        - matchLabels:
+            gentianos.io/tenant: acme
+            gentianos.io/tier: tenant-runs
         refreshTime: 1h
   providerConfigRef:
     name: kubernetes

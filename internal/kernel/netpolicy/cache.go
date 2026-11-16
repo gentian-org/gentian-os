@@ -22,7 +22,8 @@ const tenantCachePolicyPrefix = "tenant-cache-"
 
 // TenantCacheEgressNetworkPolicy allows app workloads that declare a
 // Memcached cache to reach the tenant's Memcached instance, on its port. An
-// app that declared Redis is not among them: its cache is the shared Redis.
+// app that declared the redis engine is not among them: its cache is the
+// shared cache of the system tier.
 func TenantCacheEgressNetworkPolicy(tenantName, nsName string, cacheAppNames []string) *networkingv1.NetworkPolicy {
 	if len(cacheAppNames) == 0 {
 		return nil

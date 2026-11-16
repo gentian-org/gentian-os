@@ -40,7 +40,8 @@ import (
 type Plan struct {
 	Name string
 	// Quotas are the plan's quantities by their spec.quotas key: requestsCpu,
-	// requestsMemory, cpu, memory, storage and maxPods. A key the plan does
+	// requestsMemory, cpu, memory, storage, maxPods and the three of the
+	// namespace for runs (runsCpu, runsMemory, runsMaxPods). A key the plan does
 	// not set is absent, and is written as null so the ceiling the tenant
 	// ends up with is the plan's and not a mixture of the plan and whatever
 	// the manifest had before.
@@ -58,7 +59,10 @@ const ResourcePlanFile = "resource-plan.yaml"
 
 // quotaKeys is every quantity a plan can set, in the order the patch writes
 // them. Fixed here because the patch has to name each one, present or null.
-var quotaKeys = []string{"requestsCpu", "requestsMemory", "cpu", "memory", "storage", "maxPods"}
+var quotaKeys = []string{
+	"requestsCpu", "requestsMemory", "cpu", "memory", "storage", "maxPods",
+	"runsCpu", "runsMemory", "runsMaxPods",
+}
 
 // SetResourcePlan writes the tenant's plan as one commit: the patch, and the
 // kustomization entry that applies it.

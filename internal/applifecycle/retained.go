@@ -267,7 +267,7 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 	app.Kinds[KindDatabase] = store(KindDatabase,
 		src.databases[name] || recorded.Has(backup.KindDatabase), stores.Database != "")
 	app.Kinds[KindObjectStorage] = store(KindObjectStorage, recorded.Has(backup.KindObjectStorage), stores.S3)
-	app.Kinds[KindCache] = store(KindCache, recorded.Has(backup.KindCache), stores.Redis)
+	app.Kinds[KindCache] = store(KindCache, recorded.Has(backup.KindCache), stores.Cache)
 	// The key at the model gateway: on record for an app whose profile
 	// declared the gateway on a cluster that served models -- and for any app
 	// installed before the gateway had to be declared, until the reconciler

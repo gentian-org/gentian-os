@@ -132,7 +132,7 @@ const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
 // A restore replaces an app's database, bucket and volumes underneath a process
 // that is still running, and a command-mode quiesce never recreates the pod --
 // maintenance mode goes on and off around it. What survives is everything the
-// old pod had already read: its caches in Redis and APCu, and every ConfigMap
+// old pod had already read: its caches in the shared cache and APCu, and every ConfigMap
 // mounted with subPath, which Kubernetes materializes once at pod start and
 // never updates again.
 //

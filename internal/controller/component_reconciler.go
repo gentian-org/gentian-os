@@ -39,7 +39,9 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/addresses"
+	"github.com/gentian-org/gentian-os/internal/apprender"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
+	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -74,6 +76,9 @@ type ComponentReconciler struct {
 	// UsherURL is where a desktop asks what a person may open; empty derives
 	// it from the edge namespace.
 	UsherURL string
+	// DispatcherURL overrides where a component that starts runs is told
+	// the dispatcher is. Empty derives it from the layout.
+	DispatcherURL string
 	// CustodianURL overrides where a component is told the credential
 	// manager is. Empty derives it from the layout.
 	CustodianURL string
@@ -163,6 +168,12 @@ const (
 	// app the token's audience.
 	bouncerExchangeScopeAnnotation = "gentianos.io/bouncer-exchange-scope"
 	bouncerAuthModeAnnotation      = "gentianos.io/bouncer-mode"
+	// On a route that takes a token in place of a session: the audience
+	// and the realm the bouncer holds the token against, and where the
+	// entry's protected resource metadata is (RFC 9728).
+	bouncerTokenAudienceAnnotation    = "gentianos.io/bouncer-token-audience"
+	bouncerTokenRealmAnnotation       = "gentianos.io/bouncer-token-realm"
+	bouncerResourceMetadataAnnotation = "gentianos.io/bouncer-resource-metadata"
 	// bouncerDenyPathsAnnotation carries the exposure's denyPaths to the
 	// bouncer's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
@@ -275,9 +286,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// reach, and who may reach it, is the tenant's network rules' to say
 	// (netpolicy.AdapterNetworkPolicies), because it depends on what else the
 	// tenant has installed.
-	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp && comp.Spec.Class != gentianov1alpha1.ComponentClassAdapter {
+	//
+	// An action is installed and never deployed: it is held and let through
+	// by the same checks, and stops where a release would begin
+	// (actionInstalled).
+	switch comp.Spec.Class {
+	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction:
+	default:
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps and adapters are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters and actions are", comp.Spec.Class), 0)
 	}
 	// The instance runs under one of the modes its profile is certified for.
 	// A Component written before its profile was on the cluster was given
@@ -477,6 +494,21 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if noExtension != "" {
 		return r.status(ctx, comp, metav1.ConditionFalse, "APIExtensionRefused", noExtension, componentRequeue)
 	}
+	// An action ends here. Its profile is the one the install names, usable
+	// on this cluster, and what it asked for is answered; there is nothing
+	// to roll out. A run of it is the dispatcher's.
+	if comp.Spec.Class == gentianov1alpha1.ComponentClassAction {
+		// Its credentials are files a run reads: a field that names no
+		// variable cannot be written, and one a person has not set yet
+		// holds every run (run_credentials.go).
+		if refusal := actionCredentialsRefusal(profile); refusal != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", refusal, 0)
+		}
+		if awaits := actionAwaits(ctx, r.Client, tenant.Name, comp, profile); awaits != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "CredentialsPending", awaits, componentRequeue)
+		}
+		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
+	}
 
 	zone := r.zoneOf(tenant)
 	// An address name the platform depends on -- the desktop's, the
@@ -534,6 +566,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonAuthorizationModelInvalid, refusal, 0)
 	}
+	// Runs of its own that name an image the profile does not pin are
+	// refused whole, for the reason the pins exist.
+	if refusal := runsRefusal(profile); refusal != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonRunsInvalid, refusal, 0)
+	}
 	// The system engines it declares, before anything that needs one: a
 	// component's first install is what asks for an engine that was not
 	// running, and until the engine answers the component waits under a
@@ -555,9 +592,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Requirements first: a chart whose database does not exist yet is not
-	// installed, it is waited for. A placed component's database is in the
-	// platform's own schema, and the operator provides it; an installed
-	// app's is the tenant's store's, read by its sensitive values.
+	// installed, it is waited for. A placed component is handed its
+	// database as a Secret: the desktop the tenant's own, any other the one
+	// the tenant's stores make under its name. An installed app's is read
+	// by its sensitive values.
 	if operatorPlaced(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, profile, tenant)
 		if err != nil {
@@ -603,6 +641,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// one, for the same reason and in the same way.
 	if err := r.ensureAuthorization(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("authorization: %w", err)
+	}
+	// The key for the dispatcher, for a component that starts runs, for the
+	// same reason and in the same way.
+	if err := r.ensureRuns(ctx, comp, tenant.Name, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("runs: %w", err)
 	}
 	// The TURN edge's address and secret, for a component that declares it
 	// or activates an addon that does, for the same reason and in the same
@@ -720,6 +763,20 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		in.Placed = operatorPlaced(profile)
 		in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
+		// The realm client of the token entry, for as long as the entry is
+		// approved: without the approval the realm issues nobody a token
+		// for it.
+		if e := tokenEntryOf(comp, profile); e != nil && (tokenEntryApproved(comp, e, time.Now()) ||
+			tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))) {
+			in.TokenEntry = &apprender.TokenEntry{
+				Host:          exposureHost(zone, comp, e),
+				RedirectURIs:  e.ClientRedirectURIs,
+				SessionMaxAge: tokenEntrySessionMaxAge(tenant, clusterAllowsTokenEntrySessions(ctx, r.Client)),
+			}
+			for _, p := range e.ExchangedBy {
+				in.TokenEntry.Exchangers = append(in.TokenEntry.Exchangers, VouchingAlias(p))
+			}
+		}
 		rendered, err := r.render(ctx, in)
 		if err != nil {
 			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", err.Error(), 0)
@@ -853,6 +910,34 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
 			}
 		}
+	}
+	// The token entry: a host of its own that takes a token of the tenant's
+	// realm in place of a session, served once the tenant's perimeter
+	// approver approved it and removed when that ends. Asked of every
+	// component, so the condition and the route go when the declaration does.
+	tokenEntry := tokenEntryOf(comp, profile)
+	tokenHost := ""
+	sessionHosts := map[string]bool{}
+	if tokenEntry != nil {
+		tokenHost = exposureHost(zone, comp, tokenEntry)
+		for _, e := range routable {
+			sessionHosts[exposureHost(zone, comp, e)] = true
+		}
+	}
+	// A component that declares none, never did and routes nothing has no
+	// such route to look for: an API entry, an addon. One whose profile
+	// stopped declaring it still carries the condition, and is asked once
+	// more so that the route goes.
+	hadTokenEntry := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil
+	tokenWaived := tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	if tokenEntry != nil || hadTokenEntry || len(routable) > 0 {
+		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, tokenServed, held); err != nil {
+			return ctrl.Result{}, fmt.Errorf("token entry: %w", err)
+		}
+	}
+	if tokenServed {
+		exposed++
 	}
 	// The one route that takes no session, for the realm's answer to the
 	// sidecar -- and its removal, where the profile no longer declares one.
@@ -1177,7 +1262,7 @@ func (z edgeZone) listenerFor(host, kernelDomain string) string {
 // routableExposures are the entries of a profile this component routes on the
 // authenticated Gateway, and the ones it refuses to.
 //
-// A gateway entry is behind the zone's session or it is not routed. The
+// A gateway entry is behind the zone's session or it is not routed here. The
 // policy that puts a session and the authorization question in front of a
 // route is written for oidc entries only, so an entry with any other mode
 // would be a route on the authenticated Gateway with nothing in front of it
@@ -1193,6 +1278,11 @@ func routableExposures(comp *gentianov1alpha1.Component, profile *gentianov1alph
 		// An entry that routes into another component is not this one's to
 		// route: the named component already serves that host.
 		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+			continue
+		}
+		// A token entry has a route and a policy of its own, and only once
+		// it is approved (token_entry.go). It is not one of these.
+		if tokenEntryOf(comp, profile) == e {
 			continue
 		}
 		if e.AuthMode != gentianov1alpha1.AuthModeOIDC {
@@ -1484,7 +1574,9 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 		return err
 	}
 	for i := range list.Items {
-		if list.Items[i].GetName() == policy.GetName() {
+		// The token entry's policy carries no session and is not this one's
+		// to remove (token_entry.go).
+		if name := list.Items[i].GetName(); name == policy.GetName() || name == tokenEntryPolicyName(comp.Name) {
 			continue
 		}
 		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
@@ -1713,24 +1805,31 @@ func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *
 		}
 	}
 	add(zoneDesktopHost(zone.zoneNames))
-	var own []string
-	if profile != nil {
-		for i := range profile.Spec.Expose {
-			e := &profile.Spec.Expose[i]
-			if e.Surface != gentianov1alpha1.SurfaceGateway {
-				continue
-			}
-			if e.Backend.Component != "" && e.Backend.Component != comp.Name {
-				continue
-			}
-			own = append(own, exposureHost(zone, comp, e))
-		}
-	}
-	sort.Strings(own)
-	for _, h := range own {
+	for _, h := range componentOwnHosts(zone.zoneNames, comp, profile) {
 		add(h)
 	}
 	return framers
+}
+
+// componentOwnHosts is every host a component answers on through the
+// gateway, sorted: its profile's gateway entries that are its own.
+func componentOwnHosts(zone zoneNames, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile) []string {
+	var own []string
+	if profile == nil {
+		return nil
+	}
+	for i := range profile.Spec.Expose {
+		e := &profile.Spec.Expose[i]
+		if e.Surface != gentianov1alpha1.SurfaceGateway {
+			continue
+		}
+		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+			continue
+		}
+		own = append(own, exposureHostIn(zone, comp.Name, e))
+	}
+	sort.Strings(own)
+	return own
 }
 
 // buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.
@@ -1743,6 +1842,14 @@ func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *
 // has to admit exactly that and no more. It is not the component's to choose:
 // a component that answered X-Frame-Options: DENY would silently break its
 // own tile.
+// tokenEntryMetadataPath is where an entry that takes a token publishes its
+// protected resource metadata (RFC 9728 §3).
+const tokenEntryMetadataPath = "/.well-known/oauth-protected-resource"
+
+// tokenEntryAudience is what a token for the entry on a host names as its
+// audience: the entry's address, without a path.
+func tokenEntryAudience(host string) string { return "https://" + host }
+
 func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string, framers []string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
@@ -1775,6 +1882,15 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, tenantName, name, host
 		bouncerObjectAnnotation:   authz.object,
 		bouncerForwardAnnotation:  fmt.Sprint(authz.forwardToken),
 		bouncerAuthModeAnnotation: mode,
+	}
+	// A token is held against the entry's own address and the zone's realm:
+	// one made out to anything else, or issued by another tenant's realm, is
+	// refused. Only this reconciler knows both.
+	if mode == "bearer" {
+		annotations[bouncerForwardAnnotation] = "false"
+		annotations[bouncerTokenAudienceAnnotation] = tokenEntryAudience(host)
+		annotations[bouncerTokenRealmAnnotation] = zone.realm
+		annotations[bouncerResourceMetadataAnnotation] = tokenEntryAudience(host) + tokenEntryMetadataPath
 	}
 	if e.ExchangeToken && e.AuthMode == gentianov1alpha1.AuthModeOIDC && !authz.forwardToken && !authz.sessionByIDToken() {
 		annotations[bouncerExchangeScopeAnnotation] = AppTokenScope(comp.Spec.ProfileRef.Name)
@@ -1918,6 +2034,16 @@ func (r *ComponentReconciler) usherURL() string {
 	return fmt.Sprintf("http://gentian-os-usher.%s.svc.cluster.local:8080", layout.Namespace(layout.Control))
 }
 
+// dispatcherURL is where the dispatcher answers inside the cluster: the
+// Service the operator's chart puts in the control namespace
+// (templates/dispatcher.yaml).
+func (r *ComponentReconciler) dispatcherURL() string {
+	if r.DispatcherURL != "" {
+		return r.DispatcherURL
+	}
+	return fmt.Sprintf("http://gentian-os-dispatcher.%s.svc.cluster.local:%d", layout.Namespace(layout.Control), dispatcher.Port)
+}
+
 // custodianPort is charts/gentian-os/values.yaml's
 // custodian.port. Named rather than repeated, because a component
 // told the wrong port fails at the first credential write with a connection
@@ -1972,6 +2098,7 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
+		Watches(&gentianov1alpha1.Component{}, adaptersOfApp(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
 		// A partner app's Secret arriving or changing rolls its pods

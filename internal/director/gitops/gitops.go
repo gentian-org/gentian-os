@@ -782,7 +782,11 @@ func (g *GitOps) Uninstall(ctx context.Context, tenant, profile string, meta Met
 		// Remove the whole list entry, not just its `- profile:` line: an entry can carry
 		// nested keys (addons, config) and leaving those behind produces YAML that does
 		// not parse, which wedges every later reconcile. See removeAppEntry.
-		if err := refusePlaced(strings.Split(text, "\n"), profile); err != nil {
+		lines := strings.Split(text, "\n")
+		if err := refusePlaced(lines, profile); err != nil {
+			return "", "", false, err
+		}
+		if err := refuseCameWith(lines, profile); err != nil {
 			return "", "", false, err
 		}
 		out, ok := removeAppEntry(text, profile)

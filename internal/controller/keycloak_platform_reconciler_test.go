@@ -56,7 +56,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, route).Build()
 
-	if err := reconcileKeycloakIDPGatewayRoute(context.Background(), c, "platform.example.test", gentianov1alpha1.TenancyModeMulti); err != nil {
+	if err := reconcileKeycloakIDPGatewayRoute(context.Background(), c, "platform.example.test", gentianov1alpha1.TenancyModeMulti, "kernel"); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -86,7 +86,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 			break
 		}
 	}
-	if csp == "" || !strings.Contains(csp, "https://platform.platform.example.test") || !strings.Contains(csp, "https://*.demo.platform.example.test") {
+	if csp == "" || !strings.Contains(csp, "https://platform.platform.example.test") || !strings.Contains(csp, "https://desktop.demo.platform.example.test") || strings.Contains(csp, "*") {
 		t.Fatalf("unexpected CSP: %q", csp)
 	}
 }
@@ -100,7 +100,7 @@ func TestTheFramePolicyIsAppliedOnlyWhenItsSourcesAreExact(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "demo"
 	tenant.Status.Domain = "demo.platform.example.test"
-	want := contentSecurityPolicy(keycloakGatewayResponseFilters(kernel, []string{tenant.Status.Domain}, nil, []string{tenant.Name}))
+	want := contentSecurityPolicy(keycloakGatewayResponseFilters([]string{platformDesktopHost(kernel), desktopHost(tenant.Status.Domain)}))
 
 	withPolicy := func(policies ...string) *gatewayv1.HTTPRoute {
 		route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{
@@ -133,7 +133,7 @@ func TestTheFramePolicyIsAppliedOnlyWhenItsSourcesAreExact(t *testing.T) {
 		"in another order":         {withPolicy("default-src 'self'; frame-ancestors " + strings.Join(reversed, " ")), true},
 		"one source more":          {withPolicy(want + " https://elsewhere.example"), false},
 		"one source fewer":         {withPolicy("frame-ancestors " + strings.Join(sources[1:], " ")), false},
-		"a wider wildcard":         {withPolicy(strings.Replace(want, "https://*.demo.platform.example.test", "https://*", 1)), false},
+		"a wider wildcard":         {withPolicy(strings.Replace(want, "https://desktop.demo.platform.example.test", "https://*.demo.platform.example.test", 1)), false},
 		"one rule without it":      {withPolicy(want, ""), false},
 		"no frame-ancestors":       {withPolicy("default-src 'self' " + strings.Join(sources, " ")), false},
 		"inside another directive": {withPolicy("sandbox " + want), false},
@@ -142,7 +142,7 @@ func TestTheFramePolicyIsAppliedOnlyWhenItsSourcesAreExact(t *testing.T) {
 		_ = gatewayv1.Install(scheme)
 		_ = gentianov1alpha1.AddToScheme(scheme)
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), tc.route).Build()
-		if got := keycloakGatewayFramePolicyApplied(ctx, c, kernel, gentianov1alpha1.TenancyModeMulti); got != tc.want {
+		if got := keycloakGatewayFramePolicyApplied(ctx, c, kernel, gentianov1alpha1.TenancyModeMulti, "kernel"); got != tc.want {
 			t.Errorf("%s: applied = %v, want %v", name, got, tc.want)
 		}
 	}

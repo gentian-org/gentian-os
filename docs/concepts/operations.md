@@ -119,9 +119,12 @@ catalog directories, not each tenant app install.
 
 ## 6. Metrics
 
-The operator exposes Prometheus metrics (`internal/controller/metrics.go`); the
-chart ships a `ServiceMonitor` for them, off unless `metrics.serviceMonitor`
-is enabled. The platform installs no Prometheus.
+The operator exposes Prometheus metrics (`internal/controller/metrics.go`) on
+port 8080, plain HTTP. With the Cluster claim's `monitoring.enabled`, the
+platform's Prometheus in `kernel-observability` scrapes them; the operator's
+NetworkPolicy admits those Prometheus pods to the port and no other source,
+so with monitoring off nothing reaches it. The chart also ships a
+`ServiceMonitor`, off unless `metrics.serviceMonitor` is enabled.
 
 | Metric | Description |
 |---|---|
@@ -163,9 +166,12 @@ the cluster is blocked by the answer: the operator reads the HTTP status of the
 reply and nothing else.
 
 **When.** A leader-elected worker in the operator sends one report a few
-minutes after the operator starts and one every 24 hours after that. A report
-that does not arrive is retried with a doubling wait, from one minute up to
-one hour. No failure stops anything else.
+minutes after the operator starts and one every 24 hours after that. When a
+tenant is provisioned or removed, or its address or realm changes, a report
+goes within a few minutes, at least three minutes after the last one, so the
+receiving end knows the tenant the same day. A report that does not arrive is
+retried with a doubling wait, from one minute up to one hour. No failure stops
+anything else.
 
 **Where.** An HTTP `POST` to one `https` address fixed at install time
 (`usageStatistics.url` in the operator chart). A redirect is not followed.
@@ -285,8 +291,9 @@ itself exports first, verifies after and rolls back by itself
 
 The platform this cluster runs is on the Cluster claim's status
 (`status.platform`): the version line and the build the operator runs, and
-the newest release the platform's feed publishes
-(`GENTIAN_RELEASE_FEED_URL`; `none` on a cluster that reaches nothing). A
+the newest release the platform's release index lists
+(`GENTIAN_RELEASE_FEED_URL`, `docs/releases/index.yaml` on `main`; `none` on a
+cluster that reaches nothing). A
 profile declares the oldest line it runs on (`spec.requires.platform`), and
 the director refuses a build whose floor this line does not meet.
 
@@ -784,7 +791,7 @@ copied anywhere.
 | The desktop's database of the tenant that adopts the kernel realm | `kernel-data` | `kernel-postgres-role-portal-shell`: the database's own role, not an administrator |
 | Mailbox copy and load | `system-mail` | the mail server's volume |
 | MariaDB dump and load | `system-mariadb` | `mariadb-admin` |
-| Realm export and import | the identity namespace (`kernel-authentication`) | `keycloak-admin` |
+| Realm export and import | the identity namespace (`kernel-authentication`) | `keycloak-provisioner` |
 | Bucket archive and load, the manifest, a bundle's removal | `system-s3` | `s3-admin`, and the bundle's own credential and key |
 | Volume archive and load | the tenant's namespace | the claim |
 | An app's own secrets, into the bundle and back | no Job: the operator itself | the vault, as the operator; the bundle's credential in `system-s3`; the key from the export's or the restore's own Secret |

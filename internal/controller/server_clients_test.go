@@ -81,6 +81,7 @@ func TestTheKernelDatabaseAndMailClientsAreWhereTheirNetworkPoliciesExpectThem(t
 		Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 			Database: &gentianov1alpha1.DatabaseRequirement{}}},
 	}}
+	desktopProfile.Name = DesktopProfileName
 	r := &ComponentReconciler{KernelRealm: kernelRealm}
 	desktop := func(tenant *gentianov1alpha1.Tenant) *gentianov1alpha1.Component {
 		return &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenant.NamespaceName()}}

@@ -208,7 +208,7 @@ func TestTheUserTenantPublishesAWebsiteOnTheMainAddress(t *testing.T) {
 		t.Fatalf("PUT = %d %v", code, body)
 	}
 	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
-	if !strings.Contains(message, "on the cluster's main address") || !strings.Contains(message, "can_expose tenant:user") {
+	if !strings.Contains(message, "on the tenant's bare name") || !strings.Contains(message, "can_expose tenant:user") {
 		t.Fatalf("the commit does not say what was published, or by which relation:\n%s", message)
 	}
 	patch := dt.Git(t, "", "--git-dir", h.remote, "show", "main:"+strings.TrimSuffix(dt.TenantPath("user"), "tenant.yaml")+"exposures.yaml")
@@ -261,43 +261,62 @@ func TestTheUserTenantPublishesAWebsiteOnTheMainAddress(t *testing.T) {
 	}
 }
 
-// Anywhere but the user tenant of a single-tenancy cluster the main address
-// is not a tenant's to ask for, and nothing is committed.
-func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
+// A website may take a tenant's own bare name -- its zone, or a domain of its
+// own -- wherever the tenant has one. Only the cluster's main address is the
+// cluster administrator's to give: a tenant on the cluster's own domain that
+// the cluster does not name is refused, and so is the platform tenant, and
+// nothing is committed for them.
+func TestABareNameIsTheTenantsOwnAndTheMainAddressTheClusterAdministrators(t *testing.T) {
 	cases := []struct {
-		what, mode, path, realm, who string
-		platform                     bool
+		what, mode, claim, path, realm, who, tenant, wantHost string
+		platform                                              bool
 	}{
-		{"a multi-tenancy cluster", "multi", userSitePath, "tenant-user", "uma", false},
-		{"a cluster that declares no mode", "", userSitePath, "tenant-user", "uma", false},
-		{"a tenant that is not the user tenant", "single", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", false},
-		{"the platform tenant", "single", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", true},
+		{"a multi-tenancy cluster: the tenant's zone", "multi", "", userSitePath, "tenant-user", "uma", "user", "user." + dt.KernelDomain, false},
+		{"a cluster that declares no mode: the tenant's zone", "", "", userSitePath, "tenant-user", "uma", "user", "user." + dt.KernelDomain, false},
+		{"a tenant beside the user tenant: its zone", "single", "", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", "demo", "demo." + dt.KernelDomain, false},
+		{"the platform tenant", "single", "", "/v1/tenants/demo/exposures/website/site", "tenant-demo", "tom", "demo", "", true},
+		{"the user tenant where the cluster names another", "", claimWith() + "  tenancyMode: single\n  mainAddress:\n    tenant: demo\n", userSitePath, "tenant-user", "uma", "user", "", false},
 	}
 	for _, tc := range cases {
-		h := startTenancy(t, &residueOperator{}, tc.mode, websites())
+		files := websites()
+		if tc.claim != "" {
+			files[dt.ClaimPath] = tc.claim
+		}
+		h := startTenancy(t, &residueOperator{}, tc.mode, files)
 		if tc.platform {
 			adoptKernelRealm(t, h, "demo", "website", "blog")
 		}
 		before := h.tip(t)
 		tok := h.token(t, tc.realm, tc.who)
 		code, body := h.do(t, "PUT", tc.path, tok, mainAddress)
+		if tc.wantHost != "" {
+			if code != http.StatusAccepted || h.tip(t) == before {
+				t.Errorf("%s: %d %v, want 202", tc.what, code, body)
+				continue
+			}
+			_, view := h.do(t, "GET", exposuresPath(tc.tenant), tok, "")
+			if got := entryOf(t, view, "website", "site")["host"]; got != tc.wantHost {
+				t.Errorf("%s: the website answers at %v, want %s", tc.what, got, tc.wantHost)
+			}
+			continue
+		}
 		msg, _ := body["error"].(string)
-		if code != http.StatusConflict || !strings.Contains(msg, "single-tenancy") {
+		if code != http.StatusConflict || !strings.Contains(msg, "mainAddress.tenant") {
 			t.Errorf("%s: %d %v, want 409 with the reason", tc.what, code, body)
 		}
 		if h.tip(t) != before {
 			t.Errorf("%s: the refused request committed anyway", tc.what)
 		}
 		// The same entry without apex is no way round it: the profile
-		// declares it for the main address, and the operator would publish
+		// declares it for a bare name, and the operator would publish
 		// nothing for an approval that does not say so. The platform
 		// tenant's zone is the one the operator does not ask that of.
 		code, body = h.do(t, "PUT", tc.path, tok, `{"reason":"a public page"}`)
 		if want := map[bool]int{false: http.StatusUnprocessableEntity, true: http.StatusAccepted}[tc.platform]; code != want {
 			t.Errorf("%s: the website without apex: %d %v, want %d", tc.what, code, body, want)
 		}
-		// An entry that is not for the main address is an ordinary surface,
-		// as before.
+		// An entry that is not for a bare name is an ordinary surface, as
+		// before.
 		ordinary := strings.TrimSuffix(tc.path, "website/site") + "nextcloud/shares"
 		if code, body := h.do(t, "PUT", ordinary, tok, `{"reason":"shared calendars"}`); code != http.StatusAccepted {
 			t.Errorf("%s: an ordinary surface: %d %v", tc.what, code, body)
@@ -307,8 +326,8 @@ func TestTheMainAddressIsRefusedEverywhereElse(t *testing.T) {
 
 // A multi-tenancy cluster may name one tenant for its main address. That
 // tenant's approver publishes a website there as the user tenant of a
-// single-tenancy cluster does, with the same acknowledgement; every other
-// tenant is refused as before, and nothing is committed for them.
+// single-tenancy cluster does, with the same acknowledgement. Every other
+// tenant's website goes on its own bare name, never on the main address.
 func TestTheTenantTheClusterNamesHoldsTheMainAddressUnderMulti(t *testing.T) {
 	claim := claimWith() + "  tenancyMode: multi\n  mainAddress:\n    tenant: user\n"
 	files := websites()
@@ -329,13 +348,14 @@ func TestTheTenantTheClusterNamesHoldsTheMainAddressUnderMulti(t *testing.T) {
 		t.Fatalf("the named tenant's website answers at %v, want the bare domain %s", got, dt.KernelDomain)
 	}
 
-	// Another tenant of the same cluster is still refused.
+	// Another tenant of the same cluster gets its own bare name.
 	tom := h.token(t, "tenant-demo", "tom")
-	before = h.tip(t)
-	code, body = h.do(t, "PUT", "/v1/tenants/demo/exposures/website/site", tom, mainAddress)
-	msg, _ := body["error"].(string)
-	if code != http.StatusConflict || !strings.Contains(msg, "mainAddress.tenant") || h.tip(t) != before {
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/exposures/website/site", tom, mainAddress); code != http.StatusAccepted {
 		t.Fatalf("another tenant: %d %v", code, body)
+	}
+	_, view = h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if got := entryOf(t, view, "website", "site")["host"]; got != "demo."+dt.KernelDomain {
+		t.Fatalf("another tenant's website answers at %v, want its own bare name demo.%s", got, dt.KernelDomain)
 	}
 }
 

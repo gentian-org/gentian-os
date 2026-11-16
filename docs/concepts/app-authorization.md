@@ -89,8 +89,10 @@ Every call carries `Authorization: Bearer <AUTHORIZATION_KEY>`. A key the
 table does not name is `401`; nothing a caller sends can name another store,
 and a field the API does not have is `400`. Each key has a rate limit (100
 calls a second, burst 200), so no app can slow another's decisions. A key may
-not write or delete a tuple whose user or object is of type `group` (`403`):
-who is in a group is the realm's to say (§2.5). A refusal is
+not write or delete a tuple whose object is of type `group` (`403`): who is
+in a group is the realm's to say (§2.5). What a group's members hold of the
+component's own objects is the component's: a tuple whose user is
+`group:<realm>/<name>#member` is written like any other. A refusal is
 `{code, message}`.
 
 The arbiter runs from the operator's image with its own command, and the

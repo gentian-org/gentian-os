@@ -293,3 +293,59 @@ func TestAnEntryInAModeThePlatformDoesNotOfferIsNotApproved(t *testing.T) {
 		}
 	}
 }
+
+// A token entry is listed as its own kind, in words that say it is no public
+// address and what the platform checks, and its approval is recorded as that
+// kind and reads as an approval.
+func TestATokenEntryIsListedAndApprovedAsItsOwnKind(t *testing.T) {
+	profile := kindsProfile("nextcloud", "app", "") +
+		"    - name: mcp\n      surface: gateway\n      authMode: bearer\n      subDomain: mcp\n" +
+		"      backend:\n        service: nextcloud\n        port: 8765\n" +
+		"      clientRedirectURIs:\n      - http://localhost/callback\n"
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{dt.CataloguePath("nextcloud.yaml"): profile})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+	code, body := h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	if kinds, _ := body["kinds"].(map[string]any); kinds["tokenEntry"] == nil || kinds["tokenEntry"] == "" {
+		t.Fatalf("kinds = %v: no words for tokenEntry", body["kinds"])
+	}
+	entry := entryOf(t, body, "nextcloud", "mcp")
+	if entry["kind"] != "tokenEntry" || entry["publicAddress"] != false || entry["passesCredential"] != true ||
+		entry["anyoneWithoutSignIn"] == true || entry["state"] != "requested" {
+		t.Fatalf("mcp = %v", entry)
+	}
+	// Where a program may be sent back to is part of what is approved.
+	if back, _ := entry["clientRedirectURIs"].([]any); len(back) != 1 || back[0] != "http://localhost/callback" {
+		t.Fatalf("the approver is not shown where a program returns to: %v", entry["clientRedirectURIs"])
+	}
+	access, _ := entry["access"].(string)
+	for _, says := range []string{
+		"not a public address",
+		"issued by this tenant's sign-in service for this address",
+		"that the person may use the component",
+		"refused everywhere else on the platform",
+		"Until approved, the address answers nobody",
+	} {
+		if !strings.Contains(access, says) {
+			t.Errorf("the approver is not told %q: %v", says, access)
+		}
+	}
+	// The body's kind is what the approver was shown; another one is refused.
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/mcp", tom, `{"reason":"asked for","kind":"public"}`); code == http.StatusAccepted {
+		t.Fatalf("approved as a public address: %v", body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/mcp", tom, `{"reason":"asked for","kind":"tokenEntry"}`); code != http.StatusAccepted {
+		t.Fatalf("approve = %d %v", code, body)
+	}
+	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%s", "main")
+	if !strings.HasPrefix(message, "Approve ") || !strings.Contains(message, "takes a token of the tenant's realm") || !strings.Contains(message, "not a public address") {
+		t.Errorf("the commit reads as a publication: %q", message)
+	}
+	if file := registryOf(t, h, "demo"); !strings.Contains(file, "exposureName: mcp\n      kind: tokenEntry\n      owner: tom") {
+		t.Errorf("the registry lacks the token entry:\n%s", file)
+	}
+}

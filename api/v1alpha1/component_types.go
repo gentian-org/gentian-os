@@ -194,8 +194,9 @@ type ExposureEnablement struct {
 	// down.
 	ReviewAt metav1.Time `json:"reviewAt"`
 
-	// Apex is the approver saying that this surface is for the cluster's
-	// main address (the bare domain), copied from the Tenant's entry.
+	// Apex is the approver saying that this surface is for the tenant's
+	// bare name (the cluster's main address, or the tenant's own), copied
+	// from the Tenant's entry.
 	// +optional
 	Apex bool `json:"apex,omitempty"`
 

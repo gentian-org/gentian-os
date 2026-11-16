@@ -646,7 +646,7 @@ purge_tenant_namespaces() {
     seen=""
     found=0
     for ns in $(kubectl get namespaces \
-        -l 'gentianos.io/tier in (tenant,tenant-dmz,shared,system,system-dmz)' \
+        -l 'gentianos.io/tier in (tenant,tenant-dmz,tenant-runs,shared,system,system-dmz)' \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
         [[ -n "${ns}" ]] || continue
         seen="${seen} ${ns}"

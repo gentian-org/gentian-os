@@ -66,9 +66,10 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 		seen[ns] = struct{}{}
 		out = append(out, ns)
 	}
-	// The database, where this reconciler fulfilled it: a placed
-	// component's. An installed app's way there is the tenant's
-	// (kernel-access-<app>), on the database's port only.
+	// The database of a placed component: the desktop's, or the one the
+	// tenant's stores made under the component's name. An installed app's
+	// way there is the tenant's (kernel-access-<app>), on the database's
+	// port only.
 	if operatorPlaced(profile) && profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		add(r.componentDatabaseNamespace(tenant, profile))
 	}
@@ -191,6 +192,24 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	// its pods on its one port.
 	if wantsAuthorization(profile) {
 		outside = append(outside, authorizationEgress())
+	}
+	// The dispatcher, for a component that starts runs: its pods on its one
+	// port.
+	if wantsRuns(profile) {
+		outside = append(outside, runsEgress())
+	}
+	// The realm's signing keys, for a component told the issuer that no
+	// exposure of its own takes to the edge: the edge Service's pods on the
+	// port its https port forwards to (issuer_keys.go). An edge that cannot
+	// be read leaves the rule out, as below.
+	if wantsIssuerKeys(profile) {
+		keys, err := r.issuerKeysRule(ctx)
+		if err != nil {
+			logf.FromContext(ctx).Info("the edge's Service could not be read; the policy leaves the issuer's keys out",
+				"component", comp.Name, "error", err.Error())
+			keys = nil
+		}
+		outside = append(outside, keys...)
 	}
 	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
 	// The cluster's own public address, where a rule to public addresses

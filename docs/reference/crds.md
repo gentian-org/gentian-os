@@ -247,7 +247,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.config.replicas` | integer (int32) |  | `Replicas` overrides the default replica count. |
 | `spec.exposures` | []object |  | `Exposures` are the entries of the profile a perimeter approver approved: the perimeter entries that are switched on, and the entries behind sign-in whose… |
 | `spec.exposures[].alias` | string |  | `Alias` is the label of a second address for this surface directly under the cluster's own domain, copied from the Tenant's entry. |
-| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the cluster's main address (the bare domain), copied from the Tenant's entry. |
+| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the tenant's bare name (the cluster's main address, or the tenant's own), copied from the Tenant's entry. |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` ends the exposure, for one that was published for a while: at expiry the operator treats the enablement as absent, and the entry stays in git as… |
 | `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of the profile's expose list that asks for approval. |
 | `spec.exposures[].kind` | string |  | `Kind` is what was approved, copied from the Tenant's entry; empty is a public address. |
@@ -304,10 +304,25 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
+| `spec.action` | object |  | `Action` is what an action takes, returns and runs. |
+| `spec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `spec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
+| `spec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
+| `spec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
+| `spec.action.outputs` | object |  | `Outputs` is the JSON Schema of what a run returns. |
+| `spec.action.resources` | object |  | `Resources` is what one attempt of a run is given. |
+| `spec.action.resources.cpu` | int-or-string |  |  |
+| `spec.action.resources.memory` | int-or-string |  |  |
+| `spec.action.runtime` | string |  | `Runtime` is what runs the action. |
 | `spec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `spec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
+| `spec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
+| `spec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
+| `spec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `spec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `spec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -325,6 +340,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `spec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
 | `spec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
+| `spec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `spec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
 | `spec.customization.addon` | object |  | `Addon` declares that *this* profile is an addon rather than a deployable app, and how the base activates it. |
 | `spec.customization.addon.id` | string | yes | `ID` is what the hosting app's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
@@ -385,15 +401,17 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `spec.expose` | []object |  | `Expose` declares entry points. |
 | `spec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
-| `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
+| `spec.expose[].apex` | boolean |  | `Apex` publishes this entry on a bare name instead of a host under the zone's domain. |
 | `spec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `spec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
 | `spec.expose[].backend.component` | string |  | `Component` names another component whose Service this entry routes to. |
 | `spec.expose[].backend.port` | integer (int32) | yes |  |
 | `spec.expose[].backend.service` | string | yes |  |
 | `spec.expose[].clientAuthorization` | string |  | `ClientAuthorization` says whose the Authorization header is on this entry. |
+| `spec.expose[].clientRedirectURIs` | []string |  | `ClientRedirectURIs` are, on a token entry, the addresses a program may be sent back to once the person has signed in: the redirect addresses of the realm… |
 | `spec.expose[].denyPaths` | []string |  | `DenyPaths` are refused even where Paths admits them. |
 | `spec.expose[].exchangeToken` | boolean |  | `ExchangeToken` asks the front door to hand this backend a token of the person that is valid at this app and nowhere else: the session's token exchanged at the… |
+| `spec.expose[].exchangedBy` | []string |  | `ExchangedBy` names, on a token entry, the profiles of the components that exchange the entry's tokens for one per app (requires.services.vouching.exchange)… |
 | `spec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
 | `spec.expose[].name` | string | yes |  |
 | `spec.expose[].paths` | []string |  | `Paths` this entry serves. |
@@ -410,6 +428,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.expose[].tile.relation` | string | yes | `Relation` is what the caller must hold, on the object Object names, for the tile to be on their page: a permission of the authorization model… |
 | `spec.extensions` | []object |  | `Extensions` are containers shipped inside the component's own pod: the only escape hatch, and one that cannot create a cluster-scoped object. |
 | `spec.extensions[].appSecrets` | []object |  | `AppSecrets` are sidecar-internal secrets stored at gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}. |
+| `spec.extensions[].appSecrets[].format` | string |  | `Format` is what the value is. |
 | `spec.extensions[].appSecrets[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `spec.extensions[].appSecrets[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `spec.extensions[].chart` | object | yes | `Chart` references the sidecar Helm chart. |
@@ -480,6 +499,20 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `spec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `spec.extensions[].kernelRequirements.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `spec.extensions[].kernelRequirements.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `spec.extensions[].kernelRequirements.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `spec.extensions[].kernelRequirements.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `spec.extensions[].kernelRequirements.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `spec.extensions[].kernelRequirements.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `spec.extensions[].kernelRequirements.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `spec.extensions[].kernelRequirements.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `spec.extensions[].kernelRequirements.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `spec.extensions[].kernelRequirements.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `spec.extensions[].kernelRequirements.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `spec.extensions[].kernelRequirements.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `spec.extensions[].kernelRequirements.runs.own[].resources.cpu` | int-or-string |  |  |
+| `spec.extensions[].kernelRequirements.runs.own[].resources.memory` | int-or-string |  |  |
 | `spec.extensions[].kernelRequirements.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `spec.extensions[].kernelRequirements.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `spec.extensions[].kernelRequirements.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -489,7 +522,8 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `spec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
-| `spec.extensions[].kernelRequirements.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `spec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `spec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.extensions[].kernelRequirements.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -746,6 +780,20 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `spec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `spec.requires.services.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `spec.requires.services.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `spec.requires.services.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `spec.requires.services.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `spec.requires.services.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `spec.requires.services.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `spec.requires.services.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `spec.requires.services.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `spec.requires.services.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `spec.requires.services.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `spec.requires.services.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `spec.requires.services.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `spec.requires.services.runs.own[].resources.cpu` | int-or-string |  |  |
+| `spec.requires.services.runs.own[].resources.memory` | int-or-string |  |  |
 | `spec.requires.services.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `spec.requires.services.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `spec.requires.services.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -755,7 +803,8 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `spec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
-| `spec.requires.services.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `spec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `spec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -763,6 +812,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `spec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
 | `spec.secrets.generated` | []object |  | `Generated` secrets are random, created once and held in the vault. |
+| `spec.secrets.generated[].format` | string |  | `Format` is what the value is. |
 | `spec.secrets.generated[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `spec.secrets.generated[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `spec.secrets.supplied` | []object |  | `Supplied` secrets are credentials only a person can provide. |
@@ -1097,10 +1147,25 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
+| `status.profileSpec.action` | object |  | `Action` is what an action takes, returns and runs. |
+| `status.profileSpec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `status.profileSpec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
+| `status.profileSpec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
+| `status.profileSpec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
+| `status.profileSpec.action.outputs` | object |  | `Outputs` is the JSON Schema of what a run returns. |
+| `status.profileSpec.action.resources` | object |  | `Resources` is what one attempt of a run is given. |
+| `status.profileSpec.action.resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.action.resources.memory` | int-or-string |  |  |
+| `status.profileSpec.action.runtime` | string |  | `Runtime` is what runs the action. |
 | `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts. |
 | `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `status.profileSpec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
+| `status.profileSpec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
+| `status.profileSpec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
+| `status.profileSpec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `status.profileSpec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `status.profileSpec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -1118,6 +1183,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `status.profileSpec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
 | `status.profileSpec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
+| `status.profileSpec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `status.profileSpec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
 | `status.profileSpec.customization.addon` | object |  | `Addon` declares that *this* profile is an addon rather than a deployable app, and how the base activates it. |
 | `status.profileSpec.customization.addon.id` | string | yes | `ID` is what the hosting app's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
@@ -1178,15 +1244,17 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.defaultWhereStoreOffered` | boolean |  | `DefaultWhereStoreOffered` is placement {tenants: users, while: storeOffered}. |
 | `status.profileSpec.expose` | []object |  | `Expose` declares entry points. |
 | `status.profileSpec.expose[].annotations` | map[string]string |  | `Annotations` are gateway policy for this host. |
-| `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on the cluster's bare domain -- its main address -- instead of a host under the zone's domain. |
+| `status.profileSpec.expose[].apex` | boolean |  | `Apex` publishes this entry on a bare name instead of a host under the zone's domain. |
 | `status.profileSpec.expose[].authMode` | string | yes | `AuthMode` is mandatory and has no default. |
 | `status.profileSpec.expose[].backend` | object | yes | `Backend` is the Service the entry routes to. |
 | `status.profileSpec.expose[].backend.component` | string |  | `Component` names another component whose Service this entry routes to. |
 | `status.profileSpec.expose[].backend.port` | integer (int32) | yes |  |
 | `status.profileSpec.expose[].backend.service` | string | yes |  |
 | `status.profileSpec.expose[].clientAuthorization` | string |  | `ClientAuthorization` says whose the Authorization header is on this entry. |
+| `status.profileSpec.expose[].clientRedirectURIs` | []string |  | `ClientRedirectURIs` are, on a token entry, the addresses a program may be sent back to once the person has signed in: the redirect addresses of the realm… |
 | `status.profileSpec.expose[].denyPaths` | []string |  | `DenyPaths` are refused even where Paths admits them. |
 | `status.profileSpec.expose[].exchangeToken` | boolean |  | `ExchangeToken` asks the front door to hand this backend a token of the person that is valid at this app and nowhere else: the session's token exchanged at the… |
+| `status.profileSpec.expose[].exchangedBy` | []string |  | `ExchangedBy` names, on a token entry, the profiles of the components that exchange the entry's tokens for one per app (requires.services.vouching.exchange)… |
 | `status.profileSpec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
 | `status.profileSpec.expose[].name` | string | yes |  |
 | `status.profileSpec.expose[].paths` | []string |  | `Paths` this entry serves. |
@@ -1203,6 +1271,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.expose[].tile.relation` | string | yes | `Relation` is what the caller must hold, on the object Object names, for the tile to be on their page: a permission of the authorization model… |
 | `status.profileSpec.extensions` | []object |  | `Extensions` are containers shipped inside the component's own pod: the only escape hatch, and one that cannot create a cluster-scoped object. |
 | `status.profileSpec.extensions[].appSecrets` | []object |  | `AppSecrets` are sidecar-internal secrets stored at gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}. |
+| `status.profileSpec.extensions[].appSecrets[].format` | string |  | `Format` is what the value is. |
 | `status.profileSpec.extensions[].appSecrets[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `status.profileSpec.extensions[].appSecrets[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `status.profileSpec.extensions[].chart` | object | yes | `Chart` references the sidecar Helm chart. |
@@ -1273,6 +1342,20 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `status.profileSpec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `status.profileSpec.extensions[].kernelRequirements.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.extensions[].kernelRequirements.runs.own[].resources.memory` | int-or-string |  |  |
 | `status.profileSpec.extensions[].kernelRequirements.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `status.profileSpec.extensions[].kernelRequirements.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -1282,7 +1365,8 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
-| `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -1539,6 +1623,20 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
 | `status.profileSpec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `status.profileSpec.requires.services.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
+| `status.profileSpec.requires.services.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
+| `status.profileSpec.requires.services.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
+| `status.profileSpec.requires.services.runs.callback.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `status.profileSpec.requires.services.runs.callback.service` | string | yes | `Service` is the name of the Service, in the component's namespace. |
+| `status.profileSpec.requires.services.runs.concurrency` | integer (int32) |  | `Concurrency` is the most runs the component has under way at once. |
+| `status.profileSpec.requires.services.runs.own` | []object |  | `Own` are runs of the component's own images, such as a runner that is not an action of a catalog. |
+| `status.profileSpec.requires.services.runs.own[].command` | []string | yes | `Command` is what a run starts in the image, as an action's is. |
+| `status.profileSpec.requires.services.runs.own[].deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt may take. |
+| `status.profileSpec.requires.services.runs.own[].image` | string | yes | `Image` is the repository of the image, which package.images pins. |
+| `status.profileSpec.requires.services.runs.own[].name` | string | yes | `Name` is what the component asks for. |
+| `status.profileSpec.requires.services.runs.own[].resources` | object |  | `Resources` is what one attempt is given. |
+| `status.profileSpec.requires.services.runs.own[].resources.cpu` | int-or-string |  |  |
+| `status.profileSpec.requires.services.runs.own[].resources.memory` | int-or-string |  |  |
 | `status.profileSpec.requires.services.storage` | object |  | `Storage` specifies object storage (S3) and/or filesystem (WebDAV) requirements. |
 | `status.profileSpec.requires.services.storage.files` | object |  | `Files` requests WebDAV access to the tenant's file-storage service. |
 | `status.profileSpec.requires.services.storage.files.capabilities` | []string |  | `Capabilities` lists the required access capabilities. |
@@ -1548,7 +1646,8 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `status.profileSpec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
-| `status.profileSpec.requires.services.vouching.keys` | object | yes | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
+| `status.profileSpec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `status.profileSpec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
@@ -1556,6 +1655,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `status.profileSpec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
 | `status.profileSpec.secrets.generated` | []object |  | `Generated` secrets are random, created once and held in the vault. |
+| `status.profileSpec.secrets.generated[].format` | string |  | `Format` is what the value is. |
 | `status.profileSpec.secrets.generated[].name` | string | yes | `Name` is the logical identifier for this secret (e.g., "admin_password"). |
 | `status.profileSpec.secrets.generated[].valuePath` | string | yes | `ValuePath` is the dot-notation (or bracket-notation) Helm value key that should receive the generated secret value. |
 | `status.profileSpec.secrets.supplied` | []object |  | `Supplied` secrets are credentials only a person can provide. |
@@ -1598,6 +1698,9 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
 | `spec.quotas.requestsMemory` | int-or-string |  | `RequestsMemory` caps the sum of container memory **requests** in the namespace — reserved capacity, priced, as RequestsCPU is. |
+| `spec.quotas.runsCpu` | int-or-string |  | `RunsCPU` caps the sum of container CPU in the tenant's namespace for runs. |
+| `spec.quotas.runsMaxPods` | integer (int32) |  | `RunsMaxPods` caps the number of pods in the tenant's namespace for runs. |
+| `spec.quotas.runsMemory` | int-or-string |  | `RunsMemory` caps the sum of container memory in the tenant's namespace for runs. |
 | `spec.quotas.storage` | int-or-string |  | `Storage` is the total storage quota (PVCs + S3 buckets). |
 | `spec.retired` | boolean |  | `Retired` withholds the plan from every new choice and keeps it for the tenants already on it. |
 | `spec.tier` | integer (int32) | yes | `Tier` orders plans from smallest to largest. |
@@ -1630,6 +1733,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.apps[].addonPins[].digest` | string | yes | `Digest` pins the addon's profile bundle: the build the install asked for. |
 | `spec.apps[].addonPins[].name` | string | yes | `Name` is the addon's profile name, as addons lists it. |
 | `spec.apps[].addons` | []string |  | `Addons` lists the addon profiles activated inside this app for this tenant — customization-ladder rung L3. |
+| `spec.apps[].cameWith` | string |  | `CameWith` names the app this one was installed together with: that app's profile names this one (ComponentProfile spec.comesWith), and the tenant did not have… |
 | `spec.apps[].catalogue` | string |  | `Catalogue` is the catalog the pinned build was fetched from: the first half of its coordinate, \<catalogue>/\<profile>. |
 | `spec.apps[].config` | object |  | `Config` provides per-tenant overrides for this app installation. |
 | `spec.apps[].config.dropIns` | []object |  | `DropIns` supply tenant-authored files into drop-in directories the target ComponentProfile declares as tenantEditable. |
@@ -1668,9 +1772,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.exposures[].alias` | string |  | `Alias` is a second address for this surface, directly under the cluster's own domain: the one label of \<alias>.\<kernelDomain>. |
 | `spec.exposures[].aliasSetAt` | string (date-time) |  |  |
 | `spec.exposures[].aliasSetBy` | string |  | `AliasSetBy` is the subject that set the alias, and AliasSetAt when. |
-| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the cluster's main address: the bare domain. |
+| `spec.exposures[].apex` | boolean |  | `Apex` is the approver saying that this surface is for the tenant's bare name: the cluster's main address for the one tenant that may hold it -- the one the… |
 | `spec.exposures[].apexAcknowledgedAt` | string (date-time) |  |  |
-| `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on the main address, and ApexAcknowledgedAt when: only a site whose scripts the… |
+| `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on a bare name, and ApexAcknowledgedAt when: only a site whose scripts the… |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` is when it stops answering, for a surface published for a while. |
 | `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of that component's profile that asks for approval: one whose surface is perimeter, or one behind sign-in that declares the… |
 | `spec.exposures[].install` | string | yes | `Install` names the Component this publishes from. |
@@ -1701,6 +1805,14 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.isolation.mode` | string |  | `Mode` selects the isolation strategy. |
 | `spec.isolation.namespace` | string |  | `Namespace` overrides the target namespace name. |
 | `spec.isolation.s3Prefix` | string |  | `S3Prefix` is the prefix for all S3 bucket names belonging to this tenant. |
+| `spec.llm` | object |  | `LLM` is what the tenant's apps may use at the platform's model gateway: which external providers' models, and how much. |
+| `spec.llm.budget` | object |  | `Budget` caps the tenant's use of the gateway, all its apps together. |
+| `spec.llm.budget.budgetDuration` | string |  | `BudgetDuration` is the period after which spend starts again from nothing, e.g. 30d or 1mo. |
+| `spec.llm.budget.maxBudget` | integer (int64) |  | `MaxBudget` is what the tenant may spend per period, in whole US dollars at the gateway's prices. |
+| `spec.llm.budget.rpmLimit` | integer (int64) |  | `RPMLimit` is the requests per minute. |
+| `spec.llm.budget.tpmLimit` | integer (int64) |  | `TPMLimit` is the tokens per minute. |
+| `spec.llm.delegated` | boolean |  | `Delegated` says the tenant's own administrators may change Providers as well. |
+| `spec.llm.providers` | []string |  | `Providers` are the external providers, by their name in the Cluster claim's spec.llm.providers, whose models this tenant's apps may use. |
 | `spec.locales` | []string |  | `Locales` are the languages this tenant's realm renders its login and account pages in, as ISO 639-1 codes (AD-15). |
 | `spec.mail` | object |  | `Mail` configures the mail mode and settings for this tenant. |
 | `spec.mail.mode` | string |  | `Mode` selects the mail delivery strategy. |
@@ -1749,6 +1861,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
 | `spec.quotas.requestsMemory` | int-or-string |  | `RequestsMemory` caps the sum of container memory **requests** in the namespace — reserved capacity, priced, as RequestsCPU is. |
+| `spec.quotas.runsCpu` | int-or-string |  | `RunsCPU` caps the sum of container CPU in the tenant's namespace for runs. |
+| `spec.quotas.runsMaxPods` | integer (int32) |  | `RunsMaxPods` caps the number of pods in the tenant's namespace for runs. |
+| `spec.quotas.runsMemory` | int-or-string |  | `RunsMemory` caps the sum of container memory in the tenant's namespace for runs. |
 | `spec.quotas.storage` | int-or-string |  | `Storage` is the total storage quota (PVCs + S3 buckets). |
 | `spec.security` | object |  | `Security` is the realm policy this tenant runs under: how strong a password has to be, how long a session lasts, what happens after repeated failures. |
 | `spec.security.bruteForce` | object |  | `BruteForce` is what happens after repeated failures. |
@@ -1777,6 +1892,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.storeTerms` | object |  | `StoreTerms` records that the tenant accepted the App Store's terms: which version, and when. |
 | `spec.storeTerms.acceptedAt` | string (date-time) | yes | `AcceptedAt` is when they were accepted. |
 | `spec.storeTerms.version` | string | yes | `Version` is the version of the terms the store named when they were accepted. |
+| `spec.tokenEntries` | object |  | `TokenEntries` is how this tenant's token entries come to be served: a component's address that takes a token of the tenant's realm in place of a session. |
+| `spec.tokenEntries.approval` | string |  | `Approval` says whether a token entry needs the perimeter approver's approval before it is served. |
+| `spec.tokenEntries.sessionMaxHours` | integer (int32) |  | `SessionMaxHours` is how long a sign-in through one of this tenant's token entries lasts before the person signs in again. |
 | `status` | object |  | TenantStatus holds the observed state of a Tenant. |
 | `status.adminEmail` | string |  | `AdminEmail` is the resolved contact address for this tenant, and the administrator's login: admin@\<effectiveDomain>. |
 | `status.appCount` | integer |  | `AppCount` is the total number of apps requested in spec. |

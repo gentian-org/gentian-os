@@ -40,10 +40,15 @@ type fakeRealm struct {
 	updatedBody map[string]any
 	// noManagement makes the realm answer with no realm-management client.
 	noManagement bool
+	// adminAPIScope makes the realm have the kc-admin-api client scope, as a
+	// realm of Keycloak 26.8.2 or later does.
+	adminAPIScope bool
+	// defaults is the set of client scope ids that are the client's defaults.
+	defaults map[string]bool
 }
 
 func newFakeRealm() *fakeRealm {
-	return &fakeRealm{granted: map[string]bool{}, scoped: map[string]bool{}}
+	return &fakeRealm{granted: map[string]bool{}, scoped: map[string]bool{}, defaults: map[string]bool{}}
 }
 
 // allRealmManagementRoles is what a real realm offers; the registrar must take
@@ -159,6 +164,28 @@ func (f *fakeRealm) server(t *testing.T) *httptest.Server {
 			f.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
+		case r.URL.Path == "/admin/realms/demo/client-scopes" && r.Method == http.MethodGet:
+			scopes := []map[string]string{{"id": "profile-uuid", "name": "profile"}}
+			if f.adminAPIScope {
+				scopes = append(scopes, map[string]string{"id": "admin-api-uuid", "name": AdminAPIScope})
+			}
+			_ = json.NewEncoder(w).Encode(scopes)
+
+		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid/default-client-scopes" && r.Method == http.MethodGet:
+			f.mu.Lock()
+			out := []map[string]string{}
+			for id := range f.defaults {
+				out = append(out, map[string]string{"id": id})
+			}
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(out)
+
+		case strings.HasPrefix(r.URL.Path, "/admin/realms/demo/clients/registrar-uuid/default-client-scopes/") && r.Method == http.MethodPut:
+			f.mu.Lock()
+			f.defaults[strings.TrimPrefix(r.URL.Path, "/admin/realms/demo/clients/registrar-uuid/default-client-scopes/")] = true
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+
 		case r.URL.Path == "/admin/realms/demo/clients/registrar-uuid/client-secret":
 			_, _ = w.Write([]byte(`{"type":"secret","value":"s3cr3t"}`))
 
@@ -185,6 +212,19 @@ func (f *fakeRealm) did(method, path string) bool {
 		}
 	}
 	return false
+}
+
+// count is how many times method+path was called.
+func (f *fakeRealm) count(method, path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if c == method+" "+path {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeRealm) heldRoles() []string {
@@ -391,6 +431,43 @@ func TestEnsureRegistrarRealmClient_RefusesARealmNameThatIsAPath(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.calls) != 0 {
 		t.Errorf("nothing should reach Keycloak: %v", f.calls)
+	}
+}
+
+// From Keycloak 26.8.2 the Admin API refuses a token without the kc-admin-api
+// scope; the registrar's client takes it as a default scope, once.
+func TestEnsureRegistrarRealmClient_TakesTheAdminAPIScope(t *testing.T) {
+	realm := newFakeRealm()
+	realm.adminAPIScope = true
+	srv := realm.server(t)
+	c := NewKeycloakAdminClient(srv.URL, "gentian-operator", "x")
+
+	for i := 0; i < 2; i++ {
+		if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
+			t.Fatalf("pass %d: %v", i+1, err)
+		}
+	}
+	if !realm.defaults["admin-api-uuid"] {
+		t.Errorf("default scopes = %v, want %s among them", realm.defaults, AdminAPIScope)
+	}
+	put := "/admin/realms/demo/clients/registrar-uuid/default-client-scopes/admin-api-uuid"
+	if n := realm.count(http.MethodPut, put); n != 1 {
+		t.Errorf("the scope was assigned %d times over two passes, want once: every write is an admin event", n)
+	}
+}
+
+// A realm without the scope is a Keycloak before 26.8.2, which does not check;
+// the client is provisioned as before and no scope is assigned.
+func TestEnsureRegistrarRealmClient_WithoutTheAdminAPIScope(t *testing.T) {
+	realm := newFakeRealm()
+	srv := realm.server(t)
+	c := NewKeycloakAdminClient(srv.URL, "gentian-operator", "x")
+
+	if _, err := c.EnsureRegistrarRealmClient(context.Background(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if len(realm.defaults) != 0 {
+		t.Errorf("default scopes = %v, want none assigned", realm.defaults)
 	}
 }
 

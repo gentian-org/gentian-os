@@ -20,7 +20,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/gentian-org/gentian-os/internal/backup"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 )
@@ -110,11 +109,6 @@ func TestATenantsAdministratorRestoresItsOwnBackup(t *testing.T) {
 		t.Fatalf("inspect = %d %v", code, body)
 	}
 
-	// Which version line this platform is of, for the tenant's administrator,
-	// who may not read the cluster's settings.
-	if code, body := h.do(t, "GET", "/v1/tenants/demo/me", tom, ""); code != http.StatusOK || body["platformVersionLine"] != backup.PlatformVersionLine {
-		t.Fatalf("me = %d %v", code, body)
-	}
 }
 
 // A bundle of another tenant is refused before a restore is asked for, and so

@@ -94,7 +94,7 @@ func ProvisionedOf(inv AppInventory) Provisioned {
 
 // Stores are the stores the entry records.
 func (p Provisioned) Stores() Stores {
-	return Stores{Database: p.DatabaseEngine, S3: p.Bucket != "", Redis: p.CacheUser != ""}
+	return Stores{Database: p.DatabaseEngine, S3: p.Bucket != "", Cache: p.CacheUser != ""}
 }
 
 // Empty reports whether the entry records nothing.
@@ -162,7 +162,7 @@ func MergeStores(declared Stores, recorded Provisioned) Stores {
 		out.Database = recorded.DatabaseEngine
 	}
 	out.S3 = out.S3 || recorded.Bucket != ""
-	out.Redis = out.Redis || recorded.CacheUser != ""
+	out.Cache = out.Cache || recorded.CacheUser != ""
 	return out
 }
 

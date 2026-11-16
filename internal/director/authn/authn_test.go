@@ -120,6 +120,40 @@ func TestAnIDTokenIsAcceptedOnlyAsOneAndOnlyForItsClient(t *testing.T) {
 	}
 }
 
+// An entry that takes a token names the audience it must carry. The edge's
+// own token does not carry it, and a token that does is not the edge's.
+func TestATokenForAnEntryIsAcceptedOnlyForThatEntry(t *testing.T) {
+	is := directortest.NewIssuer(t, "tenant-demo")
+	v := verifier(t, is)
+	const entry = "https://mcp.demo.example"
+	forEntry := directortest.Claims{Realm: "tenant-demo", Subject: "u-1", Audience: entry}
+
+	id, err := v.VerifyFor(context.Background(), is.Token(t, forEntry), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Subject != "u-1" || id.Realm != "tenant-demo" || id.SessionID != "sid-u-1" {
+		t.Fatalf("identity = %+v", id)
+	}
+	refused := map[string]struct{ raw, audience string }{
+		"the director's token":  {is.Token(t, with(forEntry, func(c *directortest.Claims) { c.Audience = audience })), entry},
+		"another entry's token": {is.Token(t, forEntry), "https://mcp.other.example"},
+		"no audience named":     {is.Token(t, forEntry), ""},
+		"an ID token":           {is.Token(t, with(forEntry, func(c *directortest.Claims) { c.Type = "ID" })), entry},
+		"expired":               {is.Token(t, with(forEntry, func(c *directortest.Claims) { c.Expiry = time.Now().Add(-time.Hour) })), entry},
+	}
+	for name, c := range refused {
+		t.Run(name, func(t *testing.T) {
+			if _, err := v.VerifyFor(context.Background(), c.raw, c.audience); !errors.Is(err, authn.ErrUnauthenticated) {
+				t.Fatalf("err = %v, want ErrUnauthenticated", err)
+			}
+		})
+	}
+	if _, err := v.Verify(context.Background(), is.Token(t, forEntry)); !errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("a token for an entry passed at the director: %v", err)
+	}
+}
+
 // A token signed with a symmetric key derived from the public key is the
 // classic confusion attack; the algorithm allow-list is what refuses it.
 func TestVerifyRefusesSymmetricAlgorithms(t *testing.T) {

@@ -35,7 +35,7 @@ const ProvisioningJobBackoffLimit int32 = 12
 // configuration Job, retries included.
 //
 // Without one a Job runs until something outside Kubernetes stops it. Every
-// script here talks to Keycloak, Postgres, Redis or S3 over the network, and a
+// script here talks to Keycloak, Postgres, the cache or S3 over the network, and a
 // peer that accepts the connection and then goes quiet gives a command that
 // never returns, a pod that never exits, and a reconcile that waits on that Job
 // with nothing to time it out. The Job reports neither success nor failure, so

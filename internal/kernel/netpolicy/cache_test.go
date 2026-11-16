@@ -76,7 +76,7 @@ func TestBuildDesired_TenantCachePolicies(t *testing.T) {
 	}
 }
 
-// A Redis app's cache is the shared Redis. It is not among the pods that may
+// A redis-engine app's cache is the shared one. It is not among the pods that may
 // reach the tenant's Memcached, which holds other apps' cached data and asks
 // for no password.
 func TestARedisAppIsNotGivenTheTenantsMemcached(t *testing.T) {

@@ -28,7 +28,7 @@ import (
 
 func clearEdgeLimitEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"EDGE_SIGN_IN_POSTS_PER_MINUTE", "PERIMETER_CLIENT_ADDRESS_HEADER", "EDGE_INGRESS", "NETWORK_MODE"} {
+	for _, key := range []string{"EDGE_SIGN_IN_POSTS_PER_MINUTE", "EDGE_SESSION_REQUESTS_PER_MINUTE", "PERIMETER_CLIENT_ADDRESS_HEADER", "EDGE_INGRESS", "NETWORK_MODE"} {
 		t.Setenv(key, "")
 	}
 }
@@ -114,9 +114,8 @@ func TestTheSignInLimitIsPerClientAddress(t *testing.T) {
 	}
 }
 
-// The identity provider's public route carries the limit, on what a sign-in
-// page posts to; the administration console's route, behind a session, and
-// every other kernel route carry none.
+// The identity provider's public route carries the sign-in limit, on what a
+// sign-in page posts to; no route carries one where the routes are listed.
 func TestOnlyTheIdentityProvidersPublicRouteIsLimited(t *testing.T) {
 	clearEdgeLimitEnv(t)
 	for _, s := range kernelHTTPRouteSpecs("k.example", nil, nil, nil, kernelConsoles{llm: true}, "c1", true, true, kernelFrontDoor{}) {
@@ -145,6 +144,83 @@ func TestOnlyTheIdentityProvidersPublicRouteIsLimited(t *testing.T) {
 		if matchesWhole(keycloakSignInPostPattern, path) {
 			t.Errorf("a path servers call for everybody is limited: %s", path)
 		}
+	}
+}
+
+// Every route behind a session is held to each client address's allowance
+// of requests a minute, whatever their method or path: on the authenticated
+// Gateway through the policy every route there inherits, and on the identity
+// provider's administration through its own.
+func TestEveryRouteBehindASessionIsLimited(t *testing.T) {
+	clearEdgeLimitEnv(t)
+
+	for name, spec := range map[string]map[string]interface{}{
+		"the authenticated Gateway":              authenticatedGatewayBackendTrafficPolicySpec("12h", ""),
+		"the identity provider's administration": keycloakAdminBackendTrafficPolicySpec(""),
+	} {
+		limit, _ := spec["rateLimit"].(map[string]interface{})
+		if limit == nil {
+			t.Fatalf("%s carries no rate limit", name)
+		}
+		rules := rateLimitRules(t, limit)
+		if len(rules) != 2 {
+			t.Fatalf("%s: %d rules; one for IPv4 addresses and one for IPv6", name, len(rules))
+		}
+		for i, cidr := range []string{"0.0.0.0/0", "::/0"} {
+			sel := rules[i]["clientSelectors"].([]interface{})[0].(map[string]interface{})
+			if src := sel["sourceCIDR"].(map[string]interface{}); src["type"] != "Distinct" || src["value"] != cidr {
+				t.Errorf("%s: rule %d keys on %v, want each address of %s its own bucket", name, i, src, cidr)
+			}
+			for _, narrowing := range []string{"methods", "path", "headers"} {
+				if _, ok := sel[narrowing]; ok {
+					t.Errorf("%s: rule %d counts only some requests (%s); behind a session every request counts", name, i, narrowing)
+				}
+			}
+			if l := rules[i]["limit"].(map[string]interface{}); l["requests"] != int64(30000) || l["unit"] != "Minute" {
+				t.Errorf("%s: rule %d allows %v, want 30000 a minute", name, i, l)
+			}
+		}
+	}
+	if spec := authenticatedGatewayBackendTrafficPolicySpec("12h", ""); spec["timeout"] == nil {
+		t.Error("the limit replaced the Gateway's timeouts")
+	}
+	if spec := keycloakAdminBackendTrafficPolicySpec(""); spec["connection"] == nil {
+		t.Error("the limit replaced the proxy's settings of the administration route")
+	}
+
+	// Behind the tunnel, keyed on the address the tunnel names.
+	rules := rateLimitRules(t, authenticatedGatewayBackendTrafficPolicySpec("12h", cloudflareClientAddressHeader)["rateLimit"].(map[string]interface{}))
+	if len(rules) != 1 {
+		t.Fatalf("%d rules behind the tunnel, want one", len(rules))
+	}
+	sel := rules[0]["clientSelectors"].([]interface{})[0].(map[string]interface{})
+	if h := sel["headers"].([]interface{})[0].(map[string]interface{}); h["name"] != "CF-Connecting-IP" || h["type"] != "Distinct" {
+		t.Errorf("behind the tunnel the limit keys on %v", h)
+	}
+
+	// The administrator's number, and 0 for none; the sign-in limit is
+	// neither changed by it nor changes it.
+	t.Setenv("EDGE_SESSION_REQUESTS_PER_MINUTE", "12000")
+	rules = rateLimitRules(t, edgeSessionRateLimit(""))
+	if l := rules[0]["limit"].(map[string]interface{}); l["requests"] != int64(12000) {
+		t.Errorf("the administrator's value is not in force: %v", l)
+	}
+	if l := rateLimitRules(t, edgeSignInRateLimit("", ""))[0]["limit"].(map[string]interface{}); l["requests"] != int64(60) {
+		t.Errorf("the session allowance changed the sign-in limit: %v", l)
+	}
+	t.Setenv("EDGE_SESSION_REQUESTS_PER_MINUTE", "plenty")
+	if l := rateLimitRules(t, edgeSessionRateLimit(""))[0]["limit"].(map[string]interface{}); l["requests"] != int64(30000) {
+		t.Errorf("an unusable value replaced the default: %v", l)
+	}
+	t.Setenv("EDGE_SESSION_REQUESTS_PER_MINUTE", "0")
+	if _, has := authenticatedGatewayBackendTrafficPolicySpec("12h", "")["rateLimit"]; has {
+		t.Error("0 turns the limit off, and the Gateway's policy still carries one")
+	}
+	if _, has := keycloakAdminBackendTrafficPolicySpec("")["rateLimit"]; has {
+		t.Error("0 turns the limit off, and the administration route's policy still carries one")
+	}
+	if edgeSignInRateLimit("", "") == nil {
+		t.Error("turning the session allowance off turned the sign-in limit off")
 	}
 }
 

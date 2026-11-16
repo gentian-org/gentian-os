@@ -53,7 +53,8 @@ const (
 	// zoneExchangeProfilesKey is the second thing the zone's realm has to be
 	// told about the components, in the same shape: the sorted,
 	// newline-separated names of the profiles whose exposures ask for an
-	// exchanged token (exchangeToken). The Composition makes one client scope
+	// exchanged token (exchangeToken), and of the apps calls through an
+	// installed adapter are for (adapterApp). The Composition makes one client scope
 	// in the realm per name, called what AppTokenScope calls it, and that
 	// scope is what the bouncer asks for on the component's routes.
 	//
@@ -69,17 +70,19 @@ const (
 	// line per profile, sorted, four or five fields separated by single
 	// spaces:
 	//
-	//	<profile> <service> <port> <path> [<director scopes>]
+	//	<profile> <service> <port> <path> [<what else its client may do>]
 	//
-	// for example "scribe scribe-keys 8443 /.well-known/jwks.json". A space is
+	// for example "scribe scribe-keys 8443 /.well-known/jwks.json", or
+	// "steward - 0 - exchange" for a profile that names no keys. A space is
 	// a safe separator because none of them can hold one: the first two
 	// are DNS labels, the third is a number, the fourth is held to the
-	// characters of a URL path by the profile's schema, and the fifth is the
-	// profile's requires.services.vouching.director joined by commas. The
+	// characters of a URL path by the profile's schema, and the fifth is a
+	// list of words joined by commas: "exchange" where the profile says
+	// requires.services.vouching.exchange, then the profile's
+	// requires.services.vouching.director. The
 	// path is always written out, the default included, so the Composition
-	// does not have to know what the default is. The fifth is written only
-	// in the platform tenant's projection, and only when the profile names
-	// any: a token for the director is the cluster's administrators', who
+	// does not have to know what the default is. The director's scopes are
+	// written only in the platform tenant's projection: a token for the director is the cluster's administrators', who
 	// sign in at that tenant's realm, and in another tenant's realm the
 	// scopes are never made.
 	//
@@ -91,6 +94,13 @@ const (
 	// Here for the reason the exchange profiles are: a component every tenant
 	// is given may vouch as well as an installed one may.
 	zoneVouchingProfilesKey = "vouchingProfiles"
+	// vouchingExchangeWord is, in the fifth field of a vouching line, the
+	// word that switches token exchange on at the component's client.
+	vouchingExchangeWord = "exchange"
+	// vouchingNoKeys stands where a service and a path would, in the line of
+	// a profile that names no keys. Neither a DNS label nor a path can be a
+	// lone hyphen, so it is never mistaken for one.
+	vouchingNoKeys = "-"
 
 	// vouchingKeysDefaultPath is where a component's keys are fetched from
 	// when its profile names no path: the default the profile's schema
@@ -166,6 +176,13 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// components of one profile share the one audience.
 			exchange[tenant][profile.Name] = true
 		}
+		if app := adapterApp(profile.Name, profile); app != "" {
+			// An installed adapter's app is handed tokens too: a component
+			// that vouches for people obtains one for it, by this scope, to
+			// call the adapter as the person. Without it the realm refuses
+			// that exchange for an app with no exchangeToken entry of its own.
+			exchange[tenant][app] = true
+		}
 		if wantsVouching(profile) {
 			// By the profile's name, as above and for the same reason: the
 			// realm knows the component as VouchingAlias(profile), and two
@@ -211,6 +228,24 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	return nil
 }
 
+// adapterApp is the app a call through an adapter is for, where the adapter
+// is called (it names an endpoint), and empty for anything else: the app it
+// adapts, or, for an adapter that adapts none of its tenant's apps and
+// reaches a service elsewhere, the adapter itself (name, its install name).
+// The rights check asks can_use on this app, and the token the adapter is
+// handed is for it (scope app-<app>): so a person may use an adapter of the
+// second kind exactly where they were given the adapter.
+func adapterApp(name string, profile *gentianov1alpha1.ComponentProfile) string {
+	a := profile.Spec.Adapter
+	if a == nil || a.Endpoint == nil {
+		return ""
+	}
+	if a.Adapts == nil {
+		return name
+	}
+	return a.Adapts.Profile
+}
+
 // asksForExchangedToken reports whether any exposure of the profile declares
 // exchangeToken. One entry is enough: the scope is the app's, not the
 // entry's, and every route of the app that asks is given the same one.
@@ -233,18 +268,31 @@ func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
 // describes. Only called for a profile wantsVouching says yes to.
 func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string) string {
 	vouching := profile.Services().Vouching
-	path := vouching.Keys.Path
-	if path == "" {
-		path = vouchingKeysDefaultPath
+	// A profile that names no keys exchanges and does not vouch: the three
+	// fields say so, and the Composition makes no issuer of it.
+	fields := []string{profile.Name, vouchingNoKeys, "0", vouchingNoKeys}
+	if keys := vouching.Keys; keys != nil {
+		path := keys.Path
+		if path == "" {
+			path = vouchingKeysDefaultPath
+		}
+		fields = []string{profile.Name, keys.Service, strconv.Itoa(int(keys.Port)), path}
 	}
-	fields := []string{profile.Name, vouching.Keys.Service, strconv.Itoa(int(vouching.Keys.Port)), path}
+	// The fifth field: what the client may do beside vouching.
+	var extra []string
+	if vouching.Exchange {
+		extra = append(extra, vouchingExchangeWord)
+	}
 	if tenant == gentianov1alpha1.PlatformTenantName && len(vouching.Director) > 0 {
 		scopes := make([]string, 0, len(vouching.Director))
 		for _, d := range vouching.Director {
 			scopes = append(scopes, string(d))
 		}
 		sort.Strings(scopes)
-		fields = append(fields, strings.Join(scopes, ","))
+		extra = append(extra, scopes...)
+	}
+	if len(extra) > 0 {
+		fields = append(fields, strings.Join(extra, ","))
 	}
 	return strings.Join(fields, " ")
 }

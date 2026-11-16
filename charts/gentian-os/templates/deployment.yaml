@@ -237,6 +237,12 @@ spec:
             # both as they were.
             - name: KERNEL_NETWORK_POLICIES
               value: {{ ternary "true" "false" (eq (toString .Values.kernelNetworkPolicies) "true") | quote }}
+            # The switch for the policies on the system tier's servers
+            # (STORE_NETWORK_POLICIES). Anything but "false" is on: the
+            # operator then writes the egress policy of the model gateway's
+            # PostgreSQL, as the gateway's chart writes its other policies.
+            - name: STORE_NETWORK_POLICIES
+              value: {{ ternary "false" "true" (eq (toString .Values.storeNetworkPolicies) "false") | quote }}
             - name: CLOUDFLARE_ZONE_ID
               {{- if .Values.cloudflare.zoneID }}
               value: {{ .Values.cloudflare.zoneID | quote }}
@@ -334,8 +340,8 @@ spec:
               value: {{ .Values.provisioners.postgres | quote }}
             - name: MARIADB_PROVISIONER_IMAGE
               value: {{ .Values.provisioners.mariadb | quote }}
-            - name: REDIS_PROVISIONER_IMAGE
-              value: {{ .Values.provisioners.redis | quote }}
+            - name: CACHE_PROVISIONER_IMAGE
+              value: {{ .Values.provisioners.cache | quote }}
             # The tools the Jobs that move a tenant's objects and talk to the
             # identity provider run, from the same CI run as this operator:
             # its own tag, unless set.
@@ -395,6 +401,15 @@ spec:
             # reads it cannot come from different commits.
             - name: GENTIAN_IMAGE
               value: "{{ .Values.image.repository }}{{- if $imageDigest }}@{{ $imageDigest }}{{- else }}:{{ $imageTag }}{{- end }}"
+            {{- if .Values.dispatcher.enabled }}
+            # The dispatcher of this release: the account the operator binds
+            # in each tenant's namespace for runs, and the address a component
+            # that starts runs is told.
+            - name: DISPATCHER_SA
+              value: {{ include "gentian-os.dispatcherServiceAccountName" . | quote }}
+            - name: DISPATCHER_URL
+              value: {{ printf "http://%s-dispatcher.%s.svc.cluster.local:8080" (include "gentian-os.fullname" .) .Release.Namespace | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080

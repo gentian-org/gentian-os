@@ -11,15 +11,17 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"time"
+	"sort"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -29,71 +31,85 @@ import (
 
 // LiteLLM teams, one per tenant.
 //
-// This was a shell loop: E-02 listed every Tenant, deleted a Job named
-// litellm-teams-sync and applied a new one that called the same two endpoints.
-// Per-tenant state converged by a script that runs when an operator happens to
-// re-run the installer — so a tenant created afterwards had no team until
-// somebody remembered, and two installs racing deleted each other's Job.
+// A tenant's team is what its keys belong to: it names the models the
+// tenant's apps may use, as the access groups of the gateway's configuration,
+// and carries the tenant's budget (Tenant.spec.llm). Every key of the tenant
+// names the same models (model_access_reconciler.go), so a request is held to
+// them by the key and by the team.
+
+// tenantTeam is what the tenant's team carries: the models every tenant may
+// use and those of the providers the tenant opted in to, without the groups
+// that hold no model on this cluster, and the tenant's budget.
 //
-// The operator already speaks to this API for virtual keys, on the same base
-// URL with the same master key. A team is the same shape and belongs beside it.
-
-// ensureLiteLLMTeam creates the tenant's team if LiteLLM does not have one.
-//
-// Idempotent by asking first: /team/new on an existing alias is an error rather
-// than a no-op, and the shell got away with it only because it deleted and
-// recreated the Job each time.
-func ensureLiteLLMTeam(ctx context.Context, masterKey, teamAlias string) error {
-	exists, err := litellmTeamExists(ctx, masterKey, teamAlias)
-	if err != nil {
-		return err
+// A claim that cannot be read leaves the groups unfiltered: a group grants
+// only the models the gateway's configuration puts in it, so the filter only
+// keeps the gateway from listing a group's name as a model.
+func (r *TenantReconciler) tenantTeam(ctx context.Context, tenant *gentianov1alpha1.Tenant) modelgateway.Team {
+	var providers []string
+	var budget *gentianov1alpha1.TenantLLMBudget
+	if tenant.Spec.LLM != nil {
+		providers, budget = tenant.Spec.LLM.Providers, tenant.Spec.LLM.Budget
 	}
-	if exists {
-		return nil
+	var served map[string]bool
+	if claim, found, err := readClusterModels(ctx, r.Client); err != nil {
+		log.FromContext(ctx).V(1).Info("the Cluster claim's models cannot be read; the team names every group it may",
+			"tenant", tenant.Name, "reason", err.Error())
+	} else if found {
+		served = claim.ServedGroups()
 	}
-
-	body, err := json.Marshal(map[string]any{"team_alias": teamAlias})
-	if err != nil {
-		return err
+	team := modelgateway.Team{Models: modelgateway.TeamModels(providers, served)}
+	if budget != nil {
+		team.MaxBudget, team.BudgetDuration, team.RPMLimit, team.TPMLimit =
+			budget.MaxBudget, budget.BudgetDuration, budget.RPMLimit, budget.TPMLimit
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		litellmProxyBaseURL+"/team/new", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+masterKey)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("LiteLLM /team/new: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("LiteLLM /team/new status %d: %s", resp.StatusCode, string(respBody))
-	}
-	return nil
+	return team
 }
 
-// litellmTeamExists reports whether a team with this alias is already known.
-//
-// /team/list rather than a lookup by alias: LiteLLM has no endpoint that takes
-// one, and the list is small — one entry per tenant. The reading of it is the
-// model gateway package's, which removing a team uses too.
-func litellmTeamExists(ctx context.Context, masterKey, teamAlias string) (bool, error) {
-	_, found, err := litellmGateway(masterKey).TeamID(ctx, teamAlias)
-	return found, err
+// readClusterModels reads spec.llm of the cluster's claim. found is false,
+// with no error, where there is no claim or its kind is not installed.
+func readClusterModels(ctx context.Context, c client.Reader) (modelgateway.ClaimModels, bool, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
+	})
+	if err := c.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
+		if meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err) {
+			return modelgateway.ClaimModels{}, false, nil
+		}
+		return modelgateway.ClaimModels{}, false, err
+	}
+	if len(list.Items) == 0 {
+		return modelgateway.ClaimModels{}, false, nil
+	}
+	sort.Slice(list.Items, func(a, b int) bool { return list.Items[a].GetName() < list.Items[b].GetName() })
+	return claimModels(&list.Items[0]), true, nil
 }
 
-// ensureTenantLiteLLMTeam is the reconciler's entry point.
+func claimModels(u *unstructured.Unstructured) modelgateway.ClaimModels {
+	var out modelgateway.ClaimModels
+	raw, found, _ := unstructured.NestedMap(u.Object, "spec", "llm")
+	if !found {
+		return out
+	}
+	if b, err := json.Marshal(raw); err == nil {
+		_ = json.Unmarshal(b, &out)
+	}
+	return out
+}
+
+// ensureTenantTeam makes the tenant's team carry what tenantTeam says, and
+// answers its id.
+func (r *TenantReconciler) ensureTenantTeam(ctx context.Context, gateway *modelgateway.Client, tenant *gentianov1alpha1.Tenant) (string, error) {
+	return gateway.EnsureTeam(ctx, modelgateway.TeamAlias(tenant.Name), r.tenantTeam(ctx, tenant))
+}
+
+// ensureTenantLiteLLMTeam is the reconciler's entry point for a tenant whose
+// apps hold no key: their team still follows the tenant's settings.
 //
 // Never fatal. LiteLLM is an optional kernel service: a cluster that does not
 // serve LLMs has no proxy to reach, and a tenant must not be held un-Ready
 // because an optional component is absent or still starting. The next reconcile
-// retries, which is what a controller is for and what the shell loop was not.
+// retries.
 func (r *TenantReconciler) ensureTenantLiteLLMTeam(ctx context.Context, tenant *gentianov1alpha1.Tenant) {
 	masterKey, err := r.getLiteLLMMasterKey(ctx)
 	if err != nil {
@@ -101,7 +117,7 @@ func (r *TenantReconciler) ensureTenantLiteLLMTeam(ctx context.Context, tenant *
 		// logging on every reconcile of every tenant.
 		return
 	}
-	if err := ensureLiteLLMTeam(ctx, masterKey, modelgateway.TeamAlias(tenant.Name)); err != nil {
+	if _, err := r.ensureTenantTeam(ctx, litellmGateway(masterKey), tenant); err != nil {
 		log.FromContext(ctx).V(1).Info("LiteLLM team sync deferred",
 			"tenant", tenant.Name, "reason", err.Error())
 	}

@@ -126,7 +126,7 @@ func TestAnExchangeThatFailsRefusesTheRequest(t *testing.T) {
 
 func TestTheTableRefusesAnExchangeWhereThereIsNothingToExchange(t *testing.T) {
 	for name, entry := range map[string]string{
-		"a bearer route":          `{host: a, relation: r, object: o, authMode: bearer, exchangeScope: app-a}`,
+		"a bearer route":          `{host: a, relation: r, object: o, authMode: bearer, audience: 'https://a', realm: t, exchangeScope: app-a}`,
 		"a forwarding route":      `{host: a, relation: r, object: o, authMode: oidc, forwardToken: true, exchangeScope: app-a}`,
 		"a route keeping its own": `{host: a, relation: r, object: o, authMode: oidc, keepClientToken: true, idTokenAudience: c, exchangeScope: app-a}`,
 	} {

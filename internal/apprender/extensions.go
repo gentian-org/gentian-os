@@ -118,7 +118,7 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 		// as Helm applied it reports a green app whose pods never schedule.
 		// 10m because a first boot may migrate a schema.
 		"wait":        true,
-		"waitTimeout": "10m",
+		"waitTimeout": releaseWaitTimeout,
 		"skipCRDs":    true,
 		// The tenant's namespace exists, and the release's account may not
 		// create one.
@@ -130,7 +130,6 @@ func extensionObjects(in *Input, ext *gentianov1alpha1.AppSidecarSpec) ([]*unstr
 				"name":      in.KeepVolumes,
 				"namespace": ns,
 				"key":       "patch.yaml",
-				"optional":  false,
 			}},
 		},
 		"values": values,

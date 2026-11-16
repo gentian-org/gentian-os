@@ -52,6 +52,11 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 			buildTenantWildcardCertificate(tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain, r.tenantDNS01ClusterIssuer()),
 		)
 	}
+	// The bare name of a domain of the tenant's own, which the wildcard
+	// leaves out and the cluster's certificate does not name.
+	if ownDomainApex(effectiveDomain, r.KernelDomain) {
+		objects = append(objects, buildTenantApexCertificate(tenant, nsName, effectiveDomain, r.tenantDNS01ClusterIssuer()))
+	}
 	// Tenant app hostnames are served by the kernel Gateway. The tenant's
 	// certificate stays in the tenant namespace and is referenced across
 	// namespaces by the ReferenceGrants below, so certificate ownership follows

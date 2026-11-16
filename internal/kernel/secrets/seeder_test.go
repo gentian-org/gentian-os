@@ -224,7 +224,7 @@ func TestSeederSeedCacheRecordsUser(t *testing.T) {
 
 	ctx := context.Background()
 	first, err := s.SeedCache(ctx, "demo", "test-app", secrets.CacheCreds{
-		Host: "redis.kernel.svc", Port: "6379", User: "demo-test-app",
+		Host: "cache.kernel.svc", Port: "6379", User: "demo-test-app",
 	})
 	if err != nil {
 		t.Fatalf("first seed: %v", err)
@@ -239,7 +239,7 @@ func TestSeederSeedCacheRecordsUser(t *testing.T) {
 	// A reconcile that does not supply the user must not erase the stored one,
 	// and must keep returning the same derived password.
 	second, err := s.SeedCache(ctx, "demo", "test-app", secrets.CacheCreds{
-		Host: "redis.kernel.svc", Port: "6379",
+		Host: "cache.kernel.svc", Port: "6379",
 	})
 	if err != nil {
 		t.Fatalf("second seed: %v", err)
@@ -316,8 +316,8 @@ func TestSeederSeedModelAccessIsStablePerTenantAndApp(t *testing.T) {
 	if err != nil || again.APIKey != first.APIKey {
 		t.Errorf("after a purge: %q, %v; want the derived key again", again.APIKey, err)
 	}
-	// Without a master it is random, and still write-once.
-	random := secrets.NewSeeder(newClient(t, fresh.URL), nil)
+	// In random mode it is random, and still write-once.
+	random := secrets.NewSeeder(newClient(t, fresh.URL), nil).WithMode(fixed(secrets.ModeRandom))
 	a, err := random.SeedModelAccess(ctx, "demo", "notes", "sk-", "http://gateway:4000/v1")
 	if err != nil {
 		t.Fatal(err)
@@ -429,5 +429,47 @@ func TestSyncSMTPFollowsValues(t *testing.T) {
 	}
 	if got, _ := s.Read(ctx, path); got["user"] != "b" {
 		t.Fatalf("empty sync changed the record to %v", got)
+	}
+}
+
+// A contract's user is the contract's from the moment its path is seeded: a
+// provider that makes the account its consumers sign in with is installed
+// before any of them is bound. A path seeded before the user was is given it,
+// and what the path held besides is left as it is.
+func TestSeedContractGivesTheContractItsUser(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	c := newClient(t, srv.URL)
+	s := secrets.NewSeeder(c, secrets.NewDeriver("unit-test-master"))
+	ctx := context.Background()
+
+	first, err := s.SeedContract(ctx, "acme", "process-engine")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	path := secrets.ContractPath("acme", "process-engine")
+	got, err := c.Get(ctx, path)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got["user"] != "gentian-contract-process-engine" || got["endpoint"] != "" || got["password"] != first.Password {
+		t.Fatalf("a new path holds user %q, endpoint %q", got["user"], got["endpoint"])
+	}
+
+	// As a cluster seeded it before, with an endpoint a binding wrote since.
+	old := secrets.ContractPath("acme", "files")
+	if err := c.Put(ctx, old, map[string]string{"password": "kept", "endpoint": "http://files:8080/dav", "user": ""}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	again, err := s.SeedContract(ctx, "acme", "files")
+	if err != nil {
+		t.Fatalf("seed over an older path: %v", err)
+	}
+	got, err = c.Get(ctx, old)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got["user"] != "gentian-contract-files" || got["password"] != "kept" || again.Password != "kept" || got["endpoint"] != "http://files:8080/dav" {
+		t.Fatalf("an older path holds user %q, endpoint %q, and its password is kept: %v", got["user"], got["endpoint"], got["password"] == "kept")
 	}
 }

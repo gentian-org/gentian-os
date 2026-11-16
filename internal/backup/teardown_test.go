@@ -78,7 +78,7 @@ func TestEveryKindProvisioningMakesIsAccountedForByExportAndTeardown(t *testing.
 	// field on Stores that StoreDestroyJobs does not know leaves this short.
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	declared := reflect.TypeOf(Stores{}).NumField()
-	all := Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, S3: true, Redis: true}
+	all := Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, S3: true, Cache: true}
 	jobs := StoreDestroyJobs(tenant, "wiki", all, DestroyWithinARequest)
 	if len(jobs) != declared {
 		t.Fatalf("a profile can declare %d kinds of store and %d have a destroy Job: %v", declared, len(jobs), jobs)
@@ -144,7 +144,7 @@ func TestTheInventoryNamesWhatAnAppOwns(t *testing.T) {
 	got := InventoryOf(tenant, "docmost-ce", profile)
 	want := AppInventory{
 		Tenant: "demo", App: "docmost-ce",
-		Stores:         Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, S3: true, Redis: true},
+		Stores:         Stores{Database: gentianov1alpha1.DatabaseEnginePostgreSQL, S3: true, Cache: true},
 		Database:       "demo_docmost_ce",
 		DatabaseUser:   "demo_docmost-ce",
 		DatabaseRecord: "db-demo-docmost-ce",
@@ -175,7 +175,7 @@ func destroyScripts() map[string]string {
 		"postgres": postgresDestroyScript("demo_wiki", "demo_wiki"),
 		"mariadb":  mariadbDestroyScript("demo_wiki", "demo_wiki"),
 		"s3":       objectStorageDestroyScript("demo-wiki"),
-		"redis":    cacheDestroyScript("demo-wiki"),
+		"cache":    cacheDestroyScript("demo-wiki"),
 	}
 }
 
@@ -223,10 +223,10 @@ func TestTheDestroyScriptsDiscardNoFailure(t *testing.T) {
 			t.Errorf("the object-storage script is missing %q", want)
 		}
 	}
-	if !strings.Contains(scripts["redis"], "ACL SAVE") {
-		t.Errorf("a removed cache user is not saved, and comes back at the next restart:\n%s", scripts["redis"])
+	if !strings.Contains(scripts["cache"], "ACL SAVE") {
+		t.Errorf("a removed cache user is not saved, and comes back at the next restart:\n%s", scripts["cache"])
 	}
-	if !strings.Contains(scripts["redis"], "ACL DELUSER 'demo-wiki'") || !strings.Contains(scripts["redis"], "ACL LIST") {
+	if !strings.Contains(scripts["cache"], "ACL DELUSER 'demo-wiki'") || !strings.Contains(scripts["cache"], "ACL LIST") {
 		t.Error("the cache script does not remove the user and then look for it")
 	}
 }
@@ -275,7 +275,7 @@ func TestTheDestroyJobs(t *testing.T) {
 		{PostgresDestroyJob(tenant, "wiki", DestroyWithinARequest), "pg-delete-demo-wiki", "system-postgresql", "demo_wiki"},
 		{MariaDBDestroyJob(tenant, "wiki", DestroyWithinARequest), "mariadb-delete-demo-wiki", "system-mariadb", "DROP DATABASE"},
 		{ObjectStorageDestroyJob(tenant, "wiki", DestroyWithinARequest), "s3-delete-demo-wiki", "system-s3", "-name demo-wiki"},
-		{CacheDestroyJob(tenant, "wiki", DestroyWithinARequest), "redis-acl-delete-demo-wiki", "system-cache", "demo-wiki"},
+		{CacheDestroyJob(tenant, "wiki", DestroyWithinARequest), "cache-acl-delete-demo-wiki", "system-cache", "demo-wiki"},
 	}
 	for _, c := range cases {
 		job := c.job

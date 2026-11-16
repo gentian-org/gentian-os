@@ -171,6 +171,13 @@ spec:
   package: {chart: {repository: "oci://example/charts", name: x, version: "1.0.0"}}
 `
 
+// tokenEntry is a profile of platform trust with one token entry, and
+// whatever else the entry is to say.
+func tokenEntry(more string) string {
+	return "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n" +
+		"  - {name: mcp, surface: gateway, authMode: bearer, subDomain: mcp, backend: {service: x, port: 80}" + more + "}\n"
+}
+
 func TestComponentProfileRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
 	// A gateway entry with no tile, so a case that is not about tiles does not
@@ -255,7 +262,31 @@ func TestComponentProfileRules(t *testing.T) {
 		// entry with no session.
 		{"a gateway entry that pins its caller instead", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 		{"a gateway entry with no session", app + "\n  expose:\n  - {name: open, surface: gateway, authMode: none, backend: {service: x, port: 80}}\n", "behind the zone's session"},
-		{"a gateway entry with a bearer and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, backend: {service: x, port: 80}}\n", "behind the zone's session"},
+		// A token entry: a gateway entry that takes a token of the tenant's
+		// realm in place of a session, on a host of its own, of a profile of
+		// platform trust.
+		{"a token entry", tokenEntry(""), ""},
+		{"a token entry beside an entry behind sign-in", tokenEntry("") + "  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", ""},
+		{"a token entry of a profile that is not of platform trust", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: bearer, subDomain: api, backend: {service: x, port: 80}}\n", "requires trustTier platform"},
+		{"a token entry on the component's own host", strings.Replace(tokenEntry(""), "subDomain: mcp, ", "", 1), "names a subDomain"},
+		{"a token entry that forwards a token", tokenEntry(", forwardToken: true"), "declares no forwardToken, exchangeToken or tile"},
+		{"a token entry that asks for an exchanged token", tokenEntry(", exchangeToken: true"), "declares no forwardToken, exchangeToken or tile"},
+		{"a token entry with a tile", strings.Replace(tokenEntry(", tile: {displayName: MCP, relation: can_use, object: app}"), "launch: none", "launch: tile", 1), "declares no forwardToken, exchangeToken or tile"},
+		{"a token entry that keeps the app's header", tokenEntry(", clientAuthorization: app"), "clientAuthorization is for a gateway entry behind the session"},
+		{"a token entry with the addresses a program returns to", tokenEntry(`, clientRedirectURIs: ["https://claude.ai/api/mcp/auth_callback", "http://localhost/callback", "http://127.0.0.1:8123/callback"]`), ""},
+		{"a wildcard return address", tokenEntry(`, clientRedirectURIs: ["https://example.org/*"]`), "clientRedirectURIs"},
+		{"a wildcard return host", tokenEntry(`, clientRedirectURIs: ["https://*.example.org/cb"]`), "clientRedirectURIs"},
+		{"a return address in the clear that is not the person's own computer", tokenEntry(`, clientRedirectURIs: ["http://example.org/callback"]`), "clientRedirectURIs"},
+		{"a return address of a scheme of the program's own", tokenEntry(`, clientRedirectURIs: ["cursor://callback"]`), "clientRedirectURIs"},
+		{"return addresses on an entry behind sign-in", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, clientRedirectURIs: [\"https://example.org/cb\"]}\n", "clientRedirectURIs is for a token entry"},
+		{"a token entry whose tokens a vouching component exchanges", tokenEntry(`, exchangedBy: [chaperone-ee]`), ""},
+		{"a component that exchanges and names no keys", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {exchange: true}\n", ""},
+		{"a component that vouches and names no keys", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {}\n", "vouching.keys is required"},
+		{"a component that asks for the director and names no keys", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {exchange: true, director: [plans-read]}\n", "vouching.director needs vouching.keys"},
+		{"exchangers on an entry behind sign-in", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, exchangedBy: [chaperone-ee]}\n", "exchangedBy is for a token entry"},
+		{"two token entries", tokenEntry("") + "  - {name: mcp2, surface: gateway, authMode: bearer, subDomain: mcp2, backend: {service: x, port: 80}}\n", "at most one token entry"},
+		{"a token entry of a service", strings.Replace(tokenEntry(""), "classes: [app]", "classes: [service]", 1), "a token entry is for class app"},
+		{"a gateway entry with a signed token and no session", app + "\n  expose:\n  - {name: api, surface: gateway, authMode: jwt, backend: {service: x, port: 80}}\n", "behind the zone's session"},
 
 		// An exposure may route into another component: an addon's tile points
 		// into its base, and a bound shared-app routes into shared-<app>.
@@ -467,9 +498,70 @@ spec:
 		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
 	}
 
+	// An adapter that runs in the tenant and calls a partner as the person
+	// adapts no app of the tenant either: a call through it is for the
+	// adapter itself. Naming no partner leaves it an adapter of nothing.
+	chart := "  package: {chart: {repository: \"oci://charts.example\", name: tools, version: \"1.0.0\"}}\n"
+	for _, c := range []struct{ name, spec, want string }{
+		{"an adapter that calls a partner", chart + "  requires:\n    services:\n      partners: {call: [store]}\n", ""},
+		{"an adapter that calls no partner", chart + "  requires:\n    services:\n      partners: {call: []}\n", "spec.adapter.adapts names the app"},
+		{"an adapter that only accepts partners", chart + "  requires:\n    services:\n      partners: {accept: true}\n", "spec.adapter.adapts names the app"},
+	} {
+		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
+	}
+
 	// A Component of the class: the class is the profile's, and is immutable.
 	cv := loadCRD(t, "gentianos.io_components.yaml")
 	comp := "apiVersion: gentianos.io/v1alpha1\nkind: Component\nmetadata: {name: x, namespace: tenant-a}\nspec:\n  profileRef: {name: x}\n  class: %s\n"
 	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "")
 	expect(t, "an adapter instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "adapter")), "class is immutable")
+}
+
+// An action is one pinned image a component runs through the dispatcher.
+// These are the rules the class carries at admission.
+func TestActionProfileRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	const image = `{repository: registry.example/steps/ocr, digest: "sha256:` +
+		`0000000000000000000000000000000000000000000000000000000000000000"}`
+	profile := func(pkg, spec string) string {
+		return "\napiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata: {name: x}\nspec:\n" +
+			"  version: \"1.0.0\"\n  package: " + pkg + "\n" + spec
+	}
+	one := "{images: [" + image + "]}"
+	action := "  action: {command: [\"/ocr\"]}\n"
+	head := "  classes: [action]\n  launch: none\n  trustTier: certified\n"
+	chart := `{chart: {repository: "oci://example/charts", name: x, version: "1.0.0"}}`
+
+	for _, c := range []struct{ name, obj, want string }{
+		{"an action", profile(one, head+action), ""},
+		{"an action with everything said", profile(one, head+
+			"  action:\n    command: [\"/ocr\", \"--fast\"]\n    runtime: container\n    deadlineSeconds: 120\n"+
+			"    adapters: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
+			"    inputs: {type: object, properties: {file: {type: string}}}\n    outputs: {type: object}\n"+
+			"  requires:\n    privileges:\n      egress:\n      - name: ocr-service\n        reason: the recognition service\n"+
+			"        rule: {ports: [{port: 443}]}\n"), ""},
+
+		{"an action that is also an app", profile(one, "  classes: [action, app]\n  launch: none\n  trustTier: certified\n"+action), "action is exclusive"},
+		{"an action without its block", profile(one, head), "spec.action is for class action"},
+		{"an app with an action block", profile(chart, "  classes: [app]\n  launch: none\n  trustTier: certified\n"+action), "spec.action is for class action"},
+		{"an action someone opens", profile(one, "  classes: [action]\n  launch: from\n  trustTier: certified\n"+action), "an action has launch none"},
+		{"an action on the gateway", profile(one, head+action+"  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n"), "exposes, provides and integrates nothing"},
+		{"an action that provides a contract", profile(one, head+action+"  provides:\n  - {name: tools}\n"), "exposes, provides and integrates nothing"},
+		{"an action that integrates", profile(one, head+action+"  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n"), "exposes, provides and integrates nothing"},
+		{"an action with a chart", profile(chart, head+action), "exactly one pinned image"},
+		{"an action with a chart and an image", profile("{chart: {repository: \"oci://example/charts\", name: x, version: \"1.0.0\"}, images: ["+image+"]}", head+action), "exactly one pinned image"},
+		{"an action with no image", profile("{}", head+action), "exactly one pinned image"},
+		{"an action with two images", profile("{images: ["+image+", {repository: registry.example/steps/other, digest: \"sha256:"+
+			"1111111111111111111111111111111111111111111111111111111111111111\"}]}", head+action), "exactly one pinned image"},
+		{"an action that is an API", profile("{api: {baseUrl: \"https://steps.example\"}, images: ["+image+"]}", head+action), "exactly one pinned image"},
+		{"an action that requires a database", profile(one, head+action+"  requires:\n    services:\n      database: {engine: postgresql}\n"), "an action requires no service"},
+		{"an action placed on every tenant", profile(one, head+action+"  defaultForTenants: true\n"), "an action is never placed"},
+		{"an action without a command", profile(one, head+"  action: {}\n"), "command"},
+		{"an action that runs too long", profile(one, head+"  action: {command: [\"/ocr\"], deadlineSeconds: 90000}\n"), "deadlineSeconds"},
+		{"an action on another runtime", profile(one, head+"  action: {command: [\"/ocr\"], runtime: wasm}\n"), "runtime"},
+		// A package of images alone is an action's, and nothing else's.
+		{"an app with images and nothing to deploy", profile(one, "  classes: [app]\n  launch: none\n  trustTier: certified\n"), "a package is a chart"},
+	} {
+		expect(t, c.name, v.check(t, c.obj, ""), c.want)
+	}
 }

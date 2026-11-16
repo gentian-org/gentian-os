@@ -188,6 +188,9 @@ The gentian-os operator creates, for every tenant with edge-routed apps:
    is deliberately absent: the tenant listener is scoped to `*.effectiveDomain`
    and cannot route it, so naming it would let browsers coalesce apex requests
    onto a connection that answers 404. See `docs/concepts/routing.md` §3.
+   For a domain of the tenant's own, a second one names the bare domain alone
+   (`tenant-<name>-apex`), for the perimeter listener that serves it
+   (routing.md §5).
 2. Secret `tenant-{name}-wildcard-tls` in the tenant namespace.
 3. One Gateway API `HTTPRoute` per app host, attached to the tenant Gateway and
    `kernel-public-gateway`, all using that TLS secret on the tenant listener.
@@ -239,7 +242,7 @@ cluster's own (`platform.<kernelDomain>` and below). `DELETE` is not
 refused, which is how a tenant bound earlier is put back. The operator does
 not ask the mode: a `TenantDomain` for the tenant `user` that is in the
 cluster anyway moves that tenant to `<label>.<domain>`, and a website it had
-on the main address is withdrawn (`OwnDomain`). The kernel's names stay
+on the main address moves to that domain's bare name. The kernel's names stay
 refused to its apps, because it is back on the cluster's domain the day the
 binding is removed. The tenant's hosts, mail and logins move to it, and
 the concierge finds it through `concierge-lookup`: one file per bound domain,
@@ -247,7 +250,7 @@ named by its SHA-256, so a domain is found by whoever already knows it and the
 cluster's list of customers is not published.
 
 - **OIDC issuer** stays at `https://id.<kernel_domain>/realms/<tenant>` — app URL changes do not invalidate tokens.
-- **DNS:** Customer points `*.acme.com` (or per-host records) at the platform edge proxy/tunnel.
+- **DNS:** Customer points `acme.com` and `*.acme.com` (or per-host records) at the platform edge proxy/tunnel. Where the zone is listed in `certificates.dnsZones`, external-dns writes them from the routes, but only at a name where it owns every record already there: a record somebody else put at the bare domain (a mail forwarder's MX, a TXT) keeps external-dns from adding any record there.
 - **TLS:** Same per-tenant wildcard at origin if the platform can run DNS-01 in `acme.com` (delegated subzone or API token).
 
 ### Kernel DNS credential

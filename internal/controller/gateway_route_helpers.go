@@ -12,6 +12,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -60,11 +61,19 @@ func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	return pathMatch(gatewayv1.PathMatchPathPrefix, prefix)
 }
 
-func keycloakGatewayResponseFilters(kernelDomain string, tenantEffectiveDomains []string, tenantOIDCSubdomains map[string][]string, tenantNames []string) []gatewayv1.HTTPRouteFilter {
-	origins := keycloakOIDCAncestorOrigins(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)
-	if origins == "" {
+// keycloakGatewayResponseFilters is the identity provider's frame policy:
+// its own pages and the signInFramers may frame it, nobody else.
+func keycloakGatewayResponseFilters(framers []string) []gatewayv1.HTTPRouteFilter {
+	var sources []string
+	for _, h := range framers {
+		if h != "" {
+			sources = append(sources, "https://"+h)
+		}
+	}
+	if len(sources) == 0 {
 		return nil
 	}
+	origins := strings.Join(sources, " ")
 	modifier := gatewayv1.HTTPHeaderFilter{
 		Remove: []string{"X-Frame-Options", "Content-Security-Policy"},
 		Set: []gatewayv1.HTTPHeader{

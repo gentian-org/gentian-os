@@ -48,6 +48,7 @@ Complete and exact: every flag, command and field.
 | [install.md](reference/install.md) | The installer: steps, flags, configuration surfaces, tenancy modes |
 | [commands.md](reference/commands.md) | The `kubectl gentian` commands |
 | [store-api/](reference/store-api/store-api.md) | The App Store API: contract, OpenAPI documents, schema |
+| [dispatcher-api.md](reference/dispatcher-api.md) | The dispatcher's API, and what a run's pod and its command are told |
 | [crds.md](reference/crds.md) | Every `gentianos.io` kind with all of its fields, generated from the CRDs |
 | [commands-synopsis.md](reference/commands-synopsis.md) | The `kubectl gentian` synopsis, generated from the plugin |
 | [install-steps.md](reference/install-steps.md) | The installer's flags and steps, generated from `install.sh` and `scripts/steps/` |

@@ -1,0 +1,66 @@
+# Who may start a pod in a tenant's namespace for runs.
+#
+# A tenant's namespace for runs (tier tenant-runs) holds the pods of runs and
+# nothing else. The dispatcher starts each of them, from the table the
+# operator writes: the image at its pinned build, the account without rights,
+# and the labels the namespace's network rules select by. Those rules give a
+# run the egress granted to its action and the way back to the component that
+# started it, so whoever writes a pod there says what it may reach. No other
+# account writes one, and no account writes a workload that would have the
+# cluster's controllers write pods for it.
+#
+# A person is not looked at: a person with kubectl here is break-glass.
+{{- $dispatcher := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "gentian-os.dispatcherServiceAccountName" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gentian-run-pods
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+      - key: gentianos.io/tier
+        operator: In
+        values: ["tenant-runs"]
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["pods"]
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods/ephemeralcontainers", "replicationcontrollers"]
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    - apiGroups: ["batch"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["jobs", "cronjobs"]
+  matchConditions:
+  - name: a-service-account
+    expression: >-
+      request.userInfo.username.startsWith('system:serviceaccount:')
+  validations:
+  - expression: >-
+      request.resource.resource == 'pods' && !has(request.subResource)
+      && request.userInfo.username == {{ $dispatcher | quote }}
+    reason: Forbidden
+    messageExpression: >-
+      request.userInfo.username + " may not write " + request.resource.resource
+      + " in a namespace for runs: the dispatcher starts every pod there, and nothing else runs"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gentian-run-pods
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  policyName: gentian-run-pods
+  validationActions: [Deny]

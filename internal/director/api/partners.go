@@ -52,6 +52,9 @@ const commissionerPrincipal = "component:"
 func (s *Server) commissioned(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if holder := s.cfg.CommissionKeys.Find(guard.Bearer(r)); holder != nil {
+			if s.refuseOverLimit(w, r, commissionerPrincipal+holder.Tenant+"/"+holder.Component) {
+				return
+			}
 			if c, ok := s.admitCommissioner(w, r, pattern, holder); ok {
 				h(w, r, c)
 			}

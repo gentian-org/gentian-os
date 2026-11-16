@@ -165,6 +165,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	h.registerBackupRoutes(guarded)
 	h.registerPlatformRoutes(guarded)
 	h.registerNotificationRoutes(guarded)
+	h.registerAdministratorNotificationRoutes(guarded)
 	h.registerTenantRoutes(guarded)
 	h.registerImportRoutes(guarded)
 	h.registerSourceRoutes(guarded)

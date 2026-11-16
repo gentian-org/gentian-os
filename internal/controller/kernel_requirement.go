@@ -22,7 +22,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/meta"
-	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // AppCollectionMode is re-exported from the shared provisioner package.
@@ -52,15 +51,11 @@ func (r *TenantReconciler) collectKernelApps(
 	if err != nil {
 		return nil, err
 	}
-	// A component the platform places gets its stores through its own
-	// Component, so the tenant-level path leaves it out and does not make
-	// a second set.
-	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
-	if err != nil {
-		return nil, err
-	}
+	// A component the platform places has its stores made here like an
+	// installed app's, under its own name. The desktop alone is left out:
+	// its database is the tenant's own, made through its Component.
 	var apps []string
-	for _, app := range installed {
+	for _, app := range storeOwners(tenant.Spec.Apps) {
 		profile, ok := profileForApp(profileIndex, app)
 		if !ok {
 			continue

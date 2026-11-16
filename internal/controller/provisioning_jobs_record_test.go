@@ -32,7 +32,7 @@ import (
 func TestProvisioningJobBuildersTranscript(t *testing.T) {
 	t.Setenv("POSTGRES_PROVISIONER_IMAGE", "")
 	t.Setenv("MARIADB_PROVISIONER_IMAGE", "")
-	t.Setenv("REDIS_PROVISIONER_IMAGE", "")
+	t.Setenv("CACHE_PROVISIONER_IMAGE", "")
 	t.Setenv("SEAWEEDFS_IMAGE", "")
 	t.Setenv("KEYCLOAK_PROVISIONER_IMAGE", "")
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
@@ -46,8 +46,8 @@ func TestProvisioningJobBuildersTranscript(t *testing.T) {
 		"admin":                makeAdminJob(tenant, "demo", "admin"),
 		"realm disable":        makeRealmDisableJob(tenant, "demo"),
 		"realm delete":         makeRealmDeleteJob(tenant, "demo", "kernel"),
-		"cache user":           makeRedisACLJob(tenant, "wiki", false),
-		"cache user, password": makeRedisACLJob(tenant, "wiki", true),
+		"cache user":           makeCacheACLJob(tenant, "wiki", false),
+		"cache user, password": makeCacheACLJob(tenant, "wiki", true),
 		"groups":               makeGentianGroupsJob(tenant, "demo", `[{"name":"g"}]`),
 		"postgres role":        makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true, 25),
 		"mariadb setup":        makeMariaDBSetupJob(tenant, "shop", true, true, 25),

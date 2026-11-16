@@ -72,7 +72,7 @@ existing_secret=$(bao_curl -sf -H @<(printf 'X-Vault-Token: %s\n' "${BAO_TOKEN}"
 existing_master=$(echo "${existing_secret}" | jq -r '.data.data.value // empty' 2>/dev/null || true)
 existing_salt=$(echo "${existing_secret}" | jq -r '.data.data.salt // empty' 2>/dev/null || true)
 
-gentian_settle_derivation "${existing_master}" "${existing_salt}"
+gentian_settle_derivation "${existing_master}" "${existing_salt}" || exit 1
 
 if [ -z "${MASTER_PASSWORD}" ]; then
     echo "Error: MASTER_PASSWORD is empty. A master password must be provided as MASTER_PASSWORD or pre-seeded in OpenBao." >&2
@@ -118,7 +118,7 @@ PG_OPENFGA_PW=$(derive_password "postgres" "openfga_user")
 # --- MariaDB ---
 MARIA_ROOT_PW=$(derive_password "mariadb" "root_password")
 
-# --- Redis ---
+# --- Cache (vault path cache/redis) ---
 REDIS_PW=$(derive_password "redis" "password")
 
 # --- The object store's administrator ---
@@ -264,7 +264,7 @@ kv_put_once "database/mariadb" "$(cat <<EOF
 EOF
 )"
 
-# --- Redis ---
+# --- Cache (vault path cache/redis) ---
 kv_put_once "cache/redis" "$(cat <<EOF
 {
   "auth_password": "${REDIS_PW}"
@@ -285,7 +285,9 @@ EOF
 kv_put_once "identity/keycloak-bootstrap" "$(cat <<EOF
 {
   "admin_password": "${KC_ADMIN_PW}",
-  "operator_client_secret": "$(derive_password "keycloak" "operatorClientSecret")"
+  "operator_client_secret": "$(derive_password "keycloak" "operatorClientSecret")",
+  "provisioner_client_secret": "$(derive_password "keycloak" "provisionerClientSecret")",
+  "provider_client_secret": "$(derive_password "keycloak" "providerClientSecret")"
 }
 EOF
 )"

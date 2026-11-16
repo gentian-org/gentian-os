@@ -369,6 +369,17 @@ only, with the approver's acknowledgement. Limits, reserved paths and the rule f
 network path between the two apps exists while the tenant's administrator has granted it to the
 consumer, and not before ([app-customization.md §2.3](app-customization.md)).
 
+**An app that needs other apps beside it names them.** `spec.comesWith` lists the profiles of the
+apps an app is installed together with. Installing the app also installs each of them the tenant
+does not have yet, from the app's own catalog or another one the tenant sees, and marks the entry
+(`cameWith` in the tenant's `spec.apps`); uninstalling the app removes the entries so marked, unless
+another installed app comes with them too. An app the tenant installed itself is left as it is both
+times. The install is refused as a whole when one of them is offered nowhere or cannot be installed
+on the cluster. Each of them is otherwise an app of its own: it asks for its own privileges and
+approvals, moves to newer builds by itself, is not uninstalled by hand while the app it came with
+is installed, and keeps its data when removed until it is purged by name. What an app that came
+along comes with itself is not followed.
+
 **An app that creates databases of its own** (`spec.requires.services.database.allowDynamicDatabaseCreation`)
 has to name them the platform's way on MariaDB, where every tenant's databases are on one server:
 the name of the database it was given, an underscore, then anything — `<database>_reports`. It can
@@ -497,6 +508,18 @@ component's to decide:
 So the people a component can speak for are the people who said so, for as long as nobody took it
 back.
 
+**A person who is present.** A component that also declares
+`spec.requires.services.vouching.exchange: true` may exchange a person's own
+token for one valid at a single app, with the same client and for the same
+scopes. The realm exchanges a token only for a client the token names, and
+only a token entry that lists the component's profile under `exchangedBy`
+makes its tokens out to it ([routing.md §4.1](../concepts/routing.md)). The
+person need not be linked: the token is theirs. A component that only
+exchanges leaves `keys` out. It signs no statements, so the platform gives it
+the client and the Secret, without `VOUCHING_ISSUER`, and does not enter it in
+the realm as an issuer: there is nobody to link to it and nothing it says
+about a person is believed.
+
 **A component of the platform tenant may also obtain a token for the director** — a cluster
 administrator's, for the platform's own API — by naming what it may do there in
 `spec.requires.services.vouching.director`: `plans-read` (the cluster's plans, every tenant's plan
@@ -543,7 +566,8 @@ people, that is an addon, or that is placed by default.
 What the platform does with it, and nothing needs granting for:
 
 - The adapter's pods are left out of the tenant's baseline and admit only the tenant's components
-  that speak as a person (those that declare vouching, above); those may reach every adapter.
+  that speak as a person (those that declare vouching, above); those may reach every adapter. Such
+  a component is admitted whether a tenant installed it or the platform placed it.
 - An adapter reaches the app it `adapts` and nothing else in the tenant, and that app admits it. The
   app is not changed for this.
 - It keeps no credential of its app: the credential for a call arrives with the call. Egress beyond
@@ -553,6 +577,33 @@ What the platform does with it, and nothing needs granting for:
 - An adapter may be an `api` instead of a chart: a tool server outside the cluster. It adapts no app
   of the tenant and runs nothing in it, so the egress granted to it is given to the components that
   call it.
+- An adapter may run in the tenant and adapt none of its apps, reaching a service elsewhere as the
+  person: it leaves out `adapts` and names the service's realm among its partners
+  (`requires.services.partners.call`). A call through it is then for the adapter itself: the rights
+  check asks `can_use` on the adapter, and the token it is handed (scope `app-<adapter>`) names its
+  partner client, which exchanges it for an assertion towards the partner. Its pods reach the
+  tenant's realm for that exchange; the service itself is granted egress.
+
+An adapter that says where its tool server answers is made known to the components that may call
+it:
+
+```yaml
+  adapter:
+    adapts: {profile: openproject}
+    endpoint: {service: openproject-tools, port: 8765, path: /mcp}
+```
+
+Each of those components finds a ConfigMap `adapters-<component>` in its namespace. Its one key,
+`ADAPTERS`, is a JSON object from an adapter's install name to its address inside the tenant and
+the app a call through it is for, the app it adapts or the adapter itself: `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
+The list follows what is installed. It grants nothing: the way to an adapter is the network
+policy above, and an adapter without an `endpoint` is installed and on no list.
+
+An adapter whose tools depend on the app's add-ons names a chart value in
+`spec.adapter.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
+(`package.addon.id`) of the add-ons selected into the app it adapts in its tenant, as a list, and
+an empty list while there are none or the app is not installed. When that selection changes, the
+adapter is rendered again. It learns the IDs and nothing else of the tenant's configuration.
 
 An install is an adapter when its profile says so. One made before its profile was on the cluster
 is made as an app; once the profile arrives and says adapter, that instance is replaced, and it has
@@ -566,6 +617,54 @@ nothing else of the app's does. Without the declaration no token of the app is a
 server. On a cluster that does not run its own mail server, or for a tenant without mailboxes
 there, the declaration is accepted and grants nothing
 ([app-customization.md §1.1](app-customization.md)).
+
+**An action** is a step another component runs: one image at one build, started for one call. It
+is an entry of its own with `classes: [action]` (exclusive), a package of exactly one pinned image,
+and a block `spec.action`:
+
+```yaml
+spec:
+  classes: [action]
+  launch: none
+  trustTier: certified
+  package:
+    images:
+    - repository: registry.example/steps/ocr
+      digest: sha256:…                  # the one build a run starts
+  action:
+    command: ["/ocr"]                   # reads the inputs on stdin, writes the outputs to stdout
+    deadlineSeconds: 120                # the longest one attempt may take
+    resources: {cpu: 500m, memory: 256Mi}
+    inputs: {type: object, properties: {file: {type: string}}}
+    outputs: {type: object}
+    adapters: [nextcloud-files]         # what the caller may call on its behalf
+```
+
+Installing it deploys nothing. A component that declares `requires.services.runs` starts a run of
+it through the dispatcher; the run's pod reaches that component and, where the action's
+`requires.privileges.egress` was granted, what that names. The command's contract and what a run is
+told are in [reference/dispatcher-api.md](../reference/dispatcher-api.md).
+
+An action that calls a service outside the cluster declares the credential it needs under
+`spec.secrets.supplied`, as an app does, with one difference: a field's `valuePath` is the name
+the value has in the credential's file.
+
+```yaml
+  secrets:
+    supplied:
+    - name: cloud                       # the file /run/credentials/cloud.env
+      displayName: Cloud account
+      description: A token of the account the step works in.
+      fields:
+      - key: token
+        valuePath: CLOUD_TOKEN          # a line CLOUD_TOKEN='…' in that file
+        format: token
+```
+
+The tenant's Admin Console lists it under Credentials once the action is installed. Until it is
+set the action is not Ready (`CredentialsPending`) and no run of it starts. A run of that action,
+and of no other, reads the files; a value changed in the console reaches the next runs within the
+hour. Removing the action removes what was asked for.
 
 ### 4.1a An app with no single sign-on: declare the sign-in sidecar
 
@@ -621,16 +720,26 @@ marked `placed: true`, and takes it out when the condition stops holding; nobody
 uninstalls, moves or changes it by hand, and an export leaves it out. A profile placed under a
 condition must own no data. Only a cluster's own catalogs place.
 
+A placed component that declares a database (`requires.services.database`) has one of its own,
+named after it like an installed app's, and is told of it as a Secret
+(`valueMapping.database.secretNameKey`). When the placement ends only the component is removed:
+the database stays, shows as an uninstalled app's data and is destroyed by a purge of that name,
+which is refused while the component is placed. The desktop is the exception: its database is the
+tenant's own and lives as long as the tenant.
+
 A profile placed `while: llm` is found through the index (`placedWith: llm`) before it is on the
 cluster, and is installed into every user tenant for everyone at the build the index lists, as an
 ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who
 asks to uninstall it.
 
-The operator renders every chart. Into the values of one it does not place it writes `podLabels`
-with `gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`, which the tenant's network
-policies select the app's pods by, so such a chart has to put `podLabels` on every pod template. A
-placed chart is told only what it declares: no `podLabels` (its pods are selected by their Helm
-release), no trust anchor, and pull secrets only where the tenant declared a repository.
+The operator renders every chart. The tenant's network policies select an app's pods by the labels
+`gentianos.io/app: <app>` and `gentianos.io/tenant: <tenant>`. The operator sets both on the pod
+template of every Deployment, StatefulSet and Job after the chart is rendered, replacing what the
+chart wrote under either key, so a chart needs no value for them. Into the values of a chart it
+does not place it also writes them as `podLabels`, for the Job of a Helm hook, which is not
+rendered with the rest. A placed chart is told only what it declares: no `podLabels`, no trust
+anchor, and pull secrets only where the tenant declared a repository; its pods are selected by
+their Helm release.
 
 A profile of platform trust whose chart and images are private is placed in the platform tenant
 once that tenant holds a set credential for it, and stays when the credential goes, so it may own
@@ -1144,7 +1253,7 @@ kubectl gentian repositories declare acme --tenant demo --url oci://registry.exa
 
 The token is set in the Admin Console of the tenant, under Credentials, as the name the command prints
 (`repository-acme`); it is kept in the vault, as every repository's is, and becomes a pull Secret in that
-tenant's namespace only. A chart whose address lies inside the declared registry
+tenant's namespace and its namespace for runs only. A chart whose address lies inside the declared registry
 is pulled with it. The App Store app does both steps itself for what it sells; for your own registry
 they are done once by the tenant's administrator.
 

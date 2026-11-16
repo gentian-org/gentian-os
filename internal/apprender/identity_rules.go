@@ -31,7 +31,7 @@ import (
 var identityReservedAudiences = []string{
 	"account", "account-console", "admin-cli", "broker", "realm-management",
 	"security-admin-console", "director", "keycloak", "openbao", "vault",
-	"dovecot", "infra-mariadb", "infra-redis", "infra-seaweedfs",
+	"dovecot", "infra-cache", "infra-mariadb", "infra-seaweedfs",
 	"keycloak-config", "keycloak-idp", "llm", "mail-edge", "openbao-config",
 	"openfga", "postfix",
 }

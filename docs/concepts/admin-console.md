@@ -214,8 +214,9 @@ No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
 **Inviting a member.** *Members* → *Invite*: address, name, optional recovery
 address, the app groups to join (an app installed for everyone is preselected).
-The registrar creates the account with no password and has Keycloak mail a
-link with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
+The registrar creates the account with no password, always in the tenant's
+`members` group (entering the tenant takes it), and has Keycloak mail a link
+with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 
 ### 4.3 Password reset and recovery
 
@@ -349,6 +350,11 @@ tenant. Publishing is an action at the director (`can_administer`), which
 records who published it. Notices are stored in the tenant's own database,
 in the table the desktop reads; the console keeps no copy and reads the
 history through the usher.
+
+The desktop also provides the contract `notices`: a component of the tenant
+that the administrator granted the contract to puts a notice in the inbox of
+the people or groups it names, with the contract's credential. The route
+is reached from inside the cluster only: the edge does not route it.
 
 ---
 

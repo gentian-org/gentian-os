@@ -113,9 +113,13 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	effectiveDomains, tenantNames := zonedTenantDomains(tenantList.Items, r.KernelDomain, r.TenancyMode)
-	oidcSubs, err := collectOIDCIngressSubdomainsByTenant(ctx, r.Client, tenantList.Items)
+	streamDuration, err := sessionStreamDuration(ctx, r.Client)
 	if err != nil {
-		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
+		return err
+	}
+	framers, err := signInFramers(ctx, r.Client, tenantList.Items, r.KernelDomain, r.TenancyMode, r.kernelRealm())
+	if err != nil {
+		return fmt.Errorf("collect the pages that may frame sign-in: %w", err)
 	}
 	consoles := kernelConsolesRouted(ctx, r.Client)
 	for _, ns := range kernelRouteGrantNamespaces(consoles) {
@@ -136,19 +140,38 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			return fmt.Errorf("main address: %w", err)
 		}
 	}
-	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
+	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, framers, tenantNames,
 		consoles, r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client),
 		door)
+	profileList := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profileList); err != nil {
+		return fmt.Errorf("list profiles for kernel HTTPRoutes: %w", err)
+	}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	for i := range profileList.Items {
+		profiles[profileList.Items[i].Name] = &profileList.Items[i]
+	}
+	withTenantWWW(specs, tenantWWW(tenantList.Items, profiles, r.KernelDomain, r.TenancyMode, r.kernelRealm(), time.Now()))
 	homes := tenantHomes(tenantList.Items)
 	withTenantHomes(specs, homes)
+	bareNames, err := r.tenantBareNames(ctx, tenantList.Items, profiles)
+	if err != nil {
+		return fmt.Errorf("tenants' bare names: %w", err)
+	}
+	withTenantBareNames(specs, bareNames)
 	// The identity provider's public route is held to a rate of sign-in
-	// posts per client address, and which address that is has to be asked of
-	// the cluster (edgeClientAddressHeader), so it is set here and not where
-	// the routes are listed.
+	// posts per client address, and its administration, behind the kernel
+	// session, to the allowance of every route behind a session. Which
+	// address that is has to be asked of the cluster
+	// (edgeClientAddressHeader), so it is set here and not where the routes
+	// are listed.
 	clientAddressHeader := edgeClientAddressHeader(ctx, r.Client)
 	for i := range specs {
-		if specs[i].name == kernelRouteKeycloakIDP {
+		switch specs[i].name {
+		case kernelRouteKeycloakIDP:
 			specs[i].policy = keycloakRealmBackendTrafficPolicySpec(clientAddressHeader)
+		case kernelRouteKeycloakAdmin:
+			specs[i].policy = keycloakAdminBackendTrafficPolicySpec(clientAddressHeader)
 		}
 	}
 	// The bouncer's table first: a route whose policy asks the bouncer before the
@@ -186,7 +209,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 		if spec.policy != nil {
-			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec); err != nil {
+			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec, streamDuration); err != nil {
 				return fmt.Errorf("ensure kernel BackendTrafficPolicy %s: %w", spec.name, err)
 			}
 		}
@@ -260,6 +283,66 @@ func (r *GatewayPlatformReconciler) mainAddressWebsiteServing(ctx context.Contex
 	if holder == nil {
 		return false, nil
 	}
+	return r.proxyServing(ctx, holder)
+}
+
+// tenantBareName is a tenant's own bare name while a website of the tenant's
+// holds it (addresses.HolderOf), and whether that website's proxy serves yet.
+type tenantBareName struct {
+	host    string
+	serving bool
+}
+
+// tenantBareNames are the tenants whose own bare name a website of theirs
+// holds, by name. Not the cluster's main address: its front door is
+// kernelFrontDoor's.
+func (r *GatewayPlatformReconciler) tenantBareNames(
+	ctx context.Context, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile,
+) (map[string]tenantBareName, error) {
+	holders := addresses.BareNameHolders(mainAddressInputs{
+		Tenants: tenants, Profiles: profiles,
+		KernelDomain: r.KernelDomain, KernelRealm: r.kernelRealm(), TenancyMode: r.TenancyMode,
+		MainAddressTenant: r.MainAddressTenant,
+		Now:               time.Now(),
+	})
+	out := map[string]tenantBareName{}
+	for name, holder := range holders {
+		serving, err := r.proxyServing(ctx, holder)
+		if err != nil {
+			return nil, err
+		}
+		out[name] = tenantBareName{host: holder.Host, serving: serving}
+	}
+	return out, nil
+}
+
+// withTenantBareNames hands a tenant's bare name to the website that holds
+// it. The tenant's apex route moves to the perimeter listener the website is
+// on (perimeterTenantListeners adds it while the name is held): the exact
+// listener takes the name off the catch-all, so a redirect left there would
+// never be reached. Once the website's proxy serves, the route keeps /sign-in
+// alone, which always leads to the tenant's desktop and so to sign-in; until
+// then it redirects as before, and the bare name never answers with nothing.
+// It runs last: an approved website on the bare name is the tenant's most
+// explicit word on it, over a home and over a site at www.
+func withTenantBareNames(specs []kernelHTTPRouteSpec, names map[string]tenantBareName) {
+	for name, bare := range names {
+		for i := range specs {
+			if specs[i].name != fmt.Sprintf("tenant-%s-apex", name) || specs[i].host != bare.host {
+				continue
+			}
+			specs[i].gateway = PerimeterGatewayName
+			specs[i].sectionName = perimeterListenerName(bare.host)
+			if bare.serving {
+				specs[i].rules = []gatewayv1.HTTPRouteRule{signInRedirectRule(desktopHost(bare.host))}
+			}
+		}
+	}
+}
+
+// proxyServing reports whether the publishing proxy of a surface that holds a
+// bare name has an available pod.
+func (r *GatewayPlatformReconciler) proxyServing(ctx context.Context, holder *mainAddressClaim) (bool, error) {
 	namespace, name := mainAddressProxyName(holder)
 	proxy := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, proxy); err != nil {
@@ -367,7 +450,7 @@ func kernelFrontDoorOf(tenants []gentianov1alpha1.Tenant, kernelDomain, kernelRe
 func kernelHTTPRouteSpecs(
 	kernelDomain string,
 	tenantEffectiveDomains []string,
-	tenantOIDCSubdomains map[string][]string,
+	signInFramers []string,
 	tenantNames []string,
 	consoles kernelConsoles,
 	cluster string,
@@ -380,7 +463,7 @@ func kernelHTTPRouteSpecs(
 	kcService := keycloakHTTPServiceName()
 	kcPort := int32(8080)
 
-	idFilters := keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)
+	idFilters := keycloakGatewayResponseFilters(signInFramers)
 	specs := []kernelHTTPRouteSpec{
 		// The identity provider is a kernel-owned perimeter surface: no
 		// session, because it is the issuer, and a path allowlist, because it
@@ -545,12 +628,20 @@ func kernelHTTPRouteSpecs(
 			if domain == platformDesktopHost(kernelDomain) {
 				continue
 			}
-			specs = append(specs, kernelHTTPRouteSpec{
+			spec := kernelHTTPRouteSpec{
 				name:        fmt.Sprintf("tenant-%s-apex", tenantNames[i]),
 				host:        domain,
 				sectionName: wildcardListenerName,
 				rules:       []gatewayv1.HTTPRouteRule{hostRedirectRule(desktopHost(domain))},
-			})
+			}
+			// A domain of the tenant's own has a listener of its own on the
+			// perimeter, with the certificate that names its bare name; the
+			// catch-all would answer it with the cluster's.
+			if ownDomainApex(domain, kernelDomain) {
+				spec.gateway = PerimeterGatewayName
+				spec.sectionName = perimeterListenerName(domain)
+			}
+			specs = append(specs, spec)
 		}
 	}
 	specs = append(specs,
@@ -878,6 +969,50 @@ func tenantHomes(tenants []gentianov1alpha1.Tenant) map[string]string {
 	return homes
 }
 
+// tenantWWW are the tenants that publish a public site at www.<their zone>,
+// by name, with that host.
+//
+// The bare name then leads to the site rather than to the desktop: whoever
+// types acme.com is looking for Acme, not for its sign-in. It is derived from
+// what the tenant's approver already published, so it needs no setting, and
+// it ends with the publication -- an approval that has expired leads back to
+// the desktop. A home the tenant set (spec.signUp.home) is a choice and wins
+// over it (withTenantHomes runs after).
+func tenantWWW(tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile, kernelDomain, tenancyMode, kernelRealm string, now time.Time) map[string]string {
+	out := map[string]string{}
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+		www := "www." + zone.domain
+		for j := range tenant.Spec.Exposures {
+			e := &tenant.Spec.Exposures[j]
+			if e.ExpiresAt != nil && !now.Before(e.ExpiresAt.Time) {
+				continue
+			}
+			if publishedHost(e, profiles, zone, kernelDomain) == www {
+				out[tenant.Name] = www
+				break
+			}
+		}
+	}
+	return out
+}
+
+// withTenantWWW points the apex of a tenant with a site at www there instead
+// of at its desktop, path and query kept.
+func withTenantWWW(specs []kernelHTTPRouteSpec, www map[string]string) {
+	for name, host := range www {
+		for i := range specs {
+			if specs[i].name == fmt.Sprintf("tenant-%s-apex", name) {
+				specs[i].rules = []gatewayv1.HTTPRouteRule{hostRedirectRule(host)}
+			}
+		}
+	}
+}
+
 // withTenantHomes points the apex of a tenant with a home at that home
 // instead of at its desktop.
 func withTenantHomes(specs []kernelHTTPRouteSpec, homes map[string]string) {
@@ -986,6 +1121,20 @@ func keycloakRealmBackendTrafficPolicySpec(clientAddressHeader string) map[strin
 	return spec
 }
 
+// keycloakAdminBackendTrafficPolicySpec is the policy of the identity
+// provider's administration route: the proxy's, and the allowance of a route
+// behind a session (edge_rate_limit.go), and its sign-in restart
+// (edge_sign_in_restart.go). The route is on the perimeter Gateway, so it
+// does not inherit the authenticated Gateway's.
+func keycloakAdminBackendTrafficPolicySpec(clientAddressHeader string) map[string]interface{} {
+	spec := keycloakProxyBackendTrafficPolicySpec()
+	if limit := edgeSessionRateLimit(clientAddressHeader); limit != nil {
+		spec["rateLimit"] = limit
+	}
+	spec["responseOverride"] = edgeSignInRestart()
+	return spec
+}
+
 func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{} {
 	return map[string]interface{}{
 		"path": map[string]interface{}{
@@ -1083,11 +1232,13 @@ func attachKernelClientTrafficPolicyTarget(spec map[string]interface{}, sectionN
 	}
 }
 
-func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicy(ctx context.Context, spec kernelHTTPRouteSpec) error {
+// ensureKernelBackendTrafficPolicy is a kernel route's own policy. It
+// replaces the Gateway's, so it carries the stream limit too.
+func (r *GatewayPlatformReconciler) ensureKernelBackendTrafficPolicy(ctx context.Context, spec kernelHTTPRouteSpec, streamDuration string) error {
 	if spec.policy == nil {
 		return nil
 	}
-	policySpec := cloneMap(spec.policy)
+	policySpec := withMaxStreamDuration(spec.policy, streamDuration)
 	attachBackendTrafficPolicyTarget(policySpec, spec.name)
 	return r.ensureKernelBackendTrafficPolicyNamed(ctx, fmt.Sprintf("btp-%s", spec.name), policySpec)
 }

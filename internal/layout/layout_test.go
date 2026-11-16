@@ -67,9 +67,14 @@ func section(t *testing.T, text, key string) string {
 	return rest[:next[0]]
 }
 
-func TestATenantNameFitsItsDMZ(t *testing.T) {
+// The longest name a tenant may have still makes namespace names of its
+// second namespaces: the one for runs is the longer.
+func TestATenantNameFitsItsNamespaces(t *testing.T) {
 	long := strings.Repeat("a", MaxTenantName)
-	if n := len(TenantDMZ(long)); n != 63 {
+	if n := len(TenantRuns(long)); n != 63 {
+		t.Fatalf("tenant-%s-runs is %d characters", long, n)
+	}
+	if n := len(TenantDMZ(long)); n > 63 {
 		t.Fatalf("tenant-%s-dmz is %d characters", long, n)
 	}
 }

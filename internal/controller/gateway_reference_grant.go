@@ -76,6 +76,15 @@ func tenantKernelGatewayReferenceGrantIntents(tenant *gentianov1alpha1.Tenant) [
 						"kind":  "Secret",
 						"name":  tenantWildcardSecretName(tenant.Name),
 					},
+					// The bare name of a domain of its own, on the
+					// perimeter Gateway in the same namespace. Named for
+					// every tenant: a grant to a Secret that is not there
+					// grants nothing.
+					map[string]interface{}{
+						"group": "",
+						"kind":  "Secret",
+						"name":  tenantApexSecretName(tenant.Name),
+					},
 				},
 			},
 		},

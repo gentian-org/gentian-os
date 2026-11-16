@@ -49,7 +49,7 @@ func jobDigest(t *testing.T, job *batchv1.Job) string {
 func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 	t.Setenv("POSTGRES_PROVISIONER_IMAGE", "")
 	t.Setenv("MARIADB_PROVISIONER_IMAGE", "")
-	t.Setenv("REDIS_PROVISIONER_IMAGE", "")
+	t.Setenv("CACHE_PROVISIONER_IMAGE", "")
 	t.Setenv("SEAWEEDFS_IMAGE", "")
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 	for name, c := range map[string]struct {
@@ -58,7 +58,7 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 	}{
 		// The postgres role, the MariaDB user and the cache user moved
 		// once, deliberately, when the app's password left the spec:
-		// ROLE_PW, DB_PASS and REDIS_USER_PASSWORD are read from the
+		// ROLE_PW, DB_PASS and CACHE_USER_PASSWORD are read from the
 		// Secret of the Job's name, which the Job owns
 		// (ensureProvisioningJobSecrets), and are written into no Job.
 		// Nothing else in these Jobs changed.
@@ -89,9 +89,10 @@ func TestProvisioningJobsAreWhatTheyWere(t *testing.T) {
 		// store's signing Secret.
 		"bucket":         {makeS3BucketJob(tenant, "wiki", true, backup.ObjectStorageOptions{}), "b8b6bda18925bf9da9324ce60f1e574280306f454068d0a337d44573311c28b2"},
 		"bucket, no key": {makeS3BucketJob(tenant, "wiki", false, backup.ObjectStorageOptions{}), "56ebf6847888baa1559a5429f977c4c1bb81c6fbd8267282480dcd42419cda2a"},
-		// Moved deliberately with the move to Valkey: the user is held to its
-		// prefix and saved, so every cache user is made again on the new server.
-		"cache user": {makeRedisACLJob(tenant, "wiki", true), "194ee456921cb6d90d2e116eb26740c521f26adcd7a051c3142799baa5acf304"},
+		// Moved deliberately when the user was held to its prefix and saved,
+		// and again when the Job came to address the cache by engine-neutral
+		// names (cache-admin, CACHE_*, redis-cli).
+		"cache user": {makeCacheACLJob(tenant, "wiki", true), "d8410ab24642a4c8e693efea228e36aa906bfb75ecc3c1ca9c39ff63632e309f"},
 	} {
 		if got := jobDigest(t, c.job); got != c.want {
 			t.Errorf("%s: the Job provisioning creates has changed (digest %s, pinned %s)", name, got, c.want)

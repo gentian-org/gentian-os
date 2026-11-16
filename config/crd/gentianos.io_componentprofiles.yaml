@@ -68,6 +68,10 @@ spec:
               One policy carries a component's session on every host it has, and that
               policy either hands the edge's token over in the Authorization header or
               leaves the header to the app. It cannot do both.
+              A token entry lets a program reach the component as a person of the tenant,
+              with no browser session in front. That its host is no other entry's is the
+              operator's to hold (ConditionTokenEntry, HostShared): the entries' hosts
+              are known only in a tenant's zone.
               A service may expose -- a console is not a contract surface -- but only on
               the gateway. The perimeter has no session, and a service console published
               there is never what anybody meant.
@@ -99,7 +103,86 @@ spec:
               and by nothing else: no person opens it, nothing is exposed, no other app is
               handed a contract to call it, and it holds no credential of an app of its
               own -- vouching would be one for every app, a contract key one for its app.
+              An action is run and never deployed, opened or reached: it is one image at
+              one build, and a run of it speaks to the component that started it and to
+              nothing the platform provides.
+              Runs are started for a component whose entry was reviewed. That a run of
+              its own names an image the entry pins is held at reconcile (runsRefusal):
+              the rule costs more than a schema may spend.
             properties:
+              action:
+                description: |-
+                  Action is what an action takes, returns and runs. Present exactly when
+                  the class is action.
+                properties:
+                  adapters:
+                    description: |-
+                      Adapters names the adapters whose tools the calling component may call
+                      on a run's behalf, by their ComponentProfile. A run reaches no adapter
+                      itself. It is a statement for the administrator who installs the
+                      action; the caller enforces it.
+                    items:
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: set
+                  command:
+                    description: |-
+                      Command is what a run starts in the action's image. It is given the
+                      run's inputs on standard input and writes its outputs to standard
+                      output; the environment names the address and the credential at which
+                      the caller answers for anything more. It is stated because a run wraps
+                      it, and an image's own entrypoint cannot be wrapped unseen.
+                    items:
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
+                    maxItems: 32
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  deadlineSeconds:
+                    default: 600
+                    description: |-
+                      DeadlineSeconds is the longest one attempt of a run may take. A caller
+                      may ask for less and never for more.
+                    format: int32
+                    maximum: 86400
+                    minimum: 1
+                    type: integer
+                  inputs:
+                    description: Inputs is the JSON Schema of what a run takes.
+                    x-kubernetes-preserve-unknown-fields: true
+                  outputs:
+                    description: Outputs is the JSON Schema of what a run returns.
+                    x-kubernetes-preserve-unknown-fields: true
+                  resources:
+                    description: Resources is what one attempt of a run is given.
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  runtime:
+                    default: container
+                    description: Runtime is what runs the action.
+                    enum:
+                    - container
+                    type: string
+                required:
+                - command
+                type: object
               adapter:
                 description: |-
                   Adapter is what an adapter adapts. Present exactly when the class is
@@ -112,7 +195,10 @@ spec:
                       the adapter opens the way from its pods to that app's pods and nowhere
                       else in the tenant; the app is not asked to cooperate. Absent for an
                       adapter packaged as an API, which reaches a service outside the cluster
-                      and no app of the tenant.
+                      and no app of the tenant, and for one that runs in the tenant and
+                      reaches a partner's service as the person
+                      (requires.services.partners.call): a call through either is for the
+                      adapter itself.
                     properties:
                       profile:
                         description: Profile is the ComponentProfile of the app.
@@ -132,6 +218,52 @@ spec:
                         x-kubernetes-list-type: set
                     required:
                     - profile
+                    type: object
+                  addonsValuesPath:
+                    description: |-
+                      AddonsValuesPath is the dot-separated Helm values path at which the
+                      adapter is told which add-ons are selected into the app it adapts in
+                      its tenant: a list of their IDs (package.addon.id), empty while none is
+                      selected or the app is not installed. The adapter is rendered again
+                      when that selection changes. Absent, it is told nothing about them.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                    type: string
+                  endpoint:
+                    description: |-
+                      Endpoint is where the adapter's tool server (MCP) answers inside the
+                      tenant: its Service, the port and the path. With it the platform tells
+                      the tenant's components that may call adapters that this one is there
+                      (the ConfigMap adapters-<component>). Absent, the adapter is installed
+                      and callers are not told of it.
+                    properties:
+                      path:
+                        description: |-
+                          Path is appended to the address the consumer is told, for an API
+                          served below the root.
+                        maxLength: 253
+                        pattern: ^/[A-Za-z0-9._~/-]*$
+                        type: string
+                      port:
+                        description: |-
+                          Port is the Service's port, and must be the port the provider's pods
+                          listen on: a network policy matches the port a pod listens on, and
+                          the way it opens is to this port and no other.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      service:
+                        description: Service is the provider's Service, in the namespace
+                          it is installed in.
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - port
+                    - service
                     type: object
                 type: object
               backup:
@@ -309,9 +441,32 @@ spec:
                   - app
                   - shared-app
                   - adapter
+                  - action
                   type: string
                 maxItems: 2
                 minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              comesWith:
+                description: |-
+                  ComesWith names the profiles of the apps this app is installed
+                  together with. Installing the app also installs each of them the
+                  tenant does not have yet, from a catalog the tenant sees, and
+                  uninstalling it removes those again unless another installed app
+                  comes with them too. An app the tenant installed itself is left as it
+                  is, on install and on uninstall. An install is refused as a whole
+                  when one of them cannot be found or may not be installed in the
+                  tenant.
+
+                  Each of them is an app of its own for everything else: its own
+                  requirements, entries, privileges and approvals, its own builds and
+                  moves, and its own data, which is kept when it is removed and
+                  destroyed when it is purged.
+                items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 8
                 type: array
                 x-kubernetes-list-type: set
               customization:
@@ -764,16 +919,17 @@ spec:
                       type: object
                     apex:
                       description: |-
-                        Apex publishes this entry on the cluster's bare domain -- its main
-                        address -- instead of a host under the zone's domain. Only a perimeter
-                        entry may say it. The operator honors it for the platform tenant,
-                        and for the one tenant that may hold the main address -- the tenant
-                        the Cluster claim names (mainAddress.tenant), or the user tenant of a
-                        single-tenancy cluster -- when that tenant's approver published the
-                        entry for the main address (apex on the enablement) and no other
-                        surface holds it. Everywhere else an
-                        apex entry has no host and is not published: the bare domain is the
-                        first thing anybody typing the cluster's address meets.
+                        Apex publishes this entry on a bare name instead of a host under the
+                        zone's domain. Only a perimeter entry may say it. For the platform
+                        tenant that is the cluster's bare domain. For the tenant that may hold
+                        the cluster's main address -- the tenant the Cluster claim names
+                        (mainAddress.tenant), or the user tenant of a single-tenancy cluster --
+                        it is the cluster's bare domain too. For every other tenant it is the
+                        tenant's own bare name: its zone (<tenant>.<cluster's domain>) or a
+                        domain bound to it. Either way only when the tenant's approver published
+                        the entry for it (apex on the enablement) and no other surface of the
+                        tenant holds it. Elsewhere an apex entry has no host and is not
+                        published.
                       type: boolean
                     authMode:
                       description: AuthMode is mandatory and has no default.
@@ -832,6 +988,28 @@ spec:
                       enum:
                       - app
                       type: string
+                    clientRedirectURIs:
+                      description: |-
+                        ClientRedirectURIs are, on a token entry, the addresses a program may
+                        be sent back to once the person has signed in: the redirect addresses
+                        of the realm client the platform registers for the entry. Each is
+                        exact, with no wildcard: an https address, or a loopback address
+                        (http://127.0.0.1 or http://localhost) for a program on the person's
+                        own computer. A loopback address written without a port admits any
+                        port, which is what a program that listens on a free one needs; its
+                        path is still exact, and 127.0.0.1 does not stand for localhost. The
+                        tenant's perimeter approver approves the entry with them, and a
+                        program sent anywhere else is refused by the realm.
+
+                        An entry that names none has no client, and nobody can obtain a token
+                        for it.
+                      items:
+                        maxLength: 200
+                        pattern: ^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?/[A-Za-z0-9._~/-]*)$
+                        type: string
+                      maxItems: 8
+                      type: array
+                      x-kubernetes-list-type: set
                     denyPaths:
                       description: |-
                         DenyPaths are refused even where Paths admits them. Deny wins regardless
@@ -856,6 +1034,20 @@ spec:
                         platform trust. An exchanged token is worth nothing outside the app it
                         names, and any app may ask for it.
                       type: boolean
+                    exchangedBy:
+                      description: |-
+                        ExchangedBy names, on a token entry, the profiles of the components
+                        that exchange the entry's tokens for one per app
+                        (requires.services.vouching.exchange): the entry's tokens then name
+                        each one's client, which is what lets the realm exchange them for it.
+                        A component not named here can exchange none of them.
+                      items:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      maxItems: 4
+                      type: array
+                      x-kubernetes-list-type: set
                     forwardToken:
                       description: |-
                         ForwardToken asks the gateway to pass the edge access token to this
@@ -1053,8 +1245,29 @@ spec:
                       the cluster''s main address passes no credential to an app'
                     rule: '!has(self.apex) || !self.apex || self.authMode == ''none'''
                   - message: a gateway entry is behind the zone's session (authMode
-                      oidc). What needs no session is a perimeter surface
-                    rule: self.surface != 'gateway' || self.authMode == 'oidc'
+                      oidc) or takes a token the tenant's realm made out to it (authMode
+                      bearer). What needs neither is a perimeter surface
+                    rule: self.surface != 'gateway' || self.authMode in ['oidc', 'bearer']
+                  - message: 'a token entry (authMode bearer) names a subDomain: it
+                      answers on a host of its own, where no session''s cookie is
+                      sent'
+                    rule: self.surface != 'gateway' || self.authMode != 'bearer' ||
+                      (has(self.subDomain) && self.subDomain.size() > 0)
+                  - message: 'a token entry (authMode bearer) declares no forwardToken,
+                      exchangeToken or tile: there is no session whose token could
+                      be passed on, and nobody opens it in a browser'
+                    rule: self.surface != 'gateway' || self.authMode != 'bearer' ||
+                      ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken)
+                      || !self.exchangeToken) && !has(self.tile))
+                  - message: 'clientRedirectURIs is for a token entry (a gateway entry
+                      with authMode bearer): no other entry has a client of its own'
+                    rule: '!has(self.clientRedirectURIs) || (self.surface == ''gateway''
+                      && self.authMode == ''bearer'')'
+                  - message: 'exchangedBy is for a token entry (a gateway entry with
+                      authMode bearer): no other entry''s tokens are made out by a
+                      client of its own'
+                    rule: '!has(self.exchangedBy) || (self.surface == ''gateway''
+                      && self.authMode == ''bearer'')'
                 maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:
@@ -1079,6 +1292,16 @@ spec:
                           and inject. These are credentials the app needs (admin passwords, session
                           signing keys, cluster tokens) that are not provided by any kernel service.
                         properties:
+                          format:
+                            description: |-
+                              Format is what the value is. Left out, it is a random string of 40 hex
+                              characters. ec-p256 makes it a private key instead: an EC P-256 key as
+                              PKCS #8 in PEM, for a component that signs what it issues and has to
+                              keep signing with the same key across upgrades. A key is held,
+                              delivered, kept and destroyed exactly as any other generated secret.
+                            enum:
+                            - ec-p256
+                            type: string
                           name:
                             description: |-
                               Name is the logical identifier for this secret (e.g., "admin_password").
@@ -1707,6 +1930,115 @@ spec:
                                 the key asks the app question alone.
                               type: boolean
                           type: object
+                        runs:
+                          description: |-
+                            Runs declares that the component starts runs: of the actions installed
+                            in its tenant, and of images of its own. See RunsRequirement.
+                          properties:
+                            callback:
+                              description: Callback is where a run reaches this component.
+                              properties:
+                                path:
+                                  description: Path is put before the paths a run
+                                    calls. Empty means none.
+                                  maxLength: 253
+                                  pattern: ^(/[A-Za-z0-9._~-]+)*$
+                                  type: string
+                                port:
+                                  description: Port is the Service's port.
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                service:
+                                  description: Service is the name of the Service,
+                                    in the component's namespace.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                              required:
+                              - port
+                              - service
+                              type: object
+                            concurrency:
+                              default: 4
+                              description: Concurrency is the most runs the component
+                                has under way at once.
+                              format: int32
+                              maximum: 64
+                              minimum: 1
+                              type: integer
+                            own:
+                              description: |-
+                                Own are runs of the component's own images, such as a runner that is
+                                not an action of a catalog. Each is started like an action, by this
+                                component alone.
+                              items:
+                                description: OwnRun is one run of the component's
+                                  own.
+                                properties:
+                                  command:
+                                    description: Command is what a run starts in the
+                                      image, as an action's is.
+                                    items:
+                                      maxLength: 1024
+                                      minLength: 1
+                                      type: string
+                                    maxItems: 32
+                                    minItems: 1
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  deadlineSeconds:
+                                    default: 600
+                                    description: DeadlineSeconds is the longest one
+                                      attempt may take.
+                                    format: int32
+                                    maximum: 86400
+                                    minimum: 1
+                                    type: integer
+                                  image:
+                                    description: Image is the repository of the image,
+                                      which package.images pins.
+                                    maxLength: 253
+                                    minLength: 1
+                                    type: string
+                                  name:
+                                    description: Name is what the component asks for.
+                                    maxLength: 63
+                                    minLength: 1
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                  resources:
+                                    description: Resources is what one attempt is
+                                      given.
+                                    properties:
+                                      cpu:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                        x-kubernetes-int-or-string: true
+                                      memory:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                        x-kubernetes-int-or-string: true
+                                    type: object
+                                required:
+                                - command
+                                - image
+                                - name
+                                type: object
+                              maxItems: 8
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                          required:
+                          - callback
+                          type: object
                         storage:
                           description: Storage specifies object storage (S3) and/or
                             filesystem (WebDAV) requirements.
@@ -1777,10 +2109,21 @@ spec:
                               maxItems: 2
                               type: array
                               x-kubernetes-list-type: set
+                            exchange:
+                              description: |-
+                                Exchange lets the component's client also exchange a person's own
+                                token for one valid at a single app (RFC 8693), for the same scopes it
+                                may ask for when it vouches. The realm exchanges a token only for a
+                                client the token names, and only a token entry that says so
+                                (exchangedBy on the entry) names this one. So what the component can
+                                exchange is what came in through such an entry: a person present, who
+                                connected a program and need not be linked.
+                              type: boolean
                             keys:
                               description: |-
                                 Keys says where the component publishes the keys its statements are
-                                signed with, as a JWKS. The realm fetches them from there.
+                                signed with, as a JWKS. The realm fetches them from there. Left out
+                                only by a component that exchanges and does not vouch.
                               properties:
                                 path:
                                   default: /.well-known/jwks.json
@@ -1805,9 +2148,16 @@ spec:
                               - port
                               - service
                               type: object
-                          required:
-                          - keys
                           type: object
+                          x-kubernetes-validations:
+                          - message: 'vouching.keys is required: only a component
+                              that does nothing but exchange a present person''s token
+                              (exchange: true) may leave it out'
+                            rule: has(self.keys) || (has(self.exchange) && self.exchange)
+                          - message: 'vouching.director needs vouching.keys: a token
+                              for the director is obtained with a signed statement'
+                            rule: has(self.keys) || !has(self.director) || size(self.director)
+                              == 0
                       type: object
                     name:
                       description: |-
@@ -3898,6 +4248,113 @@ spec:
                               the key asks the app question alone.
                             type: boolean
                         type: object
+                      runs:
+                        description: |-
+                          Runs declares that the component starts runs: of the actions installed
+                          in its tenant, and of images of its own. See RunsRequirement.
+                        properties:
+                          callback:
+                            description: Callback is where a run reaches this component.
+                            properties:
+                              path:
+                                description: Path is put before the paths a run calls.
+                                  Empty means none.
+                                maxLength: 253
+                                pattern: ^(/[A-Za-z0-9._~-]+)*$
+                                type: string
+                              port:
+                                description: Port is the Service's port.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              service:
+                                description: Service is the name of the Service, in
+                                  the component's namespace.
+                                maxLength: 63
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                type: string
+                            required:
+                            - port
+                            - service
+                            type: object
+                          concurrency:
+                            default: 4
+                            description: Concurrency is the most runs the component
+                              has under way at once.
+                            format: int32
+                            maximum: 64
+                            minimum: 1
+                            type: integer
+                          own:
+                            description: |-
+                              Own are runs of the component's own images, such as a runner that is
+                              not an action of a catalog. Each is started like an action, by this
+                              component alone.
+                            items:
+                              description: OwnRun is one run of the component's own.
+                              properties:
+                                command:
+                                  description: Command is what a run starts in the
+                                    image, as an action's is.
+                                  items:
+                                    maxLength: 1024
+                                    minLength: 1
+                                    type: string
+                                  maxItems: 32
+                                  minItems: 1
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                deadlineSeconds:
+                                  default: 600
+                                  description: DeadlineSeconds is the longest one
+                                    attempt may take.
+                                  format: int32
+                                  maximum: 86400
+                                  minimum: 1
+                                  type: integer
+                                image:
+                                  description: Image is the repository of the image,
+                                    which package.images pins.
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  description: Name is what the component asks for.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                  type: string
+                                resources:
+                                  description: Resources is what one attempt is given.
+                                  properties:
+                                    cpu:
+                                      anyOf:
+                                      - type: integer
+                                      - type: string
+                                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                      x-kubernetes-int-or-string: true
+                                    memory:
+                                      anyOf:
+                                      - type: integer
+                                      - type: string
+                                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                      x-kubernetes-int-or-string: true
+                                  type: object
+                              required:
+                              - command
+                              - image
+                              - name
+                              type: object
+                            maxItems: 8
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                        required:
+                        - callback
+                        type: object
                       storage:
                         description: Storage specifies object storage (S3) and/or
                           filesystem (WebDAV) requirements.
@@ -3968,10 +4425,21 @@ spec:
                             maxItems: 2
                             type: array
                             x-kubernetes-list-type: set
+                          exchange:
+                            description: |-
+                              Exchange lets the component's client also exchange a person's own
+                              token for one valid at a single app (RFC 8693), for the same scopes it
+                              may ask for when it vouches. The realm exchanges a token only for a
+                              client the token names, and only a token entry that says so
+                              (exchangedBy on the entry) names this one. So what the component can
+                              exchange is what came in through such an entry: a person present, who
+                              connected a program and need not be linked.
+                            type: boolean
                           keys:
                             description: |-
                               Keys says where the component publishes the keys its statements are
-                              signed with, as a JWKS. The realm fetches them from there.
+                              signed with, as a JWKS. The realm fetches them from there. Left out
+                              only by a component that exchanges and does not vouch.
                             properties:
                               path:
                                 default: /.well-known/jwks.json
@@ -3996,9 +4464,16 @@ spec:
                             - port
                             - service
                             type: object
-                        required:
-                        - keys
                         type: object
+                        x-kubernetes-validations:
+                        - message: 'vouching.keys is required: only a component that
+                            does nothing but exchange a present person''s token (exchange:
+                            true) may leave it out'
+                          rule: has(self.keys) || (has(self.exchange) && self.exchange)
+                        - message: 'vouching.director needs vouching.keys: a token
+                            for the director is obtained with a signed statement'
+                          rule: has(self.keys) || !has(self.director) || size(self.director)
+                            == 0
                     type: object
                 type: object
               secrets:
@@ -4048,6 +4523,16 @@ spec:
                         and inject. These are credentials the app needs (admin passwords, session
                         signing keys, cluster tokens) that are not provided by any kernel service.
                       properties:
+                        format:
+                          description: |-
+                            Format is what the value is. Left out, it is a random string of 40 hex
+                            characters. ec-p256 makes it a private key instead: an EC P-256 key as
+                            PKCS #8 in PEM, for a component that signs what it issues and has to
+                            keep signing with the same key across upgrades. A key is held,
+                            delivered, kept and destroyed exactly as any other generated secret.
+                          enum:
+                          - ec-p256
+                          type: string
                         name:
                           description: |-
                             Name is the logical identifier for this secret (e.g., "admin_password").
@@ -4081,7 +4566,8 @@ spec:
                         CredentialRequirement of the tenant the app is installed in, shown in that
                         tenant's Admin Console under Credentials and set there, and the app's
                         values carry the fields once they are. Until then the app waits, with the
-                        requirement listed as unsatisfied.
+                        requirement listed as unsatisfied. An action is not Ready until then, and
+                        a run of it reads the credential as a file.
 
                         Stored at gentian-os/tenants/{tenant}/apps/{app}/supplied/{name}, one
                         property per field, with the app's other credentials: purging the app
@@ -4137,7 +4623,9 @@ spec:
                               valuePath:
                                 description: |-
                                   ValuePath is the Helm value key that receives the value, as for a
-                                  generated secret.
+                                  generated secret. For an action, which has no chart, it is the name
+                                  the value has in the credential's file, /run/credentials/{name}.env
+                                  in a run's pod: letters, digits and underscores.
                                 minLength: 1
                                 type: string
                             required:
@@ -4238,6 +4726,20 @@ spec:
                 the component is sent every record the platform writes'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.logDestination)
                 || self.trustTier == ''platform'''
+            - message: 'a token entry (a gateway entry with authMode bearer) requires
+                trustTier platform: the component is handed a person''s token and
+                speaks for them'
+              rule: '!has(self.expose) || !self.expose.exists(e, e.surface == ''gateway''
+                && e.authMode == ''bearer'') || self.trustTier == ''platform'''
+            - message: a profile declares at most one token entry
+              rule: '!has(self.expose) || self.expose.filter(e, e.surface == ''gateway''
+                && e.authMode == ''bearer'').size() <= 1'
+            - message: 'a token entry is for class app: it is approved in a tenant''s
+                registry by that tenant''s perimeter approver, and its tokens are
+                that tenant''s realm''s'
+              rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.expose)
+                || !self.expose.exists(e, e.surface == ''gateway'' && e.authMode ==
+                ''bearer'')'
             - message: 'requires.services.vouching requires trustTier platform: the
                 component can obtain a person''s token for any app of the tenant'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
@@ -4317,9 +4819,9 @@ spec:
                 || !has(x.kernelRequirements.authorization))'
             - message: a package is a chart, a composition, the two together, an api,
                 or an addon -- and nothing else beside them
-              rule: '[has(self.__package__.chart) || (has(self.__package__.composition)
+              rule: has(self.action) || [has(self.__package__.chart) || (has(self.__package__.composition)
                 && self.__package__.composition.size() > 0), has(self.__package__.api),
-                has(self.__package__.addon)].exists_one(x, x)'
+                has(self.__package__.addon)].exists_one(x, x)
             - message: an addon is package.addon on this kind, not customization.addon
               rule: '!has(self.customization) || !has(self.customization.addon)'
             - message: 'launch tile needs a tile on an exposure or on package.api:
@@ -4360,8 +4862,12 @@ spec:
               rule: '!has(self.adapter) || !has(self.__package__.addon)'
             - message: spec.adapter.adapts names the app the adapter uses; only an
                 adapter packaged as an api, which reaches a service outside the cluster,
-                adapts none
-              rule: '!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)'
+                or one that calls a partner (requires.services.partners.call) adapts
+                none
+              rule: '!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)
+                || (has(self.requires) && has(self.requires.services) && has(self.requires.services.partners)
+                && has(self.requires.services.partners.call) && self.requires.services.partners.call.size()
+                > 0)'
             - message: 'an adapter is never placed by default: a tenant''s administrator
                 installs it'
               rule: '!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants)
@@ -4370,6 +4876,44 @@ spec:
             - message: 'an adapter is never placed: a tenant''s administrator installs
                 it'
               rule: '!has(self.adapter) || !has(self.placement)'
+            - message: 'action is exclusive: an action is a component of its own,
+                never also the app that runs it'
+              rule: '!has(self.classes) || !(''action'' in self.classes) || self.classes.size()
+                == 1'
+            - message: spec.action is for class action, and class action needs it
+              rule: (has(self.classes) && 'action' in self.classes) == has(self.action)
+            - message: 'an action has launch none: nobody opens it'
+              rule: '!has(self.action) || self.launch == ''none'''
+            - message: 'an action exposes, provides and integrates nothing: a run
+                reaches the component that started it and nothing else'
+              rule: '!has(self.action) || ((!has(self.expose) || self.expose.size()
+                == 0) && (!has(self.provides) || self.provides.size() == 0) && (!has(self.integrations)
+                || self.integrations.size() == 0))'
+            - message: 'an action''s package is exactly one pinned image (package.images)
+                and nothing else: no chart, composition, api or addon'
+              rule: '!has(self.action) || (!has(self.__package__.chart) && !has(self.__package__.composition)
+                && !has(self.__package__.api) && !has(self.__package__.addon) && has(self.__package__.images)
+                && self.__package__.images.size() == 1)'
+            - message: 'an action requires no service: what a run needs it asks of
+                the component that started it'
+              rule: '!has(self.action) || !has(self.requires) || !has(self.requires.services)'
+            - message: 'an action asks for egress and no other privilege: a run holds
+                no right at the Kubernetes API and runs under the restricted pod security
+                standard'
+              rule: '!has(self.action) || !has(self.requires) || !has(self.requires.privileges)
+                || ((!has(self.requires.privileges.podSecurity) || self.requires.privileges.podSecurity.size()
+                == 0) && (!has(self.requires.privileges.clusterRoles) || self.requires.privileges.clusterRoles.size()
+                == 0) && (!has(self.requires.privileges.apiExtensions) || self.requires.privileges.apiExtensions.size()
+                == 0))'
+            - message: 'an action is never placed: a tenant''s administrator installs
+                it'
+              rule: '!has(self.action) || (!has(self.placement) && !((has(self.defaultForTenants)
+                && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform)
+                || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered)))'
+            - message: 'requires.services.runs requires trustTier certified or platform:
+                an entry nobody reviewed starts no runs'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.runs)
+                || self.trustTier in [''certified'', ''platform'']'
             - message: 'placement is for class app: a service and a shared-app have
                 one instance'
               rule: '!has(self.placement) || !has(self.classes) || (''app'' in self.classes)'

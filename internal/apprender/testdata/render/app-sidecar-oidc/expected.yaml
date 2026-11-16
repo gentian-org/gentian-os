@@ -69,6 +69,51 @@ spec:
                   name: every-claim-of-the-release
                   annotations:
                     helm.sh/resource-policy: keep
+            - target:
+                group: apps
+                version: v1
+                kind: Deployment
+              patch: |-
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: every-deployment-of-the-release
+                spec:
+                  template:
+                    metadata:
+                      labels:
+                        gentianos.io/app: "demo-app"
+                        gentianos.io/tenant: "demo"
+            - target:
+                group: apps
+                version: v1
+                kind: StatefulSet
+              patch: |-
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: every-statefulset-of-the-release
+                spec:
+                  template:
+                    metadata:
+                      labels:
+                        gentianos.io/app: "demo-app"
+                        gentianos.io/tenant: "demo"
+            - target:
+                group: batch
+                version: v1
+                kind: Job
+              patch: |-
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: every-job-of-the-release
+                spec:
+                  template:
+                    metadata:
+                      labels:
+                        gentianos.io/app: "demo-app"
+                        gentianos.io/tenant: "demo"
       kind: ConfigMap
       metadata:
         name: demo-app-release-keep-volumes
@@ -271,7 +316,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     set:
     - name: oidc.issuer
       valueFrom:
@@ -298,7 +342,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
@@ -415,7 +459,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     set:
     - name: auth.issuer
       valueFrom:
@@ -436,7 +479,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
@@ -469,7 +512,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     skipCRDs: true
     skipCreateNamespace: true
     values:
@@ -477,7 +519,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
@@ -510,7 +552,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     skipCRDs: true
     skipCreateNamespace: true
     values:
@@ -523,7 +564,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3
@@ -556,7 +597,6 @@ spec:
         key: patch.yaml
         name: demo-app-release-keep-volumes
         namespace: tenant-demo
-        optional: false
     skipCRDs: true
     skipCreateNamespace: true
     values:
@@ -564,7 +604,7 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 10m0s
   providerConfigRef:
     name: tenant-apps
   rollbackLimit: 3

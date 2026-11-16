@@ -98,6 +98,7 @@ func TestEachReadAsksItsRelationOnItsObject(t *testing.T) {
 		{"/v1/clusters/demo/customizations", "can_audit", "cluster:demo", "/v1/customizations"},
 		{"/v1/clusters/demo/usage-statistics", "can_audit", "cluster:demo", "/v1/usage-statistics"},
 		{"/v1/clusters/demo/catalogue/residue", "can_audit", "cluster:demo", "/v1/catalogue/residue"},
+		{"/v1/clusters/demo/domains", "can_audit", "cluster:demo", "/v1/domains"},
 	} {
 		t.Run(c.path, func(t *testing.T) {
 			op := &fakeOperator{}

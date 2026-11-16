@@ -555,13 +555,13 @@ namespaces:
             evidence: [charts/gentian-os/templates/networkpolicy.yaml:53]
           - port: 8080
             what: metrics
-            elsewhere: gentian-os-operator admits any source
+            elsewhere: gentian-os-operator admits the Prometheus pods of kernel-observability
           - port: 8081
             what: health
-            elsewhere: gentian-os-operator admits any source
+            elsewhere: gentian-os-operator lists it nowhere; the kubelet's probes come from the pod's own node
           - port: 8090
             what: Keycloak's event listener posts membership events here
-            elsewhere: gentian-os-operator admits any source
+            elsewhere: gentian-os-operator admits the Keycloak pods of kernel-authentication
             evidence: [kernel/appsets/raw/09-identity.yaml:63]
           - port: 9443
             what: the Tenant admission webhook
@@ -580,6 +580,32 @@ namespaces:
                   - internal/controller/component_reconciler.go:1527
                   - charts/gentian-os/templates/componentprofile-desktop.yaml:45
                   - charts/gentian-os/templates/componentprofile-admin-console.yaml:44
+      - name: dispatcher
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: dispatcher}
+        ports:
+          - port: 8080
+            what: starts a run for a component that declares requires.services.runs
+            from:
+              - peer: tenants
+                why: >-
+                  a tenant's component that starts runs; its own policy opens
+                  the way for that component alone, and the listener refuses a
+                  request without a key the operator's table names
+                evidence:
+                  - internal/controller/runs.go:132
+                  - charts/gentian-os/templates/dispatcher.yaml:152
+          - port: 8081
+            what: carries out an act the director asks for, done once and following nothing declared
+            from:
+              - peer: director
+                why: >-
+                  relays a person's request for a backup taken or deleted; the
+                  listener admits the director's ServiceAccount token alone
+                evidence:
+                  - charts/gentian-os/templates/director.yaml:277
+                  - cmd/director/main.go:224
       - name: usher
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os

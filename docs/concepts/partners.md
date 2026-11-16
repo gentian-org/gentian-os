@@ -86,8 +86,9 @@ realm):
   X made), client authentication *JWT signed with private key*. JWT
   Authorization Grant on, assertion reuse off, max assertion expiration
   2 minutes, clock skew 10 seconds, signature algorithm RS256, *limit access
-  token expiration* on. Hidden on the login page; sync mode *import*; trusts
-  no address; maps no group and no role.
+  token expiration* on. Hidden on the login page; sync mode *import*; maps
+  no group and no role. It trusts the partner's address (*Trust email*) only
+  for `organization`, below.
 - **What a first arrival becomes** (`accept.accounts`):
   - `link`: the person signs in to their existing account at Y once and the
     two are linked; no account is made through the provider;
@@ -97,7 +98,9 @@ realm):
     the person proves it;
   - `organization`: every arrival is a member of an organization of Y's realm
     for X, with the domain given; for a partner whose people are a customer
-    organization.
+    organization. Keycloak grants membership by domain only to a verified
+    address, so the provider trusts the address X gives; otherwise each
+    arrival would first verify it by mail at Y.
 - **Per app allowed to accept, the app's client `partner-<profile>`**:
   confidential, JWT Authorization Grant on for every accepted partner's
   provider, authenticated by the app's Kubernetes service account token.
