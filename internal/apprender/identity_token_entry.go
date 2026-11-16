@@ -102,15 +102,18 @@ func (id *identityScope) tokenEntryClient() []*unstructured.Unstructured {
 			"providerConfigRef":  identityProvider,
 		}),
 		id.tokenEntryAudienceMapper(clientName, "token-entry-audience", "audience-entry", tokenEntryAudience(entry.Host)),
-		// The optional scopes Keycloak gives every client, without
-		// offline_access: a token of this client ends with the person's
-		// session, and none outlives it. Deleted with the client.
+		// The optional scopes Keycloak gives every client. offline_access
+		// among them: a connector such as claude.ai asks for it and is
+		// refused the whole sign-in without it. Its offline session ends
+		// after the realm's offline idle timeout without use, or when the
+		// person removes the access in their account. Deleted with the
+		// client.
 		identityObject("openidclient.keycloak.crossplane.io/v1alpha1", "ClientOptionalScopes", id.name("token-entry-optional-scopes"), map[string]interface{}{
 			"deletionPolicy": "Orphan",
 			"forProvider": map[string]interface{}{
 				"realmId":        id.realm,
 				"clientIdRef":    identityRef(clientName),
-				"optionalScopes": []interface{}{"address", "microprofile-jwt", "organization", "phone"},
+				"optionalScopes": []interface{}{"address", "microprofile-jwt", "offline_access", "organization", "phone"},
 			},
 			"providerConfigRef": identityProvider,
 		}),

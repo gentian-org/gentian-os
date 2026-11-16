@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -244,12 +245,9 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		}
 	}
 	scopes, _, _ := unstructured.NestedStringSlice(objs["demo-agent-door-token-entry-optional-scopes"].Object, "spec", "forProvider", "optionalScopes")
-	for _, s := range scopes {
-		if s == "offline_access" {
-			t.Fatal("the client may ask for a token that outlives the session")
-		}
-	}
-	if len(scopes) == 0 {
-		t.Fatal("no optional scopes are declared, which leaves the realm's, offline_access among them")
+	// A connector asks for offline_access, and the realm refuses the whole
+	// sign-in when the client may not have it.
+	if !slices.Contains(scopes, "offline_access") {
+		t.Fatalf("optional scopes = %v: a client asking for offline_access is refused", scopes)
 	}
 }
