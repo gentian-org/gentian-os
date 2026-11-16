@@ -1229,7 +1229,10 @@ in this repository writes one: the cluster's mail names are published as DNS
 records for the mail edge's load balancer (see [mail.md](mail.md)).
 
 The gateway-platform controller updates the hairpin block when the Envoy
-Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
+Service, routing mode or set of hosts changes. CoreDNS's `reload` plugin
+picks the change up without a restart; only a Corefile without `reload` gets
+CoreDNS rolled, since a cluster with one CoreDNS replica resolves nothing
+during a roll. Tenant NetworkPolicies are
 refreshed when the edge Service changes so egress to the edge stays allowed.
 
 The block holds `<kernelDomain>` itself, and a CoreDNS `hosts` entry answers

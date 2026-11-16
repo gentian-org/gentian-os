@@ -280,7 +280,27 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 	if err := c.Patch(ctx, cm, patch); err != nil {
 		return fmt.Errorf("patch CoreDNS ConfigMap: %w", err)
 	}
+	// A Corefile with the reload plugin is read again by CoreDNS itself once
+	// the kubelet has the new ConfigMap in the pod, without dropping a query.
+	// A restart is then only an outage: a cluster that runs one CoreDNS
+	// replica resolves nothing until the new pod is ready, and every lookup
+	// in that window fails -- the Gateway renewing a session against
+	// Keycloak among them, which signs people out.
+	if corefileReloads(patched) {
+		return nil
+	}
 	return restartCoreDNSDeployment(ctx, c)
+}
+
+// corefileReloads reports whether a Corefile loads the reload plugin: a line
+// that is the directive "reload", with or without an interval.
+func corefileReloads(corefile string) bool {
+	for _, line := range strings.Split(corefile, "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == "reload" {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveCoreDNSConfigMapName finds the ConfigMap backing CoreDNS by reading
