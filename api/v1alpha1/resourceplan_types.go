@@ -156,6 +156,16 @@ const (
 	// usage history carry an actor at all. The commit has the same name as
 	// its author, which is how the two records are joined.
 	ResourcePlanSetByAnnotation = "gentianos.io/resource-plan-set-by"
+
+	// PlanRequestAnnotation names the plan a tenant's administrator asked
+	// the cluster's administrators to move the tenant to. Written by the
+	// director into the tenant's plan-request.yaml patch; removed when the
+	// request is withdrawn, declined, or answered by moving the tenant. The
+	// three beside it say who asked, when (RFC 3339) and why.
+	PlanRequestAnnotation       = "gentianos.io/plan-request"
+	PlanRequestByAnnotation     = "gentianos.io/plan-request-by"
+	PlanRequestAtAnnotation     = "gentianos.io/plan-request-at"
+	PlanRequestReasonAnnotation = "gentianos.io/plan-request-reason"
 )
 
 // QuotasEqual reports whether two quota sets impose the same limits.

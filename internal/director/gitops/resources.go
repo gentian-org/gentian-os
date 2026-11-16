@@ -149,14 +149,33 @@ func writeTenantPlan(manifest, tenant string, plan Plan, meta Meta) ([]string, e
 		return nil, err
 	}
 	listed, kustomizationChanged := ensurePatchListed(string(kustomization), ResourcePlanFile)
+	// Moving the tenant answers its request, whichever plan it asked for:
+	// the request goes in the same commit.
+	requestPath := filepath.Join(dir, PlanRequestFile)
+	_, requestErr := os.Stat(requestPath)
+	if requestErr != nil && !errors.Is(requestErr, os.ErrNotExist) {
+		return nil, requestErr
+	}
+	requested := requestErr == nil
+	listed, unlisted := removeListed(listed, PlanRequestFile, listPatch)
+	kustomizationChanged = kustomizationChanged || unlisted
 
-	if samePlan(string(existing), desired) && !kustomizationChanged {
+	if samePlan(string(existing), desired) && !kustomizationChanged && !requested {
 		return nil, nil
 	}
-	if err := os.WriteFile(patchPath, []byte(desired), 0o644); err != nil {
-		return nil, err
+	files := []string{}
+	if !samePlan(string(existing), desired) {
+		if err := os.WriteFile(patchPath, []byte(desired), 0o644); err != nil {
+			return nil, err
+		}
+		files = append(files, patchPath)
 	}
-	files := []string{patchPath}
+	if requested {
+		if err := os.Remove(requestPath); err != nil {
+			return nil, err
+		}
+		files = append(files, requestPath)
+	}
 	if kustomizationChanged {
 		if err := os.WriteFile(kustomizationPath, []byte(listed), 0o644); err != nil {
 			return nil, err

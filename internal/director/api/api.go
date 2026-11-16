@@ -96,6 +96,8 @@ type Repository interface {
 	ClusterModels(ctx context.Context) (gitops.ModelSettings, error)
 	SetClusterModels(ctx context.Context, want gitops.ModelSettings, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
+	SetPlanRequest(ctx context.Context, tenant string, req gitops.PlanRequest, meta gitops.Meta) (gitops.Result, error)
+	ClearPlanRequest(ctx context.Context, tenant, message string, meta gitops.Meta) (gitops.Result, error)
 	PlanDefinitions(ctx context.Context) ([]gitops.PlanDefinition, error)
 	WritePlans(ctx context.Context, message string, meta gitops.Meta, writes ...gitops.PlanWrite) (gitops.Result, error)
 	PlanOrdering(ctx context.Context) (*gentianov1alpha1.PlanOrderingSpec, bool, error)
@@ -396,6 +398,15 @@ func (s *Server) clusterObject(r *http.Request) (string, error) {
 		return "", gitops.ErrInvalidName
 	}
 	return authz.Cluster(s.cfg.Cluster), nil
+}
+
+// tenantOfThisCluster is tenantObject on a route under /v1/clusters/{c}: the
+// relation is the tenant's, and another cluster's id does not exist here.
+func (s *Server) tenantOfThisCluster(r *http.Request) (string, error) {
+	if c := r.PathValue("c"); c != s.cfg.Cluster || c == "" {
+		return "", gitops.ErrInvalidName
+	}
+	return tenantObject(r)
 }
 
 func tenantObject(r *http.Request) (string, error) {
@@ -813,6 +824,16 @@ func (s *Server) routes() {
 		// commit, like everything else the operator learns from git.
 		if s.cfg.Cluster != "" {
 			s.guarded("PUT /v1/clusters/{c}/tenants/{t}/resources", "can_configure", s.clusterObject, s.setResourcePlan)
+			// What a tenant's administrator may do instead: ask for a plan,
+			// and take the request back. The cluster's administrator
+			// answers it by moving the tenant (above, which clears it) or
+			// by declining it (the same DELETE).
+			s.guardedAny("PUT /v1/clusters/{c}/tenants/{t}/resources/request",
+				[]guard.Ask{{Relation: "can_administer", Object: s.tenantOfThisCluster}},
+				s.requestResourcePlan)
+			s.guardedAny("DELETE /v1/clusters/{c}/tenants/{t}/resources/request",
+				[]guard.Ask{{Relation: "can_configure", Object: s.clusterObject}, {Relation: "can_administer", Object: s.tenantOfThisCluster}},
+				s.clearResourcePlanRequest)
 		}
 
 		// The bundle as one file, through the director and never a signed
