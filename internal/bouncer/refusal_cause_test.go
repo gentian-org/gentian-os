@@ -113,3 +113,35 @@ func TestASessionNotRenewedIsReloadedNotSignedOut(t *testing.T) {
 		t.Fatalf("page = %s", page)
 	}
 }
+
+// keylessVerifier is a Keycloak that does not answer for its keys.
+type keylessVerifier struct{ fakeVerifier }
+
+func (keylessVerifier) Verify(context.Context, string) (*authn.Identity, error) {
+	return nil, &authn.Refusal{Cause: authn.CauseKeysUnavailable, Err: errors.New("unauthenticated: keys for realm \"kernel\": connection refused")}
+}
+
+// A token whose keys cannot be fetched is not judged: the answer is 503,
+// which a page and a program retry, and not the 401 that ends a session or
+// restarts its sign-in. Nothing reaches a backend.
+func TestKeysThatCannotBeFetchedAreUnavailableNotUnauthenticated(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	d := restartDecider(&fakeStore{allow: map[string]bool{}})
+	d.verify = keylessVerifier{d.verify.(fakeVerifier)}
+	d.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	fetch := withAuth(page("argocd.k.example", "/api/v1/applications", endedSession), "Bearer root-token")
+	fetch.FetchMode = "cors"
+	for name, req := range map[string]Request{
+		"a page":  withAuth(page("argocd.k.example", "/", endedSession), "Bearer root-token"),
+		"a fetch": fetch,
+	} {
+		dec := d.Decide(context.Background(), req)
+		if dec.Allow || dec.Status != http.StatusServiceUnavailable || dec.Redirect != "" || len(dec.SetCookies) != 0 || dec.Browser {
+			t.Fatalf("%s: %+v", name, dec)
+		}
+	}
+	if !bytes.Contains(buf.Bytes(), []byte(`"reason":"unavailable"`)) || !bytes.Contains(buf.Bytes(), []byte(`"cause":"keys-unavailable"`)) {
+		t.Fatalf("audit = %s", buf.String())
+	}
+}

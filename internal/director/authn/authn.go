@@ -316,6 +316,23 @@ func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Ide
 	}, nil
 }
 
+// Warm fetches a realm's key set into the cache, so that the first token of
+// the realm is checked without asking Keycloak. An error is Keycloak not
+// answering for the realm's keys; nothing is cached then.
+func (v *Verifier) Warm(ctx context.Context, realm string) error {
+	if !realmName.MatchString(realm) {
+		return fmt.Errorf("authn: %q is not a realm name", realm)
+	}
+	set, err := v.fetch(ctx, realm)
+	if err != nil {
+		return fmt.Errorf("authn: keys for realm %q: %w", realm, err)
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.keys[realm] = &realmKeys{set: *set, fetched: v.cfg.Now()}
+	return nil
+}
+
 // claimsCause is the cause of a claims check that failed.
 func claimsCause(err error) string {
 	switch {

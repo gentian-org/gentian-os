@@ -131,6 +131,11 @@ func run(log *slog.Logger) error {
 
 	httpSrv := &http.Server{Addr: envvar.Or("BOUNCER_HEALTH", ":8081"), ReadHeaderTimeout: 5 * time.Second}
 	http.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	// Ready once the kernel realm's signing keys are at hand: that is
+	// Keycloak answering. A tenant realm's keys follow on its first token.
+	readiness := &bouncer.Readiness{}
+	http.Handle("GET /readyz", readiness)
+	go bouncer.WarmUntilReady(ctx, verifier, envvar.Or("BOUNCER_KERNEL_REALM", "kernel"), 2*time.Second, readiness, log)
 	go func() { _ = httpSrv.ListenAndServe() }()
 
 	// The one question a component may ask for a person who is not at a

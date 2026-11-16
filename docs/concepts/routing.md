@@ -520,7 +520,11 @@ marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
 back still without a session gets a page saying the session could not be
 renewed, with a link that reloads the page; it never signs out, which would
 end the realm's session too. The page for a person who lacks the access is
-shown only for a `403`. The one path of an app that takes no
+shown only for a `403`. A token whose realm's signing keys the bouncer cannot
+fetch (Keycloak away) is answered `503`, not `401`: the session may well be
+good, and a `503` is retried where a `401` ends it. A bouncer pod is ready only
+once it holds the kernel realm's keys, so in a rollout the pods before it keep
+answering while Keycloak restarts too. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
