@@ -1210,6 +1210,8 @@ type MCPRequirement struct {
 // APIIntegration configures how an ApiProfile (deploymentMethod: api) reaches
 // its backing external service. No workload pods are created; the operator only
 // contributes catalog and portal metadata.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.baseUrl) != has(self.backend)",message="an api names where it is answered once: baseUrl, or backend for a bridge"
 type APIIntegration struct {
 	// Runtime selects how the tenant reaches the external service.
 	// redirect sends the browser to baseUrl (default).
@@ -1221,10 +1223,18 @@ type APIIntegration struct {
 	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
 
 	// BaseURL is the external service origin (e.g. https://service.example).
-	// +kubebuilder:validation:Required
+	// Every entry packaged as an api names one, except a bridge, which names
+	// a backend.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^https?://.+`
-	BaseURL string `json:"baseUrl"`
+	BaseURL string `json:"baseUrl,omitempty"`
+
+	// Backend is the Service of the tenant a bridge is answered by: the
+	// Service of the app it connects, which speaks the bridge's protocols
+	// itself. Runtime, TenantBinding and Tile say nothing of such an entry.
+	// +optional
+	Backend *APIBackend `json:"backend,omitempty"`
 
 	// TenantBinding declares how the tenant is identified to the external
 	// service. tenant-domain appends the tenant effective domain as a query
