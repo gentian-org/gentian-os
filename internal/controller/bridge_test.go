@@ -393,15 +393,16 @@ func TestABridgesRealmClientComesAndGoesWithItsApproval(t *testing.T) {
 	if got, _, _ := unstructured.NestedStringSlice(client.Object, "spec", "forProvider", "validRedirectUris"); !reflect.DeepEqual(got, bridgeRedirectURIs) {
 		t.Fatalf("redirects %v", got)
 	}
-	mappers := &unstructured.UnstructuredList{}
-	mappers.SetAPIVersion("client.keycloak.crossplane.io/v1alpha1")
-	mappers.SetKind("ProtocolMapperList")
-	if err := c.List(ctx, mappers); err != nil {
-		t.Fatal(err)
-	}
+	// Its two audience mappers, by the names the render gives them.
 	audiences := map[string]bool{}
-	for i := range mappers.Items {
-		aud, _, _ := unstructured.NestedString(mappers.Items[i].Object, "spec", "forProvider", "config", "included.custom.audience")
+	for _, suffix := range []string{"token-entry-audience", "token-entry-audience-" + bouncer.ExchangeClientID} {
+		mapper := &unstructured.Unstructured{}
+		mapper.SetAPIVersion("client.keycloak.crossplane.io/v1alpha1")
+		mapper.SetKind("ProtocolMapper")
+		if err := c.Get(ctx, types.NamespacedName{Name: tenant.Name + "-" + comp.Name + "-" + suffix}, mapper); err != nil {
+			t.Fatalf("%s: %v", suffix, err)
+		}
+		aud, _, _ := unstructured.NestedString(mapper.Object, "spec", "forProvider", "config", "included.custom.audience")
 		audiences[aud] = true
 	}
 	if len(audiences) != 2 || !audiences["https://sync.acme.k.example"] || !audiences[bouncer.ExchangeClientID] {
