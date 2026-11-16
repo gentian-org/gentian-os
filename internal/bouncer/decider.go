@@ -301,6 +301,16 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 	if route.Denies(req.Path) {
 		return about(route, "", deny(http.StatusForbidden, "path is not published on "+req.Host))
 	}
+	// A door serves the paths of its apps and nothing else, and which app a
+	// request is for is settled before anybody is asked who is calling: from
+	// here on the route is that app's.
+	if len(route.Paths) > 0 {
+		sub := route.forPath(req.Path)
+		if sub == nil {
+			return about(route, "", deny(http.StatusNotFound, "path is not served on "+req.Host))
+		}
+		route = sub
+	}
 	id, err := d.session(ctx, route, req)
 	if err != nil {
 		// On an oidc route this is not "no session yet". The OAuth2 filter
@@ -334,7 +344,9 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 // decideFor asks the route's question for a verified caller.
 func (d *Decider) decideFor(ctx context.Context, route *Route, req Request, id *authn.Identity) Decision {
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
-	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
+	// One answer per question: behind a door a host has one per app.
+	asked := route.Host + "\x00" + route.Relation + "\x00" + route.Object
+	if cached, ok := d.cache.get(id.Subject, id.SessionID, asked); ok {
 		dec := about(route, id.Subject, d.finish(ctx, route, req, cached))
 		dec.cached = true
 		return dec
@@ -366,7 +378,7 @@ func (d *Decider) decideFor(ctx context.Context, route *Route, req Request, id *
 		}
 		return about(route, id.Subject, browserRefusal(route, deny(http.StatusForbidden, reason)))
 	}
-	d.cache.put(id.Subject, id.SessionID, route.Host, who)
+	d.cache.put(id.Subject, id.SessionID, asked, who)
 	return about(route, id.Subject, d.finish(ctx, route, req, who))
 }
 
@@ -386,6 +398,12 @@ func about(route *Route, subject string, dec Decision) Decision {
 func (d *Decider) finish(ctx context.Context, route *Route, req Request, who identity) Decision {
 	dec := allow(route, req, who)
 	if route.ExchangeScope == "" {
+		// The token a caller presents at a door is the door's. An app
+		// behind it that asked for no token of its own is told who is
+		// asking in the identity headers, as behind a session.
+		if route.behindDoor {
+			dec.RemoveHeaders = append(dec.RemoveHeaders, "authorization")
+		}
 		return dec
 	}
 	token, err := d.exchange.token(ctx, who, bearer(req.Authorization), route.ExchangeScope)
