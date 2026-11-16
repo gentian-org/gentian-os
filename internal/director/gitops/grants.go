@@ -251,7 +251,7 @@ type platformSecurityDoc struct {
 		AllowedClusterRoles []ClusterRoleAllowance `json:"allowedClusterRoles"`
 		// Written by the cluster's operator by hand, never by the director,
 		// and carried across every write of the other two.
-		PreApprovedEgressCatalogues []string `json:"preApprovedEgressCatalogues"`
+		PreApprovedEgressCatalogs []string `json:"preApprovedEgressCatalogs"`
 	} `json:"spec"`
 }
 
@@ -271,7 +271,7 @@ func (g *GitOps) updatePlatformSecurity(ctx context.Context, message string, met
 			return "", err
 		}
 		change(&doc)
-		return renderPlatformSecurity(doc.Spec.AllowedMacWaivers, doc.Spec.AllowedClusterRoles, doc.Spec.PreApprovedEgressCatalogues), nil
+		return renderPlatformSecurity(doc.Spec.AllowedMacWaivers, doc.Spec.AllowedClusterRoles, doc.Spec.PreApprovedEgressCatalogs), nil
 	})
 }
 
@@ -371,7 +371,7 @@ func (g *GitOps) PlatformClusterRoles(ctx context.Context) ([]ClusterRoleAllowan
 	return doc.Spec.AllowedClusterRoles, err
 }
 
-func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance, egressCatalogues []string) string {
+func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance, egressCatalogs []string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by the director: which MAC waivers and which of the platform's\n")
 	b.WriteString("# cluster roles this cluster permits, set by whoever the commit names.\n")
@@ -403,9 +403,9 @@ func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance, e
 			b.WriteString("    role: " + quoteScalar(r.Role) + "\n")
 		}
 	}
-	if len(egressCatalogues) > 0 {
-		b.WriteString("  preApprovedEgressCatalogues:\n")
-		for _, c := range egressCatalogues {
+	if len(egressCatalogs) > 0 {
+		b.WriteString("  preApprovedEgressCatalogs:\n")
+		for _, c := range egressCatalogs {
 			b.WriteString("  - " + quoteScalar(c) + "\n")
 		}
 	}

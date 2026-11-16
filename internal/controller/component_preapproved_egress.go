@@ -23,23 +23,23 @@ import (
 
 // preApprovedEgress are the egress requests of profile that the cluster's
 // policy answers: all of them where its catalog is listed in the
-// PlatformSecurityPolicy's preApprovedEgressCatalogues. Read on every
+// PlatformSecurityPolicy's preApprovedEgressCatalogs. Read on every
 // reconcile, so the hold and the network policy agree with the policy as it
 // is now.
 func (r *ComponentReconciler) preApprovedEgress(ctx context.Context, profile *gentianov1alpha1.ComponentProfile) (map[string]struct{}, error) {
 	if profile == nil || profile.Privileges() == nil || len(profile.Privileges().Egress) == 0 {
 		return nil, nil
 	}
-	catalogues, err := security.LoadPreApprovedEgressCatalogues(ctx, r.Client)
+	catalogs, err := security.LoadPreApprovedEgressCatalogs(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
-	return security.PreApprovedEgress(profile, catalogues), nil
+	return security.PreApprovedEgress(profile, catalogs), nil
 }
 
 // componentsAskingForEgressPrivileges wakes every Component whose profile
 // asks for egress when the PlatformSecurityPolicy changes: a catalog added to
-// preApprovedEgressCatalogues lets a waiting install go on, and one removed
+// preApprovedEgressCatalogs lets a waiting install go on, and one removed
 // takes its apps' egress away now, not when something else next wakes them.
 func componentsAskingForEgressPrivileges(c client.Client) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {

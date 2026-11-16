@@ -336,7 +336,7 @@ func TestConcurrentSecurityPolicySavesBothLand(t *testing.T) {
 
 // The catalogs whose egress the cluster answers are written by hand, never by
 // the director; its writes of the other two lists carry them across.
-func TestTheDirectorKeepsThePreApprovedEgressCatalogues(t *testing.T) {
+func TestTheDirectorKeepsThePreApprovedEgressCatalogs(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	path := "clusters/" + dt.Cluster + "/kernel/claims/" + gitops.PlatformSecurityFile
 	dt.Commit(t, remote, map[string]string{path: `apiVersion: gentianos.io/v1alpha1
@@ -345,7 +345,7 @@ metadata:
   name: default
 spec:
   allowedMacWaivers: []
-  preApprovedEgressCatalogues:
+  preApprovedEgressCatalogs:
   - cluster/acme
 `})
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
@@ -363,8 +363,8 @@ spec:
 		t.Fatal(err)
 	}
 	written := dt.RemoteFile(t, remote, path)
-	if !strings.Contains(written, "preApprovedEgressCatalogues:\n  - \"cluster/acme\"") &&
-		!strings.Contains(written, "preApprovedEgressCatalogues:\n  - cluster/acme") {
+	if !strings.Contains(written, "preApprovedEgressCatalogs:\n  - \"cluster/acme\"") &&
+		!strings.Contains(written, "preApprovedEgressCatalogs:\n  - cluster/acme") {
 		t.Fatalf("the director's writes dropped the pre-approved catalogs:\n%s", written)
 	}
 }

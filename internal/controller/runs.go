@@ -252,7 +252,7 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 	}
 	// The catalogs whose apps' egress the cluster answers itself: an action
 	// of one is given its egress as if it had been granted.
-	preApprovedCatalogues, err := security.LoadPreApprovedEgressCatalogues(ctx, r.Client)
+	preApprovedCatalogs, err := security.LoadPreApprovedEgressCatalogs(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +357,7 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		}
 		of(holder).actions = append(of(holder).actions, installedAction{
 			comp: comp, profile: profile, runnable: runnable,
-			preApproved: security.PreApprovedEgress(profile, preApprovedCatalogues),
+			preApproved: security.PreApprovedEgress(profile, preApprovedCatalogs),
 		})
 	}
 	for _, runs := range out {

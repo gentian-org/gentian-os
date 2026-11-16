@@ -253,7 +253,7 @@ const OriginAnnotation = "gentianos.io/catalogue-origin"
 
 // PreApprovedEgress are the egress requests of profile that the cluster's
 // policy answers: all of them where the profile's catalog is one of
-// catalogues (PlatformSecurityPolicy spec.preApprovedEgressCatalogues), none
+// catalogues (PlatformSecurityPolicy spec.preApprovedEgressCatalogs), none
 // otherwise. A profile with no recorded origin is of no listed catalog.
 func PreApprovedEgress(profile *gentianov1alpha1.ComponentProfile, catalogues []string) map[string]struct{} {
 	if profile == nil || len(catalogues) == 0 || profile.Privileges() == nil {

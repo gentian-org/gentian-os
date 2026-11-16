@@ -51,16 +51,16 @@ type PlatformSecurityPolicySpec struct {
 	// +optional
 	AllowedClusterRoles []AllowedClusterRole `json:"allowedClusterRoles,omitempty"`
 
-	// PreApprovedEgressCatalogues lists catalogs, by the origin a materialized
-	// profile records (gentianos.io/catalogue-origin: "cluster/<source>" or
-	// "tenant/<tenant>/<source>"), whose apps' egress requests this cluster
+	// PreApprovedEgressCatalogs lists catalogs, by the origin a materialized
+	// profile records ("cluster/<source>" or "tenant/<tenant>/<source>"),
+	// whose apps' egress requests this cluster
 	// answers itself: such a request is granted without an approver, for as
 	// long as its catalog is listed here. Egress only; every other privilege
 	// still needs its approver. Removing a catalog makes its apps' egress
 	// requests pending again.
 	// +optional
 	// +listType=set
-	PreApprovedEgressCatalogues []string `json:"preApprovedEgressCatalogues,omitempty"`
+	PreApprovedEgressCatalogs []string `json:"preApprovedEgressCatalogs,omitempty"`
 }
 
 // PlatformSecurityPolicyStatus reports observed policy state.

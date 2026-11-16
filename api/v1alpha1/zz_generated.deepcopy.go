@@ -3805,8 +3805,8 @@ func (in *PlatformSecurityPolicySpec) DeepCopyInto(out *PlatformSecurityPolicySp
 		*out = make([]AllowedClusterRole, len(*in))
 		copy(*out, *in)
 	}
-	if in.PreApprovedEgressCatalogues != nil {
-		in, out := &in.PreApprovedEgressCatalogues, &out.PreApprovedEgressCatalogues
+	if in.PreApprovedEgressCatalogs != nil {
+		in, out := &in.PreApprovedEgressCatalogs, &out.PreApprovedEgressCatalogs
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

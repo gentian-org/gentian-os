@@ -56,9 +56,9 @@ func LoadAllowedClusterRoles(ctx context.Context, c client.Client) ([]gentianov1
 	return psp.Spec.AllowedClusterRoles, nil
 }
 
-// LoadPreApprovedEgressCatalogues reads which catalogs' apps have their
+// LoadPreApprovedEgressCatalogs reads which catalogs' apps have their
 // egress requests answered by the cluster's policy. No policy lists none.
-func LoadPreApprovedEgressCatalogues(ctx context.Context, c client.Client) ([]string, error) {
+func LoadPreApprovedEgressCatalogs(ctx context.Context, c client.Client) ([]string, error) {
 	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
 	err := c.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName}, psp)
 	if apierrors.IsNotFound(err) {
@@ -67,7 +67,7 @@ func LoadPreApprovedEgressCatalogues(ctx context.Context, c client.Client) ([]st
 	if err != nil {
 		return nil, fmt.Errorf("get PlatformSecurityPolicy: %w", err)
 	}
-	return psp.Spec.PreApprovedEgressCatalogues, nil
+	return psp.Spec.PreApprovedEgressCatalogs, nil
 }
 
 // SyncPlatformSecurityConfigMap writes the cluster allowlist for compositions.
