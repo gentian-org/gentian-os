@@ -230,3 +230,23 @@ func TestARefusalNamesItsCause(t *testing.T) {
 		}
 	}
 }
+
+// Warm puts a realm's keys in the cache, so that a token of the realm is
+// checked while Keycloak is away; a realm it cannot fetch is an error.
+func TestWarmKeepsTheKeysForWhenKeycloakIsAway(t *testing.T) {
+	is := directortest.NewIssuer(t, "kernel")
+	v := verifier(t, is)
+	if err := v.Warm(context.Background(), "kernel"); err != nil {
+		t.Fatal(err)
+	}
+	for _, realm := range []string{"nope", "../admin"} {
+		if err := v.Warm(context.Background(), realm); err == nil {
+			t.Fatalf("warmed %q", realm)
+		}
+	}
+	token := is.Token(t, directortest.Claims{Realm: "kernel", Subject: "u-1", Audience: audience})
+	is.Close()
+	if _, err := v.Verify(context.Background(), token); err != nil {
+		t.Fatalf("a warmed realm needed Keycloak: %v", err)
+	}
+}

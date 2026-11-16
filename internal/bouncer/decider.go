@@ -334,11 +334,21 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 		// ended, whose refresh the realm refuses, reaches this service with
 		// the filter's cookies and no token. A page the person opens is
 		// then signed in again rather than refused (restartSignIn).
+		cause, late := causeOf(err)
+		// Keycloak not answering for its keys says nothing about the
+		// session: the token may well be good. Unavailable, then, which a
+		// page and a program retry, and not a 401, which ends a session in
+		// most apps and would here restart the sign-in.
+		if cause == authn.CauseKeysUnavailable {
+			dec := deny(http.StatusServiceUnavailable, "the realm's signing keys could not be fetched")
+			dec.cause = cause
+			return about(route, "", dec)
+		}
 		dec, ok := restartSignIn(route, req, err.Error())
 		if !ok {
 			dec = challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error())))
 		}
-		dec.cause, dec.late = causeOf(err)
+		dec.cause, dec.late = cause, late
 		return about(route, "", dec)
 	}
 	if id.SessionID == "" {

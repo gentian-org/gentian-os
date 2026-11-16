@@ -520,7 +520,11 @@ marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
 back still without a session gets a page saying the session could not be
 renewed, with a link that reloads the page; it never signs out, which would
 end the realm's session too. The page for a person who lacks the access is
-shown only for a `403`. The one path of an app that takes no
+shown only for a `403`. A token whose realm's signing keys the bouncer cannot
+fetch (Keycloak away) is answered `503`, not `401`: the session may well be
+good, and a `503` is retried where a `401` ends it. A bouncer pod is ready only
+once it holds the kernel realm's keys, so in a rollout the pods before it keep
+answering while Keycloak restarts too. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
@@ -1225,7 +1229,10 @@ in this repository writes one: the cluster's mail names are published as DNS
 records for the mail edge's load balancer (see [mail.md](mail.md)).
 
 The gateway-platform controller updates the hairpin block when the Envoy
-Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
+Service, routing mode or set of hosts changes. CoreDNS's `reload` plugin
+picks the change up without a restart; only a Corefile without `reload` gets
+CoreDNS rolled, since a cluster with one CoreDNS replica resolves nothing
+during a roll. Tenant NetworkPolicies are
 refreshed when the edge Service changes so egress to the edge stays allowed.
 
 The block holds `<kernelDomain>` itself, and a CoreDNS `hosts` entry answers
