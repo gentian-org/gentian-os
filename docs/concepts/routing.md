@@ -616,8 +616,11 @@ The bouncer verifies the token on every request: signature, expiry, that it
 is an access token of the tenant's own realm, that it is made out to the
 entry's address (`aud` holds `https://<host>`) and that it names a session of
 the realm, and then asks the route's relation of the person. A refusal is
-`401` with `WWW-Authenticate: Bearer resource_metadata=...`, never a
-redirect. The `Cookie` header is removed before the backend, the token is
+`401` with `WWW-Authenticate: Bearer scope="openid", resource_metadata=...`,
+never a redirect. The metadata document names the realm and the same scope
+(`scopes_supported: ["openid"]`), so a program asks for that scope alone; a
+program told none may ask for every scope of the realm, which the entry's
+client refuses. The `Cookie` header is removed before the backend, the token is
 left in `Authorization`, and the audit record names the program's client
 beside the person. The session's own token is refused there, and a token
 made out to the entry is refused at the director and at every app.

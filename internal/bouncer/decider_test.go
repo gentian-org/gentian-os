@@ -304,9 +304,9 @@ func TestATokenRouteTakesOnlyATokenMadeOutToItByItsRealm(t *testing.T) {
 		if dec.Allow || dec.Status != http.StatusUnauthorized || dec.Redirect != "" || dec.Browser {
 			t.Errorf("%s: %+v", name, dec)
 		}
-		want := `Bearer resource_metadata="` + entryMetadata + `"`
+		want := `Bearer scope="openid", resource_metadata="` + entryMetadata + `"`
 		if req.Authorization != "" {
-			want = `Bearer error="invalid_token", resource_metadata="` + entryMetadata + `"`
+			want = `Bearer error="invalid_token", scope="openid", resource_metadata="` + entryMetadata + `"`
 		}
 		if dec.Challenge != want {
 			t.Errorf("%s: challenge %q, want %q", name, dec.Challenge, want)

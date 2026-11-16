@@ -483,10 +483,19 @@ func (d *Decider) session(ctx context.Context, route *Route, req Request) (*auth
 	return id, nil
 }
 
+// EntryScope is the scope a program asks for when it signs a person in to
+// reach a token entry: the challenge names it, and so does the entry's
+// metadata. A program told no scope may ask the realm for every scope it has,
+// and the realm refuses that for the entry's client. The token names the
+// entry as its audience already, and what the person may do is asked per
+// call, so nothing more is needed.
+const EntryScope = "openid"
+
 // challenge puts on a 401 of a route that takes a token what RFC 6750 and
-// RFC 9728 have a program expect: that a bearer token is called for, where
-// the entry's metadata is, and, when a token was presented, that it was not
-// accepted. Why it was not is in the log and never in the answer.
+// RFC 9728 have a program expect: that a bearer token is called for, the
+// scope to ask for, where the entry's metadata is, and, when a token was
+// presented, that it was not accepted. Why it was not is in the log and never
+// in the answer.
 func challenge(route *Route, req Request, dec Decision) Decision {
 	if route == nil || route.AuthMode != AuthModeBearer || dec.Status != http.StatusUnauthorized {
 		return dec
@@ -496,7 +505,7 @@ func challenge(route *Route, req Request, dec Decision) Decision {
 		parts = append(parts, `error="invalid_token"`)
 	}
 	if route.ResourceMetadata != "" {
-		parts = append(parts, `resource_metadata="`+route.ResourceMetadata+`"`)
+		parts = append(parts, `scope="`+EntryScope+`"`, `resource_metadata="`+route.ResourceMetadata+`"`)
 	}
 	dec.Challenge = strings.TrimSpace("Bearer " + strings.Join(parts, ", "))
 	return dec

@@ -121,7 +121,7 @@ func TestEnvoyGetsHeadersOnAllowAndAStatusOnDeny(t *testing.T) {
 			asked = h.Header.Value
 		}
 	}
-	if asked != `Bearer resource_metadata="`+entryMetadata+`"` {
+	if asked != `Bearer scope="openid", resource_metadata="`+entryMetadata+`"` {
 		t.Fatalf("www-authenticate = %q", asked)
 	}
 	// A session route answers no such thing: a browser is sent to sign in by

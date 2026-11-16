@@ -254,12 +254,14 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	var said struct {
 		Resource string   `json:"resource"`
 		Servers  []string `json:"authorization_servers"`
+		Scopes   []string `json:"scopes_supported"`
 	}
 	if err := json.Unmarshal([]byte(body), &said); err != nil {
 		t.Fatal(err)
 	}
 	if said.Resource != ann[bouncerTokenAudienceAnnotation] || len(said.Servers) != 1 ||
-		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm {
+		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm ||
+		len(said.Scopes) != 1 || said.Scopes[0] != "openid" {
 		t.Fatalf("metadata = %s", body)
 	}
 
