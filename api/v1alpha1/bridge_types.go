@@ -24,6 +24,11 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	"sort"
+	"strings"
+)
+
 // BridgeKind is who is on the far side of a bridge.
 // +kubebuilder:validation:Enum=external
 type BridgeKind string
@@ -113,4 +118,77 @@ type APIBackend struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
+}
+
+const (
+	// BridgeDoorLabel is the host label of a tenant's door, where its
+	// external bridges answer: <label>.<the tenant's domain>.
+	BridgeDoorLabel = "sync"
+
+	// BridgeEntryName names a bridge's entry at the door in the tenant's
+	// approvals, where another entry is named by its exposure: a bridge has
+	// one.
+	BridgeEntryName = "bridge"
+)
+
+// bridgeRedirectURIs are where a program on a person's own computer is sent
+// back to after the person signed in: a loopback address, on any port.
+var bridgeRedirectURIs = []string{"http://127.0.0.1/", "http://localhost/"}
+
+// BridgePaths are the path prefixes a bridge answers under, over all its
+// protocols, each once, without a trailing slash and in one order. Nil for
+// a profile that is no bridge.
+func (p *ComponentProfile) BridgePaths() []string {
+	if p == nil || p.Spec.Bridge == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, protocol := range p.Spec.Bridge.Protocols {
+		for _, path := range protocol.Paths {
+			path = strings.TrimSuffix(strings.TrimSpace(path), "/")
+			if path == "" || seen[path] {
+				continue
+			}
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// BridgeEntry is an external bridge as the entry the edge serves and a
+// perimeter approver approves: on the tenant's door, taking a token of the
+// tenant's realm in place of a session, under the bridge's paths and no
+// other, to the Service the bridge names. Nil for every profile that is not
+// an external bridge routed to a Service.
+//
+// The profile declares no such exposure and may not (a bridge exposes
+// nothing of its own): the entry is the platform's reading of spec.bridge,
+// so that what is approved, routed and held against a token is one thing
+// with what any token entry is. It asks for the approval a token entry asks
+// for (ExposureKindTokenEntry).
+func (p *ComponentProfile) BridgeEntry() *ExposureSpec {
+	if p == nil || p.Spec.Bridge == nil || p.Spec.Bridge.Kind != BridgeKindExternal {
+		return nil
+	}
+	isBridge := false
+	for _, c := range p.Spec.Classes {
+		isBridge = isBridge || c == ComponentClassBridge
+	}
+	api := p.Spec.Package.API
+	paths := p.BridgePaths()
+	if !isBridge || api == nil || api.Backend == nil || len(paths) == 0 {
+		return nil
+	}
+	return &ExposureSpec{
+		Name:               BridgeEntryName,
+		Surface:            SurfaceGateway,
+		AuthMode:           AuthModeBearer,
+		SubDomain:          BridgeDoorLabel,
+		Paths:              paths,
+		Backend:            BackendRef{Service: api.Backend.Service, Port: api.Backend.Port},
+		ClientRedirectURIs: append([]string(nil), bridgeRedirectURIs...),
+	}
 }
