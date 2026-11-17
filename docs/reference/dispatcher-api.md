@@ -66,6 +66,25 @@ A run as it is told:
 (`DeadlineExceeded`, `Error`, `OOMKilled`). A finished run's pod is kept ten
 minutes, and after that the caller's own record is what there is.
 
+What the caller may run, one entry per name:
+
+```json
+{"actions": [
+  {"name": "runner", "version": "2.0.0", "own": true, "deadlineSeconds": 900},
+  {"name": "ocr", "version": "1.0.0", "own": false, "deadlineSeconds": 120,
+   "inputs": {"type": "object", "required": ["page"], "properties": {"page": {"type": "string"}}},
+   "outputs": {"type": "object", "properties": {"text": {"type": "string"}}}}
+]}
+```
+
+| Field | Is |
+| --- | --- |
+| `name` | what a run to start names as `action` |
+| `version` | the version of the profile that declares it |
+| `own` | whether it is one of the caller's own runs |
+| `deadlineSeconds` | the longest one attempt may take |
+| `inputs`, `outputs` | the JSON Schemas of what a run of an installed action takes and returns, as its profile states them (`spec.action.inputs`, `spec.action.outputs`). Left out where the profile states none, and for a caller's own run. They are for a caller that lets a person configure a step; the dispatcher checks nothing against them |
+
 Refusals:
 
 | Status | When |

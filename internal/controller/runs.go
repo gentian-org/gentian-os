@@ -471,7 +471,18 @@ func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		}
 		entry := dispatcher.Tenant{Tenant: tenant.Name, Namespace: namespace}
 		for _, action := range runs.actions {
-			entry.Actions = append(entry.Actions, action.runnable)
+			// What a run takes and returns goes into the table as the
+			// profile states it, once for every tenant that installed it.
+			runnable := action.runnable
+			var inputs, outputs []byte
+			if schema := action.profile.Spec.Action.Inputs; schema != nil {
+				inputs = schema.Raw
+			}
+			if schema := action.profile.Spec.Action.Outputs; schema != nil {
+				outputs = schema.Raw
+			}
+			runnable.Schemas = table.Hold(inputs, outputs)
+			entry.Actions = append(entry.Actions, runnable)
 		}
 		table.Tenants = append(table.Tenants, entry)
 		for _, caller := range runs.callers {
