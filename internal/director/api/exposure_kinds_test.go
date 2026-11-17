@@ -395,6 +395,19 @@ func TestEachWayOfABridgeIsListedAndApprovedOnItsOwn(t *testing.T) {
 			t.Errorf("the approver is not told %q: %v", says, note)
 		}
 	}
+	// What the approval allows is the bridge's: the app gets an exchanged
+	// token, and the caller is a program on the person's device.
+	access, _ := entry["access"].(string)
+	for _, says := range []string{"file sync, calendar or address book program", "the person may use nextcloud", "nextcloud never receives the token the program presented", "made out to nextcloud alone"} {
+		if !strings.Contains(access, says) {
+			t.Errorf("the approver is not told %q: %v", says, access)
+		}
+	}
+	for _, wrong := range []string{"AI assistant", "receives the person's token"} {
+		if strings.Contains(access, wrong) {
+			t.Errorf("the approver is told %q: %v", wrong, access)
+		}
+	}
 
 	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/files", tom, `{"reason":"sync","kind":"public"}`); code == http.StatusAccepted {
 		t.Fatalf("approved as a public address: %v", body)
