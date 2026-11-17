@@ -238,6 +238,12 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 	}
 	catalogue.AppStore = &tilecatalogue.AppStore{Offered: offer.offered(), Reason: offer.reason}
 
+	doors, err := r.doors(ctx)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("project the doors: %w", err)
+	}
+	catalogue.Doors = doors
+
 	if err := r.write(ctx, catalogue); err != nil {
 		return ctrl.Result{}, fmt.Errorf("write the tile catalogue: %w", err)
 	}
@@ -401,6 +407,88 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 	// Stable order, so a projection that did not change does not rewrite the
 	// ConfigMap and wake everything that watches it.
 	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
+	return out, nil
+}
+
+// doors are the ways each tenant's door serves, read from the routes the
+// bridges are served on: a way is listed when its route serves it, which is
+// when it is approved and the bridge is not held back.
+func (r *TileProjectionReconciler) doors(ctx context.Context) ([]tilecatalogue.Door, error) {
+	components := &gentianov1alpha1.ComponentList{}
+	if err := r.List(ctx, components); err != nil {
+		return nil, err
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return nil, err
+	}
+	byNamespace := map[string]string{}
+	for i := range tenants.Items {
+		if tenants.Items[i].DeletionTimestamp == nil {
+			byNamespace[tenants.Items[i].NamespaceName()] = tenants.Items[i].Name
+		}
+	}
+	doors := map[string]*tilecatalogue.Door{}
+	for i := range components.Items {
+		comp := &components.Items[i]
+		tenant, ok := byNamespace[comp.Namespace]
+		if !ok || comp.DeletionTimestamp != nil {
+			continue
+		}
+		profile, err := getProfileFor(ctx, r.Client, comp.Spec.ProfileRef.Name, comp.Spec.ProfileRef.Digest)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !isBridge(profile) {
+			continue
+		}
+		route := &gatewayv1.HTTPRoute{}
+		err = r.Get(ctx, types.NamespacedName{
+			Name: tokenEntryRouteName(comp.Name, gentianov1alpha1.BridgeEntryName), Namespace: comp.Namespace}, route)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(route.Spec.Hostnames) == 0 || route.Annotations[bouncerDoorPathsAnnotation] == "" {
+			continue
+		}
+		served := map[string]bool{}
+		for _, names := range doorWaysOf(route.Annotations[bouncerDoorWaysAnnotation]) {
+			for _, n := range names {
+				served[n] = true
+			}
+		}
+		d := doors[tenant]
+		if d == nil {
+			d = &tilecatalogue.Door{Tenant: tenant, Host: string(route.Spec.Hostnames[0]), Ways: []tilecatalogue.DoorWay{}}
+			doors[tenant] = d
+		}
+		for _, w := range profile.BridgeDoorWays() {
+			if !served[w.Name] {
+				continue
+			}
+			d.Ways = append(d.Ways, tilecatalogue.DoorWay{
+				Bridge: comp.Name, Name: w.Name, Protocol: string(w.Protocol),
+				App: profile.Spec.Bridge.App.Profile, Object: route.Annotations[bouncerObjectAnnotation],
+			})
+		}
+	}
+	out := make([]tilecatalogue.Door, 0, len(doors))
+	for _, d := range doors {
+		sort.Slice(d.Ways, func(a, b int) bool {
+			if d.Ways[a].Bridge != d.Ways[b].Bridge {
+				return d.Ways[a].Bridge < d.Ways[b].Bridge
+			}
+			return d.Ways[a].Name < d.Ways[b].Name
+		})
+		out = append(out, *d)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Tenant < out[b].Tenant })
 	return out, nil
 }
 

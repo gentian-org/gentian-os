@@ -64,6 +64,9 @@ type Request struct {
 	// page the person opened. They decide only how a refusal is answered.
 	Method    string
 	FetchMode string
+	// Source is the address the request came from, as the Gateway saw it.
+	// It only counts failed device passwords.
+	Source string
 }
 
 // Decision is the bouncer's answer.
@@ -88,6 +91,10 @@ type Decision struct {
 	// Challenge is the WWW-Authenticate header of a 401 on a route that
 	// takes a token: what a program needs to find where to get one.
 	Challenge string
+	// PasswordChallenge is a second WWW-Authenticate header, on a 401 at a
+	// door whose realm takes device passwords: what has a calendar or
+	// contact program ask for a username and a password.
+	PasswordChallenge string
 	// SetCookies go out with a redirect as Set-Cookie headers: the edge's
 	// cookies of an ended session, cleared, and RestartCookie.
 	SetCookies []string
@@ -119,6 +126,7 @@ type Decider struct {
 	now    func() time.Time
 
 	exchange *exchangeCache
+	devices  *devices
 
 	mu    sync.RWMutex
 	table *Table
@@ -138,6 +146,9 @@ type Options struct {
 	// Without it such a route is refused: there is nothing to hand its
 	// backend in place of the session's token.
 	Exchanger Exchanger
+	// Devices checks a device password presented at a door. Without it a
+	// door takes tokens only.
+	Devices DeviceRealm
 }
 
 // New returns a Decider.
@@ -154,6 +165,7 @@ func New(o Options) *Decider {
 	return &Decider{
 		verify: o.Verifier, store: o.Store, cache: newCache(o.CacheTTL, o.Now), log: o.Logger, now: o.Now, table: o.Table,
 		exchange: newExchangeCache(o.Exchanger, o.Now),
+		devices:  newDevices(o.Devices, o.Now),
 	}
 }
 
@@ -322,7 +334,52 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 			return about(route, "", deny(http.StatusNotFound, "path is not served on "+req.Host))
 		}
 		route = sub
+		// A discovery address sends a calendar or contact program to where
+		// the app answers, and is answered before anybody is asked who is
+		// calling: it names a path and grants nothing.
+		if route.redirect != "" {
+			return about(route, "", Decision{Status: http.StatusMovedPermanently, Redirect: route.redirect, Reason: "discovery"})
+		}
+		dec := d.atDoor(ctx, route, req)
+		if dec.Status == http.StatusUnauthorized && d.devices != nil && d.devices.realm.Offers(route.Realm) {
+			dec.PasswordChallenge = `Basic realm="` + route.Host + `", charset="UTF-8"`
+		}
+		return dec
 	}
+	return d.withSession(ctx, route, req)
+}
+
+// atDoor decides a request for one app of a door. A device password is
+// turned into the person's token first, and the request is then decided as
+// one that presented that token, provided the password covers a way that
+// serves the path.
+func (d *Decider) atDoor(ctx context.Context, route *Route, req Request) Decision {
+	user, password, basic := basicAuth(req.Authorization)
+	if !basic || d.devices == nil {
+		return d.withSession(ctx, route, req)
+	}
+	if !d.devices.realm.Offers(route.Realm) {
+		return about(route, "", challenge(route, req, deny(http.StatusUnauthorized, "device passwords are not taken here")))
+	}
+	t, err := d.devices.token(ctx, route.Realm, user, password, req.Source)
+	switch {
+	case errors.Is(err, errDeviceLimited):
+		return about(route, "", deny(http.StatusTooManyRequests, err.Error()))
+	case errors.Is(err, ErrDeviceRefused):
+		return about(route, "", challenge(route, req, deny(http.StatusUnauthorized, err.Error())))
+	case err != nil:
+		d.log.WarnContext(ctx, "device password grant failed; failing closed", "host", req.Host, "realm", route.Realm, "error", err.Error())
+		return about(route, "", deny(http.StatusServiceUnavailable, "the realm could not check the device password"))
+	}
+	if !covers(t.Ways, route.ways) {
+		return about(route, "", deny(http.StatusForbidden, "the device password does not cover a way that serves "+pathOnly(req.Path)))
+	}
+	req.Authorization = "Bearer " + t.Token
+	return d.withSession(ctx, route, req)
+}
+
+// withSession decides a request on the token its route calls for.
+func (d *Decider) withSession(ctx context.Context, route *Route, req Request) Decision {
 	id, err := d.session(ctx, route, req)
 	if err != nil {
 		// On an oidc route this is not "no session yet". The OAuth2 filter

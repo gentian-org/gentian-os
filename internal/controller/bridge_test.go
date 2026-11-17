@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -454,6 +455,20 @@ func TestTheDoorServesTheApprovedWaysOfABridgeAndNoOther(t *testing.T) {
 	if door := bridgeDoorOf(tenant, profile, got...); !reflect.DeepEqual(door.paths, served.Paths) {
 		t.Fatalf("the bouncer is told %v", door.paths)
 	}
+	// The bouncer is told which ways serve each prefix, for a caller whose
+	// device password covers some ways only. A prefix two approved ways
+	// share names both, and the annotation reads back as it was written.
+	all := bridgeDoorOf(tenant, profile, "calendars", "contacts")
+	route := &gatewayv1.HTTPRoute{}
+	all.annotate(route)
+	want := "/remote.php/dav/addressbooks=contacts,/remote.php/dav/calendars=calendars,/remote.php/dav/principals=calendars|contacts"
+	if got := route.Annotations[bouncerDoorWaysAnnotation]; got != want {
+		t.Fatalf("ways annotation %q, want %q", got, want)
+	}
+	paths := doorPaths(route.Annotations)
+	if len(paths) != 3 || !reflect.DeepEqual(paths[2].Ways, []string{"calendars", "contacts"}) || !reflect.DeepEqual(paths[0].Ways, []string{"contacts"}) {
+		t.Fatalf("the table is told %+v", paths)
+	}
 	// Approved as something else, or under the name of the whole route, is
 	// not a way approved.
 	approve("bridge")
@@ -495,5 +510,46 @@ func TestOnlyADeviceWayToTheAppIsServedAtTheDoor(t *testing.T) {
 	mixed := bridgeProfile("mixed", "nextcloud-base-ce", agents, deviceWay("files", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/"))
 	if e := bridgeEntryOf(mixed); e == nil || !reflect.DeepEqual(e.Paths, []string{"/remote.php/dav/files"}) || len(mixed.BridgeWayEntries()) != 1 {
 		t.Fatalf("a bridge with one door way: %+v", e)
+	}
+}
+
+// A calendar or contact way that names a root is found by its discovery
+// address: the door serves the address under the way, and the bouncer is
+// told where it sends a program.
+func TestADiscoveryAddressIsServedAndRedirectedForAWayWithARoot(t *testing.T) {
+	calendars := deviceWay("calendars", gentianov1alpha1.BridgeProtocolCalDAV, "/remote.php/dav/calendars/", "/remote.php/dav/principals/")
+	calendars.Root = "/remote.php/dav/principals/"
+	contacts := deviceWay("contacts", gentianov1alpha1.BridgeProtocolCardDAV, "/remote.php/dav/addressbooks/", "/remote.php/dav/principals/")
+	contacts.Root = "/remote.php/dav/principals/"
+	profile := bridgeProfile("nextcloud-dav", "nextcloud-base-ce",
+		deviceWay("files", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/"), calendars, contacts)
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "acme"
+
+	door := bridgeDoorOf(tenant, profile, "calendars")
+	want := []string{"/.well-known/caldav", "/remote.php/dav/calendars", "/remote.php/dav/principals"}
+	if !reflect.DeepEqual(door.paths, want) {
+		t.Fatalf("calendars alone serve %v, want %v", door.paths, want)
+	}
+	route := &gatewayv1.HTTPRoute{}
+	door.annotate(route)
+	if got := route.Annotations[bouncerDoorRedirectsAnnotation]; got != "/.well-known/caldav=/remote.php/dav/principals/" {
+		t.Fatalf("redirects %q", got)
+	}
+	paths := doorPaths(route.Annotations)
+	if paths[0].Prefix != "/.well-known/caldav" || paths[0].Redirect != "/remote.php/dav/principals/" ||
+		!reflect.DeepEqual(paths[0].Ways, []string{"calendars"}) || paths[1].Redirect != "" {
+		t.Fatalf("the table is told %+v", paths)
+	}
+	// The address of a way not approved is not served, and a way without
+	// a root has none.
+	files := bridgeDoorOf(tenant, profile, "files")
+	if len(files.redirects) != 0 || slices.Contains(files.paths, "/.well-known/caldav") {
+		t.Fatalf("files alone: %+v", files)
+	}
+	route = &gatewayv1.HTTPRoute{}
+	files.annotate(route)
+	if _, set := route.Annotations[bouncerDoorRedirectsAnnotation]; set {
+		t.Fatal("a door with no discovery address carries the annotation")
 	}
 }

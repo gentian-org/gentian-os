@@ -349,6 +349,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
 | `spec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
 | `spec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
+| `spec.bridge.ways[].root` | string |  | `Root` is where a calendar or contact program that found the door by its discovery address (RFC 6764: /.well-known/caldav, /.well-known/carddav) is sent, to ask… |
 | `spec.bridge.ways[].speaksAs` | string | yes | `SpeaksAs` is whom the calls are made for. |
 | `spec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `spec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
@@ -1207,6 +1208,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
 | `status.profileSpec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
 | `status.profileSpec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
+| `status.profileSpec.bridge.ways[].root` | string |  | `Root` is where a calendar or contact program that found the door by its discovery address (RFC 6764: /.well-known/caldav, /.well-known/carddav) is sent, to ask… |
 | `status.profileSpec.bridge.ways[].speaksAs` | string | yes | `SpeaksAs` is whom the calls are made for. |
 | `status.profileSpec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `status.profileSpec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |

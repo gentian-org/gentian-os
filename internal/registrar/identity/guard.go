@@ -107,6 +107,9 @@ type change struct {
 	// vouching marks a write to a person's link to a component that vouches
 	// for people (vouching.go).
 	vouching bool
+	// credential is the id of a person's credential the write removes:
+	// only ever a device password (devicepasswords.go).
+	credential string
 }
 
 // classify reads a request path as a write. ok is false for a path this
@@ -114,7 +117,14 @@ type change struct {
 func classify(realm, rel string) (w change, ok bool) {
 	admin := "/admin/realms/" + url.PathEscape(realm)
 	activation := "/realms/" + url.PathEscape(realm) + "/gentian-activation/users/"
+	devices := "/realms/" + url.PathEscape(realm) + "/gentian-device-passwords/users/"
 	switch {
+	case strings.HasPrefix(rel, devices):
+		rest := strings.TrimPrefix(rel, devices)
+		if rest != "" && !strings.Contains(rest, "/") {
+			return change{user: unescape(rest)}, true
+		}
+		return change{}, false
 	case strings.HasPrefix(rel, activation):
 		rest := strings.Split(strings.TrimPrefix(rel, activation), "/")
 		if len(rest) == 2 && rest[0] != "" && rest[1] == "link" {
@@ -139,6 +149,8 @@ func classify(realm, rel string) (w change, ok bool) {
 			return change{user: unescape(seg[1]), group: unescape(seg[3]), membership: true}, true
 		case len(seg) == 4 && seg[2] == "federated-identity" && strings.HasPrefix(unescape(seg[3]), vouchingAliasPrefix):
 			return change{user: unescape(seg[1]), vouching: true}, true
+		case len(seg) == 4 && seg[2] == "credentials":
+			return change{user: unescape(seg[1]), credential: unescape(seg[3])}, true
 		default:
 			return change{user: unescape(seg[1])}, true
 		}
@@ -177,6 +189,22 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	// this case in either direction.
 	if w.vouching && method == http.MethodDelete {
 		return nil
+	}
+	// Removing a device password is the same: it ends what the person was
+	// given, for everybody, the holder of a platform role included. Whether
+	// the credential is one is asked of the realm, not taken from the
+	// caller; any other credential (a second factor) is judged below like
+	// every write to a person.
+	if w.credential != "" && method == http.MethodDelete {
+		held, err := c.DevicePasswords(ctx, r, w.user)
+		if err != nil {
+			return err
+		}
+		for _, d := range held {
+			if d.ID == w.credential {
+				return nil
+			}
+		}
 	}
 	which, err := c.roleGroups(ctx)
 	if err != nil {

@@ -26,6 +26,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
@@ -88,6 +89,7 @@ const (
 // BridgeSpec is what a bridge connects, and the ways its calls go.
 // +kubebuilder:validation:XValidation:rule="self.ways.all(w, self.ways.filter(x, x.name == w.name).size() == 1)",message="a way's name is its own within the bridge: it names the way in the tenant's approvals"
 // +kubebuilder:validation:XValidation:rule="has(self.app) == self.ways.exists(w, w.caller == 'app' || w.callee == 'app')",message="spec.bridge.app names the app of the tenant a way calls or is called by: present exactly when a way's caller or callee is app"
+// +kubebuilder:validation:XValidation:rule="self.ways.filter(w, has(w.root) && w.protocol == 'caldav').size() <= 1 && self.ways.filter(w, has(w.root) && w.protocol == 'carddav').size() <= 1",message="a protocol has one discovery address: at most one way per protocol names a root"
 type BridgeSpec struct {
 	// App is the app of the tenant the bridge connects: the app's
 	// ComponentProfile, which must be installed in the same tenant. A way
@@ -128,6 +130,7 @@ type BridgedApp struct {
 // +kubebuilder:validation:XValidation:rule="self.caller != self.callee",message="a way connects two different sides: its caller and its callee differ"
 // +kubebuilder:validation:XValidation:rule="self.caller != 'device' || self.speaksAs == 'person'",message="a program on a person's device speaks as that person"
 // +kubebuilder:validation:XValidation:rule="has(self.paths) == (self.callee == 'app' && (self.caller == 'device' || self.caller == 'outside'))",message="paths are where a caller from outside the platform reaches the app: present exactly for a way from a device or an outside service to the app"
+// +kubebuilder:validation:XValidation:rule="!has(self.root) || ((self.protocol == 'caldav' || self.protocol == 'carddav') && has(self.paths) && self.paths.exists(p, self.root == p || self.root.startsWith(p.endsWith('/') ? p : p + '/')))",message="root is where a calendar or contact program is sent from the discovery address: only for a way in caldav or carddav, and under one of its paths"
 type BridgeWay struct {
 	// Name names the way within the bridge, and in the tenant's approvals.
 	// +kubebuilder:validation:MinLength=1
@@ -161,6 +164,36 @@ type BridgeWay struct {
 	// +kubebuilder:validation:items:MaxLength=128
 	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$`
 	Paths []string `json:"paths,omitempty"`
+
+	// Root is where a calendar or contact program that found the door by
+	// its discovery address (RFC 6764: /.well-known/caldav,
+	// /.well-known/carddav) is sent, to ask there who the person is and
+	// where their calendars or address books are. Under one of Paths, and
+	// only for a way in caldav or carddav. The door answers the discovery
+	// address with a redirect to it, before anybody is asked who is
+	// calling: the redirect names a path and grants nothing.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$`
+	Root string `json:"root,omitempty"`
+}
+
+// BridgeDiscoveryPath is the discovery address of a protocol at the door
+// (RFC 6764), or "" for a protocol that has none.
+func BridgeDiscoveryPath(protocol BridgeProtocolName) string {
+	switch protocol {
+	case BridgeProtocolCalDAV, BridgeProtocolCardDAV:
+		return "/.well-known/" + string(protocol)
+	}
+	return ""
+}
+
+// discovery is a door way's discovery address, when it names a root.
+func (w BridgeWay) discovery() string {
+	if w.Root == "" {
+		return ""
+	}
+	return BridgeDiscoveryPath(w.Protocol)
 }
 
 // APIBackend is a Service inside the tenant that an entry packaged as an API
@@ -256,7 +289,7 @@ func (p *ComponentProfile) BridgePaths(ways ...string) []string {
 		if len(only) > 0 && !only[w.Name] {
 			continue
 		}
-		for _, path := range w.Paths {
+		for _, path := range append(append([]string{}, w.Paths...), w.discovery()) {
 			path = strings.TrimSuffix(strings.TrimSpace(path), "/")
 			if path == "" || seen[path] {
 				continue
@@ -266,6 +299,53 @@ func (p *ComponentProfile) BridgePaths(ways ...string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// BridgeRedirects is, for the named ways (every door way when none is
+// named), each discovery address the door answers with a redirect, and
+// where to.
+func (p *ComponentProfile) BridgeRedirects(ways ...string) map[string]string {
+	only := map[string]bool{}
+	for _, w := range ways {
+		only[w] = true
+	}
+	out := map[string]string{}
+	for _, w := range p.BridgeDoorWays() {
+		if (len(only) > 0 && !only[w.Name]) || w.discovery() == "" {
+			continue
+		}
+		out[w.discovery()] = w.Root
+	}
+	return out
+}
+
+// BridgePathWays is, for each prefix BridgePaths returns for the same ways,
+// the ways that serve it, sorted. A prefix two ways share (a calendar's and
+// an address book's principals) names both. The door lets a caller whose
+// device password covers some ways reach a prefix only if one of them is
+// among the prefix's.
+func (p *ComponentProfile) BridgePathWays(ways ...string) map[string][]string {
+	only := map[string]bool{}
+	for _, w := range ways {
+		only[w] = true
+	}
+	out := map[string][]string{}
+	for _, w := range p.BridgeDoorWays() {
+		if len(only) > 0 && !only[w.Name] {
+			continue
+		}
+		for _, path := range append(append([]string{}, w.Paths...), w.discovery()) {
+			path = strings.TrimSuffix(strings.TrimSpace(path), "/")
+			if path == "" || slices.Contains(out[path], w.Name) {
+				continue
+			}
+			out[path] = append(out[path], w.Name)
+		}
+	}
+	for _, names := range out {
+		sort.Strings(names)
+	}
 	return out
 }
 

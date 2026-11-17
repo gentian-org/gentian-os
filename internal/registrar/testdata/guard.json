@@ -12,7 +12,7 @@
         "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_view tenant:demo}"
+      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -29,7 +29,7 @@
         "request_id=\"req-0001-abcd\" user:demo/u1 can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:u1 name:Una realm:demo component: decision:can_view tenant:demo}"
+      "handled": "{subject:u1 name:Una realm:demo component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -45,7 +45,7 @@
         "request_id=\"req-0001-abcd\" user:bob can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:bob name:bob@example.org realm: component: decision:can_view tenant:demo}"
+      "handled": "{subject:bob name:bob@example.org realm: component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -197,7 +197,7 @@
         "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_view tenant:demo}"
+      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -213,7 +213,7 @@
         "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_view tenant:demo}"
+      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -247,7 +247,7 @@
         "request_id=\"req-0001-abcd\" user:ada can_configure cluster:c1"
       ],
       "logs": null,
-      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_configure cluster:c1}"
+      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_configure cluster:c1 signedIn:0}"
     }
   },
   {
@@ -296,7 +296,7 @@
         "request_id=\"req-0001-abcd\" user:ada can_install_app tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_install_app tenant:demo}"
+      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_install_app tenant:demo signedIn:0}"
     }
   },
   {
@@ -348,7 +348,7 @@
         "request_id=\"req-0001-abcd\" user:demo/u1 can_enter tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:u1 name:Una realm:demo component: decision:can_enter tenant:demo}"
+      "handled": "{subject:u1 name:Una realm:demo component: decision:can_enter tenant:demo signedIn:0}"
     }
   },
   {
@@ -382,7 +382,7 @@
         "request_id=\"req-0001-abcd\" user:ada can_manage_users tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_manage_users tenant:demo}"
+      "handled": "{subject:ada name:ada@example.org realm:gentian component: decision:can_manage_users tenant:demo signedIn:0}"
     }
   },
   {
@@ -396,7 +396,7 @@
       "body": "",
       "checks": null,
       "logs": null,
-      "handled": "{subject: name: realm: component:component:demo/shop decision:own_key vouching:demo/shop}"
+      "handled": "{subject: name: realm: component:component:demo/shop decision:own_key vouching:demo/shop signedIn:0}"
     }
   },
   {
@@ -410,7 +410,7 @@
       "body": "",
       "checks": null,
       "logs": null,
-      "handled": "{subject: name: realm: component:component:demo/shop decision:own_key vouching:demo/shop}"
+      "handled": "{subject: name: realm: component:component:demo/shop decision:own_key vouching:demo/shop signedIn:0}"
     }
   },
   {
@@ -493,7 +493,7 @@
         "request_id=\"req-0001-abcd\" user:ada can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name: realm:gentian component: decision:can_view tenant:demo}"
+      "handled": "{subject:ada name: realm:gentian component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -509,7 +509,7 @@
         "request_id=\"\u003cminted\u003e\" user:ada can_view tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name: realm:gentian component: decision:can_view tenant:demo}"
+      "handled": "{subject:ada name: realm:gentian component: decision:can_view tenant:demo signedIn:0}"
     }
   },
   {
@@ -525,7 +525,7 @@
         "request_id=\"req-0001-abcd\" user:ada can_manage_users tenant:demo"
       ],
       "logs": null,
-      "handled": "{subject:ada name: realm:gentian component: decision:can_manage_users tenant:demo}"
+      "handled": "{subject:ada name: realm:gentian component: decision:can_manage_users tenant:demo signedIn:0}"
     }
   }
 ]

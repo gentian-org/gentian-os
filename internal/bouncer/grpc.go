@@ -102,6 +102,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		Cookie:        headers[HeaderCookie],
 		Method:        httpReq.GetMethod(),
 		FetchMode:     headers[HeaderFetchMode],
+		Source:        req.GetAttributes().GetSource().GetAddress().GetSocketAddress().GetAddress(),
 	}
 	if r.Host == "" {
 		r.Host = httpReq.GetHost()
@@ -166,6 +167,14 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 				Header:       &corev3.HeaderValue{Key: "www-authenticate", Value: dec.Challenge},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			})
+			// A second challenge, as a header of its own: a calendar or
+			// contact program reads the one it knows.
+			if dec.PasswordChallenge != "" {
+				denied.Headers = append(denied.Headers, &corev3.HeaderValueOption{
+					Header:       &corev3.HeaderValue{Key: "www-authenticate", Value: dec.PasswordChallenge},
+					AppendAction: corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,
+				})
+			}
 		}
 		return &authv3.CheckResponse{
 			Status:       &rpcstatus.Status{Code: int32(grpcCode(dec.Status)), Message: dec.Reason},

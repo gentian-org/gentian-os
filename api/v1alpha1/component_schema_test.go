@@ -477,14 +477,14 @@ spec:
 	// way is a way from a device to the app in webdav, with these fields
 	// put in place of the ones it has.
 	way := func(fields string) string {
-		base := map[string]string{"name": "files", "caller": "device", "callee": "app", "protocol": "webdav", "speaksAs": "person", "paths": "[/dav/]"}
+		base := map[string]string{"name": "files", "caller": "device", "callee": "app", "protocol": "webdav", "speaksAs": "person", "paths": "[/dav/]", "root": "-"}
 		for _, kv := range strings.Split(fields, ";") {
 			if k, v, ok := strings.Cut(kv, "="); ok {
 				base[k] = v
 			}
 		}
 		out := []string{}
-		for _, k := range []string{"name", "caller", "callee", "protocol", "speaksAs", "paths"} {
+		for _, k := range []string{"name", "caller", "callee", "protocol", "speaksAs", "paths", "root"} {
 			if v := base[k]; v != "-" {
 				out = append(out, k+": "+v)
 			}
@@ -523,6 +523,13 @@ spec:
 		{"two ways of one name", class + ways(way("")+way("protocol=caldav")) + api, "a way's name is its own"},
 		{"a way to itself", class + ways(way("caller=app;paths=-")) + api, "its caller and its callee differ"},
 		{"a device that speaks for the tenant", class + ways(way("speaksAs=tenant")) + api, "speaks as that person"},
+
+		{"a calendar way with a root under its paths", class + ways(way("name=calendars;protocol=caldav;paths=[/dav/calendars/, /dav/principals/];root=/dav/principals/")) + api, ""},
+		{"a root that is one of the paths without its slash", class + ways(way("name=contacts;protocol=carddav;paths=[/dav/principals];root=/dav/principals")) + api, ""},
+		{"a root outside the way's paths", class + ways(way("name=calendars;protocol=caldav;paths=[/dav/calendars/];root=/dav/")) + api, "under one of its paths"},
+		{"a root that only shares a prefix", class + ways(way("name=calendars;protocol=caldav;paths=[/dav/cal];root=/dav/calendars/")) + api, "under one of its paths"},
+		{"a root for files", class + ways(way("root=/dav/")) + api, "only for a way in caldav or carddav"},
+		{"two calendar ways that name a root", class + ways(way("name=a;protocol=caldav;root=/dav/x")+way("name=b;protocol=caldav;root=/dav/y")) + api, "one discovery address"},
 		{"a way from a device with no path", class + ways(way("paths=-")) + api, "paths are where a caller from outside the platform reaches the app"},
 		{"paths on a way between agents and the app", class + ways(way("caller=agents;protocol=mcp")) + api, "paths are where a caller from outside the platform reaches the app"},
 		{"a caller that is not one", class + ways(way("caller=browser")) + api, "Unsupported value"},
