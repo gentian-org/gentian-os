@@ -454,6 +454,20 @@ func TestTheDoorServesTheApprovedWaysOfABridgeAndNoOther(t *testing.T) {
 	if door := bridgeDoorOf(tenant, profile, got...); !reflect.DeepEqual(door.paths, served.Paths) {
 		t.Fatalf("the bouncer is told %v", door.paths)
 	}
+	// The bouncer is told which ways serve each prefix, for a caller whose
+	// device password covers some ways only. A prefix two approved ways
+	// share names both, and the annotation reads back as it was written.
+	all := bridgeDoorOf(tenant, profile, "calendars", "contacts")
+	route := &gatewayv1.HTTPRoute{}
+	all.annotate(route)
+	want := "/remote.php/dav/addressbooks=contacts,/remote.php/dav/calendars=calendars,/remote.php/dav/principals=calendars|contacts"
+	if got := route.Annotations[bouncerDoorWaysAnnotation]; got != want {
+		t.Fatalf("ways annotation %q, want %q", got, want)
+	}
+	paths := doorPaths(route.Annotations)
+	if len(paths) != 3 || !reflect.DeepEqual(paths[2].Ways, []string{"calendars", "contacts"}) || !reflect.DeepEqual(paths[0].Ways, []string{"contacts"}) {
+		t.Fatalf("the table is told %+v", paths)
+	}
 	// Approved as something else, or under the name of the whole route, is
 	// not a way approved.
 	approve("bridge")

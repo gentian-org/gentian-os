@@ -50,6 +50,10 @@ const (
 	// relation, object and exchange scope are then asked under those
 	// prefixes alone.
 	bouncerDoorPathsAnnotation = "gentianos.io/bouncer-door-paths"
+	// bouncerDoorWaysAnnotation names the ways that serve each of those
+	// prefixes: "<prefix>=<way>|<way>,..." A caller with a device password
+	// reaches a prefix only through one of its ways.
+	bouncerDoorWaysAnnotation = "gentianos.io/bouncer-door-ways"
 	// bouncerDoorObjectAnnotation is what the door itself is recorded as
 	// for a request that reached no app: the tenant.
 	bouncerDoorObjectAnnotation = "gentianos.io/bouncer-door-object"
@@ -135,6 +139,8 @@ type bridgeDoor struct {
 	scope string
 	// paths are the prefixes the bridge serves: those of its approved ways.
 	paths []string
+	// pathWays names, for each of paths, the approved ways that serve it.
+	pathWays map[string][]string
 }
 
 // bridgeDoorOf is the door a bridge's route describes, serving the paths of
@@ -151,7 +157,36 @@ func bridgeDoorOf(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.Com
 		tenantObject: "tenant:" + tenant.Name,
 		scope:        BridgeTokenScope(app),
 		paths:        profile.BridgePaths(ways...),
+		pathWays:     profile.BridgePathWays(ways...),
 	}
+}
+
+// waysAnnotation writes pathWays in the order of paths.
+func (d *bridgeDoor) waysAnnotation() string {
+	parts := make([]string, 0, len(d.paths))
+	for _, p := range d.paths {
+		if names := d.pathWays[p]; len(names) > 0 {
+			parts = append(parts, p+"="+strings.Join(names, "|"))
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// doorWaysOf reads bouncerDoorWaysAnnotation back.
+func doorWaysOf(value string) map[string][]string {
+	out := map[string][]string{}
+	for _, part := range strings.Split(value, ",") {
+		prefix, names, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || prefix == "" {
+			continue
+		}
+		for _, n := range strings.Split(names, "|") {
+			if n = strings.TrimSpace(n); n != "" {
+				out[prefix] = append(out[prefix], n)
+			}
+		}
+	}
+	return out
 }
 
 // annotate writes the door on a route built as a token entry's.
@@ -166,6 +201,7 @@ func (d *bridgeDoor) annotate(route *gatewayv1.HTTPRoute) {
 	route.Annotations[bouncerObjectAnnotation] = d.authz.object
 	route.Annotations[bouncerExchangeScopeAnnotation] = d.scope
 	route.Annotations[bouncerDoorPathsAnnotation] = strings.Join(d.paths, ",")
+	route.Annotations[bouncerDoorWaysAnnotation] = d.waysAnnotation()
 	route.Annotations[bouncerDoorObjectAnnotation] = d.tenantObject
 }
 

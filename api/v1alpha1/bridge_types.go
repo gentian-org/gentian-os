@@ -26,6 +26,7 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
@@ -266,6 +267,35 @@ func (p *ComponentProfile) BridgePaths(ways ...string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// BridgePathWays is, for each prefix BridgePaths returns for the same ways,
+// the ways that serve it, sorted. A prefix two ways share (a calendar's and
+// an address book's principals) names both. The door lets a caller whose
+// device password covers some ways reach a prefix only if one of them is
+// among the prefix's.
+func (p *ComponentProfile) BridgePathWays(ways ...string) map[string][]string {
+	only := map[string]bool{}
+	for _, w := range ways {
+		only[w] = true
+	}
+	out := map[string][]string{}
+	for _, w := range p.BridgeDoorWays() {
+		if len(only) > 0 && !only[w.Name] {
+			continue
+		}
+		for _, path := range w.Paths {
+			path = strings.TrimSuffix(strings.TrimSpace(path), "/")
+			if path == "" || slices.Contains(out[path], w.Name) {
+				continue
+			}
+			out[path] = append(out[path], w.Name)
+		}
+	}
+	for _, names := range out {
+		sort.Strings(names)
+	}
 	return out
 }
 

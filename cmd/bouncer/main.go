@@ -106,7 +106,14 @@ func run(log *slog.Logger) error {
 		TokenBase:  envvar.Or("BOUNCER_TOKEN_BASE_URL", envvar.Or("DIRECTOR_JWKS_BASE_URL", issuerBase)),
 		SecretsDir: envvar.Or("BOUNCER_EXCHANGE_SECRETS", "/etc/bouncer-exchange"),
 	}
-	decider := bouncer.New(bouncer.Options{Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log, Exchanger: exchanger})
+	// Device passwords at a door: each realm's device client presents the
+	// secret the operator mounted beside the exchange client's; a realm
+	// with none takes tokens only.
+	devices := &bouncer.RealmDevices{TokenBase: exchanger.TokenBase, SecretsDir: exchanger.SecretsDir}
+	decider := bouncer.New(bouncer.Options{
+		Verifier: verifier, Store: store, Table: table, CacheTTL: cacheTTL, Logger: log,
+		Exchanger: exchanger, Devices: devices,
+	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
