@@ -1264,12 +1264,14 @@ ${admin_clients_shell}
               # mapper -- which is why both are on.
               # Kept thirty days in the database, as tenant realms are: the
               # record is what the realm writes to stdout as it happens.
+              # gentian-device-passwords ends a person's device passwords
+              # with their password, as in every tenant realm.
               REALM_EVENTS=\$(jq -n '{
                 eventsEnabled: true,
                 eventsExpiration: 2592000,
                 adminEventsEnabled: true,
                 adminEventsDetailsEnabled: false,
-                eventsListeners: ["jboss-logging", "gentian-director"]
+                eventsListeners: ["jboss-logging", "gentian-director", "gentian-device-passwords"]
               }')
               if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/events/config" -d "\${REALM_EVENTS}" >/dev/null 2>&1; then

@@ -730,6 +730,13 @@ const (
 	// bouncerExchangeSecret is the one Secret the bouncer mounts
 	// (charts/gentian-os, bouncer.yaml: the two must agree).
 	bouncerExchangeSecret = "bouncer-exchange"
+	// devicesRealmLabel marks a Secret holding one realm's door device
+	// client secret, the client the bouncer checks a device password with,
+	// and its value is the realm. Gathered into the same Secret, under the
+	// realm's name with devicesEntrySuffix (internal/bouncer, the two must
+	// agree): a realm's name has no dot, so the entries cannot collide.
+	devicesRealmLabel  = "gentianos.io/edge-devices-realm"
+	devicesEntrySuffix = ".devices"
 )
 
 // exchangeRealmName is what a realm may be called to become a file name in
@@ -738,22 +745,27 @@ const (
 var exchangeRealmName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func (r *GatewayPlatformReconciler) ensureBouncerExchangeSecrets(ctx context.Context) error {
-	list := &corev1.SecretList{}
-	if err := r.List(ctx, list, client.InNamespace(servicesNamespace), client.HasLabels{exchangeRealmLabel}); err != nil {
-		return err
-	}
 	data := map[string][]byte{}
-	for i := range list.Items {
-		s := &list.Items[i]
-		realm := s.Labels[exchangeRealmLabel]
-		secret := s.Data[exchangeSecretKey]
-		// The gathered Secret is itself in this namespace; it carries no
-		// such label, and is skipped by name as well in case one is ever put
-		// on it.
-		if s.Name == bouncerExchangeSecret || s.DeletionTimestamp != nil || len(secret) == 0 || !exchangeRealmName.MatchString(realm) {
-			continue
+	for _, kind := range []struct{ label, suffix string }{
+		{exchangeRealmLabel, ""},
+		{devicesRealmLabel, devicesEntrySuffix},
+	} {
+		list := &corev1.SecretList{}
+		if err := r.List(ctx, list, client.InNamespace(servicesNamespace), client.HasLabels{kind.label}); err != nil {
+			return err
 		}
-		data[realm] = secret
+		for i := range list.Items {
+			s := &list.Items[i]
+			realm := s.Labels[kind.label]
+			secret := s.Data[exchangeSecretKey]
+			// The gathered Secret is itself in this namespace; it carries no
+			// such label, and is skipped by name as well in case one is ever
+			// put on it.
+			if s.Name == bouncerExchangeSecret || s.DeletionTimestamp != nil || len(secret) == 0 || !exchangeRealmName.MatchString(realm) {
+				continue
+			}
+			data[realm+kind.suffix] = secret
+		}
 	}
 	key := types.NamespacedName{Name: bouncerExchangeSecret, Namespace: servicesNamespace}
 	existing := &corev1.Secret{}
