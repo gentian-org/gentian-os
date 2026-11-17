@@ -390,6 +390,35 @@ func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
 	}
 }
 
+// Each class a profile holds exclusively is the class its install runs as.
+// A bridge installed as an app was held with ClassMismatch for good: the
+// class of an instance read from its profile is never replaced.
+func TestAnExclusiveClassIsTheClassItsInstallRunsAs(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	for _, class := range []gentianov1alpha1.ComponentClass{
+		gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge,
+	} {
+		tenant := acmeTenantFixture()
+		tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "nextcloud-sync"}}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+			tenant.DeepCopy(), profileFixture("nextcloud-sync", false, class),
+		).Build()
+		r := &TenantReconciler{Client: c, Scheme: scheme}
+		if err := r.ensureAppComponents(ctx, tenant); err != nil {
+			t.Fatal(err)
+		}
+		comp := &gentianov1alpha1.Component{}
+		if err := c.Get(ctx, types.NamespacedName{Name: "nextcloud-sync", Namespace: tenantNamespaceName(tenant)}, comp); err != nil {
+			t.Fatal(err)
+		}
+		if comp.Spec.Class != class {
+			t.Errorf("a profile of class %s is installed as %s", class, comp.Spec.Class)
+		}
+	}
+}
+
 // The claim names addons by what the app calls them, not by their profiles:
 // the Composition matches the base's addonValues on these ids and hands them
 // to its activation script. With profile names Nextcloud was asked to enable

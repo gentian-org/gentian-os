@@ -758,6 +758,7 @@ func (r *TenantReconciler) installClass(ctx context.Context, profileName string)
 	}
 	for _, exclusive := range []gentianov1alpha1.ComponentClass{
 		gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction,
+		gentianov1alpha1.ComponentClassBridge,
 	} {
 		if classIncludes(profile, exclusive) {
 			return exclusive, true, nil
