@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -180,6 +181,11 @@ func TestTheDispatchersTableSaysWhoMayStartWhat(t *testing.T) {
 	ctx := context.Background()
 	flow := rightsComponent("acme", "flow")
 	ocr, ocrProfile := actionFixture("acme", "ocr", true)
+	const inputs = `{"type":"object","required":["page"],"properties":{"page":{"type":"string"}}}`
+	const outputs = `{"type":"object","properties":{"text":{"type":"string"}}}`
+	ocrProfile.Spec.Action.Inputs = &apiextensionsv1.JSON{Raw: []byte(inputs)}
+	ocrProfile.Spec.Action.Outputs = &apiextensionsv1.JSON{Raw: []byte(outputs)}
+	plain, plainProfile := actionFixture("acme", "plain", true)
 	pending, pendingProfile := actionFixture("acme", "pending", false)
 	pending.Status.Conditions[0].Status = metav1.ConditionFalse
 	elsewhere, elsewhereProfile := actionFixture("other", "translate", false)
@@ -187,7 +193,7 @@ func TestTheDispatchersTableSaysWhoMayStartWhat(t *testing.T) {
 		Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromString("http")}},
 	}}
 	c, r := runsHarness(t, rightsTenant("acme"), rightsTenant("other"), flow, runsProfile("flow"),
-		ocr, ocrProfile, pending, pendingProfile, elsewhere, elsewhereProfile, service)
+		ocr, ocrProfile, plain, plainProfile, pending, pendingProfile, elsewhere, elsewhereProfile, service)
 	if err := (&ComponentReconciler{Client: c, Scheme: c.Scheme()}).ensureRuns(ctx, flow, "acme", runsProfile("flow")); err != nil {
 		t.Fatal(err)
 	}
@@ -226,8 +232,21 @@ func TestTheDispatchersTableSaysWhoMayStartWhat(t *testing.T) {
 		action.DeadlineSeconds != 120 || action.Command[0] != "/ocr" {
 		t.Fatalf("ocr = %+v own=%v found=%v", action, own, found)
 	}
+	// The action's schemas are in the table as its profile states them, and
+	// an action that states none, like a caller's own run, has none.
+	if held := table.Schemas[action.Schemas]; string(held.Inputs) != inputs || string(held.Outputs) != outputs {
+		t.Fatalf("ocr's schemas = %+v, under %q", held, action.Schemas)
+	}
+	if without, _, found := table.Runnable(caller, "plain"); !found || without.Schemas != "" {
+		t.Fatalf("plain = %+v found=%v", without, found)
+	}
+	// However many tenants installed it, an action's schemas are held once.
+	if len(table.Schemas) != 1 {
+		t.Fatalf("schemas held = %d", len(table.Schemas))
+	}
 	runner, own, found := table.Runnable(caller, "runner")
-	if !found || !own || runner.Ref() != "registry.example/flow/runner@"+runnerDigest || runner.DeadlineSeconds != 900 {
+	if !found || !own || runner.Ref() != "registry.example/flow/runner@"+runnerDigest || runner.DeadlineSeconds != 900 ||
+		runner.Schemas != "" {
 		t.Fatalf("runner = %+v own=%v found=%v", runner, own, found)
 	}
 	for _, name := range []string{"pending", "translate", "nothing"} {

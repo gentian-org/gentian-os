@@ -308,13 +308,21 @@ func (s *Server) actions(w http.ResponseWriter, _ *http.Request, c *call) {
 		Version         string `json:"version,omitempty"`
 		Own             bool   `json:"own"`
 		DeadlineSeconds int32  `json:"deadlineSeconds"`
+		// Inputs and Outputs are an installed action's schemas, as its
+		// profile states them.
+		Inputs  json.RawMessage `json:"inputs,omitempty"`
+		Outputs json.RawMessage `json:"outputs,omitempty"`
 	}
 	out := []entry{}
 	for _, own := range c.caller.Own {
 		out = append(out, entry{Name: own.Name, Version: own.Version, Own: true, DeadlineSeconds: own.DeadlineSeconds})
 	}
 	for _, action := range c.tenant.Actions {
-		out = append(out, entry{Name: action.Name, Version: action.Version, DeadlineSeconds: action.DeadlineSeconds})
+		schemas := c.table.Schemas[action.Schemas]
+		out = append(out, entry{
+			Name: action.Name, Version: action.Version, DeadlineSeconds: action.DeadlineSeconds,
+			Inputs: schemas.Inputs, Outputs: schemas.Outputs,
+		})
 	}
 	s.answer(w, http.StatusOK, map[string]any{"actions": out})
 }
