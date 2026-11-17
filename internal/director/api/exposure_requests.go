@@ -202,6 +202,22 @@ func accessOf(kind string) string {
 	return ""
 }
 
+// bridgeAccessOf says what approving a way of a bridge allows: a token entry
+// as accessOf's, except that the bouncer asks for the right to use the app
+// the bridge connects and hands the app an exchanged token, never the one the
+// program presented (internal/controller, bridge.go).
+func bridgeAccessOf(app string, protocol gentianov1alpha1.BridgeProtocolName) string {
+	return "This is not a public address, and nobody signs in on it with a browser. " +
+		fmt.Sprintf("A program on a person's own device, such as a file sync, calendar or address book program, reaches these paths of %s in %s as that person: ", app, protocol) +
+		"it presents a token the tenant's sign-in service issued to the person for this address alone, after the person signed in and agreed. " +
+		"The platform checks every request: that the token is valid, was issued by this tenant's sign-in service for this address, " +
+		fmt.Sprintf("belongs to a sign-in that has not ended, and that the person may use %s. ", app) +
+		"A person who is removed from the tenant, or whose sign-in is ended, loses this access within minutes. " +
+		"A token for this address is refused everywhere else on the platform, and a browser's session is refused here. " +
+		fmt.Sprintf("%s never receives the token the program presented: the platform exchanges it for one made out to %s alone, and %s acts with the person's own rights in it. ", app, app, app) +
+		"Until approved, these paths answer nobody."
+}
+
 // rateLimitOf says the limit one client address is held to on a public
 // address. The numbers are the ones the operator renders the proxy from
 // (addresses.PerimeterRateFor); the cluster's administrator may have set
@@ -519,6 +535,7 @@ func (v *exposureView) entries() []exposureEntry {
 			// what right.
 			if way := profile.BridgeWay(entry.Name); way != nil && way.DoorWay() && len(profile.Spec.Expose) == 0 {
 				app := profile.Spec.Bridge.App.Profile
+				e.Access = bridgeAccessOf(app, way.Protocol)
 				e.Note = strings.TrimSpace(fmt.Sprintf(
 					"A way of a bridge to %s, in %s: programs on a person's own devices reach these paths of %s as that person, who is asked the right to use %s as at its own address. Each way of the bridge is approved on its own. %s",
 					app, way.Protocol, app, app, e.Note))
