@@ -45,10 +45,6 @@ const (
 	// tenant's domain>. Kept from every app (internal/hostnames).
 	BridgeDoorLabel = gentianov1alpha1.BridgeDoorLabel
 
-	// bridgeEntryName names the one route a bridge is served on. Its ways
-	// are approved by their own names.
-	bridgeEntryName = gentianov1alpha1.BridgeEntryName
-
 	// bouncerDoorPathsAnnotation makes a route that takes a token one app
 	// of a door: the path prefixes it serves, comma-separated. The route's
 	// relation, object and exchange scope are then asked under those
