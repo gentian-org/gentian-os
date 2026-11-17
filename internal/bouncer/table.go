@@ -152,8 +152,10 @@ type Route struct {
 	// behindDoor marks the route forPath returns: one app's, reached through
 	// a door. Its token was made out to the door, never to the app.
 	behindDoor bool
-	// ways are the ways that serve the path forPath matched.
-	ways []string
+	// ways are the ways that serve the path forPath matched, and redirect
+	// its discovery redirect.
+	ways     []string
+	redirect string
 }
 
 // PathRoute is one app behind a door (Route.Paths): the path prefix it is
@@ -178,6 +180,11 @@ type PathRoute struct {
 	// a device password reaches it only if the password covers one of them;
 	// a caller with a token of the door's own sign-in is not asked.
 	Ways []string `json:"ways,omitempty"`
+	// Redirect makes the prefix a discovery address (RFC 6764): a request
+	// under it is answered with a redirect to this path, before anybody is
+	// asked who is calling. It names where the app answers and grants
+	// nothing.
+	Redirect string `json:"redirect,omitempty"`
 }
 
 // forPath is the route a request to a door is decided as: the door's own,
@@ -204,7 +211,7 @@ func (r *Route) forPath(path string) *Route {
 		return nil
 	}
 	sub := *r
-	sub.Paths, sub.behindDoor, sub.ways = nil, true, best.Ways
+	sub.Paths, sub.behindDoor, sub.ways, sub.redirect = nil, true, best.Ways, best.Redirect
 	sub.Relation, sub.Object, sub.ExchangeScope = best.Relation, best.Object, best.ExchangeScope
 	return &sub
 }

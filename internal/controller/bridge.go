@@ -54,6 +54,11 @@ const (
 	// prefixes: "<prefix>=<way>|<way>,..." A caller with a device password
 	// reaches a prefix only through one of its ways.
 	bouncerDoorWaysAnnotation = "gentianos.io/bouncer-door-ways"
+	// bouncerDoorRedirectsAnnotation names the discovery addresses among
+	// those prefixes and where each sends a calendar or contact program:
+	// "<prefix>=<path>,..." The bouncer answers them with the redirect
+	// before it asks who is calling.
+	bouncerDoorRedirectsAnnotation = "gentianos.io/bouncer-door-redirects"
 	// bouncerDoorObjectAnnotation is what the door itself is recorded as
 	// for a request that reached no app: the tenant.
 	bouncerDoorObjectAnnotation = "gentianos.io/bouncer-door-object"
@@ -141,6 +146,9 @@ type bridgeDoor struct {
 	paths []string
 	// pathWays names, for each of paths, the approved ways that serve it.
 	pathWays map[string][]string
+	// redirects are the discovery addresses among paths, and where each
+	// sends a program.
+	redirects map[string]string
 }
 
 // bridgeDoorOf is the door a bridge's route describes, serving the paths of
@@ -158,7 +166,30 @@ func bridgeDoorOf(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.Com
 		scope:        BridgeTokenScope(app),
 		paths:        profile.BridgePaths(ways...),
 		pathWays:     profile.BridgePathWays(ways...),
+		redirects:    profile.BridgeRedirects(ways...),
 	}
+}
+
+// redirectsAnnotation writes redirects in the order of paths.
+func (d *bridgeDoor) redirectsAnnotation() string {
+	parts := []string{}
+	for _, p := range d.paths {
+		if to := d.redirects[p]; to != "" {
+			parts = append(parts, p+"="+to)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// doorRedirectsOf reads bouncerDoorRedirectsAnnotation back.
+func doorRedirectsOf(value string) map[string]string {
+	out := map[string]string{}
+	for _, part := range strings.Split(value, ",") {
+		if prefix, to, ok := strings.Cut(strings.TrimSpace(part), "="); ok && prefix != "" && to != "" {
+			out[prefix] = to
+		}
+	}
+	return out
 }
 
 // waysAnnotation writes pathWays in the order of paths.
@@ -202,6 +233,11 @@ func (d *bridgeDoor) annotate(route *gatewayv1.HTTPRoute) {
 	route.Annotations[bouncerExchangeScopeAnnotation] = d.scope
 	route.Annotations[bouncerDoorPathsAnnotation] = strings.Join(d.paths, ",")
 	route.Annotations[bouncerDoorWaysAnnotation] = d.waysAnnotation()
+	if r := d.redirectsAnnotation(); r != "" {
+		route.Annotations[bouncerDoorRedirectsAnnotation] = r
+	} else {
+		delete(route.Annotations, bouncerDoorRedirectsAnnotation)
+	}
 	route.Annotations[bouncerDoorObjectAnnotation] = d.tenantObject
 }
 

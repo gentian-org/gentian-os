@@ -514,6 +514,18 @@ spec:
                           - caldav
                           - carddav
                           type: string
+                        root:
+                          description: |-
+                            Root is where a calendar or contact program that found the door by
+                            its discovery address (RFC 6764: /.well-known/caldav,
+                            /.well-known/carddav) is sent, to ask there who the person is and
+                            where their calendars or address books are. Under one of Paths, and
+                            only for a way in caldav or carddav. The door answers the discovery
+                            address with a redirect to it, before anybody is asked who is
+                            calling: the redirect names a path and grants nothing.
+                          maxLength: 128
+                          pattern: ^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$
+                          type: string
                         speaksAs:
                           description: SpeaksAs is whom the calls are made for.
                           enum:
@@ -538,6 +550,13 @@ spec:
                           or an outside service to the app'
                         rule: has(self.paths) == (self.callee == 'app' && (self.caller
                           == 'device' || self.caller == 'outside'))
+                      - message: 'root is where a calendar or contact program is sent
+                          from the discovery address: only for a way in caldav or
+                          carddav, and under one of its paths'
+                        rule: '!has(self.root) || ((self.protocol == ''caldav'' ||
+                          self.protocol == ''carddav'') && has(self.paths) && self.paths.exists(p,
+                          self.root == p || self.root.startsWith(p.endsWith(''/'')
+                          ? p : p + ''/'')))'
                     maxItems: 16
                     minItems: 1
                     type: array
@@ -557,6 +576,11 @@ spec:
                     is app'
                   rule: has(self.app) == self.ways.exists(w, w.caller == 'app' ||
                     w.callee == 'app')
+                - message: 'a protocol has one discovery address: at most one way
+                    per protocol names a root'
+                  rule: self.ways.filter(w, has(w.root) && w.protocol == 'caldav').size()
+                    <= 1 && self.ways.filter(w, has(w.root) && w.protocol == 'carddav').size()
+                    <= 1
               classes:
                 description: |-
                   Classes lists the modes this component may be deployed under. It is a

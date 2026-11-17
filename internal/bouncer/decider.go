@@ -334,6 +334,12 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 			return about(route, "", deny(http.StatusNotFound, "path is not served on "+req.Host))
 		}
 		route = sub
+		// A discovery address sends a calendar or contact program to where
+		// the app answers, and is answered before anybody is asked who is
+		// calling: it names a path and grants nothing.
+		if route.redirect != "" {
+			return about(route, "", Decision{Status: http.StatusMovedPermanently, Redirect: route.redirect, Reason: "discovery"})
+		}
 		dec := d.atDoor(ctx, route, req)
 		if dec.Status == http.StatusUnauthorized && d.devices != nil && d.devices.realm.Offers(route.Realm) {
 			dec.PasswordChallenge = `Basic realm="` + route.Host + `", charset="UTF-8"`

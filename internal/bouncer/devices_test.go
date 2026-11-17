@@ -204,3 +204,22 @@ func TestBasicCredentialsAreRead(t *testing.T) {
 		}
 	}
 }
+
+// A discovery address is answered with its redirect before anybody is asked
+// who is calling: a program that knows only the door's name finds the app.
+func TestADiscoveryAddressRedirectsWithoutACredential(t *testing.T) {
+	d, realm, _ := deviceDoor(t)
+	route := d.table.Routes[0]
+	route.Paths = append(route.Paths, PathRoute{
+		Prefix: "/.well-known/caldav", Relation: "can_use", Object: "app:acme/nextcloud",
+		ExchangeScope: "app-nextcloud", Ways: []string{"calendars"}, Redirect: "/remote.php/dav/principals/",
+	})
+	d.table = &Table{Routes: []Route{route}}
+	dec := d.Decide(context.Background(), Request{Host: doorHost, Path: "/.well-known/caldav"})
+	if dec.Status != http.StatusMovedPermanently || dec.Redirect != "/remote.php/dav/principals/" || dec.Allow {
+		t.Fatalf("discovery: %+v", dec)
+	}
+	if realm.grants != 0 || dec.subject != "" {
+		t.Fatalf("somebody was asked: %d grants, subject %q", realm.grants, dec.subject)
+	}
+}

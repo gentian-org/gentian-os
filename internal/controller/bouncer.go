@@ -384,6 +384,7 @@ type bouncerPath struct {
 	Object        string   `json:"object"`
 	ExchangeScope string   `json:"exchangeScope,omitempty"`
 	Ways          []string `json:"ways,omitempty"`
+	Redirect      string   `json:"redirect,omitempty"`
 }
 
 // doorPaths reads the paths a bridge's route serves at a door, each with the
@@ -391,10 +392,11 @@ type bouncerPath struct {
 func doorPaths(ann map[string]string) []bouncerPath {
 	var out []bouncerPath
 	ways := doorWaysOf(ann[bouncerDoorWaysAnnotation])
+	redirects := doorRedirectsOf(ann[bouncerDoorRedirectsAnnotation])
 	for _, p := range splitDenyPaths(ann[bouncerDoorPathsAnnotation]) {
 		out = append(out, bouncerPath{
 			Prefix: p, Relation: ann[bouncerRelationAnnotation], Object: ann[bouncerObjectAnnotation],
-			ExchangeScope: ann[bouncerExchangeScopeAnnotation], Ways: ways[p],
+			ExchangeScope: ann[bouncerExchangeScopeAnnotation], Ways: ways[p], Redirect: redirects[p],
 		})
 	}
 	return out
