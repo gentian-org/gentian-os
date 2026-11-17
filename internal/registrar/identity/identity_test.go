@@ -98,6 +98,30 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The device password endpoint the platform's Keycloak extension serves.
+	if strings.HasPrefix(r.URL.Path, "/realms/") && strings.Contains(r.URL.Path, "/gentian-device-passwords/") {
+		f.mu.Lock()
+		f.calls = append(f.calls, recorded{method: r.Method, path: r.URL.Path, body: string(body)})
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		var req struct {
+			Name string   `json:"name"`
+			Ways []string `json:"ways"`
+		}
+		_ = json.Unmarshal(body, &req)
+		if req.Name == "taken" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"there is a device password named taken already"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "dp1", "name": req.Name, "ways": req.Ways, "username": "ada",
+			"password": "k3m9x-p2hrt-aaaaa-bbbbb-ccccc", "createdAt": 1794930085299,
+		})
+		return
+	}
+
 	// The activation-link endpoint the platform's Keycloak extension serves.
 	if strings.HasPrefix(r.URL.Path, "/realms/") && strings.Contains(r.URL.Path, "/gentian-activation/") {
 		f.mu.Lock()
@@ -899,5 +923,49 @@ func TestTheGroupListingSaysWhichAppsAreProvisionedForEverybody(t *testing.T) {
 	}
 	if !got["gentian:tenant:demo:app:xwiki-ce"] || got["gentian:tenant:demo:app:odoo-base-ce"] {
 		t.Fatalf("default grants = %v", got)
+	}
+}
+
+func TestDevicePasswordsAreMadeListedAndRevoked(t *testing.T) {
+	f, srv := newFake(t)
+	f.users["demo"] = []userRep{{ID: "abc123", Username: "ada", Enabled: true}}
+	f.creds["abc123"] = []map[string]string{
+		{"id": "pw1", "type": "password"},
+		{"id": "otp1", "type": "otp"},
+		{"id": "dp1", "type": DevicePasswordType, "userLabel": "Ada's phone",
+			"credentialData": `{"ref":"k3m9x","ways":["calendars","contacts"],"lastUsedAt":1794930085383}`},
+	}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+	ctx := context.Background()
+
+	made, err := c.CreateDevicePassword(ctx, r, "abc123", "Ada's phone", []string{"calendars", "contacts"})
+	if err != nil || made.Password == "" || made.Username != "ada" || made.ID != "dp1" {
+		t.Fatalf("made %+v, %v", made, err)
+	}
+	if posts := f.callsTo(http.MethodPost, "/realms/demo/gentian-device-passwords/users/abc123"); len(posts) != 1 {
+		t.Fatalf("the extension was asked %+v", f.recorded())
+	}
+	if _, err := c.CreateDevicePassword(ctx, r, "abc123", "taken", []string{"files"}); !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "named taken already") {
+		t.Fatalf("a name already used: %v", err)
+	}
+
+	held, err := c.DevicePasswords(ctx, r, "abc123")
+	if err != nil || len(held) != 1 || held[0].Name != "Ada's phone" || strings.Join(held[0].Ways, ",") != "calendars,contacts" ||
+		held[0].LastUsedAt == nil {
+		t.Fatalf("listed %+v, %v", held, err)
+	}
+
+	// Only a device password is removed; a second factor named by its id is
+	// not one, and is not touched.
+	if err := c.RevokeDevicePassword(ctx, r, "abc123", "otp1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoking a second factor: %v", err)
+	}
+	if err := c.RevokeDevicePassword(ctx, r, "abc123", "dp1"); err != nil {
+		t.Fatal(err)
+	}
+	if dels := f.callsTo(http.MethodDelete, "/credentials/dp1"); len(dels) != 1 || len(f.callsTo(http.MethodDelete, "/credentials/otp1")) != 0 {
+		t.Fatalf("removed %+v", f.recorded())
 	}
 }

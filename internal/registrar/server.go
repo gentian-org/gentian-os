@@ -86,6 +86,9 @@ type Identity interface {
 	VouchingLinked(ctx context.Context, r identity.Realm, id, profile string) (bool, error)
 	LinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
 	UnlinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
+	DevicePasswords(ctx context.Context, r identity.Realm, id string) ([]identity.DevicePassword, error)
+	CreateDevicePassword(ctx context.Context, r identity.Realm, id, name string, ways []string) (identity.NewDevicePassword, error)
+	RevokeDevicePassword(ctx context.Context, r identity.Realm, id, passwordID string) error
 }
 
 // Config assembles a Server.
@@ -233,6 +236,10 @@ type call struct {
 	// decision is the relation and object that permitted the call, in the
 	// form the director's commit trailer uses: "can_manage_users tenant:demo".
 	decision string
+	// signedIn is when the caller last signed in with their realm, as their
+	// token says, in Unix seconds; zero when it does not say. Read by an act
+	// that asks for a sign-in moments before.
+	signedIn int64
 }
 
 // object names what a route's relation is checked against.
@@ -286,7 +293,7 @@ func (s *Server) authorizeAs(
 	if name == "" {
 		name = g.Ident.Name
 	}
-	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision()}, true
+	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision(), signedIn: g.Ident.AuthTime}, true
 }
 
 // gate is the guard of this registrar's routes.
@@ -389,6 +396,12 @@ func (s *Server) routes() {
 	s.guarded("POST /v1/tenants/{t}/vouching/{profile}/link", "can_enter", tenantObject, s.linkVouching)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
 	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)
+
+	// A person's own device passwords (devicepasswords.go). Open to whoever
+	// may enter the tenant, about the caller and nobody else.
+	s.guarded("GET /v1/tenants/{t}/device-passwords", "can_enter", tenantObject, s.listDevicePasswords)
+	s.action("POST /v1/tenants/{t}/actions/create-device-password", "can_enter", tenantObject, s.createDevicePassword)
+	s.action("POST /v1/tenants/{t}/actions/revoke-device-password", "can_enter", tenantObject, s.revokeDevicePassword)
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {

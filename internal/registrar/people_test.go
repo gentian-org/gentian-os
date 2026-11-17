@@ -27,6 +27,8 @@ import (
 // the realm the registrar then reaches must be that tenant's and no other.
 type fakeIdentity struct {
 	mu sync.Mutex
+	// devicePasswords per realm and person (devicepasswords_test.go).
+	devicePasswords map[string][]identity.DevicePassword
 	// held is the set of realms this registrar has a credential for.
 	held map[string]bool
 	// seen is every realm an operation was performed against, in order.

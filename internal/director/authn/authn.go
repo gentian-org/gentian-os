@@ -101,6 +101,11 @@ type Identity struct {
 	// Scopes are the token's scope claim, split. Read only for a delegated
 	// token (Delegated), to bound what it may call.
 	Scopes []string
+	// AuthTime is when the person last signed in with the realm, in Unix
+	// seconds, which a refreshed token keeps (auth_time). Zero when the
+	// token does not say. Read by an act that asks for a sign-in moments
+	// before.
+	AuthTime int64
 }
 
 // Config configures a Verifier.
@@ -194,6 +199,7 @@ type keycloakClaims struct {
 	Email     string `json:"email"`
 	Type      string `json:"typ"`
 	Scope     string `json:"scope"`
+	AuthTime  int64  `json:"auth_time"`
 }
 
 // Verify checks a raw access token and returns the identity it carries.
@@ -313,6 +319,7 @@ func (v *Verifier) verify(ctx context.Context, raw, audience, kind string) (*Ide
 		Name:      name,
 		Email:     kc.Email,
 		Scopes:    strings.Fields(kc.Scope),
+		AuthTime:  max(kc.AuthTime, 0),
 	}, nil
 }
 
