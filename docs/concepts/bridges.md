@@ -34,6 +34,7 @@ A bridge declares one or more ways. A way is one direction of calls:
 | `protocol` | `mcp`, `webdav`, `caldav`, `carddav` | what the calls are made in; one protocol per way |
 | `speaksAs` | `person`, `tenant` | whom the calls are made for; `tenant` only for what every member of the tenant may see |
 | `paths` | path prefixes | where a caller from outside the platform reaches the app; present exactly for a way from `device` or `outside` to `app` |
+| `root` | a path under `paths` | where a calendar or contact program is sent from the discovery address; only for a way in `caldav` or `carddav`, one per protocol in a bridge |
 
 A bridge in both directions declares two ways. Each way is approved on its own.
 
@@ -82,6 +83,7 @@ spec:
       protocol: caldav
       speaksAs: person
       paths: [/remote.php/dav/calendars/, /remote.php/dav/principals/]
+      root: /remote.php/dav/principals/
   package:
     api:
       backend: {service: nextcloud, port: 8080}
@@ -92,11 +94,16 @@ spec:
 The door is `sync.<the tenant's domain>`. The label `sync` is reserved: no app
 takes it ([routing.md](routing.md)).
 
-- **Sign-in.** A program signs the person in at the tenant's realm with the
-  authorization code flow and PKCE, through the realm client
-  `token-entry-<component>`, and is sent back to a loopback address on any
-  port. Its token is made out to the door. The sign-in, the second factor and
-  the session limits are the realm's.
+- **Sign-in.** A program presents one of two credentials, both issued and
+  ended by the tenant's realm:
+  - a **token**, for a program that can sign the person in: the
+    authorization code flow with PKCE through the realm client
+    `token-entry-<component>`, back to a loopback address on any port. The
+    token is made out to the door. The sign-in, the second factor and the
+    session limits are the realm's.
+  - a **device password** (§4.2), as HTTP Basic credentials, for a program
+    that knows only a username and a password: most calendar and contact
+    programs.
 - **One client, ways approved one by one.** A bridge has one route and one
   realm client for all its ways. The tenant's perimeter approver approves each
   way as a token entry (`kubectl gentian exposures requests`), and the route
@@ -106,9 +113,15 @@ takes it ([routing.md](routing.md)).
   may use the app (`can_use` on the app, the question the app's own address
   asks), and exchanges the token at the realm for one made out to the app
   alone (scope `bridge-<app profile>`). The app is handed that token, never the
-  one the program presented. A request without a token is answered `401` with
-  the address of the door's resource metadata (RFC 9728); a path no approved
-  way serves is answered `404`.
+  one the program presented. A request without a credential is answered `401`
+  with the address of the door's resource metadata (RFC 9728) and, where the
+  realm takes device passwords, a second challenge for a username and a
+  password; a path no approved way serves is answered `404`.
+- **Discovery.** For a way that names a `root`, the door serves its
+  protocol's discovery address (RFC 6764: `/.well-known/caldav`,
+  `/.well-known/carddav`) and answers it with a `301` to the root, before
+  anybody is asked who is calling. A program set up with the door's name
+  alone finds the app from there.
 - **No path rewriting.** A path is asked of the app as the program asked for
   it: DAV answers name paths of their own.
 - **One owner per path.** A path at the door is the first bridge's that served
@@ -119,7 +132,34 @@ The app's one obligation is to accept a bearer token of the tenant's realm made
 out to its own sign-in client. Nextcloud does with `user_oidc` and
 `check-bearer`.
 
-### 4.2 Conditions
+### 4.2 Device passwords
+
+A device password is a credential of the person in the tenant's realm, beside
+their password and second factor. The person makes one in their own settings,
+for one device and the ways they choose; the password is shown once.
+
+| | |
+|---|---|
+| Made | by the person, through the registrar (`create-device-password`), within ten minutes of a sign-in with whatever second factor the realm asks; an older sign-in is answered with a step-up challenge (RFC 9470) |
+| Form | five groups of five characters, generated; the first group names it among the person's own, the rest is a secret of about 99 bits, kept as a digest |
+| Username | the person's username or email address in the realm |
+| Limited to | the ways chosen when it was made; a path no such way serves is refused |
+| Ends | when the person revokes it, changes or resets their password, or is signed out of every session by an administrator; when unused for longer than the realm's offline session idle timeout (30 days unless the realm says otherwise); a disabled person's is refused |
+| Count | at most 25 per person |
+
+The bouncer posts the username and the password to the realm as a password
+grant of the realm client `gentian-door-devices`, whose direct grant runs one
+step: the platform's device password check. That client cannot check a
+person's password, and no other client can check a device password. The
+realm answers with a token of the person made out to the door, carrying the
+password's ways (`gentian_ways`), and the request is decided as one that
+presented it. The bouncer keeps the token until shortly before it runs out,
+so the realm is asked about once in five minutes per device. A wrong
+password does not count towards the realm's lockout of the person; the door
+counts failures per username and per source address instead and answers
+`429` past its limit, without asking the realm.
+
+### 4.3 Conditions
 
 | Condition | Reason | Means |
 |---|---|---|
