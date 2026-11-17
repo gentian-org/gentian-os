@@ -30,23 +30,29 @@ import (
 	"github.com/gentian-org/gentian-os/internal/hostnames"
 )
 
-func bridgeProfile(name, app string, protocols ...gentianov1alpha1.BridgeProtocol) *gentianov1alpha1.ComponentProfile {
+// deviceWay is a way from a program on a person's device to the app.
+func deviceWay(name string, protocol gentianov1alpha1.BridgeProtocolName, paths ...string) gentianov1alpha1.BridgeWay {
+	return gentianov1alpha1.BridgeWay{
+		Name: name, Caller: gentianov1alpha1.BridgeCallerDevice, Callee: gentianov1alpha1.BridgeCalleeApp,
+		Protocol: protocol, SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson, Paths: paths,
+	}
+}
+
+func bridgeProfile(name, app string, ways ...gentianov1alpha1.BridgeWay) *gentianov1alpha1.ComponentProfile {
 	p := &gentianov1alpha1.ComponentProfile{}
 	p.Name = name
 	p.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge}
 	p.Spec.Launch = gentianov1alpha1.ComponentLaunchNone
-	p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{
-		Kind: gentianov1alpha1.BridgeKindExternal, App: gentianov1alpha1.BridgedApp{Profile: app}, Protocols: protocols,
-	}
+	p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{App: &gentianov1alpha1.BridgedApp{Profile: app}, Ways: ways}
 	p.Spec.Package.API = &gentianov1alpha1.APIIntegration{Backend: &gentianov1alpha1.APIBackend{Service: app, Port: 8080}}
 	return p
 }
 
 func nextcloudBridge() *gentianov1alpha1.ComponentProfile {
 	return bridgeProfile("nextcloud-dav", "nextcloud-base-ce",
-		gentianov1alpha1.BridgeProtocol{Name: gentianov1alpha1.BridgeProtocolWebDAV, Paths: []string{"/remote.php/dav/files/"}},
-		gentianov1alpha1.BridgeProtocol{Name: gentianov1alpha1.BridgeProtocolCalDAV, Paths: []string{"/remote.php/dav/calendars/", "/remote.php/dav/principals/"}},
-		gentianov1alpha1.BridgeProtocol{Name: gentianov1alpha1.BridgeProtocolCardDAV, Paths: []string{"/remote.php/dav/addressbooks/", "/remote.php/dav/principals"}},
+		deviceWay("files", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/"),
+		deviceWay("calendars", gentianov1alpha1.BridgeProtocolCalDAV, "/remote.php/dav/calendars/", "/remote.php/dav/principals/"),
+		deviceWay("contacts", gentianov1alpha1.BridgeProtocolCardDAV, "/remote.php/dav/addressbooks/", "/remote.php/dav/principals"),
 	)
 }
 
@@ -156,11 +162,11 @@ func TestOnlyABridgeRoutedToAServiceHasAnEntryAtTheDoor(t *testing.T) {
 func TestTheRouteTableMakesOneDoorOfATenantsBridges(t *testing.T) {
 	files := bridgeRoute(t, nextcloudBridge(), time.Unix(100, 0))
 	contacts := bridgeRoute(t, bridgeProfile("odoo-contacts", "odoo-base-ce",
-		gentianov1alpha1.BridgeProtocol{Name: gentianov1alpha1.BridgeProtocolCardDAV, Paths: []string{"/contacts/"}}), time.Unix(200, 0))
+		deviceWay("way", gentianov1alpha1.BridgeProtocolCardDAV, "/contacts/")), time.Unix(200, 0))
 	// A later bridge that claims a path under one already served, and one of
 	// its own.
 	late := bridgeRoute(t, bridgeProfile("other-dav", "other-app",
-		gentianov1alpha1.BridgeProtocol{Name: gentianov1alpha1.BridgeProtocolWebDAV, Paths: []string{"/remote.php/dav/files/shared/", "/other/"}}), time.Unix(300, 0))
+		deviceWay("way", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/shared/", "/other/")), time.Unix(300, 0))
 
 	scheme := runtime.NewScheme()
 	_ = gatewayv1.Install(scheme)
@@ -313,7 +319,7 @@ func TestABridgeIsServedWhileItsAppIsInstalledAndItsPathsAreFree(t *testing.T) {
 	// Another bridge that wants a path under one of this one's is held, and
 	// this one is not disturbed by it.
 	other := bridgeProfile("other-dav", "nextcloud-base-ce",
-		gentianov1alpha1.BridgeProtocol{Name: gentianov1alpha1.BridgeProtocolWebDAV, Paths: []string{"/remote.php/dav/files/shared/"}})
+		deviceWay("way", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/shared/"))
 	otherComp := componentFor(other.Name, comp.Namespace)
 	ok, err = r.bridgeServable(ctx, otherComp, other, host)
 	cond := apimeta.FindStatusCondition(otherComp.Status.Conditions, ConditionBridge)
@@ -380,7 +386,7 @@ func TestABridgesRealmClientComesAndGoesWithItsApproval(t *testing.T) {
 		t.Fatal("a client for a bridge nobody approved")
 	}
 	comp.Spec.Exposures = []gentianov1alpha1.ExposureEnablement{{
-		ExposureName: bridgeEntryName, Kind: gentianov1alpha1.ExposureKindTokenEntry, Owner: "u-tom",
+		ExposureName: "files", Kind: gentianov1alpha1.ExposureKindTokenEntry, Owner: "u-tom",
 		ReviewAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
 	}}
 	if !held() {
@@ -413,5 +419,81 @@ func TestABridgesRealmClientComesAndGoesWithItsApproval(t *testing.T) {
 	comp.Spec.Exposures[0].Kind = gentianov1alpha1.ExposureKindPublic
 	if held() {
 		t.Fatal("the client outlived the approval")
+	}
+}
+
+// Each way of a bridge is approved on its own, and the door serves the paths
+// of the ways approved and no other: a path two ways share is served while
+// either is.
+func TestTheDoorServesTheApprovedWaysOfABridgeAndNoOther(t *testing.T) {
+	profile := nextcloudBridge()
+	comp := componentFor(profile.Name, "tenant-acme")
+	now := time.Now()
+	approve := func(ways ...string) {
+		comp.Spec.Exposures = nil
+		for _, w := range ways {
+			comp.Spec.Exposures = append(comp.Spec.Exposures, gentianov1alpha1.ExposureEnablement{
+				ExposureName: w, Kind: gentianov1alpha1.ExposureKindTokenEntry, Owner: "u-tom",
+				ReviewAt: metav1.NewTime(now.Add(24 * time.Hour)),
+			})
+		}
+	}
+
+	if got := approvedBridgeWays(comp, profile, false, now); len(got) != 0 || servedBridgeEntry(profile, got) != nil {
+		t.Fatalf("approved before anyone approved: %v", got)
+	}
+	approve("calendars")
+	got := approvedBridgeWays(comp, profile, false, now)
+	served := servedBridgeEntry(profile, got)
+	if !reflect.DeepEqual(got, []string{"calendars"}) || served == nil ||
+		!reflect.DeepEqual(served.Paths, []string{"/remote.php/dav/calendars", "/remote.php/dav/principals"}) {
+		t.Fatalf("one way approved: %v, served %+v", got, served)
+	}
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "acme"
+	if door := bridgeDoorOf(tenant, profile, got...); !reflect.DeepEqual(door.paths, served.Paths) {
+		t.Fatalf("the bouncer is told %v", door.paths)
+	}
+	// Approved as something else, or under the name of the whole route, is
+	// not a way approved.
+	approve("bridge")
+	comp.Spec.Exposures = append(comp.Spec.Exposures, gentianov1alpha1.ExposureEnablement{
+		ExposureName: "files", Kind: gentianov1alpha1.ExposureKindPublic, Owner: "u-tom",
+	})
+	if got := approvedBridgeWays(comp, profile, false, now); len(got) != 0 {
+		t.Fatalf("approved as %v", got)
+	}
+	// The tenant waives approvals, as the cluster allows: every way.
+	if got := approvedBridgeWays(comp, profile, true, now); len(got) != 3 {
+		t.Fatalf("waived: %v", got)
+	}
+	// Each way is one entry an approver is asked about, with its own paths.
+	entries := profile.BridgeWayEntries()
+	if len(entries) != 3 || entries[0].Name != "files" || !reflect.DeepEqual(entries[0].Paths, []string{"/remote.php/dav/files"}) ||
+		entries[0].RequestKind() != gentianov1alpha1.ExposureKindTokenEntry {
+		t.Fatalf("entries %+v", entries)
+	}
+}
+
+// Only a way from a program on a device to the app, in a protocol the app
+// speaks over HTTP, is served at the door. A bridge with no such way has no
+// entry there.
+func TestOnlyADeviceWayToTheAppIsServedAtTheDoor(t *testing.T) {
+	agents := gentianov1alpha1.BridgeWay{
+		Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents, Callee: gentianov1alpha1.BridgeCalleeApp,
+		Protocol: gentianov1alpha1.BridgeProtocolMCP, SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson,
+	}
+	mcp := deviceWay("mcp", gentianov1alpha1.BridgeProtocolMCP, "/mcp")
+	for name, profile := range map[string]*gentianov1alpha1.ComponentProfile{
+		"an agent bridge":   bridgeProfile("agent-bridge", "odoo", agents),
+		"mcp from a device": bridgeProfile("device-mcp", "odoo", mcp),
+	} {
+		if bridgeEntryOf(profile) != nil || len(profile.BridgeWayEntries()) != 0 {
+			t.Errorf("%s has an entry at the door", name)
+		}
+	}
+	mixed := bridgeProfile("mixed", "nextcloud-base-ce", agents, deviceWay("files", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/"))
+	if e := bridgeEntryOf(mixed); e == nil || !reflect.DeepEqual(e.Paths, []string{"/remote.php/dav/files"}) || len(mixed.BridgeWayEntries()) != 1 {
+		t.Fatalf("a bridge with one door way: %+v", e)
 	}
 }

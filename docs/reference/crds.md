@@ -339,14 +339,17 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.volumes` | object |  | `Volumes` narrows what is captured from the app's PersistentVolumeClaims. |
 | `spec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `spec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
-| `spec.bridge` | object |  | `Bridge` is what a bridge connects. |
-| `spec.bridge.app` | object | yes | `App` names the app on the near side: the app's ComponentProfile, which must be installed in the same tenant. |
+| `spec.bridge` | object |  | `Bridge` is what a bridge connects and the ways its calls go. |
+| `spec.bridge.app` | object |  | `App` is the app of the tenant the bridge connects: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `spec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
-| `spec.bridge.kind` | string | yes | `Kind` is who is on the far side. |
-| `spec.bridge.protocols` | []object | yes | `Protocols` are what the bridge offers of the app, each under the paths it answers at. |
-| `spec.bridge.protocols[].name` | string | yes | `Name` is the protocol. |
-| `spec.bridge.protocols[].paths` | []string | yes | `Paths` are the path prefixes the protocol is answered under. |
+| `spec.bridge.ways` | []object | yes | `Ways` are the directions the bridge's calls go, each in one protocol and each approved on its own. |
+| `spec.bridge.ways[].callee` | string | yes | `Callee` is who answers them. |
+| `spec.bridge.ways[].caller` | string | yes | `Caller` is who opens the calls. |
+| `spec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
+| `spec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
+| `spec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
+| `spec.bridge.ways[].speaksAs` | string | yes | `SpeaksAs` is whom the calls are made for. |
 | `spec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `spec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `spec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
@@ -1194,14 +1197,17 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.volumes` | object |  | `Volumes` narrows what is captured from the app's PersistentVolumeClaims. |
 | `status.profileSpec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `status.profileSpec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
-| `status.profileSpec.bridge` | object |  | `Bridge` is what a bridge connects. |
-| `status.profileSpec.bridge.app` | object | yes | `App` names the app on the near side: the app's ComponentProfile, which must be installed in the same tenant. |
+| `status.profileSpec.bridge` | object |  | `Bridge` is what a bridge connects and the ways its calls go. |
+| `status.profileSpec.bridge.app` | object |  | `App` is the app of the tenant the bridge connects: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `status.profileSpec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
-| `status.profileSpec.bridge.kind` | string | yes | `Kind` is who is on the far side. |
-| `status.profileSpec.bridge.protocols` | []object | yes | `Protocols` are what the bridge offers of the app, each under the paths it answers at. |
-| `status.profileSpec.bridge.protocols[].name` | string | yes | `Name` is the protocol. |
-| `status.profileSpec.bridge.protocols[].paths` | []string | yes | `Paths` are the path prefixes the protocol is answered under. |
+| `status.profileSpec.bridge.ways` | []object | yes | `Ways` are the directions the bridge's calls go, each in one protocol and each approved on its own. |
+| `status.profileSpec.bridge.ways[].callee` | string | yes | `Callee` is who answers them. |
+| `status.profileSpec.bridge.ways[].caller` | string | yes | `Caller` is who opens the calls. |
+| `status.profileSpec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
+| `status.profileSpec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
+| `status.profileSpec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
+| `status.profileSpec.bridge.ways[].speaksAs` | string | yes | `SpeaksAs` is whom the calls are made for. |
 | `status.profileSpec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `status.profileSpec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `status.profileSpec.customization` | object |  | `Customization` declares what a tenant may change about this component. |

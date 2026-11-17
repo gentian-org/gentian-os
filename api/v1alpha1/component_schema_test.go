@@ -450,8 +450,8 @@ func TestComponentRules(t *testing.T) {
 	}
 }
 
-// A bridge is a class of its own, reached through the platform's door and by
-// nothing else. These are the rules the class carries at admission.
+// A bridge is a class of its own, reached or reaching out only as its ways
+// say. These are the rules the class and its ways carry at admission.
 func TestBridgeProfileRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
 	head := `
@@ -464,16 +464,32 @@ spec:
 `
 	class := "  classes: [bridge]\n  launch: none\n"
 	bridge := `  bridge:
-    kind: external
     app: {profile: nextcloud-base-ce, versions: ["33.0.10"]}
-    protocols:
-    - {name: webdav, paths: [/remote.php/dav/files/]}
-    - {name: caldav, paths: [/remote.php/dav/calendars/, /remote.php/dav/principals/]}
+    ways:
+    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/remote.php/dav/files/]}
+    - {name: calendars, caller: device, callee: app, protocol: caldav, speaksAs: person, paths: [/remote.php/dav/calendars/, /remote.php/dav/principals/]}
 `
 	api := "  package: {api: {backend: {service: nextcloud, port: 8080}}}\n"
 	chart := "  package: {chart: {repository: \"oci://charts.example\", name: carddav, version: \"1.0.0\"}}\n"
-	protocols := func(p string) string {
-		return "  bridge:\n    kind: external\n    app: {profile: nextcloud-base-ce}\n    protocols:\n" + p
+	ways := func(w string) string {
+		return "  bridge:\n    app: {profile: nextcloud-base-ce}\n    ways:\n" + w
+	}
+	// way is a way from a device to the app in webdav, with these fields
+	// put in place of the ones it has.
+	way := func(fields string) string {
+		base := map[string]string{"name": "files", "caller": "device", "callee": "app", "protocol": "webdav", "speaksAs": "person", "paths": "[/dav/]"}
+		for _, kv := range strings.Split(fields, ";") {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				base[k] = v
+			}
+		}
+		out := []string{}
+		for _, k := range []string{"name", "caller", "callee", "protocol", "speaksAs", "paths"} {
+			if v := base[k]; v != "-" {
+				out = append(out, k+": "+v)
+			}
+		}
+		return "    - {" + strings.Join(out, ", ") + "}\n"
 	}
 	cases := []struct{ name, spec, want string }{
 		{"a bridge routed to the app's own Service", class + bridge + api, ""},
@@ -497,15 +513,28 @@ spec:
 		{"an app routed to a Service by an api", "  classes: [app]\n  launch: none\n  package: {api: {backend: {service: nextcloud, port: 8080}}}\n", "package.api.backend is for a bridge"},
 		{"an api that names neither", "  classes: [app]\n  launch: none\n  package: {api: {}}\n", "names where it is answered once"},
 
-		{"a kind that is not one", class + strings.Replace(bridge, "kind: external", "kind: agent", 1) + api, "Unsupported value"},
-		{"a bridge that names no app", class + "  bridge:\n    kind: external\n    protocols:\n    - {name: webdav, paths: [/dav/]}\n" + api, "app"},
-		{"a bridge that offers nothing", class + "  bridge:\n    kind: external\n    app: {profile: nextcloud-base-ce}\n    protocols: []\n" + api, "protocols"},
-		{"a protocol that is not one", class + protocols("    - {name: imap, paths: [/mail/]}\n") + api, "Unsupported value"},
-		{"a protocol with no path", class + protocols("    - {name: webdav, paths: []}\n") + api, "paths"},
-		{"the app's root", class + protocols("    - {name: webdav, paths: [/]}\n") + api, "paths"},
-		{"a path that climbs", class + protocols("    - {name: webdav, paths: [/dav/../admin/]}\n") + api, "paths"},
-		{"a path with a query", class + protocols("    - {name: webdav, paths: [\"/dav?x=1\"]}\n") + api, "paths"},
-		{"a path that does not begin at the root", class + protocols("    - {name: webdav, paths: [dav/]}\n") + api, "paths"},
+		{"a bridge in both directions", class + ways(way("")+way("name=tools;caller=agents;callee=app;protocol=mcp;paths=-")) + api, ""},
+		{"a service bridge, which connects no app", class + "  bridge:\n    ways:\n" + way("caller=agents;callee=outside;protocol=mcp;paths=-") + api, ""},
+		{"a way for the tenant", class + ways(way("name=tools;caller=agents;callee=app;protocol=mcp;speaksAs=tenant;paths=-")) + api, ""},
+
+		{"a bridge with no way", class + ways("") + api, "ways"},
+		{"a way to the app that names none", class + "  bridge:\n    ways:\n" + way("") + api, "spec.bridge.app names the app"},
+		{"an app no way uses", class + ways(way("caller=agents;callee=outside;protocol=mcp;paths=-")) + api, "spec.bridge.app names the app"},
+		{"two ways of one name", class + ways(way("")+way("protocol=caldav")) + api, "a way's name is its own"},
+		{"a way to itself", class + ways(way("caller=app;paths=-")) + api, "its caller and its callee differ"},
+		{"a device that speaks for the tenant", class + ways(way("speaksAs=tenant")) + api, "speaks as that person"},
+		{"a way from a device with no path", class + ways(way("paths=-")) + api, "paths are where a caller from outside the platform reaches the app"},
+		{"paths on a way between agents and the app", class + ways(way("caller=agents;protocol=mcp")) + api, "paths are where a caller from outside the platform reaches the app"},
+		{"a caller that is not one", class + ways(way("caller=browser")) + api, "Unsupported value"},
+		{"a callee that is not one", class + ways(way("callee=cloud;paths=-")) + api, "Unsupported value"},
+		{"a protocol that is not one", class + ways(way("protocol=imap")) + api, "Unsupported value"},
+		{"a speaker that is not one", class + ways(way("speaksAs=admin")) + api, "Unsupported value"},
+		{"a way with an empty path list", class + ways(way("paths=[]")) + api, "paths"},
+		{"the app's root", class + ways(way("paths=[/]")) + api, "paths"},
+		{"a path that climbs", class + ways(way("paths=[/dav/../admin/]")) + api, "paths"},
+		{"a path with a query", class + ways(way(`paths=["/dav?x=1"]`)) + api, "paths"},
+		{"a path that does not begin at the root", class + ways(way("paths=[dav/]")) + api, "paths"},
+		{"a way name that is not a label", class + ways(way("name=Files")) + api, "name"},
 	}
 	for _, c := range cases {
 		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)

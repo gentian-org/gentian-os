@@ -354,13 +354,13 @@ func TestATokenEntryIsListedAndApprovedAsItsOwnKind(t *testing.T) {
 // listed as the one entry it is served as at the tenant's door, in the words
 // of a token entry, with the app it connects and the paths it serves, and its
 // approval is recorded as a token entry's.
-func TestABridgeIsListedAndApprovedAsATokenEntryAtTheDoor(t *testing.T) {
+func TestEachWayOfABridgeIsListedAndApprovedOnItsOwn(t *testing.T) {
 	bridge := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: notes\n" +
 		"  labels:\n    gentianos.io/profile-name: notes\nspec:\n  classes: [bridge]\n  launch: none\n" +
 		"  trustTier: certified\n  version: \"1.0.0\"\n" +
-		"  bridge:\n    kind: external\n    app: {profile: nextcloud}\n    protocols:\n" +
-		"    - {name: webdav, paths: [/remote.php/dav/files/]}\n" +
-		"    - {name: caldav, paths: [/remote.php/dav/calendars/]}\n" +
+		"  bridge:\n    app: {profile: nextcloud}\n    ways:\n" +
+		"    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/remote.php/dav/files/]}\n" +
+		"    - {name: calendars, caller: device, callee: app, protocol: caldav, speaksAs: person, paths: [/remote.php/dav/calendars/]}\n" +
 		"  package:\n    api:\n      backend: {service: nextcloud, port: 8080}\n"
 	tenant := dt.TenantYAML("demo") + "  - profile: notes\n"
 	h := startSeeded(t, nil, func(remote string) {
@@ -371,40 +371,50 @@ func TestABridgeIsListedAndApprovedAsATokenEntryAtTheDoor(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET = %d %v", code, body)
 	}
-	entry := entryOf(t, body, "notes", "bridge")
+	// Each way is its own entry, with its own paths.
+	entry := entryOf(t, body, "notes", "files")
 	if entry["kind"] != "tokenEntry" || entry["publicAddress"] != false || entry["passesCredential"] != true ||
 		entry["anyoneWithoutSignIn"] == true || entry["state"] != "requested" {
-		t.Fatalf("bridge = %v", entry)
+		t.Fatalf("files = %v", entry)
 	}
 	if host, _ := entry["host"].(string); !strings.HasPrefix(host, "sync.") {
-		t.Fatalf("the bridge answers on %q, not at the tenant's door", host)
+		t.Fatalf("the way answers on %q, not at the tenant's door", host)
 	}
-	paths, _ := entry["paths"].([]any)
-	if len(paths) != 2 || paths[0] != "/remote.php/dav/calendars" || paths[1] != "/remote.php/dav/files" {
+	if paths, _ := entry["paths"].([]any); len(paths) != 1 || paths[0] != "/remote.php/dav/files" {
 		t.Fatalf("the approver is shown the paths %v", entry["paths"])
+	}
+	if paths, _ := entryOf(t, body, "notes", "calendars")["paths"].([]any); len(paths) != 1 || paths[0] != "/remote.php/dav/calendars" {
+		t.Fatalf("calendars shows the paths %v", paths)
 	}
 	if back, _ := entry["clientRedirectURIs"].([]any); len(back) != 2 {
 		t.Fatalf("the approver is not shown where a program returns to: %v", entry["clientRedirectURIs"])
 	}
 	note, _ := entry["note"].(string)
-	for _, says := range []string{"A bridge to nextcloud", "as that person", "the right to use nextcloud"} {
+	for _, says := range []string{"A way of a bridge to nextcloud, in webdav", "as that person", "the right to use nextcloud", "approved on its own"} {
 		if !strings.Contains(note, says) {
 			t.Errorf("the approver is not told %q: %v", says, note)
 		}
 	}
 
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/bridge", tom, `{"reason":"sync","kind":"public"}`); code == http.StatusAccepted {
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/files", tom, `{"reason":"sync","kind":"public"}`); code == http.StatusAccepted {
 		t.Fatalf("approved as a public address: %v", body)
 	}
-	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/bridge", tom, `{"reason":"sync","kind":"tokenEntry"}`); code != http.StatusAccepted {
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/files", tom, `{"reason":"sync","kind":"tokenEntry"}`); code != http.StatusAccepted {
 		t.Fatalf("approve = %d %v", code, body)
 	}
-	if file := registryOf(t, h, "demo"); !strings.Contains(file, "exposureName: bridge\n      kind: tokenEntry\n      owner: tom") {
-		t.Errorf("the registry lacks the bridge:\n%s", file)
+	if file := registryOf(t, h, "demo"); !strings.Contains(file, "exposureName: files\n      kind: tokenEntry\n      owner: tom") {
+		t.Errorf("the registry lacks the way:\n%s", file)
 	}
 	_, body = h.do(t, "GET", exposuresPath("demo"), tom, "")
-	if got := entryOf(t, body, "notes", "bridge"); got["state"] != "approved" {
+	if got := entryOf(t, body, "notes", "files"); got["state"] != "approved" {
 		t.Fatalf("after the approval = %v", got)
+	}
+	if got := entryOf(t, body, "notes", "calendars"); got["state"] != "requested" {
+		t.Fatalf("another way was approved with it: %v", got)
+	}
+	// The route's own name is no way to approve.
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/bridge", tom, `{"reason":"sync","kind":"tokenEntry"}`); code == http.StatusAccepted {
+		t.Fatal("the whole bridge was approved under the name of its route")
 	}
 	// An app that is no bridge has no such entry.
 	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/bridge", tom, `{"reason":"sync","kind":"tokenEntry"}`); code == http.StatusAccepted {

@@ -103,8 +103,8 @@ spec:
               and by nothing else: no person opens it, nothing is exposed, no other app is
               handed a contract to call it, and it holds no credential of an app of its
               own -- vouching would be one for every app, a contract key one for its app.
-              A bridge is reached through a door of the platform's that checks every
-              caller, and by nothing else: no person opens it, it exposes nothing of its
+              A bridge is reached, or reaches out, only as its ways say, through what the
+              platform opens for them: no person opens it, it exposes nothing of its
               own, no other app is handed a contract to call it, and it holds no
               credential of the app it connects.
               An action is run and never deployed, opened or reached: it is one image at
@@ -427,14 +427,15 @@ spec:
                 type: object
               bridge:
                 description: |-
-                  Bridge is what a bridge connects. Present exactly when the class is
-                  bridge.
+                  Bridge is what a bridge connects and the ways its calls go. Present
+                  exactly when the class is bridge.
                 properties:
                   app:
                     description: |-
-                      App names the app on the near side: the app's ComponentProfile, which
-                      must be installed in the same tenant. A caller of the bridge is asked
-                      the question a person opening that app is asked.
+                      App is the app of the tenant the bridge connects: the app's
+                      ComponentProfile, which must be installed in the same tenant. A way
+                      whose caller or callee is app means this app. A person a call is made
+                      for is asked the question a person opening the app is asked.
                     properties:
                       profile:
                         description: Profile is the ComponentProfile of the app.
@@ -455,34 +456,48 @@ spec:
                     required:
                     - profile
                     type: object
-                  kind:
-                    description: Kind is who is on the far side.
-                    enum:
-                    - external
-                    type: string
-                  protocols:
+                  ways:
                     description: |-
-                      Protocols are what the bridge offers of the app, each under the paths
-                      it answers at. A protocol is named once.
+                      Ways are the directions the bridge's calls go, each in one protocol
+                      and each approved on its own. A bridge in both directions declares
+                      two ways.
                     items:
-                      description: BridgeProtocol is one protocol a bridge offers,
-                        and where.
+                      description: |-
+                        BridgeWay is one direction of a bridge's calls: who opens them, who answers
+                        them, in which protocol, and for whom.
                       properties:
-                        name:
-                          description: Name is the protocol.
+                        callee:
+                          description: Callee is who answers them.
                           enum:
-                          - webdav
-                          - caldav
-                          - carddav
+                          - app
+                          - agents
+                          - outside
+                          - partner
+                          type: string
+                        caller:
+                          description: Caller is who opens the calls.
+                          enum:
+                          - device
+                          - outside
+                          - agents
+                          - app
+                          type: string
+                        name:
+                          description: Name names the way within the bridge, and in
+                            the tenant's approvals.
+                          maxLength: 30
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                           type: string
                         paths:
                           description: |-
-                            Paths are the path prefixes the protocol is answered under. A caller
-                            asks for them as they are written here and the backend is asked for the
-                            same: answers of these protocols name paths of their own, and a path
-                            rewritten on the way in would not match them. Nothing outside these
-                            paths is reached through the bridge, and none of them is the app's
-                            root: a bridge opens what a protocol needs and no more.
+                            Paths are the path prefixes of the app a caller from outside the
+                            platform reaches. A caller asks for them as they are written here and
+                            the app is asked for the same: answers of these protocols name paths
+                            of their own, and a path rewritten on the way in would not match them.
+                            Nothing outside these paths is reached through the way, and none of
+                            them is the app's root: a way opens what its protocol needs and no
+                            more.
                           items:
                             maxLength: 128
                             pattern: ^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$
@@ -491,21 +506,57 @@ spec:
                           minItems: 1
                           type: array
                           x-kubernetes-list-type: set
+                        protocol:
+                          description: Protocol is what the calls are made in.
+                          enum:
+                          - mcp
+                          - webdav
+                          - caldav
+                          - carddav
+                          type: string
+                        speaksAs:
+                          description: SpeaksAs is whom the calls are made for.
+                          enum:
+                          - person
+                          - tenant
+                          type: string
                       required:
+                      - callee
+                      - caller
                       - name
-                      - paths
+                      - protocol
+                      - speaksAs
                       type: object
-                    maxItems: 8
+                      x-kubernetes-validations:
+                      - message: 'a way connects two different sides: its caller and
+                          its callee differ'
+                        rule: self.caller != self.callee
+                      - message: a program on a person's device speaks as that person
+                        rule: self.caller != 'device' || self.speaksAs == 'person'
+                      - message: 'paths are where a caller from outside the platform
+                          reaches the app: present exactly for a way from a device
+                          or an outside service to the app'
+                        rule: has(self.paths) == (self.callee == 'app' && (self.caller
+                          == 'device' || self.caller == 'outside'))
+                    maxItems: 16
                     minItems: 1
                     type: array
                     x-kubernetes-list-map-keys:
                     - name
                     x-kubernetes-list-type: map
                 required:
-                - app
-                - kind
-                - protocols
+                - ways
                 type: object
+                x-kubernetes-validations:
+                - message: 'a way''s name is its own within the bridge: it names the
+                    way in the tenant''s approvals'
+                  rule: self.ways.all(w, self.ways.filter(x, x.name == w.name).size()
+                    == 1)
+                - message: 'spec.bridge.app names the app of the tenant a way calls
+                    or is called by: present exactly when a way''s caller or callee
+                    is app'
+                  rule: has(self.app) == self.ways.exists(w, w.caller == 'app' ||
+                    w.callee == 'app')
               classes:
                 description: |-
                   Classes lists the modes this component may be deployed under. It is a

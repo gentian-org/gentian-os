@@ -220,11 +220,20 @@ func servedTokenEntry(
 	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
 	e *gentianov1alpha1.ExposureSpec, host string, sessionHosts map[string]bool, waived bool, now time.Time,
 ) bool {
+	return servedEntry(comp, profile, e, host, sessionHosts, e != nil && tokenEntryApproved(comp, e, now), waived)
+}
+
+// servedEntry is servedTokenEntry with the approval already read: a bridge's
+// is read from its ways (approvedBridgeWays), whose names its route does not
+// carry.
+func servedEntry(
+	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+	e *gentianov1alpha1.ExposureSpec, host string, sessionHosts map[string]bool, approved, waived bool,
+) bool {
 	if e == nil {
 		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionTokenEntry)
 		return false
 	}
-	approved := tokenEntryApproved(comp, e, now)
 	byWaiver := !approved && waived
 	approved = approved || waived
 	cond := metav1.Condition{

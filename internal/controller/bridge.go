@@ -26,26 +26,24 @@ import (
 	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
-// An external bridge (api/v1alpha1/bridge_types.go) is served at the tenant's
-// door: one host of the zone that takes a token of the tenant's realm in
-// place of a session, on which every bridge of the tenant answers under the
-// paths of its protocols and nothing else does.
+// A bridge's ways from a program on a person's device to the app it connects
+// (api/v1alpha1/bridge_types.go) are served at the tenant's door: one host of
+// the zone that takes a token of the tenant's realm in place of a session, on
+// which every bridge of the tenant answers under the paths of its approved
+// ways and nothing else does.
 //
 // At the edge a bridge is a token entry (token_entry.go) that routes to the
-// Service of the app it connects. It is approved, served, challenged and
-// removed as one. What differs is said on its route for the bouncer: the
-// question is the app's (may this person use it), the paths are the bridge's
-// alone, and the app is handed a token of the person made out to it, never
-// the one the caller presented at the door.
+// Service of the app it connects, with one route and one sign-in client for
+// all its ways. Each way is approved on its own, and the route serves the
+// paths of the ways approved. What differs from a token entry is said on its
+// route for the bouncer: the question is the app's (may this person use it),
+// the paths are the approved ways' alone, and the app is handed a token of
+// the person made out to it, never the one the caller presented at the door.
 
 const (
 	// BridgeDoorLabel is the host label of a tenant's door: <label>.<the
 	// tenant's domain>. Kept from every app (internal/hostnames).
 	BridgeDoorLabel = gentianov1alpha1.BridgeDoorLabel
-
-	// bridgeEntryName names a bridge in the tenant's approvals, where a
-	// token entry is named by its exposure: a bridge has one entry.
-	bridgeEntryName = gentianov1alpha1.BridgeEntryName
 
 	// bouncerDoorPathsAnnotation makes a route that takes a token one app
 	// of a door: the path prefixes it serves, comma-separated. The route's
@@ -79,7 +77,8 @@ func isBridge(profile *gentianov1alpha1.ComponentProfile) bool {
 		classIncludes(profile, gentianov1alpha1.ComponentClassBridge)
 }
 
-// bridgePaths are the path prefixes a bridge answers under.
+// bridgePaths are the path prefixes of every door way of a bridge, approved
+// or not: what it holds at the door against another component.
 func bridgePaths(profile *gentianov1alpha1.ComponentProfile) []string {
 	if !isBridge(profile) {
 		return nil
@@ -87,11 +86,42 @@ func bridgePaths(profile *gentianov1alpha1.ComponentProfile) []string {
 	return profile.BridgePaths()
 }
 
-// bridgeEntryOf is a served bridge as the entry the edge routes
-// (ComponentProfile.BridgeEntry). Nil for every component that is not an
-// external bridge routed to a Service.
+// bridgeEntryOf is a bridge as the one route the edge serves for it at the
+// door, under the paths of every door way (ComponentProfile.BridgeEntry). Nil
+// for every component with no way the door serves.
 func bridgeEntryOf(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ExposureSpec {
+	if !isBridge(profile) {
+		return nil
+	}
 	return profile.BridgeEntry()
+}
+
+// approvedBridgeWays are the names of the door ways of a bridge the tenant's
+// perimeter approver approved, each as a token entry and not expired, in the
+// profile's order; every door way where the tenant waives the approval as
+// the cluster allows.
+func approvedBridgeWays(comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, waived bool, now time.Time) []string {
+	if !isBridge(profile) {
+		return nil
+	}
+	var out []string
+	for _, e := range profile.BridgeWayEntries() {
+		if waived || tokenEntryApproved(comp, e, now) {
+			out = append(out, e.Name)
+		}
+	}
+	return out
+}
+
+// servedBridgeEntry is the route a bridge is served on, under the paths of
+// the approved ways alone. Nil when no way is approved.
+func servedBridgeEntry(profile *gentianov1alpha1.ComponentProfile, ways []string) *gentianov1alpha1.ExposureSpec {
+	e := bridgeEntryOf(profile)
+	if e == nil || len(ways) == 0 {
+		return nil
+	}
+	e.Paths = profile.BridgePaths(ways...)
+	return e
 }
 
 // bridgeDoor is what a bridge's route says to the bouncer beside what a
@@ -103,12 +133,13 @@ type bridgeDoor struct {
 	tenantObject string
 	// scope is what the caller's token is exchanged for.
 	scope string
-	// paths are the prefixes the bridge serves.
+	// paths are the prefixes the bridge serves: those of its approved ways.
 	paths []string
 }
 
-// bridgeDoorOf is the door a bridge's route describes.
-func bridgeDoorOf(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile) *bridgeDoor {
+// bridgeDoorOf is the door a bridge's route describes, serving the paths of
+// the named ways (every door way when none is named).
+func bridgeDoorOf(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, ways ...string) *bridgeDoor {
 	if bridgeEntryOf(profile) == nil {
 		return nil
 	}
@@ -119,7 +150,7 @@ func bridgeDoorOf(tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.Com
 		authz:        routeAuthz{relation: "can_use", object: "app:" + tenant.Name + "/" + app},
 		tenantObject: "tenant:" + tenant.Name,
 		scope:        BridgeTokenScope(app),
-		paths:        bridgePaths(profile),
+		paths:        profile.BridgePaths(ways...),
 	}
 }
 
@@ -241,9 +272,10 @@ func (r *ComponentReconciler) doorPathTaken(
 }
 
 // ensureBridgeClient keeps the realm client programs sign people in through
-// to reach a bridge, while the bridge is approved, and removes it when it is
-// not: without the approval the realm issues nobody a token for the door in
-// this bridge's name.
+// to reach a bridge, while a way of it is approved, and removes it when none
+// is: without an approval the realm issues nobody a token for the door in
+// this bridge's name. One client serves every way: what a token reaches is
+// decided at the door, by the ways approved.
 //
 // The client's tokens are made out to the door, and name the edge's exchange
 // client beside it: the bouncer exchanges one for a token of the app the
@@ -261,7 +293,8 @@ func (r *ComponentReconciler) ensureBridgeClient(
 	if err != nil {
 		return false, "", err
 	}
-	if tokenEntryApproved(comp, e, time.Now()) || tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client)) {
+	waived := tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+	if len(approvedBridgeWays(comp, profile, waived, time.Now())) > 0 {
 		in.TokenEntry = &apprender.TokenEntry{
 			Host:          exposureHost(zone, comp, e),
 			RedirectURIs:  e.ClientRedirectURIs,
