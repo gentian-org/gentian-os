@@ -206,14 +206,16 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
 		).
-		// A tenant realm's exchange client secret: the bouncer presents it,
-		// from the one Secret this reconciler gathers them into.
+		// A tenant realm's exchange or door device client secret: the
+		// bouncer presents them, from the one Secret this reconciler gathers
+		// them into.
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-				_, ok := obj.GetLabels()[exchangeRealmLabel]
-				return ok && obj.GetNamespace() == servicesNamespace
+				_, exchange := obj.GetLabels()[exchangeRealmLabel]
+				_, devices := obj.GetLabels()[devicesRealmLabel]
+				return (exchange || devices) && obj.GetNamespace() == servicesNamespace
 			})),
 		).
 		// A component's route carries a question the bouncer's table must hold.

@@ -1581,6 +1581,229 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── the door's device sign-in ──────────────────────────────────
+                 A calendar, contact or file program that knows only a
+                 username and a password reaches the tenant's door with a
+                 device password (docs/concepts/bridges.md). The bouncer posts
+                 it to this realm as a password grant of the client below,
+                 and the realm answers with a token of the person for the
+                 door, carrying the ways the password may use.
+
+                 A client of its own, not the exchange client: that one does
+                 one thing and nobody signs in through it. This one does one
+                 thing too. Its direct grant runs the flow
+                 gentian-door-devices, whose one step checks a device
+                 password and nothing else (the platform's Keycloak
+                 extension, gentian-device-password). It cannot check a
+                 person's password, and no other client can check a device
+                 password: every other client's direct grant runs Keycloak's
+                 own steps.
+
+                 The secret is generated and gathered for the bouncer as the
+                 exchange client's is, under a label of its own
+                 (gentianos.io/edge-devices-realm). */}}
+            {{- $devicesClientID := "gentian-door-devices" }}
+            {{- $devicesSecret   := printf "edge-%s-devices" $zone }}
+            {{- $doorAudience    := printf "https://sync.%s" $domain }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-devices-password
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-devices-password
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: generators.external-secrets.io/v1alpha1
+                  kind: Password
+                  metadata:
+                    name: {{ $devicesSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-devices-realm: {{ $realm }}
+                  spec:
+                    length: 48
+                    digits: 8
+                    symbols: 0
+                    noUpper: false
+                    allowRepeat: true
+                    secretKeys:
+                      - client-secret
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-devices-client-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-devices-client-secret
+            spec:
+              readiness:
+                policy: DeriveFromObject
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $devicesSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-devices-realm: {{ $realm }}
+                  spec:
+                    refreshPolicy: CreatedOnce
+                    refreshInterval: "0"
+                    target:
+                      name: {{ $devicesSecret }}
+                      creationPolicy: Owner
+                      template:
+                        metadata:
+                          labels:
+                            app.kubernetes.io/managed-by: gentian-os
+                            gentianos.io/edge-devices-realm: {{ $realm }}
+                    dataFrom:
+                      - sourceRef:
+                          generatorRef:
+                            apiVersion: generators.external-secrets.io/v1alpha1
+                            kind: Password
+                            name: {{ $devicesSecret }}
+              providerConfigRef:
+                name: kubernetes
+            {{- /* The flow and its one step. Orphan, as the realm's other
+                 flows: a flow outlives a composite that is recreated. */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-flow
+              name: {{ $tenant }}-door-devices-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-door-devices
+                description: A device password at the tenant's door, and nothing else
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-exec
+              name: {{ $tenant }}-door-devices-exec
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-door-devices
+                authenticator: gentian-device-password
+                requirement: REQUIRED
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            {{- /* Confidential, the direct grant on and bound to the flow
+                 above, every other flow off. fullScopeAllowed false and the
+                 one default scope basic, as on the exchange client: the
+                 token is for the door and says whose it is, and the bouncer
+                 exchanges it for the app's at once. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-door-devices-client
+              annotations:
+                crossplane.io/external-name: {{ $devicesClientID }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-client
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $devicesClientID }}
+                name: {{ printf "%s door (device passwords)" $brandName | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: true
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                authenticationFlowBindingOverrides:
+                  - directGrantIdRef:
+                      name: {{ $tenant }}-door-devices-flow
+                extraConfig:
+                  gentianos.io/managed-by: platform
+                clientSecretSecretRef:
+                  name: {{ $devicesSecret }}
+                  namespace: {{ $edgeNs }}
+                  key: client-secret
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-door-devices-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-door-devices-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - basic
+              providerConfigRef:
+                name: keycloak
+            {{- /* What the token carries beyond basic: the door in its
+                 audience, which is what the bouncer checks a token at the
+                 door for; the exchange client in its audience, without which
+                 Keycloak refuses to exchange it; and the ways the password
+                 may use, from the session note the device password step
+                 writes. */}}
+            {{- range $m := (list
+                  (dict "name" "door-audience" "mapper" "oidc-audience-mapper" "config" (dict "included.custom.audience" $doorAudience))
+                  (dict "name" "exchange-audience" "mapper" "oidc-audience-mapper" "config" (dict "included.custom.audience" $exchangeClientID))
+                  (dict "name" "ways" "mapper" "oidc-usersessionmodel-note-mapper" "config" (dict "user.session.note" "gentian.device_password.ways" "claim.name" "gentian_ways" "jsonType.label" "String"))) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-door-devices-{{ $m.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-{{ $m.name }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-door-devices-client
+                  policy:
+                    resolve: Always
+                name: {{ $m.name }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.mapper }}
+                config:
+                  {{- range $k, $v := $m.config }}
+                  {{ $k }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── vouching: a component that speaks for people ────────────
                  A component that works for a person who is not at a browser
                  has no session to exchange. One whose profile declares
@@ -2096,6 +2319,8 @@ spec:
                 eventsListeners:
                   - jboss-logging
                   - gentian-director
+                  # Ends a person's device passwords with their password.
+                  - gentian-device-passwords
               providerConfigRef:
                 name: keycloak
             {{- /* The mailbox store's client is realm state: one per realm,
@@ -4366,6 +4591,14 @@ spec:
             - edge-exchange-password
             - edge-exchange-client-secret
             - keycloak-edge-exchange-client
+          # The door's device client's secret, and its flow, before the
+          # device client.
+          - sequence:
+            - edge-devices-password
+            - edge-devices-client-secret
+            - keycloak-door-devices-flow
+            - keycloak-door-devices-exec
+            - keycloak-door-devices-client
           # A vouching client's secret before the client, again for that
           # reason. Patterns, because there is one of each per component that
           # vouches: every vouching client waits until every vouching Secret

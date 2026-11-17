@@ -278,3 +278,57 @@ status:
     status: "True"
   - type: Synced
     status: "True"
+---
+# The door's device client's secret and flow: the sequencer holds the device
+# client back on them as it holds the exchange client on its secret.
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-edge-devices-password
+  annotations:
+    crossplane.io/composition-resource-name: edge-devices-password
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-edge-devices-client-secret
+  annotations:
+    crossplane.io/composition-resource-name: edge-devices-client-secret
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Flow
+metadata:
+  name: render-fixture-door-devices-flow
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-flow
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  name: render-fixture-door-devices-exec
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-exec
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

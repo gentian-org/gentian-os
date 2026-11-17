@@ -6,11 +6,48 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: eso-secret-store, keycloak-browser-config-admin-is,
-      keycloak-browser-config-other-is-not, and 34 more'
+    message: 'Unready resources: edge-devices-password, eso-secret-store, keycloak-browser-config-admin-is,
+      and 39 more'
     reason: Creating
     status: "False"
     type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-devices-password
+  labels:
+    crossplane.io/composite: user
+  name: user-edge-devices-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-devices-realm: user
+        name: edge-user-devices
+        namespace: kernel-edge
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - client-secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -682,6 +719,141 @@ spec:
     name: keycloak
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-default-scopes
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-door-audience
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-door-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: https://sync.platform.example.test
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: door-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-exchange-audience
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-exchange-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: gentian-edge-exchange
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: exchange-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-ways
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-ways
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      claim.name: gentian_ways
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      jsonType.label: String
+      user.session.note: gentian.device_password.ways
+      userinfo.token.claim: "false"
+    name: ways
+    protocol: openid-connect
+    protocolMapper: oidc-usersessionmodel-note-mapper
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
 metadata:
   annotations:
@@ -1163,6 +1335,7 @@ spec:
     eventsListeners:
     - jboss-logging
     - gentian-director
+    - gentian-device-passwords
     realmId: user
   providerConfigRef:
     name: keycloak
