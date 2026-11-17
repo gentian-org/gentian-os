@@ -49,6 +49,10 @@ spec:
         directorUrlKey: director.url
         # Where the desktop asks which tiles this person may open.
         usherUrlKey: usher.url
+        # Where a person makes, lists and revokes their own device passwords
+        # (docs/concepts/bridges.md). The registrar admits only the caller's
+        # own, with a token of the tenant's realm.
+        registrarUrlKey: registrar.url
         clusterKey: director.cluster
         tenantKey: tenant
         kernelDomainKey: kernelDomain
