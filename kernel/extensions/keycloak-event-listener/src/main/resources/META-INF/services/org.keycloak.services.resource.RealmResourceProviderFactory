@@ -1,1 +1,2 @@
 io.gentianos.keycloak.activation.ActivationLinkResourceProviderFactory
+io.gentianos.keycloak.devicepassword.DevicePasswordResourceProviderFactory

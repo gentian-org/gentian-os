@@ -115,3 +115,23 @@ writes when it renders the app, and from nowhere else (`RequestBinding`):
 A value is matched against at most 512 characters, with a bound on the work
 (`BoundedChars`): the pattern is a profile's, the value whoever sends the
 request's. Anything missing or unreadable refuses the request and maps no claim.
+
+## Device passwords
+
+`io.gentianos.keycloak.devicepassword` keeps a person's device passwords as
+credentials of type `gentian-device-password`, beside their password and
+second factor. A device password lets a calendar, contact or file program
+that knows only a username and a password reach the tenant's door
+(`sync.<tenant domain>`); see `docs/concepts/bridges.md`.
+
+| Part | Id | What it does |
+|---|---|---|
+| Endpoint | `gentian-device-passwords` | `POST /realms/<realm>/gentian-device-passwords/users/<id>` with `{"name", "ways"}` makes one and returns it once. Keycloak's admin permissions decide: managing the user is required. The admin API lists (`GET users/<id>/credentials`, never the secret) and removes (`DELETE users/<id>/credentials/<id>`) them. |
+| Authenticator | `gentian-device-password` | The only step of the door's device client's direct grant flow: checks a username or email and a device password, refuses an idle one, records the use, and puts the password's ways on the session (note `gentian.device_password.ways`). |
+| Event listener | `gentian-device-passwords` | Removes all of a person's device passwords when their password is changed or reset, or an administrator signs them out of every session. Listed per realm, with admin events on. |
+
+A device password is five groups of five characters; the first group names
+it among the person's own, the other twenty are a random secret of about 99
+bits, kept as a SHA-256 digest bound to the person and the name. A password
+unused for longer than the realm's offline session idle timeout is refused.
+A wrong one does not count towards Keycloak's lockout of the person.
