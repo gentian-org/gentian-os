@@ -352,9 +352,9 @@ func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 }
 
 // entriesOf are the entries of a profile an approver may be asked about: the
-// ones it declares, and, for a bridge, the one entry it is served as at the
-// tenant's door. A bridge declares no exposure; what is approved of it is
-// that programs reach the app it connects, under its paths, with a token of
+// ones it declares, and, for a bridge, one per way the tenant's door serves.
+// A bridge declares no exposure; what is approved of each way is that
+// programs reach the app it connects, under the way's paths, with a token of
 // the tenant's realm.
 func entriesOf(profile *gentianov1alpha1.ComponentProfile) []*gentianov1alpha1.ExposureSpec {
 	if profile == nil {
@@ -364,9 +364,7 @@ func entriesOf(profile *gentianov1alpha1.ComponentProfile) []*gentianov1alpha1.E
 	for i := range profile.Spec.Expose {
 		out = append(out, &profile.Spec.Expose[i])
 	}
-	if bridge := profile.BridgeEntry(); bridge != nil {
-		out = append(out, bridge)
-	}
+	out = append(out, profile.BridgeWayEntries()...)
 	return out
 }
 
@@ -519,10 +517,11 @@ func (v *exposureView) entries() []exposureEntry {
 			v.describe(&e, entry)
 			// A bridge: what the approval lets programs reach, and by
 			// what right.
-			if b := profile.Spec.Bridge; b != nil && entry.Name == gentianov1alpha1.BridgeEntryName && len(profile.Spec.Expose) == 0 {
+			if way := profile.BridgeWay(entry.Name); way != nil && way.DoorWay() && len(profile.Spec.Expose) == 0 {
+				app := profile.Spec.Bridge.App.Profile
 				e.Note = strings.TrimSpace(fmt.Sprintf(
-					"A bridge to %s: programs on a person's own devices reach these paths of %s as that person, who is asked the right to use %s as at its own address. %s",
-					b.App.Profile, b.App.Profile, b.App.Profile, e.Note))
+					"A way of a bridge to %s, in %s: programs on a person's own devices reach these paths of %s as that person, who is asked the right to use %s as at its own address. Each way of the bridge is approved on its own. %s",
+					app, way.Protocol, app, app, e.Note))
 			}
 			if changed != "" {
 				e.Note = strings.TrimSpace(changed + ". " + e.Note)

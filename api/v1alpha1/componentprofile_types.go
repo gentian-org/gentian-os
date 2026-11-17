@@ -54,10 +54,10 @@ const (
 	// ComponentClassAction is a step another component runs: one pinned
 	// image, started per run by the dispatcher. Installing it deploys nothing.
 	ComponentClassAction ComponentClass = "action"
-	// ComponentClassBridge connects one app to callers that act for a
-	// person and cannot hold the browser's session. It is installed in
-	// tenant-<t> beside the app, nobody opens it, and its callers reach it
-	// through a door of the platform's (bridge_types.go).
+	// ComponentClassBridge connects, for a person or for the tenant, across
+	// the boundary of the browser's session, in the ways it declares. It is
+	// installed in tenant-<t>, nobody opens it, and what the platform opens
+	// for it is read from its ways (bridge_types.go).
 	ComponentClassBridge ComponentClass = "bridge"
 )
 
@@ -234,8 +234,8 @@ type ComponentPlacement struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api) || (has(self.requires) && has(self.requires.services) && has(self.requires.services.partners) && has(self.requires.services.partners.call) && self.requires.services.partners.call.size() > 0)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, or one that calls a partner (requires.services.partners.call) adapts none"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
-// A bridge is reached through a door of the platform's that checks every
-// caller, and by nothing else: no person opens it, it exposes nothing of its
+// A bridge is reached, or reaches out, only as its ways say, through what the
+// platform opens for them: no person opens it, it exposes nothing of its
 // own, no other app is handed a contract to call it, and it holds no
 // credential of the app it connects.
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('bridge' in self.classes) || self.classes.size() == 1",message="bridge is exclusive: a bridge is a component of its own, never also the app it connects"
@@ -317,8 +317,8 @@ type ComponentProfileSpec struct {
 	// +optional
 	Adapter *AdapterSpec `json:"adapter,omitempty"`
 
-	// Bridge is what a bridge connects. Present exactly when the class is
-	// bridge.
+	// Bridge is what a bridge connects and the ways its calls go. Present
+	// exactly when the class is bridge.
 	// +optional
 	Bridge *BridgeSpec `json:"bridge,omitempty"`
 

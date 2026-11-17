@@ -717,13 +717,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.ensureImagePins(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("image pins: %w", err)
 	}
-	// A bridge is served by routing to the Service of the app it connects.
-	// One that would run a workload of its own, to speak a protocol the app
-	// does not, has nothing here that routes to it: held, and said so,
-	// rather than deployed where no caller can reach it.
+	// A bridge is served by routing its door ways to the Service of the app
+	// it connects. One with no such way -- its ways go elsewhere, or it would
+	// run a workload of its own -- has nothing here that serves it: held,
+	// and said so, rather than deployed where no caller can reach it.
 	if isBridge(profile) && bridgeEntryOf(profile) == nil {
-		return r.status(ctx, comp, metav1.ConditionFalse, "PackageUnsupported",
-			"a bridge is served when it is packaged as an api that names the Service of the app it connects (package.api.backend); one that runs a workload of its own is not served yet", 0)
+		return r.status(ctx, comp, metav1.ConditionFalse, "WayUnsupported",
+			"no way of this bridge is served yet: the platform serves a way from a program on a person's device to the app the bridge connects, in webdav, caldav or carddav, "+
+				"for a bridge packaged as an api that names the Service of that app (package.api.backend)", 0)
 	}
 	switch {
 	case profile.Spec.Package.Chart != nil && appComposition(comp, profile) != "":
@@ -951,9 +952,19 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// its entry is read from what it connects, and its route says what the
 	// bouncer asks under its paths.
 	tokenEntry := tokenEntryOf(comp, profile)
-	door := bridgeDoorOf(tenant, profile)
-	if door != nil {
-		tokenEntry = bridgeEntryOf(profile)
+	tokenWaived := false
+	var door *bridgeDoor
+	var bridgeWays []string
+	if bridge := bridgeEntryOf(profile); bridge != nil {
+		// Served under the paths of the ways approved; until one is, the
+		// entry is the whole bridge's, awaiting approval.
+		tokenWaived = tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+		bridgeWays = approvedBridgeWays(comp, profile, tokenWaived, time.Now())
+		tokenEntry = bridge
+		if served := servedBridgeEntry(profile, bridgeWays); served != nil {
+			tokenEntry = served
+		}
+		door = bridgeDoorOf(tenant, profile, bridgeWays...)
 	}
 	tokenHost := ""
 	sessionHosts := map[string]bool{}
@@ -972,8 +983,17 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// stopped declaring it still carries the condition, and is asked once
 	// more so that the route goes.
 	hadTokenEntry := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil
-	tokenWaived := tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
-	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	var tokenServed bool
+	if door != nil {
+		byPerson := approvedBridgeWays(comp, profile, false, time.Now())
+		tokenServed = servedEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, len(byPerson) > 0, tokenWaived)
+		if cond := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry); tokenServed && cond != nil {
+			cond.Message = fmt.Sprintf("the ways %s: %s", strings.Join(bridgeWays, ", "), cond.Message)
+		}
+	} else {
+		tokenWaived = tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+		tokenServed = servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	}
 	// A bridge whose app is gone, or whose path is another's, has no route
 	// whatever was approved.
 	if door != nil && !bridgeOK {

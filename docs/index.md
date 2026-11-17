@@ -73,6 +73,7 @@ How each part is designed and why, for architects, operators and app authors.
 | [app-authorization.md](concepts/app-authorization.md) | Authorization stores for apps and the arbiter |
 | [partners.md](concepts/partners.md) | Identity across clusters |
 | [app-catalog.md](concepts/app-catalog.md) | Profiles, classes, integrations, tiers, the component model |
+| [bridges.md](concepts/bridges.md) | Bridges and their ways: syncing devices, agents and outside services with a tenant's apps |
 | [store-contract.md](concepts/store-contract.md) | What a cluster accepts from an App Store |
 | [versioning.md](concepts/versioning.md) | Versions, floors, update modes, the guarded move |
 | [admin-console.md](concepts/admin-console.md) | The administration console and the desktop |

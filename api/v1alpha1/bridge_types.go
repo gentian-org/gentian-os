@@ -16,11 +16,12 @@ limitations under the License.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// A bridge connects one app to callers that act for a person and cannot hold
-// the browser's session. It is a component of its own, never part of the
-// app's entry, and a class of its own: nobody opens it, it exposes nothing,
-// and its callers reach it through a door of the platform's that checks every
-// one of them.
+// A bridge connects, for a person or for the tenant, across the boundary of
+// the browser's session, in either direction. It is a component of its own,
+// never part of an app's entry, and a class of its own: nobody opens it, and
+// it is reached, or reaches out, only as its ways say. What the platform opens
+// for a bridge -- an entry at a door, a host outside, a credential -- is read
+// from its ways, and nothing else is opened for it.
 
 package v1alpha1
 
@@ -29,44 +30,80 @@ import (
 	"strings"
 )
 
-// BridgeKind is who is on the far side of a bridge.
-// +kubebuilder:validation:Enum=external
-type BridgeKind string
+// BridgeCaller is who opens the calls of a way.
+// +kubebuilder:validation:Enum=device;outside;agents;app
+type BridgeCaller string
 
 const (
-	// BridgeKindExternal is a bridge to programs outside the cluster that
-	// speak a standard protocol for a person: a file sync program, a
-	// calendar, an address book.
-	BridgeKindExternal BridgeKind = "external"
+	// BridgeCallerDevice is a program on a person's own device: a file sync
+	// program, a calendar, an address book.
+	BridgeCallerDevice BridgeCaller = "device"
+	// BridgeCallerOutside is a service outside the platform.
+	BridgeCallerOutside BridgeCaller = "outside"
+	// BridgeCallerAgents are the tenant's agents.
+	BridgeCallerAgents BridgeCaller = "agents"
+	// BridgeCallerApp is the app of the tenant the bridge connects (spec.bridge.app).
+	BridgeCallerApp BridgeCaller = "app"
 )
 
-// BridgeProtocolName is a standard protocol an external bridge offers.
-// +kubebuilder:validation:Enum=webdav;caldav;carddav
+// BridgeCallee is who answers the calls of a way.
+// +kubebuilder:validation:Enum=app;agents;outside;partner
+type BridgeCallee string
+
+const (
+	// BridgeCalleeApp is the app of the tenant the bridge connects (spec.bridge.app).
+	BridgeCalleeApp BridgeCallee = "app"
+	// BridgeCalleeAgents are the tenant's agents, started by the call.
+	BridgeCalleeAgents BridgeCallee = "agents"
+	// BridgeCalleeOutside is a service outside the platform.
+	BridgeCalleeOutside BridgeCallee = "outside"
+	// BridgeCalleePartner is a service of one of the platform's partners.
+	BridgeCalleePartner BridgeCallee = "partner"
+)
+
+// BridgeProtocolName is the protocol the calls of a way are made in.
+// +kubebuilder:validation:Enum=mcp;webdav;caldav;carddav
 type BridgeProtocolName string
 
 const (
+	BridgeProtocolMCP     BridgeProtocolName = "mcp"
 	BridgeProtocolWebDAV  BridgeProtocolName = "webdav"
 	BridgeProtocolCalDAV  BridgeProtocolName = "caldav"
 	BridgeProtocolCardDAV BridgeProtocolName = "carddav"
 )
 
-// BridgeSpec is what a bridge connects.
+// BridgeSpeaker is whom the calls of a way are made for.
+// +kubebuilder:validation:Enum=person;tenant
+type BridgeSpeaker string
+
+const (
+	// BridgeSpeakerPerson: each call is made as one person, with that
+	// person's rights.
+	BridgeSpeakerPerson BridgeSpeaker = "person"
+	// BridgeSpeakerTenant: calls are made for the tenant as a whole, and
+	// only for what every member of the tenant may see.
+	BridgeSpeakerTenant BridgeSpeaker = "tenant"
+)
+
+// BridgeSpec is what a bridge connects, and the ways its calls go.
+// +kubebuilder:validation:XValidation:rule="self.ways.all(w, self.ways.filter(x, x.name == w.name).size() == 1)",message="a way's name is its own within the bridge: it names the way in the tenant's approvals"
+// +kubebuilder:validation:XValidation:rule="has(self.app) == self.ways.exists(w, w.caller == 'app' || w.callee == 'app')",message="spec.bridge.app names the app of the tenant a way calls or is called by: present exactly when a way's caller or callee is app"
 type BridgeSpec struct {
-	// Kind is who is on the far side.
-	Kind BridgeKind `json:"kind"`
+	// App is the app of the tenant the bridge connects: the app's
+	// ComponentProfile, which must be installed in the same tenant. A way
+	// whose caller or callee is app means this app. A person a call is made
+	// for is asked the question a person opening the app is asked.
+	// +optional
+	App *BridgedApp `json:"app,omitempty"`
 
-	// App names the app on the near side: the app's ComponentProfile, which
-	// must be installed in the same tenant. A caller of the bridge is asked
-	// the question a person opening that app is asked.
-	App BridgedApp `json:"app"`
-
-	// Protocols are what the bridge offers of the app, each under the paths
-	// it answers at. A protocol is named once.
+	// Ways are the directions the bridge's calls go, each in one protocol
+	// and each approved on its own. A bridge in both directions declares
+	// two ways.
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=8
-	Protocols []BridgeProtocol `json:"protocols"`
+	// +kubebuilder:validation:MaxItems=16
+	Ways []BridgeWay `json:"ways"`
 }
 
 // BridgedApp names the app a bridge connects, and which of its versions.
@@ -86,23 +123,44 @@ type BridgedApp struct {
 	Versions []string `json:"versions,omitempty"`
 }
 
-// BridgeProtocol is one protocol a bridge offers, and where.
-type BridgeProtocol struct {
-	// Name is the protocol.
-	Name BridgeProtocolName `json:"name"`
+// BridgeWay is one direction of a bridge's calls: who opens them, who answers
+// them, in which protocol, and for whom.
+// +kubebuilder:validation:XValidation:rule="self.caller != self.callee",message="a way connects two different sides: its caller and its callee differ"
+// +kubebuilder:validation:XValidation:rule="self.caller != 'device' || self.speaksAs == 'person'",message="a program on a person's device speaks as that person"
+// +kubebuilder:validation:XValidation:rule="has(self.paths) == (self.callee == 'app' && (self.caller == 'device' || self.caller == 'outside'))",message="paths are where a caller from outside the platform reaches the app: present exactly for a way from a device or an outside service to the app"
+type BridgeWay struct {
+	// Name names the way within the bridge, and in the tenant's approvals.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=30
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
 
-	// Paths are the path prefixes the protocol is answered under. A caller
-	// asks for them as they are written here and the backend is asked for the
-	// same: answers of these protocols name paths of their own, and a path
-	// rewritten on the way in would not match them. Nothing outside these
-	// paths is reached through the bridge, and none of them is the app's
-	// root: a bridge opens what a protocol needs and no more.
+	// Caller is who opens the calls.
+	Caller BridgeCaller `json:"caller"`
+
+	// Callee is who answers them.
+	Callee BridgeCallee `json:"callee"`
+
+	// Protocol is what the calls are made in.
+	Protocol BridgeProtocolName `json:"protocol"`
+
+	// SpeaksAs is whom the calls are made for.
+	SpeaksAs BridgeSpeaker `json:"speaksAs"`
+
+	// Paths are the path prefixes of the app a caller from outside the
+	// platform reaches. A caller asks for them as they are written here and
+	// the app is asked for the same: answers of these protocols name paths
+	// of their own, and a path rewritten on the way in would not match them.
+	// Nothing outside these paths is reached through the way, and none of
+	// them is the app's root: a way opens what its protocol needs and no
+	// more.
+	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=8
 	// +kubebuilder:validation:items:MaxLength=128
 	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$`
-	Paths []string `json:"paths"`
+	Paths []string `json:"paths,omitempty"`
 }
 
 // APIBackend is a Service inside the tenant that an entry packaged as an API
@@ -121,13 +179,13 @@ type APIBackend struct {
 }
 
 const (
-	// BridgeDoorLabel is the host label of a tenant's door, where its
-	// external bridges answer: <label>.<the tenant's domain>.
+	// BridgeDoorLabel is the host label of a tenant's door, where programs
+	// on a person's devices reach the tenant's apps: <label>.<the tenant's
+	// domain>.
 	BridgeDoorLabel = "sync"
 
-	// BridgeEntryName names a bridge's entry at the door in the tenant's
-	// approvals, where another entry is named by its exposure: a bridge has
-	// one.
+	// BridgeEntryName names the one route a bridge is served on at the
+	// door. What is approved of it are its ways, each by its own name.
 	BridgeEntryName = "bridge"
 )
 
@@ -135,17 +193,70 @@ const (
 // back to after the person signed in: a loopback address, on any port.
 var bridgeRedirectURIs = []string{"http://127.0.0.1/", "http://localhost/"}
 
-// BridgePaths are the path prefixes a bridge answers under, over all its
-// protocols, each once, without a trailing slash and in one order. Nil for
-// a profile that is no bridge.
-func (p *ComponentProfile) BridgePaths() []string {
+// DoorWay reports a way the tenant's door serves: from a program on a
+// person's device to the app, in a protocol the app speaks itself over HTTP.
+func (w BridgeWay) DoorWay() bool {
+	if w.Caller != BridgeCallerDevice || w.Callee != BridgeCalleeApp || len(w.Paths) == 0 {
+		return false
+	}
+	switch w.Protocol {
+	case BridgeProtocolWebDAV, BridgeProtocolCalDAV, BridgeProtocolCardDAV:
+		return true
+	}
+	return false
+}
+
+// BridgeWay is the profile's way of this name, or nil.
+func (p *ComponentProfile) BridgeWay(name string) *BridgeWay {
 	if p == nil || p.Spec.Bridge == nil {
 		return nil
 	}
+	for i := range p.Spec.Bridge.Ways {
+		if p.Spec.Bridge.Ways[i].Name == name {
+			return &p.Spec.Bridge.Ways[i]
+		}
+	}
+	return nil
+}
+
+// BridgeDoorWays are the ways of a bridge the tenant's door serves, in the
+// profile's order. Nil for a profile that is no bridge, or for one the door
+// cannot serve: not of class bridge, or not routed to a Service.
+func (p *ComponentProfile) BridgeDoorWays() []BridgeWay {
+	if p == nil || p.Spec.Bridge == nil || p.Spec.Bridge.App == nil {
+		return nil
+	}
+	isBridge := false
+	for _, c := range p.Spec.Classes {
+		isBridge = isBridge || c == ComponentClassBridge
+	}
+	if api := p.Spec.Package.API; !isBridge || api == nil || api.Backend == nil {
+		return nil
+	}
+	var out []BridgeWay
+	for _, w := range p.Spec.Bridge.Ways {
+		if w.DoorWay() {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// BridgePaths are the path prefixes of the named door ways, each once,
+// without a trailing slash and in one order; of every door way when no name
+// is given.
+func (p *ComponentProfile) BridgePaths(ways ...string) []string {
+	only := map[string]bool{}
+	for _, w := range ways {
+		only[w] = true
+	}
 	seen := map[string]bool{}
 	var out []string
-	for _, protocol := range p.Spec.Bridge.Protocols {
-		for _, path := range protocol.Paths {
+	for _, w := range p.BridgeDoorWays() {
+		if len(only) > 0 && !only[w.Name] {
+			continue
+		}
+		for _, path := range w.Paths {
 			path = strings.TrimSuffix(strings.TrimSpace(path), "/")
 			if path == "" || seen[path] {
 				continue
@@ -158,37 +269,46 @@ func (p *ComponentProfile) BridgePaths() []string {
 	return out
 }
 
-// BridgeEntry is an external bridge as the entry the edge serves and a
-// perimeter approver approves: on the tenant's door, taking a token of the
-// tenant's realm in place of a session, under the bridge's paths and no
-// other, to the Service the bridge names. Nil for every profile that is not
-// an external bridge routed to a Service.
-//
-// The profile declares no such exposure and may not (a bridge exposes
-// nothing of its own): the entry is the platform's reading of spec.bridge,
-// so that what is approved, routed and held against a token is one thing
-// with what any token entry is. It asks for the approval a token entry asks
-// for (ExposureKindTokenEntry).
-func (p *ComponentProfile) BridgeEntry() *ExposureSpec {
-	if p == nil || p.Spec.Bridge == nil || p.Spec.Bridge.Kind != BridgeKindExternal {
-		return nil
-	}
-	isBridge := false
-	for _, c := range p.Spec.Classes {
-		isBridge = isBridge || c == ComponentClassBridge
-	}
-	api := p.Spec.Package.API
-	paths := p.BridgePaths()
-	if !isBridge || api == nil || api.Backend == nil || len(paths) == 0 {
-		return nil
-	}
+// bridgeEntry is an entry at the tenant's door: taking a token of the
+// tenant's realm in place of a session, under paths and no other, to the
+// Service the bridge names.
+func (p *ComponentProfile) bridgeEntry(name string, paths []string) *ExposureSpec {
+	backend := p.Spec.Package.API.Backend
 	return &ExposureSpec{
-		Name:               BridgeEntryName,
+		Name:               name,
 		Surface:            SurfaceGateway,
 		AuthMode:           AuthModeBearer,
 		SubDomain:          BridgeDoorLabel,
 		Paths:              paths,
-		Backend:            BackendRef{Service: api.Backend.Service, Port: api.Backend.Port},
+		Backend:            BackendRef{Service: backend.Service, Port: backend.Port},
 		ClientRedirectURIs: append([]string(nil), bridgeRedirectURIs...),
 	}
+}
+
+// BridgeEntry is a bridge as the one route the edge serves at the tenant's
+// door, under the paths of every door way. Nil for a profile with no door
+// way. What is served of it are the paths of the ways approved
+// (BridgeWayEntries); a program signs in once for all of them.
+func (p *ComponentProfile) BridgeEntry() *ExposureSpec {
+	paths := p.BridgePaths()
+	if len(paths) == 0 {
+		return nil
+	}
+	return p.bridgeEntry(BridgeEntryName, paths)
+}
+
+// BridgeWayEntries are a bridge's door ways as the entries a perimeter
+// approver approves, one per way and named by it: each asks the approval a
+// token entry asks for (ExposureKindTokenEntry), for its own paths.
+//
+// The profile declares no such exposure and may not (a bridge exposes
+// nothing of its own): the entries are the platform's reading of
+// spec.bridge, so that what is approved, routed and held against a token is
+// one thing with what any token entry is.
+func (p *ComponentProfile) BridgeWayEntries() []*ExposureSpec {
+	var out []*ExposureSpec
+	for _, w := range p.BridgeDoorWays() {
+		out = append(out, p.bridgeEntry(w.Name, p.BridgePaths(w.Name)))
+	}
+	return out
 }
