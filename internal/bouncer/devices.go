@@ -12,6 +12,8 @@ package bouncer
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -210,8 +212,9 @@ const (
 // devices keeps the tokens device passwords were exchanged for and counts
 // the failures.
 type devices struct {
-	realm DeviceRealm
-	now   func() time.Time
+	realm  DeviceRealm
+	now    func() time.Time
+	secret []byte
 
 	mu       sync.Mutex
 	tokens   map[[32]byte]DeviceToken
@@ -222,7 +225,22 @@ func newDevices(realm DeviceRealm, now func() time.Time) *devices {
 	if realm == nil {
 		return nil
 	}
-	return &devices{realm: realm, now: now, tokens: map[[32]byte]DeviceToken{}, failures: map[string][]time.Time{}}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		panic("bouncer: no randomness for the device password cache: " + err.Error())
+	}
+	return &devices{realm: realm, now: now, secret: secret, tokens: map[[32]byte]DeviceToken{}, failures: map[string][]time.Time{}}
+}
+
+// keyOf is what a token is kept under: a keyed hash of the credentials with a
+// key drawn when the process starts and held nowhere else, so that the keys
+// in memory cannot be checked against a guessed password.
+func (d *devices) keyOf(realm, user, password string) [32]byte {
+	mac := hmac.New(sha256.New, d.secret)
+	mac.Write([]byte(realm + "\x00" + user + "\x00" + password))
+	var key [32]byte
+	copy(key[:], mac.Sum(nil))
+	return key
 }
 
 // errDeviceLimited is a caller past the limit of failed attempts.
@@ -231,7 +249,7 @@ var errDeviceLimited = errors.New("too many failed device passwords")
 // token is the person's token for a device password, from the ones kept or
 // from the realm.
 func (d *devices) token(ctx context.Context, realm, user, password, source string) (DeviceToken, error) {
-	key := sha256.Sum256([]byte(realm + "\x00" + user + "\x00" + password))
+	key := d.keyOf(realm, user, password)
 	userKey, addrKey := "u\x00"+realm+"\x00"+strings.ToLower(user), "a\x00"+source
 	now := d.now()
 
