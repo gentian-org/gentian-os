@@ -113,6 +113,9 @@ func New(cfg Config) *Server {
 	// Whoever may enter a tenant may ask about themselves in it; anyone signed
 	// in may ask about themselves on the cluster, where most hold nothing.
 	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
+	// The ways the tenant's door serves to apps the caller may use: what a
+	// device password may be made for, in the person's own settings.
+	s.guarded("GET /v1/tenants/{t}/door", "can_enter", tenantObject, s.tenantDoor)
 	if cfg.Cluster != "" {
 		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
 	}
@@ -305,6 +308,58 @@ func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": c.tenant, "tiles": out, "appStore": s.appStore(catalogue.AppStore)})
+}
+
+// tenantDoor answers with the tenant's door and the ways at it that reach an
+// app the caller may use. A way to an app the caller may not use is left
+// out, as a tile is: a device password for it would open nothing. A tenant
+// whose door serves nothing answers with no ways.
+func (s *Server) tenantDoor(w http.ResponseWriter, r *http.Request, c call) {
+	ctx := r.Context()
+	catalogue, err := s.catalogue()
+	if err != nil {
+		s.cfg.Log.ErrorContext(ctx, "the tile catalog cannot be read", "path", s.cfg.TilesPath, "error", err.Error())
+		fail(w, r, http.StatusServiceUnavailable, "the tile catalog cannot be read")
+		return
+	}
+	type wayOut struct {
+		Bridge   string `json:"bridge"`
+		Name     string `json:"name"`
+		Protocol string `json:"protocol"`
+		App      string `json:"app"`
+	}
+	out := map[string]any{"tenant": c.tenant, "host": "", "ways": []wayOut{}}
+	for _, d := range catalogue.Doors {
+		if d.Tenant != c.tenant {
+			continue
+		}
+		var questions []authz.Question
+		var asked []int
+		for i, way := range d.Ways {
+			if !inTenant(way.Object, c.tenant) {
+				continue
+			}
+			from := len(questions)
+			questions = append(questions, authz.Question{User: c.user, Relation: "can_use", Object: way.Object})
+			if c.holder != "" {
+				questions = append(questions, authz.Question{User: c.holder, Relation: "can_use", Object: way.Object})
+			}
+			asked = append(asked, i, from, len(questions))
+		}
+		allowed, err := authz.CheckAll(ctx, s.cfg.Authz, guard.ID(ctx), questions)
+		if err != nil {
+			fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		ways := []wayOut{}
+		for k := 0; k < len(asked); k += 3 {
+			if way := d.Ways[asked[k]]; slices.Contains(allowed[asked[k+1]:asked[k+2]], true) {
+				ways = append(ways, wayOut{Bridge: way.Bridge, Name: way.Name, Protocol: way.Protocol, App: way.App})
+			}
+		}
+		out["host"], out["ways"] = d.Host, ways
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // tenantMe answers which tenant verbs the caller holds, all asked together.
