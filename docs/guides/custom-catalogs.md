@@ -544,69 +544,60 @@ provider, and the component holds no credential of the realm (docs/guides/identi
 **A component that calls apps of other clusters for the person**, or takes such calls, declares
 `spec.requires.services.partners` with `call` and `accept` (docs/guides/app-customization.md §1.1).
 
-**An adapter** turns one app's abilities into tools for a program that acts for a person. It is
-an entry of its own, never part of the app's, with `classes: [adapter]` (exclusive) and a block
-`spec.adapter`:
+**A bridge called by the tenant's agents** turns one app's abilities, or a service elsewhere,
+into tools for a program that acts for a person. It is an entry of its own, never part of the
+app's, with `classes: [bridge]` (exclusive) and a way from `agents` in `spec.bridge`:
 
 ```yaml
 spec:
-  classes: [adapter]
-  launch: none                      # nobody opens an adapter
+  classes: [bridge]
+  launch: none                      # nobody opens a bridge
   trustTier: certified
   package: {chart: {repository: oci://example/charts, name: openproject-tools, version: "1.0.0"}}
-  adapter:
-    adapts: {profile: openproject, versions: ["15.4.0"]}   # the app it uses, in the same tenant
+  bridge:
+    app: {profile: openproject, versions: ["15.4.0"]}   # the app it uses, in the same tenant
+    ways:
+    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person,
+       endpoint: {service: openproject-tools, port: 8765, path: /mcp}}
 ```
 
-Installing the adapter opens the way from its pods to the pods of the app it adapts and nowhere
-else in the tenant. Admission refuses an adapter that anybody
-opens, that exposes anything, that provides a contract or declares integrations, that vouches for
-people, that is an addon, or that is placed by default.
+Installing it opens the way from its pods to the pods of the app it connects and nowhere else in
+the tenant. Admission refuses a bridge that anybody opens, that exposes anything, that provides a
+contract or declares integrations, that vouches for people, that is an addon, or that is placed by
+default.
 
 What the platform does with it, and nothing needs granting for:
 
-- The adapter's pods are left out of the tenant's baseline and admit only the tenant's components
-  that speak as a person (those that declare vouching, above); those may reach every adapter. Such
-  a component is admitted whether a tenant installed it or the platform placed it.
-- An adapter reaches the app it `adapts` and nothing else in the tenant, and that app admits it. The
-  app is not changed for this.
+- The bridge's pods are left out of the tenant's baseline and admit only the tenant's components
+  that speak as a person (those that declare vouching, above); those may reach every such bridge.
+  Such a component is admitted whether a tenant installed it or the platform placed it.
 - It keeps no credential of its app: the credential for a call arrives with the call. Egress beyond
   the tenant is a privilege like any other (`requires.privileges.egress`) and opens only once the
   tenant's approver granted it. Data it keeps about a person is its own and carries the duties of an
   app's.
-- An adapter may be an `api` instead of a chart: a tool server outside the cluster. It adapts no app
-  of the tenant and runs nothing in it, so the egress granted to it is given to the components that
-  call it.
-- An adapter may run in the tenant and adapt none of its apps, reaching a service elsewhere as the
-  person: it leaves out `adapts` and names the service's realm among its partners
-  (`requires.services.partners.call`). A call through it is then for the adapter itself: the rights
-  check asks `can_use` on the adapter, and the token it is handed (scope `app-<adapter>`) names its
-  partner client, which exchanges it for an assertion towards the partner. Its pods reach the
-  tenant's realm for that exchange; the service itself is granted egress.
+- A way to `outside` may be packaged as an `api` with a `baseUrl`: a tool server outside the
+  cluster. It connects no app of the tenant and runs nothing in it, so the egress granted to it is
+  given to the components that call it.
+- A way to `partner` runs in the tenant and names the partner's realm in
+  `requires.services.partners.call`. A call through it is for the bridge itself: the rights check
+  asks `can_use` on the bridge, and the token it is handed (scope `app-<bridge>`) names its partner
+  client, which exchanges it for an assertion towards the partner. Its pods reach the tenant's realm
+  for that exchange; the service itself is granted egress.
 
-An adapter that says where its tool server answers is made known to the components that may call
-it:
+A bridge whose way names an `endpoint` is made known to the components that may call it: each finds
+a ConfigMap `bridges-<component>` in its namespace, whose one key `BRIDGES` lists the bridges by
+install name with their address and the app a call is for
+([bridges.md §4.4](../concepts/bridges.md#44-ways-from-the-agents)). The list grants nothing: the
+way to a bridge is the network policy above.
 
-```yaml
-  adapter:
-    adapts: {profile: openproject}
-    endpoint: {service: openproject-tools, port: 8765, path: /mcp}
-```
-
-Each of those components finds a ConfigMap `adapters-<component>` in its namespace. Its one key,
-`ADAPTERS`, is a JSON object from an adapter's install name to its address inside the tenant and
-the app a call through it is for, the app it adapts or the adapter itself: `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
-The list follows what is installed. It grants nothing: the way to an adapter is the network
-policy above, and an adapter without an `endpoint` is installed and on no list.
-
-An adapter whose tools depend on the app's add-ons names a chart value in
-`spec.adapter.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
-(`package.addon.id`) of the add-ons selected into the app it adapts in its tenant, as a list, and
+A bridge whose tools depend on the app's add-ons names a chart value in
+`spec.bridge.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
+(`package.addon.id`) of the add-ons selected into the app it connects in its tenant, as a list, and
 an empty list while there are none or the app is not installed. When that selection changes, the
-adapter is rendered again. It learns the IDs and nothing else of the tenant's configuration.
+bridge is rendered again. It learns the IDs and nothing else of the tenant's configuration.
 
-An install is an adapter when its profile says so. One made before its profile was on the cluster
-is made as an app; once the profile arrives and says adapter, that instance is replaced, and it has
+An install is a bridge when its profile says so. One made before its profile was on the cluster is
+made as an app; once the profile arrives and says bridge, that instance is replaced, and it has
 rolled out nothing in the meantime.
 
 **An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
@@ -637,7 +628,7 @@ spec:
     resources: {cpu: 500m, memory: 256Mi}
     inputs: {type: object, properties: {file: {type: string}}}
     outputs: {type: object}
-    adapters: [nextcloud-files]         # what the caller may call on its behalf
+    bridges: [nextcloud-files]          # what the caller may call on its behalf
 ```
 
 Installing it deploys nothing. A component that declares `requires.services.runs` starts a run of

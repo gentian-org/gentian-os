@@ -55,7 +55,7 @@ const (
 	// told about the components, in the same shape: the sorted,
 	// newline-separated names of the profiles whose exposures ask for an
 	// exchanged token (exchangeToken), and of the apps calls through an
-	// installed adapter are for (adapterApp). The Composition makes one client scope
+	// installed agent bridge are for (agentBridgeApp). The Composition makes one client scope
 	// in the realm per name, called what AppTokenScope calls it, and that
 	// scope is what the bouncer asks for on the component's routes.
 	//
@@ -199,10 +199,10 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// components of one profile share the one audience.
 			exchange[tenant][profile.Name] = true
 		}
-		if app := adapterApp(profile.Name, profile); app != "" {
-			// An installed adapter's app is handed tokens too: a component
-			// that vouches for people obtains one for it, by this scope, to
-			// call the adapter as the person. Without it the realm refuses
+		if app := agentBridgeApp(profile.Name, profile); app != "" {
+			// An installed agent bridge's app is handed tokens too: a
+			// component that vouches for people obtains one for it, by this
+			// scope, to call the bridge as the person. Without it the realm refuses
 			// that exchange for an app with no exchangeToken entry of its own.
 			exchange[tenant][app] = true
 		}
@@ -255,22 +255,23 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	return nil
 }
 
-// adapterApp is the app a call through an adapter is for, where the adapter
-// is called (it names an endpoint), and empty for anything else: the app it
-// adapts, or, for an adapter that adapts none of its tenant's apps and
-// reaches a service elsewhere, the adapter itself (name, its install name).
-// The rights check asks can_use on this app, and the token the adapter is
-// handed is for it (scope app-<app>): so a person may use an adapter of the
-// second kind exactly where they were given the adapter.
-func adapterApp(name string, profile *gentianov1alpha1.ComponentProfile) string {
-	a := profile.Spec.Adapter
-	if a == nil || a.Endpoint == nil {
+// agentBridgeApp is the app a call through an agent bridge is for, where the
+// bridge is called (its way from the agents names an endpoint), and empty for
+// anything else: the app it connects, or, for an agent bridge that connects
+// none of its tenant's apps and reaches a service elsewhere, the bridge
+// itself (name, its install name). The rights check asks can_use on this
+// app, and the token the bridge is handed is for it (scope app-<app>): so a
+// person may use a bridge of the second kind exactly where they were given
+// the bridge.
+func agentBridgeApp(name string, profile *gentianov1alpha1.ComponentProfile) string {
+	way := profile.AgentWay()
+	if way == nil || way.Endpoint == nil {
 		return ""
 	}
-	if a.Adapts == nil {
-		return name
+	if app := profile.BridgedAppName(); app != "" {
+		return app
 	}
-	return a.Adapts.Profile
+	return name
 }
 
 // asksForExchangedToken reports whether any exposure of the profile declares

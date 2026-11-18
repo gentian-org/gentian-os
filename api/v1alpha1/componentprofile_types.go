@@ -32,7 +32,7 @@ import (
 // description -- serves contracts to other components, serves no human -- is
 // the definition of a service.
 //
-// +kubebuilder:validation:Enum=service;app;shared-app;adapter;action;bridge
+// +kubebuilder:validation:Enum=service;app;shared-app;action;bridge
 type ComponentClass string
 
 const (
@@ -46,11 +46,6 @@ const (
 	// ComponentClassSharedApp is one backend in shared-<app> serving several
 	// tenants, each of which still installs the app for itself.
 	ComponentClassSharedApp ComponentClass = "shared-app"
-	// ComponentClassAdapter turns one app's abilities into tools for a
-	// program that acts for a person. It runs in tenant-<t> beside the app,
-	// nobody opens it, and only a component of the tenant that may speak as
-	// a person reaches it (adapter_types.go).
-	ComponentClassAdapter ComponentClass = "adapter"
 	// ComponentClassAction is a step another component runs: one pinned
 	// image, started per run by the dispatcher. Installing it deploys nothing.
 	ComponentClassAction ComponentClass = "action"
@@ -219,33 +214,21 @@ type ComponentPlacement struct {
 // reserved word, so the API server names the field __package__.
 // +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile))) || (has(self.__package__.api) && has(self.__package__.api.tile))",message="launch tile needs a tile on an exposure or on package.api: an app nobody can open is installed and lost"
 // +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e, has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))",message="a tile means launch tile: say how a person reaches this"
-// An adapter is reached by the platform's component that speaks as a person,
-// and by nothing else: no person opens it, nothing is exposed, no other app is
-// handed a contract to call it, and it holds no credential of an app of its
-// own -- vouching would be one for every app, a contract key one for its app.
-// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('adapter' in self.classes) || self.classes.size() == 1",message="adapter is exclusive: an adapter is a component of its own, never also the app it adapts"
-// +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'adapter' in self.classes) == has(self.adapter)",message="spec.adapter is for class adapter, and class adapter needs it"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || self.launch == 'none'",message="an adapter has launch none: nobody opens it"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.expose) || self.expose.size() == 0",message="an adapter exposes nothing: only the component that speaks as a person reaches it"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.provides) || self.provides.size() == 0",message="an adapter provides no contract: another app reaching it through one would call a tool past the component that checks every call"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.integrations) || self.integrations.size() == 0",message="an adapter declares no integrations: it reaches the app it adapts (spec.adapter.adapts), and a contract key would be a credential of its own at that app"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)",message="an adapter does not vouch for people: it speaks as the person with the credential it is handed for one call"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.__package__.addon)",message="an adapter is deployed or reached: a chart, a composition, or an api -- not an addon inside another component"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api) || (has(self.requires) && has(self.requires.services) && has(self.requires.services.partners) && has(self.requires.services.partners.call) && self.requires.services.partners.call.size() > 0)",message="spec.adapter.adapts names the app the adapter uses; only an adapter packaged as an api, which reaches a service outside the cluster, or one that calls a partner (requires.services.partners.call) adapts none"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="an adapter is never placed by default: a tenant's administrator installs it"
-// +kubebuilder:validation:XValidation:rule="!has(self.adapter) || !has(self.placement)",message="an adapter is never placed: a tenant's administrator installs it"
 // A bridge is reached, or reaches out, only as its ways say, through what the
 // platform opens for them: no person opens it, it exposes nothing of its
 // own, no other app is handed a contract to call it, and it holds no
-// credential of the app it connects.
+// credential of the app it connects. An agent bridge -- a way whose caller is
+// the tenant's agents -- is reached by the component that speaks as a person
+// and by nothing else.
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('bridge' in self.classes) || self.classes.size() == 1",message="bridge is exclusive: a bridge is a component of its own, never also the app it connects"
 // +kubebuilder:validation:XValidation:rule="(has(self.classes) && 'bridge' in self.classes) == has(self.bridge)",message="spec.bridge is for class bridge, and class bridge needs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.bridge) || self.launch == 'none'",message="a bridge has launch none: nobody opens it"
-// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || ((!has(self.expose) || self.expose.size() == 0) && (!has(self.provides) || self.provides.size() == 0) && (!has(self.integrations) || self.integrations.size() == 0))",message="a bridge exposes, provides and integrates nothing: its callers reach it through the platform's door, which checks every one of them"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || ((!has(self.expose) || self.expose.size() == 0) && (!has(self.provides) || self.provides.size() == 0) && (!has(self.integrations) || self.integrations.size() == 0))",message="a bridge exposes, provides and integrates nothing: its callers reach it only as its ways say, through the platform's door or from the component that checks every call for a person"
 // +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)",message="a bridge does not vouch for people: the door hands it the person's own credential for the app"
 // +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.__package__.addon)",message="a bridge is deployed or routed to: a chart, a composition, or an api -- not an addon inside another component"
-// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.__package__.api) || (has(self.__package__.api.backend) && !has(self.__package__.api.tile))",message="a bridge packaged as an api names the Service that answers it (package.api.backend) and carries no tile"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.__package__.api) || ((has(self.__package__.api.backend) || self.bridge.ways.all(w, w.caller == 'agents' && w.callee == 'outside')) && !has(self.__package__.api.tile))",message="a bridge packaged as an api names the Service of the app it connects (package.api.backend), or, for an agent bridge to an outside service, that service's baseUrl; it carries no tile"
 // +kubebuilder:validation:XValidation:rule="has(self.bridge) || !has(self.__package__.api) || !has(self.__package__.api.backend)",message="package.api.backend is for a bridge: every other entry packaged as an api names a baseUrl"
+// +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !self.bridge.ways.exists(w, w.callee == 'partner') || (has(self.requires) && has(self.requires.services) && has(self.requires.services.partners) && has(self.requires.services.partners.call) && self.requires.services.partners.call.size() > 0)",message="a way to a partner's service needs the partner named: requires.services.partners.call"
 // +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !((has(self.defaultForTenants) && self.defaultForTenants) || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered) && self.defaultWhereStoreOffered))",message="a bridge is never placed by default: a tenant's administrator installs it"
 // +kubebuilder:validation:XValidation:rule="!has(self.bridge) || !has(self.placement)",message="a bridge is never placed: a tenant's administrator installs it"
 // An action is run and never deployed, opened or reached: it is one image at
@@ -311,11 +294,6 @@ type ComponentProfileSpec struct {
 	// tenant otherwise.
 	// +optional
 	Provides []ContractRef `json:"provides,omitempty"`
-
-	// Adapter is what an adapter adapts. Present exactly when the class is
-	// adapter.
-	// +optional
-	Adapter *AdapterSpec `json:"adapter,omitempty"`
 
 	// Bridge is what a bridge connects and the ways its calls go. Present
 	// exactly when the class is bridge.

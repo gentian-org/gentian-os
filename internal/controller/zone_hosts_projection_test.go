@@ -215,28 +215,35 @@ func TestExchangeProfilesFollowTheComponentsThatAsk(t *testing.T) {
 	}
 }
 
-// An installed adapter's app is handed tokens by the components that vouch
-// for people, so it has a scope whether or not an entry of its own asks: by
-// the adapted profile's name, and only for an adapter that is called.
-func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
+// An installed agent bridge's app is handed tokens by the components that
+// vouch for people, so it has a scope whether or not an entry of its own
+// asks: by the connected profile's name, and only for a bridge that is
+// called.
+func TestABridgedAppHasAnExchangeScope(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	tenant := platformTenantFixture()
+	agentWay := func(endpoint *gentianov1alpha1.ContractEndpoint) []gentianov1alpha1.BridgeWay {
+		return []gentianov1alpha1.BridgeWay{{Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+			Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolMCP,
+			SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson, Endpoint: endpoint}}
+	}
 	app := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger"}}
-	adapter := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger-adapter"}}
-	adapter.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
-		Adapts:   &gentianov1alpha1.AdaptedApp{Profile: "ledger"},
-		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "ledger-adapter", Port: 8765, Path: "/mcp"},
+	bridge := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger-adapter"}}
+	bridge.Spec.Bridge = &gentianov1alpha1.BridgeSpec{
+		App:  &gentianov1alpha1.BridgedApp{Profile: "ledger"},
+		Ways: agentWay(&gentianov1alpha1.ContractEndpoint{Service: "ledger-adapter", Port: 8765, Path: "/mcp"}),
 	}
-	// Adapts nothing of the tenant: calls through it are for itself.
+	// Connects nothing of the tenant: calls through it are for itself.
 	partner := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "store-adapter"}}
-	partner.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
-		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"},
+	partner.Spec.Bridge = &gentianov1alpha1.BridgeSpec{
+		Ways: agentWay(&gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"}),
 	}
+	partner.Spec.Bridge.Ways[0].Callee = gentianov1alpha1.BridgeCalleePartner
 	quiet := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet-adapter"}}
-	quiet.Spec.Adapter = &gentianov1alpha1.AdapterSpec{Adapts: &gentianov1alpha1.AdaptedApp{Profile: "quiet"}}
+	quiet.Spec.Bridge = &gentianov1alpha1.BridgeSpec{App: &gentianov1alpha1.BridgedApp{Profile: "quiet"}, Ways: agentWay(nil)}
 	comp := func(name string) *gentianov1alpha1.Component {
 		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tenant.NamespaceName()}}
 		c.Spec.ProfileRef.Name = name
@@ -244,7 +251,7 @@ func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
 		return c
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(), app, adapter, partner, quiet,
+		tenant.DeepCopy(), app, bridge, partner, quiet,
 		comp("ledger"), comp("ledger-adapter"), comp("store-adapter"), comp("quiet-adapter"),
 	).Build()
 	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
@@ -252,7 +259,7 @@ func TestAnAdaptedAppHasAnExchangeScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := exchangeProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != "ledger" || got[1] != "store-adapter" {
-		t.Fatalf("exchange profiles = %v, want the adapted app and the adapter that adapts none", got)
+		t.Fatalf("exchange profiles = %v, want the connected app and the bridge that connects none", got)
 	}
 }
 

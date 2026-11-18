@@ -97,10 +97,10 @@ type Input struct {
 	// Addons are the addons selected into this app, by the names the app
 	// knows them by.
 	Addons []string
-	// AdaptedAddons are, for an adapter whose profile names
-	// spec.adapter.addonsValuesPath, the IDs of the add-ons selected into the
-	// app it adapts; empty when there are none.
-	AdaptedAddons []string
+	// BridgedAddons are, for a bridge whose profile names
+	// spec.bridge.addonsValuesPath, the IDs of the add-ons selected into the
+	// app it connects; empty when there are none.
+	BridgedAddons []string
 	Replicas      *int64
 	ExtraValues   map[string]interface{}
 

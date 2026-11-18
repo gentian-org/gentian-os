@@ -1131,7 +1131,7 @@ programs ask the kernel's OpenFGA, which the arbiter does not stand before.
   seconds. The tenant and the component are the table's for that key, never
   anything a request says.
 - Carries nothing of a run. Inputs, outputs, progress, a question to a
-  person and a call to an adapter go between the run's pod and the component
+  person and a call to a bridge go between the run's pod and the component
   that started it, with a credential the component made for that run. The
   dispatcher passes that credential into the pod and keeps neither it nor
   anything else: a restarted dispatcher answers from the pods it finds.

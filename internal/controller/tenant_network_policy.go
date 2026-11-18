@@ -139,7 +139,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	}
 
 	// The per-app policies (kernel access, in-app traffic, granted egress,
-	// adapters, the cache) are the installed apps'. A component the
+	// agent bridges, the cache) are the installed apps'. A component the
 	// platform places has its own written by its Component
 	// (component_network_policy.go), and is left out here.
 	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
@@ -162,9 +162,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	desired := netpolicy.BuildDesired(in)
 	desiredNames := netpolicy.ManagedPolicyNames(in)
 
-	// Who may call the tenant's adapters is decided above; the same
-	// components are told which adapters there are.
-	if err := r.ensureAdapterLists(ctx, tenant, in); err != nil {
+	// Who may call the tenant's agent bridges is decided above; the same
+	// components are told which bridges there are.
+	if err := r.ensureBridgeLists(ctx, tenant, in); err != nil {
 		return err
 	}
 

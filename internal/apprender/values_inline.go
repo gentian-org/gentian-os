@@ -56,7 +56,7 @@ func (r *valuesRender) inlineValues() (map[string]interface{}, error) {
 		valuesMergeOverwrite(vals, map[string]interface{}{"replicaCount": *in.Replicas})
 	}
 
-	r.adaptedAddonValues(vals)
+	r.bridgedAddonValues(vals)
 	if err := r.addonValues(vals); err != nil {
 		return nil, err
 	}
@@ -142,19 +142,19 @@ func (r *valuesRender) addonValues(vals map[string]interface{}) error {
 	return nil
 }
 
-// adaptedAddonValues tells an adapter which add-ons are selected into the app
-// it adapts, at the path its profile names: always a list, an empty one too,
-// so that deselecting the last add-on is said.
-func (r *valuesRender) adaptedAddonValues(vals map[string]interface{}) {
-	adapter := r.spec.Adapter
-	if adapter == nil || adapter.AddonsValuesPath == "" {
+// bridgedAddonValues tells a bridge which add-ons are selected into the app
+// it connects, at the path its profile names: always a list, an empty one
+// too, so that deselecting the last add-on is said.
+func (r *valuesRender) bridgedAddonValues(vals map[string]interface{}) {
+	bridge := r.spec.Bridge
+	if bridge == nil || bridge.AddonsValuesPath == "" {
 		return
 	}
-	ids := make([]interface{}, 0, len(r.in.AdaptedAddons))
-	for _, id := range r.in.AdaptedAddons {
+	ids := make([]interface{}, 0, len(r.in.BridgedAddons))
+	for _, id := range r.in.BridgedAddons {
 		ids = append(ids, id)
 	}
-	valuesMergeOverwrite(vals, valuesNest(strings.Split(adapter.AddonsValuesPath, "."), ids))
+	valuesMergeOverwrite(vals, valuesNest(strings.Split(bridge.AddonsValuesPath, "."), ids))
 }
 
 // pullSecretValues names the pull Secrets in the two values charts read

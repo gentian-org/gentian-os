@@ -153,6 +153,6 @@ caller twice, each time with `Authorization: Bearer $RUN_TOKEN`:
 A caller that refuses the first call ends the run before the command starts.
 
 A command that wants more (progress, a file of evidence, a person's answer, a
-call to an adapter) asks the caller itself, at `RUN_CALLBACK_URL` with
+call to a bridge) asks the caller itself, at `RUN_CALLBACK_URL` with
 `RUN_TOKEN`: the variables are the command's too. What paths a caller offers
 beyond the two above is the caller's own interface.

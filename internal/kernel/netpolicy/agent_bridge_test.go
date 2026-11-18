@@ -24,19 +24,37 @@ import (
 
 const instanceLabel = "app.kubernetes.io/instance"
 
-func adapterProfile(adapts string, api bool) *gentianov1alpha1.ComponentProfile {
+func agentBridgeProfile(connects string, api bool) *gentianov1alpha1.ComponentProfile {
+	way := gentianov1alpha1.BridgeWay{Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+		Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolMCP,
+		SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson}
 	p := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
-		Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassAdapter},
+		Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge},
 		Launch:  gentianov1alpha1.ComponentLaunchNone,
-		Adapter: &gentianov1alpha1.AdapterSpec{},
+		Bridge:  &gentianov1alpha1.BridgeSpec{},
 	}}
-	if adapts != "" {
-		p.Spec.Adapter.Adapts = &gentianov1alpha1.AdaptedApp{Profile: adapts}
+	if connects != "" {
+		p.Spec.Bridge.App = &gentianov1alpha1.BridgedApp{Profile: connects}
+	} else {
+		way.Callee = gentianov1alpha1.BridgeCalleeOutside
 	}
+	p.Spec.Bridge.Ways = []gentianov1alpha1.BridgeWay{way}
 	if api {
 		p.Spec.Package.API = &gentianov1alpha1.APIIntegration{BaseURL: "https://tools.example"}
 	}
 	return p
+}
+
+// syncBridgeProfile is a bridge with no way from the agents.
+func syncBridgeProfile(connects string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{
+		Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge},
+		Launch:  gentianov1alpha1.ComponentLaunchNone,
+		Bridge: &gentianov1alpha1.BridgeSpec{App: &gentianov1alpha1.BridgedApp{Profile: connects},
+			Ways: []gentianov1alpha1.BridgeWay{{Name: "files", Caller: gentianov1alpha1.BridgeCallerDevice,
+				Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolWebDAV,
+				SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson, Paths: []string{"/dav"}}}},
+	}}
 }
 
 func appProfile() *gentianov1alpha1.ComponentProfile {
@@ -79,14 +97,14 @@ func tenantWith(profiles map[string]*gentianov1alpha1.ComponentProfile, operator
 	return in
 }
 
-// An adapter is reached by the component that speaks as a person and by
+// An agent bridge is reached by the component that speaks as a person and by
 // nothing else: out of the baseline, which admits the edge, the identity
 // provider and the operator to every pod, and into a floor of its own.
-func TestAdapterIsReachedOnlyByTheComponentThatSpeaksAsAPerson(t *testing.T) {
+func TestAgentBridgeIsReachedOnlyByTheComponentThatSpeaksAsAPerson(t *testing.T) {
 	t.Parallel()
 	in := tenantWith(map[string]*gentianov1alpha1.ComponentProfile{
 		"openproject":         appProfile(),
-		"openproject-adapter": adapterProfile("openproject", false),
+		"openproject-adapter": agentBridgeProfile("openproject", false),
 		"chaperone":           chaperoneProfile(),
 	}, "openproject-adapter")
 	got := byName(netpolicy.BuildDesired(in))
@@ -99,14 +117,14 @@ func TestAdapterIsReachedOnlyByTheComponentThatSpeaksAsAPerson(t *testing.T) {
 		baseline.Spec.PodSelector.MatchExpressions[0].Key != want[0].Key ||
 		baseline.Spec.PodSelector.MatchExpressions[0].Operator != want[0].Operator ||
 		baseline.Spec.PodSelector.MatchExpressions[0].Values[0] != want[0].Values[0] {
-		t.Fatalf("the baseline must leave the adapter's pods out, got %+v", baseline.Spec.PodSelector)
+		t.Fatalf("the baseline must leave the bridge's pods out, got %+v", baseline.Spec.PodSelector)
 	}
 
-	floor := got["adapter-openproject-adapter"]
+	floor := got["agent-bridge-openproject-adapter"]
 	if floor == nil {
-		t.Fatal("the adapter has no policy of its own")
+		t.Fatal("the bridge has no policy of its own")
 	}
-	if floor.Labels[meta.NetPolicyTypeLabel] != meta.NetPolicyAdapter {
+	if floor.Labels[meta.NetPolicyTypeLabel] != meta.NetPolicyAgentBridge {
 		t.Fatalf("labeled %q", floor.Labels[meta.NetPolicyTypeLabel])
 	}
 	if floor.Spec.PodSelector.MatchLabels[instanceLabel] != "tenant-demo-openproject-adapter" {
@@ -115,9 +133,9 @@ func TestAdapterIsReachedOnlyByTheComponentThatSpeaksAsAPerson(t *testing.T) {
 	if len(floor.Spec.Ingress) != 1 || len(floor.Spec.Ingress[0].From) != 1 ||
 		floor.Spec.Ingress[0].From[0].PodSelector.MatchLabels[meta.AppLabel] != "chaperone" ||
 		floor.Spec.Ingress[0].From[0].NamespaceSelector != nil {
-		t.Fatalf("only the chaperone's pods may reach the adapter, got %+v", floor.Spec.Ingress)
+		t.Fatalf("only the chaperone's pods may reach the bridge, got %+v", floor.Spec.Ingress)
 	}
-	// Its way out: the cluster's DNS, and the app it adapts.
+	// Its way out: the cluster's DNS, and the app it connects.
 	reachesApp := false
 	for _, rule := range floor.Spec.Egress {
 		for _, peer := range rule.To {
@@ -127,78 +145,80 @@ func TestAdapterIsReachedOnlyByTheComponentThatSpeaksAsAPerson(t *testing.T) {
 		}
 	}
 	if !reachesApp {
-		t.Fatalf("the adapter must reach the app it adapts, got %+v", floor.Spec.Egress)
+		t.Fatalf("the bridge must reach the app it connects, got %+v", floor.Spec.Egress)
 	}
 
-	target := got["adapter-target-openproject-adapter"]
+	target := got["agent-bridge-target-openproject-adapter"]
 	if target == nil || target.Spec.PodSelector.MatchLabels[meta.AppLabel] != "openproject" ||
 		target.Spec.Ingress[0].From[0].PodSelector.MatchLabels[instanceLabel] != "tenant-demo-openproject-adapter" {
-		t.Fatalf("the app must admit its adapter, got %+v", target)
+		t.Fatalf("the app must admit its bridge, got %+v", target)
 	}
 
-	callers := got["adapter-callers-chaperone"]
+	callers := got["agent-bridge-callers-chaperone"]
 	if callers == nil || callers.Spec.PodSelector.MatchLabels[meta.AppLabel] != "chaperone" ||
 		callers.Spec.Egress[0].To[0].PodSelector.MatchLabels[instanceLabel] != "tenant-demo-openproject-adapter" {
-		t.Fatalf("the chaperone must reach the adapter, got %+v", callers)
+		t.Fatalf("the chaperone must reach the bridge, got %+v", callers)
 	}
 
 	names := netpolicy.ManagedPolicyNames(in)
-	for _, name := range []string{"adapter-openproject-adapter", "adapter-target-openproject-adapter", "adapter-callers-chaperone"} {
+	for _, name := range []string{"agent-bridge-openproject-adapter", "agent-bridge-target-openproject-adapter", "agent-bridge-callers-chaperone"} {
 		if _, ok := names[name]; !ok {
 			t.Errorf("%s is built and not kept: it would be deleted on the next pass", name)
 		}
 	}
 }
 
-// With nothing installed that speaks as a person, nothing reaches an adapter.
-func TestAdapterWithNobodyToCallItAdmitsNobody(t *testing.T) {
+// With nothing installed that speaks as a person, nothing reaches an agent bridge.
+func TestAgentBridgeWithNobodyToCallItAdmitsNobody(t *testing.T) {
 	t.Parallel()
 	in := tenantWith(map[string]*gentianov1alpha1.ComponentProfile{
-		"openproject-adapter": adapterProfile("openproject", false),
+		"openproject-adapter": agentBridgeProfile("openproject", false),
 	})
 	got := byName(netpolicy.BuildDesired(in))
-	floor := got["adapter-openproject-adapter"]
+	floor := got["agent-bridge-openproject-adapter"]
 	if floor == nil || len(floor.Spec.Ingress) != 0 {
-		t.Fatalf("an adapter with no caller must admit nothing, got %+v", floor)
+		t.Fatalf("an agent bridge with no caller must admit nothing, got %+v", floor)
 	}
-	// The app it adapts is not installed: no way is opened to it.
-	if _, ok := got["adapter-target-openproject-adapter"]; ok {
+	// The app it connects is not installed: no way is opened to it.
+	if _, ok := got["agent-bridge-target-openproject-adapter"]; ok {
 		t.Fatal("a way into an app that is not installed")
 	}
 	if len(floor.Spec.Egress) != len(got["tenant-isolation"].Spec.Egress) {
-		t.Fatalf("an adapter whose app is absent reaches only what every pod does, got %+v", floor.Spec.Egress)
+		t.Fatalf("an agent bridge whose app is absent reaches only what every pod does, got %+v", floor.Spec.Egress)
 	}
 }
 
-// A tenant with no adapter keeps its baseline exactly as it was.
-func TestNoAdapterLeavesTheBaselineAlone(t *testing.T) {
+// A tenant with no agent bridge keeps its baseline exactly as it was; a sync
+// bridge, which has no way from the agents, changes nothing of it.
+func TestNoAgentBridgeLeavesTheBaselineAlone(t *testing.T) {
 	t.Parallel()
 	in := tenantWith(map[string]*gentianov1alpha1.ComponentProfile{
 		"openproject": appProfile(),
 		"chaperone":   chaperoneProfile(),
+		"sync":        syncBridgeProfile("openproject"),
 	})
 	got := byName(netpolicy.BuildDesired(in))
 	if exprs := got["tenant-isolation"].Spec.PodSelector.MatchExpressions; len(exprs) != 0 {
-		t.Fatalf("no adapter, and the baseline leaves pods out: %+v", exprs)
+		t.Fatalf("no agent bridge, and the baseline leaves pods out: %+v", exprs)
 	}
 	for name := range got {
-		if len(name) > 8 && name[:8] == "adapter-" {
-			t.Errorf("%s built for a tenant with no adapter", name)
+		if strings.HasPrefix(name, "agent-bridge-") {
+			t.Errorf("%s built for a tenant with no agent bridge", name)
 		}
 	}
 }
 
-// An adapter that is an API runs nothing in the tenant. It is reached where it
+// An agent bridge that is an API runs nothing in the tenant. It is reached where it
 // is, and the way out is the chaperone's: whatever egress a person granted the
-// adapter, and nothing nobody granted.
-func TestAnAPIAdapterIsReachedThroughTheChaperonesGrantedEgress(t *testing.T) {
+// bridge, and nothing nobody granted.
+func TestAnAPIAgentBridgeIsReachedThroughTheChaperonesGrantedEgress(t *testing.T) {
 	t.Parallel()
-	tools := adapterProfile("", true)
+	tools := agentBridgeProfile("", true)
 	tools.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
 		Egress: []gentianov1alpha1.EgressRequest{{
 			Name:   "tool-server",
 			Rule:   networkingv1.NetworkPolicyEgressRule{To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.10/32"}}}},
-			Reason: "the tool server this adapter offers",
+			Reason: "the tool server this bridge offers",
 		}},
 	}}
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{
@@ -208,13 +228,13 @@ func TestAnAPIAdapterIsReachedThroughTheChaperonesGrantedEgress(t *testing.T) {
 
 	in := tenantWith(profiles)
 	got := byName(netpolicy.BuildDesired(in))
-	if _, ok := got["adapter-web-tools"]; ok {
-		t.Fatal("an API adapter runs no pods, and gets no floor")
+	if _, ok := got["agent-bridge-web-tools"]; ok {
+		t.Fatal("an API agent bridge runs no pods, and gets no floor")
 	}
 	if exprs := got["tenant-isolation"].Spec.PodSelector.MatchExpressions; len(exprs) != 0 {
-		t.Fatalf("an API adapter has no pods to leave out: %+v", exprs)
+		t.Fatalf("an API agent bridge has no pods to leave out: %+v", exprs)
 	}
-	if _, ok := got["adapter-callers-chaperone"]; ok {
+	if _, ok := got["agent-bridge-callers-chaperone"]; ok {
 		t.Fatal("egress nobody granted reached the chaperone")
 	}
 
@@ -223,21 +243,21 @@ func TestAnAPIAdapterIsReachedThroughTheChaperonesGrantedEgress(t *testing.T) {
 		ApprovedAt: metav1.Now(), Reason: "the team uses this search service",
 	}}
 	got = byName(netpolicy.BuildDesired(in))
-	callers := got["adapter-callers-chaperone"]
+	callers := got["agent-bridge-callers-chaperone"]
 	if callers == nil || len(callers.Spec.Egress) != 1 || callers.Spec.Egress[0].To[0].IPBlock.CIDR != "203.0.113.10/32" {
 		t.Fatalf("the chaperone must reach the granted tool server, got %+v", callers)
 	}
 }
 
 // A component the platform places that may speak as a person is a caller
-// like an installed one: admitted by the adapter and given the way to it,
+// like an installed one: admitted by the bridge and given the way to it,
 // selected by the labels its release carries. A placed component that does
-// not speak as a person is nobody to an adapter.
+// not speak as a person is nobody to an agent bridge.
 func TestAPlacedComponentThatSpeaksAsAPersonIsACallerToo(t *testing.T) {
 	t.Parallel()
 	in := tenantWith(map[string]*gentianov1alpha1.ComponentProfile{
 		"openproject":         appProfile(),
-		"openproject-adapter": adapterProfile("openproject", false),
+		"openproject-adapter": agentBridgeProfile("openproject", false),
 	})
 	in.Profiles["usher"] = chaperoneProfile()
 	in.Profiles["desktop"] = appProfile()
@@ -246,21 +266,21 @@ func TestAPlacedComponentThatSpeaksAsAPersonIsACallerToo(t *testing.T) {
 	in.PodSelectors["desktop"] = map[string]string{instanceLabel: "tenant-demo-desktop"}
 	got := byName(netpolicy.BuildDesired(in))
 
-	floor := got["adapter-openproject-adapter"]
+	floor := got["agent-bridge-openproject-adapter"]
 	if floor == nil || len(floor.Spec.Ingress) != 1 || len(floor.Spec.Ingress[0].From) != 1 ||
 		floor.Spec.Ingress[0].From[0].PodSelector.MatchLabels[instanceLabel] != "tenant-demo-usher" {
-		t.Fatalf("the adapter must admit the placed caller and nobody else, got %+v", floor)
+		t.Fatalf("the bridge must admit the placed caller and nobody else, got %+v", floor)
 	}
-	callers := got["adapter-callers-usher"]
+	callers := got["agent-bridge-callers-usher"]
 	if callers == nil || callers.Spec.PodSelector.MatchLabels[instanceLabel] != "tenant-demo-usher" ||
 		callers.Spec.Egress[0].To[0].PodSelector.MatchLabels[meta.AppLabel] != "openproject-adapter" {
-		t.Fatalf("the placed caller must reach the adapter, got %+v", callers)
+		t.Fatalf("the placed caller must reach the bridge, got %+v", callers)
 	}
-	if _, ok := got["adapter-callers-desktop"]; ok {
-		t.Fatal("a placed component that does not speak as a person was given the way to the adapter")
+	if _, ok := got["agent-bridge-callers-desktop"]; ok {
+		t.Fatal("a placed component that does not speak as a person was given the way to the bridge")
 	}
-	if _, ok := netpolicy.ManagedPolicyNames(in)["adapter-callers-usher"]; !ok {
-		t.Error("adapter-callers-usher is built and not kept: it would be deleted on the next pass")
+	if _, ok := netpolicy.ManagedPolicyNames(in)["agent-bridge-callers-usher"]; !ok {
+		t.Error("agent-bridge-callers-usher is built and not kept: it would be deleted on the next pass")
 	}
 	// Nothing else is derived from a placed component here.
 	for name := range got {

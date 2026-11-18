@@ -132,7 +132,7 @@ func TestABridgeIsServedAsATokenEntryAtTheDoor(t *testing.T) {
 }
 
 // What is not an external bridge routed to a Service has no entry at the
-// door: an app, an adapter, a bridge that would run a workload of its own.
+// door: an app, a bridge from the agents, a bridge that would run a workload of its own.
 func TestOnlyABridgeRoutedToAServiceHasAnEntryAtTheDoor(t *testing.T) {
 	app := &gentianov1alpha1.ComponentProfile{}
 	app.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}

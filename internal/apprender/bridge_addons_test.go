@@ -17,13 +17,16 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// An adapter that names spec.adapter.addonsValuesPath is told the adapted
+// A bridge that names spec.bridge.addonsValuesPath is told the connected
 // app's add-ons there, as a list, an empty one too; any other component is
 // told nothing.
-func TestAdaptedAddonValues(t *testing.T) {
-	adapter := func(path string) *gentianov1alpha1.ComponentProfileSpec {
-		return &gentianov1alpha1.ComponentProfileSpec{Adapter: &gentianov1alpha1.AdapterSpec{
-			Adapts:           &gentianov1alpha1.AdaptedApp{Profile: "wiki-base"},
+func TestBridgedAddonValues(t *testing.T) {
+	bridge := func(path string) *gentianov1alpha1.ComponentProfileSpec {
+		return &gentianov1alpha1.ComponentProfileSpec{Bridge: &gentianov1alpha1.BridgeSpec{
+			App: &gentianov1alpha1.BridgedApp{Profile: "wiki-base"},
+			Ways: []gentianov1alpha1.BridgeWay{{Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+				Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolMCP,
+				SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson}},
 			AddonsValuesPath: path,
 		}}
 	}
@@ -36,19 +39,19 @@ func TestAdaptedAddonValues(t *testing.T) {
 	}{
 		{
 			name: "selected add-ons, at a nested path, beside what is there",
-			spec: adapter("tools.active"), ids: []string{"pages", "search"},
+			spec: bridge("tools.active"), ids: []string{"pages", "search"},
 			start: map[string]interface{}{"tools": map[string]interface{}{"port": 1}},
 			want:  map[string]interface{}{"tools": map[string]interface{}{"port": 1, "active": []interface{}{"pages", "search"}}},
 		},
 		{
 			name: "none selected is an empty list, which says deselected",
-			spec: adapter("active"), ids: nil,
+			spec: bridge("active"), ids: nil,
 			start: map[string]interface{}{"active": []interface{}{"pages"}},
 			want:  map[string]interface{}{"active": []interface{}{}},
 		},
 		{
-			name: "an adapter that does not ask is told nothing",
-			spec: adapter(""), ids: []string{"pages"},
+			name: "a bridge that does not ask is told nothing",
+			spec: bridge(""), ids: []string{"pages"},
 			start: map[string]interface{}{}, want: map[string]interface{}{},
 		},
 		{
@@ -59,8 +62,8 @@ func TestAdaptedAddonValues(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &valuesRender{in: &Input{AdaptedAddons: tc.ids}, spec: tc.spec}
-			r.adaptedAddonValues(tc.start)
+			r := &valuesRender{in: &Input{BridgedAddons: tc.ids}, spec: tc.spec}
+			r.bridgedAddonValues(tc.start)
 			if !reflect.DeepEqual(tc.start, tc.want) {
 				t.Fatalf("values = %#v, want %#v", tc.start, tc.want)
 			}

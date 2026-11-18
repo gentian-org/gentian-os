@@ -48,7 +48,7 @@ type BuildInput struct {
 	Apps []gentianov1alpha1.TenantApp
 	// Placed are the install names of the components the platform places
 	// in the tenant, which Apps leaves out. One of them that may speak as a
-	// person is a caller of the tenant's adapters like an installed one;
+	// person is a caller of the tenant's agent bridges like an installed one;
 	// nothing else is derived from them here.
 	Placed []string
 	// Profiles are the profiles by install name. They may name more than
@@ -73,10 +73,10 @@ type BuildInput struct {
 // BuildDesired returns all operator-managed NetworkPolicies for a tenant.
 func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
-		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.adapterExclusion()...),
+		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.agentBridgeExclusion()...),
 		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
-	out = append(out, AdapterNetworkPolicies(in)...)
+	out = append(out, AgentBridgeNetworkPolicies(in)...)
 
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
@@ -175,7 +175,7 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 			names[np.Name] = struct{}{}
 		}
 	}
-	for _, np := range AdapterNetworkPolicies(in) {
+	for _, np := range AgentBridgeNetworkPolicies(in) {
 		names[np.Name] = struct{}{}
 	}
 	// Only while there is a Memcached app to build them for: named

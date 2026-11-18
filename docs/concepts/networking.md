@@ -65,9 +65,9 @@ writes one by hand.
 
 | Policy | Selects | Opens |
 | --- | --- | --- |
-| `tenant-isolation` (the baseline) | every pod of the namespace, an adapter's excepted | Ingress from the edge namespace -- its Envoy pods alone where the kernel's rules are on (§3) -- from the identity provider's namespace, which calls an app's back-channel logout address, and from the operator's namespace, which provisions into running apps. Egress to the cluster's DNS and to the API server. Nothing else in either direction |
+| `tenant-isolation` (the baseline) | every pod of the namespace, a bridge's from the agents excepted | Ingress from the edge namespace -- its Envoy pods alone where the kernel's rules are on (§3) -- from the identity provider's namespace, which calls an app's back-channel logout address, and from the operator's namespace, which provisions into running apps. Egress to the cluster's DNS and to the API server. Nothing else in either direction |
 | the export Job's policy | the tenant's backup and export Jobs | what a backup of the tenant's stores needs |
-| an adapter's policies | an adapter's pods, which the edge, the identity provider and the operator must not reach | a floor of the adapter's own |
+| `agent-bridge-*` | the pods of a bridge with a way from the agents, which the edge, the identity provider and the operator must not reach | a floor of the bridge's own, admitting the components that vouch for people, and its way to the app it connects ([bridges.md §4.4](bridges.md#44-ways-from-the-agents)) |
 | `kernel-access-<app>` | the app's pods | Egress to each store the profile declares, on that store's port, and to the model gateway for `requires.services.llm` ([security/design.md §2.6](../security/design.md)) |
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
 | `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
@@ -87,7 +87,7 @@ A component that starts runs (`requires.services.runs`) has two more:
 for runs, on the port its callback Service sends to (§2.1).
 
 Network rules only ever add: a pod the baseline selects cannot be closed again
-by another policy, which is why an adapter's pods are left out of the baseline
+by another policy, which is why a bridge's pods are left out of the baseline
 instead of being narrowed afterwards.
 
 What follows for an app that believes the identity headers: another app of the
@@ -109,7 +109,7 @@ a pod from any other account (`gentian-run-pods`).
 | `action-<name>` | the pods of runs of that installed action | the egress rules of the action's `requires.privileges.egress` that were granted on its install |
 | `caller-<app>` | the pods of runs that component started | the component's pods in `tenant-<t>`, on the port its callback Service sends to |
 
-No rule reaches an adapter, an engine, a store or the kernel: what a run needs
+No rule reaches a bridge, an engine, a store or the kernel: what a run needs
 of them it asks of the component that started it. A run of a component's own
 image is selected by no `action-<name>` policy and has no egress beyond its
 caller.
