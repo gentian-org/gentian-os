@@ -203,8 +203,8 @@ spec:
   admit only the callers; the callers may reach every such bridge. A bridge
   reaches the app it connects and nothing else in the tenant, and that app
   admits it ([networking.md](networking.md)).
-- **The list.** Each caller finds a ConfigMap `bridges-<component>` in its
-  namespace. Its one key, `BRIDGES`, is a JSON object from a bridge's install
+- **The list.** Each caller finds a ConfigMap `agent-bridges-<component>` in
+  its namespace. Its one key, `AGENT_BRIDGES`, is a JSON object from a bridge's install
   name to its address inside the tenant and the app a call through it is for:
   `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
   A bridge without an `endpoint` is installed and on no list.
@@ -221,4 +221,4 @@ spec:
   the IDs of the add-ons selected into the app it connects, and is rendered
   again when they change.
 - **Actions.** An action names the bridges whose tools the calling component
-  may call on a run's behalf in `spec.action.bridges`.
+  may call on a run's behalf in `spec.action.agentBridges`.

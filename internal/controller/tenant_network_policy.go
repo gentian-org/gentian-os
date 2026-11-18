@@ -164,7 +164,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 
 	// Who may call the tenant's agent bridges is decided above; the same
 	// components are told which bridges there are.
-	if err := r.ensureBridgeLists(ctx, tenant, in); err != nil {
+	if err := r.ensureAgentBridgeLists(ctx, tenant, in); err != nil {
 		return err
 	}
 

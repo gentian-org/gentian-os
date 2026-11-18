@@ -107,7 +107,7 @@ func TestEveryCallerIsToldTheTenantsAgentBridges(t *testing.T) {
 	list := func(component string) (string, bool) {
 		t.Helper()
 		cm := &corev1.ConfigMap{}
-		err := c.Get(ctx, types.NamespacedName{Namespace: "tenant-acme", Name: BridgeListName(component)}, cm)
+		err := c.Get(ctx, types.NamespacedName{Namespace: "tenant-acme", Name: AgentBridgeListName(component)}, cm)
 		if errors.IsNotFound(err) {
 			return "", false
 		}
@@ -117,10 +117,10 @@ func TestEveryCallerIsToldTheTenantsAgentBridges(t *testing.T) {
 		if len(cm.OwnerReferences) != 1 || cm.OwnerReferences[0].Name != "acme" {
 			t.Fatalf("%s is owned by %+v, want the tenant", cm.Name, cm.OwnerReferences)
 		}
-		return cm.Data[BridgeListKey], true
+		return cm.Data[AgentBridgeListKey], true
 	}
 
-	if err := tr.ensureBridgeLists(ctx, tenant, in); err != nil {
+	if err := tr.ensureAgentBridgeLists(ctx, tenant, in); err != nil {
 		t.Fatal(err)
 	}
 	const want = `{"odoo-adapter":{"url":"http://odoo-adapter.tenant-acme.svc.cluster.local:8765/mcp","app":"odoo"},` +
@@ -140,7 +140,7 @@ func TestEveryCallerIsToldTheTenantsAgentBridges(t *testing.T) {
 	// caller left is told there is none, and the other's list is gone.
 	in.Apps = []gentianov1alpha1.TenantApp{{Profile: "odoo"}, {Profile: "chaperone"}}
 	in.Placed = []string{"desktop"}
-	if err := tr.ensureBridgeLists(ctx, tenant, in); err != nil {
+	if err := tr.ensureAgentBridgeLists(ctx, tenant, in); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := list("chaperone"); !ok || got != "{}" {

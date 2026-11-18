@@ -117,9 +117,9 @@ spec:
                   Action is what an action takes, returns and runs. Present exactly when
                   the class is action.
                 properties:
-                  bridges:
+                  agentBridges:
                     description: |-
-                      Bridges names the agent bridges whose tools the calling component may
+                      AgentBridges names the agent bridges whose tools the calling component may
                       call on a run's behalf, by their ComponentProfile. A run reaches no
                       bridge itself. It is a statement for the administrator who installs the
                       action; the caller enforces it.
@@ -414,7 +414,7 @@ spec:
                             for a way whose caller is the tenant's agents: its Service, the port
                             and the path. With it the platform tells the tenant's components that
                             call tools for a person that this bridge is there (the ConfigMap
-                            bridges-<component>). Absent, the bridge is installed and its callers
+                            agent-bridges-<component>). Absent, the bridge is installed and its callers
                             are not told of it; an agent bridge packaged as an api is reached at
                             its baseUrl instead.
                           properties:

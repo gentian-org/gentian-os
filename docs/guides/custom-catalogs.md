@@ -585,7 +585,7 @@ What the platform does with it, and nothing needs granting for:
   for that exchange; the service itself is granted egress.
 
 A bridge whose way names an `endpoint` is made known to the components that may call it: each finds
-a ConfigMap `bridges-<component>` in its namespace, whose one key `BRIDGES` lists the bridges by
+a ConfigMap `agent-bridges-<component>` in its namespace, whose one key `AGENT_BRIDGES` lists the agent bridges by
 install name with their address and the app a call is for
 ([bridges.md §4.4](../concepts/bridges.md#44-ways-from-the-agents)). The list grants nothing: the
 way to a bridge is the network policy above.
@@ -628,7 +628,7 @@ spec:
     resources: {cpu: 500m, memory: 256Mi}
     inputs: {type: object, properties: {file: {type: string}}}
     outputs: {type: object}
-    bridges: [nextcloud-files]          # what the caller may call on its behalf
+    agentBridges: [nextcloud-files]     # what the caller may call on its behalf
 ```
 
 Installing it deploys nothing. A component that declares `requires.services.runs` starts a run of

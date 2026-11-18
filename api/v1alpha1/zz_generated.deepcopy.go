@@ -135,8 +135,8 @@ func (in *ActionSpec) DeepCopyInto(out *ActionSpec) {
 		*out = new(v1.JSON)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.Bridges != nil {
-		in, out := &in.Bridges, &out.Bridges
+	if in.AgentBridges != nil {
+		in, out := &in.AgentBridges, &out.AgentBridges
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

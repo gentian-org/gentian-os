@@ -619,7 +619,7 @@ func TestActionProfileRules(t *testing.T) {
 		{"an action", profile(one, head+action), ""},
 		{"an action with everything said", profile(one, head+
 			"  action:\n    command: [\"/ocr\", \"--fast\"]\n    runtime: container\n    deadlineSeconds: 120\n"+
-			"    bridges: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
+			"    agentBridges: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
 			"    inputs: {type: object, properties: {file: {type: string}}}\n    outputs: {type: object}\n"+
 			"  requires:\n    privileges:\n      egress:\n      - name: ocr-service\n        reason: the recognition service\n"+
 			"        rule: {ports: [{port: 443}]}\n"), ""},
