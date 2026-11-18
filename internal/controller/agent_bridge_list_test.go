@@ -26,7 +26,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 )
 
-func adapterListProfile(classes []gentianov1alpha1.ComponentClass, mutate func(*gentianov1alpha1.ComponentProfile)) *gentianov1alpha1.ComponentProfile {
+func bridgeListProfile(classes []gentianov1alpha1.ComponentClass, mutate func(*gentianov1alpha1.ComponentProfile)) *gentianov1alpha1.ComponentProfile {
 	p := &gentianov1alpha1.ComponentProfile{Spec: gentianov1alpha1.ComponentProfileSpec{Classes: classes}}
 	if mutate != nil {
 		mutate(p)
@@ -34,14 +34,14 @@ func adapterListProfile(classes []gentianov1alpha1.ComponentClass, mutate func(*
 	return p
 }
 
-// Every component that may call the tenant's adapters is told which there
-// are: the installed adapters that say where they answer, each with its
-// address inside the tenant and the app a call through it is for: the app it
-// adapts, or the adapter itself where it adapts none. A caller the platform
+// Every component that may call the tenant's agent bridges is told which
+// there are: the installed agent bridges that say where they answer, each
+// with its address inside the tenant and the app a call through it is for:
+// the app it connects, or the bridge itself where it connects none. A caller the platform
 // places is told like an installed one; a component that may not call them
 // is told nothing; and the list follows what is installed, down to the list
 // of a component that is a caller no more.
-func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
+func TestEveryCallerIsToldTheTenantsAgentBridges(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -51,33 +51,45 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}
-	adapter := []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassAdapter}
+	bridge := []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge}
+	agentWay := func(endpoint *gentianov1alpha1.ContractEndpoint) []gentianov1alpha1.BridgeWay {
+		return []gentianov1alpha1.BridgeWay{{Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+			Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolMCP,
+			SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson, Endpoint: endpoint}}
+	}
 	speaks := func(p *gentianov1alpha1.ComponentProfile) {
 		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 			Vouching: &gentianov1alpha1.VouchingRequirement{},
 		}}
 	}
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{
-		"odoo":      adapterListProfile(app, nil),
-		"chaperone": adapterListProfile(app, speaks),
-		"usher":     adapterListProfile(app, speaks),
-		"desktop":   adapterListProfile(app, nil),
-		"odoo-adapter": adapterListProfile(adapter, func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
-				Adapts:   &gentianov1alpha1.AdaptedApp{Profile: "odoo"},
-				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "odoo-adapter", Port: 8765, Path: "/mcp"},
+		"odoo":      bridgeListProfile(app, nil),
+		"chaperone": bridgeListProfile(app, speaks),
+		"usher":     bridgeListProfile(app, speaks),
+		"desktop":   bridgeListProfile(app, nil),
+		"odoo-adapter": bridgeListProfile(bridge, func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{
+				App:  &gentianov1alpha1.BridgedApp{Profile: "odoo"},
+				Ways: agentWay(&gentianov1alpha1.ContractEndpoint{Service: "odoo-adapter", Port: 8765, Path: "/mcp"}),
 			}
 		}),
-		// Adapts none of the tenant's apps and reaches a service elsewhere:
-		// a call through it is for the adapter itself.
-		"store-adapter": adapterListProfile(adapter, func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Adapter = &gentianov1alpha1.AdapterSpec{
-				Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"},
-			}
+		// Connects none of the tenant's apps and reaches a service elsewhere:
+		// a call through it is for the bridge itself.
+		"store-adapter": bridgeListProfile(bridge, func(p *gentianov1alpha1.ComponentProfile) {
+			ways := agentWay(&gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"})
+			ways[0].Callee = gentianov1alpha1.BridgeCalleePartner
+			p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{Ways: ways}
 		}),
 		// Installed, and silent about where it answers: on nobody's list.
-		"silent-adapter": adapterListProfile(adapter, func(p *gentianov1alpha1.ComponentProfile) {
-			p.Spec.Adapter = &gentianov1alpha1.AdapterSpec{Adapts: &gentianov1alpha1.AdaptedApp{Profile: "odoo"}}
+		"silent-adapter": bridgeListProfile(bridge, func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{App: &gentianov1alpha1.BridgedApp{Profile: "odoo"}, Ways: agentWay(nil)}
+		}),
+		// A sync bridge has no way from the agents: on nobody's list.
+		"sync": bridgeListProfile(bridge, func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{App: &gentianov1alpha1.BridgedApp{Profile: "odoo"},
+				Ways: []gentianov1alpha1.BridgeWay{{Name: "files", Caller: gentianov1alpha1.BridgeCallerDevice,
+					Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolWebDAV,
+					SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson, Paths: []string{"/dav"}}}}
 		}),
 	}
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme", UID: "uid-acme"}}
@@ -85,7 +97,7 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 		TenantName: "acme", Namespace: "tenant-acme", Profiles: profiles,
 		Apps: []gentianov1alpha1.TenantApp{
 			{Profile: "odoo"}, {Profile: "chaperone"}, {Profile: "odoo-adapter"}, {Profile: "silent-adapter"},
-			{Profile: "store-adapter"},
+			{Profile: "store-adapter"}, {Profile: "sync"},
 		},
 		Placed: []string{"usher", "desktop"},
 	}
@@ -95,7 +107,7 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 	list := func(component string) (string, bool) {
 		t.Helper()
 		cm := &corev1.ConfigMap{}
-		err := c.Get(ctx, types.NamespacedName{Namespace: "tenant-acme", Name: AdapterListName(component)}, cm)
+		err := c.Get(ctx, types.NamespacedName{Namespace: "tenant-acme", Name: BridgeListName(component)}, cm)
 		if errors.IsNotFound(err) {
 			return "", false
 		}
@@ -105,10 +117,10 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 		if len(cm.OwnerReferences) != 1 || cm.OwnerReferences[0].Name != "acme" {
 			t.Fatalf("%s is owned by %+v, want the tenant", cm.Name, cm.OwnerReferences)
 		}
-		return cm.Data[AdapterListKey], true
+		return cm.Data[BridgeListKey], true
 	}
 
-	if err := tr.ensureAdapterLists(ctx, tenant, in); err != nil {
+	if err := tr.ensureBridgeLists(ctx, tenant, in); err != nil {
 		t.Fatal(err)
 	}
 	const want = `{"odoo-adapter":{"url":"http://odoo-adapter.tenant-acme.svc.cluster.local:8765/mcp","app":"odoo"},` +
@@ -120,15 +132,15 @@ func TestEveryCallerIsToldTheTenantsAdapters(t *testing.T) {
 	}
 	for _, other := range []string{"desktop", "odoo", "odoo-adapter"} {
 		if _, ok := list(other); ok {
-			t.Fatalf("%s may not call adapters and was given a list", other)
+			t.Fatalf("%s may not call agent bridges and was given a list", other)
 		}
 	}
 
-	// The adapter is uninstalled and the placed caller withdrawn: the one
+	// The bridges are uninstalled and the placed caller withdrawn: the one
 	// caller left is told there is none, and the other's list is gone.
 	in.Apps = []gentianov1alpha1.TenantApp{{Profile: "odoo"}, {Profile: "chaperone"}}
 	in.Placed = []string{"desktop"}
-	if err := tr.ensureAdapterLists(ctx, tenant, in); err != nil {
+	if err := tr.ensureBridgeLists(ctx, tenant, in); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := list("chaperone"); !ok || got != "{}" {

@@ -26,7 +26,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func adapterAddonsFixture(adapterPath string) []client.Object {
+func bridgeAddonsFixture(addonsPath string) []client.Object {
 	profile := func(name string, spec gentianov1alpha1.ComponentProfileSpec) *gentianov1alpha1.ComponentProfile {
 		return &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}
 	}
@@ -47,10 +47,13 @@ func adapterAddonsFixture(adapterPath string) []client.Object {
 		profile("wiki-base", gentianov1alpha1.ComponentProfileSpec{}),
 		addon("wiki-pages", "pages"),
 		addon("wiki-search", "search"),
-		profile("wiki-tools", gentianov1alpha1.ComponentProfileSpec{Adapter: &gentianov1alpha1.AdapterSpec{
-			Adapts: &gentianov1alpha1.AdaptedApp{Profile: "wiki-base"}, AddonsValuesPath: adapterPath,
+		profile("wiki-tools", gentianov1alpha1.ComponentProfileSpec{Bridge: &gentianov1alpha1.BridgeSpec{
+			App: &gentianov1alpha1.BridgedApp{Profile: "wiki-base"}, AddonsValuesPath: addonsPath,
+			Ways: []gentianov1alpha1.BridgeWay{{Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+				Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolMCP,
+				SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson}},
 		}}),
-		// The app in two tenants with different add-ons, and its adapter in one.
+		// The app in two tenants with different add-ons, and its bridge in one.
 		component("tenant-a", "wiki-base", "wiki-base", "wiki-pages", "wiki-search"),
 		component("tenant-b", "wiki-base", "wiki-base", "wiki-pages"),
 		component("tenant-a", "wiki-tools", "wiki-tools"),
@@ -59,17 +62,17 @@ func adapterAddonsFixture(adapterPath string) []client.Object {
 	}
 }
 
-func adapterAddonsReconciler(t *testing.T, objs []client.Object) *ComponentReconciler {
+func bridgeAddonsReconciler(t *testing.T, objs []client.Object) *ComponentReconciler {
 	t.Helper()
 	scheme := SchemeForTest(t)
 	return &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build(), Scheme: scheme}
 }
 
-// An adapter is told the add-ons of the app it adapts in its own tenant, by
+// A bridge is told the add-ons of the app it connects in its own tenant, by
 // their IDs, and an empty list where that app is not installed.
-func TestAdaptedAddonIDs(t *testing.T) {
+func TestBridgedAddonIDs(t *testing.T) {
 	ctx := context.Background()
-	r := adapterAddonsReconciler(t, adapterAddonsFixture("active"))
+	r := bridgeAddonsReconciler(t, bridgeAddonsFixture("active"))
 	ids := func(ns, name, profileName string) []string {
 		t.Helper()
 		comp := &gentianov1alpha1.Component{}
@@ -80,43 +83,43 @@ func TestAdaptedAddonIDs(t *testing.T) {
 		if err := r.Get(ctx, client.ObjectKey{Name: profileName}, profile); err != nil {
 			t.Fatal(err)
 		}
-		got, err := r.adaptedAddonIDs(ctx, comp, profile)
+		got, err := r.bridgedAddonIDs(ctx, comp, profile)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return got
 	}
 	if got := ids("tenant-a", "wiki-tools", "wiki-tools"); !reflect.DeepEqual(got, []string{"pages", "search"}) {
-		t.Fatalf("tenant-a's adapter is told %v, want [pages search]", got)
+		t.Fatalf("tenant-a's bridge is told %v, want [pages search]", got)
 	}
 	if got := ids("tenant-c", "wiki-tools", "wiki-tools"); got == nil || len(got) != 0 {
-		t.Fatalf("an adapter whose app is not installed is told %#v, want an empty list", got)
+		t.Fatalf("a bridge whose app is not installed is told %#v, want an empty list", got)
 	}
 	if got := ids("tenant-a", "wiki-base", "wiki-base"); got != nil {
 		t.Fatalf("an app is told %v, want nothing", got)
 	}
 
-	silent := adapterAddonsReconciler(t, adapterAddonsFixture(""))
+	silent := bridgeAddonsReconciler(t, bridgeAddonsFixture(""))
 	comp := &gentianov1alpha1.Component{}
 	profile := &gentianov1alpha1.ComponentProfile{}
 	_ = silent.Get(ctx, client.ObjectKey{Namespace: "tenant-a", Name: "wiki-tools"}, comp)
 	_ = silent.Get(ctx, client.ObjectKey{Name: "wiki-tools"}, profile)
-	if got, err := silent.adaptedAddonIDs(ctx, comp, profile); err != nil || got != nil {
-		t.Fatalf("an adapter that does not ask is told %v (%v), want nothing", got, err)
+	if got, err := silent.bridgedAddonIDs(ctx, comp, profile); err != nil || got != nil {
+		t.Fatalf("a bridge that does not ask is told %v (%v), want nothing", got, err)
 	}
 }
 
-// A change to an app re-runs the adapters of that app in its tenant, and
+// A change to an app re-runs the bridges of that app in its tenant, and
 // nothing else.
-func TestAdaptersOfApp(t *testing.T) {
+func TestBridgesOfApp(t *testing.T) {
 	ctx := context.Background()
-	objs := adapterAddonsFixture("active")
-	r := adapterAddonsReconciler(t, objs)
+	objs := bridgeAddonsFixture("active")
+	r := bridgeAddonsReconciler(t, objs)
 	queued := func(obj client.Object) []string {
 		t.Helper()
 		q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
 		defer q.ShutDown()
-		adaptersOfApp(r.Client).Update(ctx, event.TypedUpdateEvent[client.Object]{ObjectOld: obj, ObjectNew: obj}, q)
+		bridgesOfApp(r.Client).Update(ctx, event.TypedUpdateEvent[client.Object]{ObjectOld: obj, ObjectNew: obj}, q)
 		var out []string
 		for q.Len() > 0 {
 			item, _ := q.Get()
@@ -139,9 +142,9 @@ func TestAdaptersOfApp(t *testing.T) {
 		t.Fatalf("a change to tenant-a's app queues %v, want [tenant-a/wiki-tools]", got)
 	}
 	if got := queued(byName("tenant-b", "wiki-base")); len(got) != 0 {
-		t.Fatalf("a change in a tenant without the adapter queues %v, want nothing", got)
+		t.Fatalf("a change in a tenant without the bridge queues %v, want nothing", got)
 	}
 	if got := queued(byName("tenant-a", "other")); len(got) != 0 {
-		t.Fatalf("a change to an app nobody adapts queues %v, want nothing", got)
+		t.Fatalf("a change to an app no bridge connects queues %v, want nothing", got)
 	}
 }

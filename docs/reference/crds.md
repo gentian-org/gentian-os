@@ -305,7 +305,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
 | `spec.action` | object |  | `Action` is what an action takes, returns and runs. |
-| `spec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `spec.action.bridges` | []string |  | `Bridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
 | `spec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
 | `spec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
 | `spec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
@@ -314,15 +314,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.action.resources.cpu` | int-or-string |  |  |
 | `spec.action.resources.memory` | int-or-string |  |  |
 | `spec.action.runtime` | string |  | `Runtime` is what runs the action. |
-| `spec.adapter` | object |  | `Adapter` is what an adapter adapts. |
-| `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
-| `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
-| `spec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
-| `spec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
-| `spec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
-| `spec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
-| `spec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
-| `spec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -340,12 +331,17 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `spec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
 | `spec.bridge` | object |  | `Bridge` is what a bridge connects and the ways its calls go. |
+| `spec.bridge.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the bridge is told which add-ons are selected into the app it connects in its tenant: a list… |
 | `spec.bridge.app` | object |  | `App` is the app of the tenant the bridge connects: the app's ComponentProfile, which must be installed in the same tenant. |
 | `spec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `spec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
 | `spec.bridge.ways` | []object | yes | `Ways` are the directions the bridge's calls go, each in one protocol and each approved on its own. |
 | `spec.bridge.ways[].callee` | string | yes | `Callee` is who answers them. |
 | `spec.bridge.ways[].caller` | string | yes | `Caller` is who opens the calls. |
+| `spec.bridge.ways[].endpoint` | object |  | `Endpoint` is where the bridge's tool server answers inside the tenant, for a way whose caller is the tenant's agents: its Service, the port and the path. |
+| `spec.bridge.ways[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `spec.bridge.ways[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `spec.bridge.ways[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
 | `spec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
 | `spec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
@@ -1164,7 +1160,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
 | `status.profileSpec.action` | object |  | `Action` is what an action takes, returns and runs. |
-| `status.profileSpec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `status.profileSpec.action.bridges` | []string |  | `Bridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
 | `status.profileSpec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
 | `status.profileSpec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
 | `status.profileSpec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
@@ -1173,15 +1169,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.action.resources.cpu` | int-or-string |  |  |
 | `status.profileSpec.action.resources.memory` | int-or-string |  |  |
 | `status.profileSpec.action.runtime` | string |  | `Runtime` is what runs the action. |
-| `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts. |
-| `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
-| `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
-| `status.profileSpec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
-| `status.profileSpec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
-| `status.profileSpec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
-| `status.profileSpec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
-| `status.profileSpec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
-| `status.profileSpec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -1199,12 +1186,17 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `status.profileSpec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
 | `status.profileSpec.bridge` | object |  | `Bridge` is what a bridge connects and the ways its calls go. |
+| `status.profileSpec.bridge.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the bridge is told which add-ons are selected into the app it connects in its tenant: a list… |
 | `status.profileSpec.bridge.app` | object |  | `App` is the app of the tenant the bridge connects: the app's ComponentProfile, which must be installed in the same tenant. |
 | `status.profileSpec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
 | `status.profileSpec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
 | `status.profileSpec.bridge.ways` | []object | yes | `Ways` are the directions the bridge's calls go, each in one protocol and each approved on its own. |
 | `status.profileSpec.bridge.ways[].callee` | string | yes | `Callee` is who answers them. |
 | `status.profileSpec.bridge.ways[].caller` | string | yes | `Caller` is who opens the calls. |
+| `status.profileSpec.bridge.ways[].endpoint` | object |  | `Endpoint` is where the bridge's tool server answers inside the tenant, for a way whose caller is the tenant's agents: its Service, the port and the path. |
+| `status.profileSpec.bridge.ways[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `status.profileSpec.bridge.ways[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `status.profileSpec.bridge.ways[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
 | `status.profileSpec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
 | `status.profileSpec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |

@@ -132,7 +132,7 @@ func (r *ComponentReconciler) renderInput(
 		return nil, err
 	}
 	in.Addons = ids
-	if in.AdaptedAddons, err = r.adaptedAddonIDs(ctx, comp, profile); err != nil {
+	if in.BridgedAddons, err = r.bridgedAddonIDs(ctx, comp, profile); err != nil {
 		return nil, err
 	}
 	// A placed component's configuration is the platform's: it was never

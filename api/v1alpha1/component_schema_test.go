@@ -507,7 +507,7 @@ spec:
 		{"a bridge placed on every tenant", class + bridge + api + "  defaultForTenants: true\n", "never placed by default"},
 		{"a bridge that is an addon", class + bridge + "  package: {addon: {id: dav, of: nextcloud-base-ce}}\n", "a bridge is deployed or routed to"},
 
-		{"a bridge pointed outside the cluster", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\"}}\n", "names the Service that answers it"},
+		{"a bridge pointed outside the cluster", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\"}}\n", "names the Service of the app it connects"},
 		{"a bridge with a tile", class + bridge + "  package: {api: {backend: {service: nextcloud, port: 8080}, tile: {displayName: Files, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_launch}}}\n", "carries no tile"},
 		{"an api that names both", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\", backend: {service: nextcloud, port: 8080}}}\n", "names where it is answered once"},
 		{"an app routed to a Service by an api", "  classes: [app]\n  launch: none\n  package: {api: {backend: {service: nextcloud, port: 8080}}}\n", "package.api.backend is for a bridge"},
@@ -548,71 +548,56 @@ spec:
 	}
 }
 
-// An adapter is a class of its own, reached by nothing but the component that
-// speaks as a person. These are the rules the class carries at admission.
-func TestAdapterProfileRules(t *testing.T) {
+// An agent bridge is a bridge with a way from the tenant's agents, reached by
+// nothing but the component that speaks as a person. These are the rules it
+// carries at admission beyond every bridge's.
+func TestAgentBridgeProfileRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
-	adapter := `
-  adapter:
-    adapts: {profile: openproject, versions: ["15.4.0"]}
-`
-	head := "  classes: [adapter]\n  launch: none\n  trustTier: certified"
-	cases := []struct{ name, spec, want string }{
-		{"an adapter", head + adapter, ""},
-
-		{"an adapter that is also an app", "  classes: [adapter, app]\n  launch: none\n  trustTier: certified" + adapter, "adapter is exclusive"},
-		{"an adapter without its block", head + "\n", "spec.adapter is for class adapter"},
-		{"an app with an adapter block", "  classes: [app]\n  launch: none\n  trustTier: certified" + adapter, "spec.adapter is for class adapter"},
-		{"an adapter someone opens", "  classes: [adapter]\n  launch: from\n  trustTier: certified" + adapter, "an adapter has launch none"},
-		{"an adapter on the gateway", head + adapter + "  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", "an adapter exposes nothing"},
-		{"an adapter that provides a contract", head + adapter + "  provides:\n  - {name: tools}\n", "an adapter provides no contract"},
-		{"an adapter that integrates", head + adapter + "  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n", "an adapter declares no integrations"},
-		{"an adapter that vouches", "  classes: [adapter]\n  launch: none\n  trustTier: platform" + adapter + "  requires:\n    services:\n      vouching: {}\n", "an adapter does not vouch for people"},
-		{"an adapter placed on every tenant", head + adapter + "  defaultForTenants: true\n", "never placed by default"},
-		{"an adapter that adapts nothing", head + "\n  adapter: {}\n", "spec.adapter.adapts names the app"},
-	}
-	for _, c := range cases {
-		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
-	}
-
-	// An adapter can be an API: a tool server outside the cluster, which it
-	// reaches for agents as an API entry does for people. It adapts no app of
-	// the tenant, and it is still never an addon.
-	apiHead := `
+	head := `
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata: {name: x}
 spec:
   version: "1.0.0"
-  classes: [adapter]
+  classes: [bridge]
   launch: none
   trustTier: certified
-  adapter: {}
 `
-	for _, c := range []struct{ name, spec, want string }{
-		{"an adapter that is an API", "  package: {api: {baseUrl: \"https://tools.example\"}}\n", ""},
-		{"an adapter that is an addon", "  package: {addon: {id: tools, of: nextcloud-base-ce}}\n", "an adapter is deployed or reached"},
-	} {
-		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
-	}
-
-	// An adapter that runs in the tenant and calls a partner as the person
-	// adapts no app of the tenant either: a call through it is for the
-	// adapter itself. Naming no partner leaves it an adapter of nothing.
 	chart := "  package: {chart: {repository: \"oci://charts.example\", name: tools, version: \"1.0.0\"}}\n"
+	api := "  package: {api: {baseUrl: \"https://tools.example\"}}\n"
+	toApp := "  bridge:\n    app: {profile: openproject, versions: [\"15.4.0\"]}\n    ways:\n" +
+		"    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
+	toOutside := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: outside, protocol: mcp, speaksAs: person}\n"
+	toPartner := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: partner, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
+	partners := "  requires:\n    services:\n      partners: {call: [store]}\n"
 	for _, c := range []struct{ name, spec, want string }{
-		{"an adapter that calls a partner", chart + "  requires:\n    services:\n      partners: {call: [store]}\n", ""},
-		{"an adapter that calls no partner", chart + "  requires:\n    services:\n      partners: {call: []}\n", "spec.adapter.adapts names the app"},
-		{"an adapter that only accepts partners", chart + "  requires:\n    services:\n      partners: {accept: true}\n", "spec.adapter.adapts names the app"},
+		{"an agent bridge to an app of the tenant", toApp + chart, ""},
+		{"an agent bridge told the app's add-ons", toApp + "    addonsValuesPath: tools.active\n" + chart, ""},
+		{"an agent bridge to an outside tool server, reached where it is", toOutside + api, ""},
+		{"an agent bridge to a partner", toPartner + chart + partners, ""},
+
+		{"an agent bridge to an app reached at a baseUrl", toApp + api, "names the Service of the app it connects"},
+		{"an agent bridge to a partner it does not name", toPartner + chart, "requires.services.partners.call"},
+		{"an agent bridge to a partner with an empty list", toPartner + chart + "  requires:\n    services:\n      partners: {call: []}\n", "requires.services.partners.call"},
+		{"an agent bridge that is an addon", toApp + "  package: {addon: {id: tools, of: nextcloud-base-ce}}\n", "a bridge is deployed or routed to"},
+		{"two ways from the agents", "  bridge:\n    app: {profile: openproject}\n    ways:\n" +
+			"    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person}\n" +
+			"    - {name: more, caller: agents, callee: app, protocol: mcp, speaksAs: person}\n" + chart, "one way from the tenant's agents"},
+		{"an endpoint on a way from a device", "  bridge:\n    app: {profile: nextcloud}\n    ways:\n" +
+			"    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/dav/], endpoint: {service: x, port: 80, path: /}}\n" + chart, "only for a way whose caller is agents"},
+		{"add-ons told without an app", toOutside + "    addonsValuesPath: tools.active\n" + api, "it needs spec.bridge.app"},
 	} {
-		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
+		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)
 	}
 
-	// A Component of the class: the class is the profile's, and is immutable.
+	// The class adapter is gone: a profile or an instance that names it is
+	// refused, and a bridge's instance keeps its class.
+	expect(t, "a profile of class adapter", v.check(t, strings.Replace(head, "[bridge]", "[adapter]", 1)+chart, ""), "Unsupported value")
 	cv := loadCRD(t, "gentianos.io_components.yaml")
 	comp := "apiVersion: gentianos.io/v1alpha1\nkind: Component\nmetadata: {name: x, namespace: tenant-a}\nspec:\n  profileRef: {name: x}\n  class: %s\n"
-	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "")
-	expect(t, "an adapter instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "adapter")), "class is immutable")
+	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "Unsupported value")
+	expect(t, "a bridge instance", cv.check(t, strings.ReplaceAll(comp, "%s", "bridge"), ""), "")
+	expect(t, "a bridge instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "bridge")), "class is immutable")
 }
 
 // An action is one pinned image a component runs through the dispatcher.
@@ -634,7 +619,7 @@ func TestActionProfileRules(t *testing.T) {
 		{"an action", profile(one, head+action), ""},
 		{"an action with everything said", profile(one, head+
 			"  action:\n    command: [\"/ocr\", \"--fast\"]\n    runtime: container\n    deadlineSeconds: 120\n"+
-			"    adapters: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
+			"    bridges: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
 			"    inputs: {type: object, properties: {file: {type: string}}}\n    outputs: {type: object}\n"+
 			"  requires:\n    privileges:\n      egress:\n      - name: ocr-service\n        reason: the recognition service\n"+
 			"        rule: {ports: [{port: 443}]}\n"), ""},

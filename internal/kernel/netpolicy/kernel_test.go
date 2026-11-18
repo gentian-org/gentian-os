@@ -371,7 +371,7 @@ func TestAnAppBehindTheSignInSidecarDoesNotReachTheIdentityProvider(t *testing.T
 }
 
 // A component that calls partners, or accepts their assertions, reaches the
-// realm, which both go through, and nothing else for it: an adapter that
+// realm, which both go through, and nothing else for it: a bridge that
 // calls a partner signs nobody in and would not reach the realm otherwise. A
 // component that only commissions partners talks to the director, not the
 // realm.

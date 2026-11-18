@@ -137,7 +137,6 @@ spec:
                 - service
                 - app
                 - shared-app
-                - adapter
                 - action
                 - bridge
                 type: string

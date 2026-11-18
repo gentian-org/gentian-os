@@ -822,7 +822,7 @@ func runPolicy(name, namespace string, labels map[string]string, pods map[string
 // let in. Every pod may ask the cluster's DNS and nothing else; a run of an
 // installed action is given the egress granted to that action; and a run is
 // let through to the component that started it, on the port it calls back
-// to. No rule reaches an adapter, an engine or the kernel.
+// to. No rule reaches an agent bridge, an engine or the kernel.
 func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, now time.Time) []*networkingv1.NetworkPolicy {
 	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
 	dns := intstr.FromInt32(53)

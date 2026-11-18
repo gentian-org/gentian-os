@@ -192,7 +192,7 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 		// Partners: the realm, where the component exchanges a person's
 		// token for an assertion towards a partner, or hands in one it
 		// accepts. An app that signs people in reaches it already; an
-		// adapter that calls a partner does not sign anybody in.
+		// agent bridge that calls a partner does not sign anybody in.
 		if p := kr.Partners; p != nil && (len(p.Call) > 0 || p.Accept) {
 			add(layout.Namespace(layout.Authentication))
 		}

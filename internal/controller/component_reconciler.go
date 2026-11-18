@@ -281,26 +281,25 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
-	// An app and an adapter run in their tenant's namespace from a release
-	// of their own, and are reconciled alike from here; what an adapter may
+	// An app and a bridge run in their tenant's namespace from a release of
+	// their own, and are reconciled alike from here; what an agent bridge may
 	// reach, and who may reach it, is the tenant's network rules' to say
-	// (netpolicy.AdapterNetworkPolicies), because it depends on what else the
-	// tenant has installed.
+	// (netpolicy.AgentBridgeNetworkPolicies), because it depends on what else
+	// the tenant has installed.
 	//
 	// An action is installed and never deployed: it is held and let through
 	// by the same checks, and stops where a release would begin
 	// (actionInstalled).
 	switch comp.Spec.Class {
-	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction,
-		gentianov1alpha1.ComponentClassBridge:
+	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge:
 	default:
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters, actions and bridges are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps, actions and bridges are", comp.Spec.Class), 0)
 	}
 	// The instance runs under one of the modes its profile is certified for.
 	// A Component written before its profile was on the cluster was given
 	// the class an install usually has, and the class cannot be changed
-	// afterwards: an adapter must not run as an app, where the tenant's
+	// afterwards: a bridge must not run as an app, where the tenant's
 	// rules would treat it as one.
 	if !classIncludes(profile, comp.Spec.Class) {
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonClassMismatch, fmt.Sprintf(
@@ -718,13 +717,14 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("image pins: %w", err)
 	}
 	// A bridge is served by routing its door ways to the Service of the app
-	// it connects. One with no such way -- its ways go elsewhere, or it would
-	// run a workload of its own -- has nothing here that serves it: held,
-	// and said so, rather than deployed where no caller can reach it.
-	if isBridge(profile) && bridgeEntryOf(profile) == nil {
+	// it connects, or, for an agent bridge, by the tenant's network rules and
+	// the list its callers are told (agent_bridge_list.go). One with neither
+	// has nothing here that serves it: held, and said so, rather than
+	// deployed where no caller can reach it.
+	if isBridge(profile) && bridgeEntryOf(profile) == nil && profile.AgentWay() == nil {
 		return r.status(ctx, comp, metav1.ConditionFalse, "WayUnsupported",
 			"no way of this bridge is served yet: the platform serves a way from a program on a person's device to the app the bridge connects, in webdav, caldav or carddav, "+
-				"for a bridge packaged as an api that names the Service of that app (package.api.backend)", 0)
+				"for a bridge packaged as an api that names the Service of that app (package.api.backend), and a way from the tenant's agents", 0)
 	}
 	switch {
 	case profile.Spec.Package.Chart != nil && appComposition(comp, profile) != "":
@@ -2166,7 +2166,7 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
-		Watches(&gentianov1alpha1.Component{}, adaptersOfApp(mgr.GetClient())).
+		Watches(&gentianov1alpha1.Component{}, bridgesOfApp(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
 		// A partner app's Secret arriving or changing rolls its pods

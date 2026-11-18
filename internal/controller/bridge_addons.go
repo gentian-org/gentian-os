@@ -22,25 +22,25 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// toldAddons is the profile's spec.adapter when it asks to be told the
-// adapted app's add-ons, or nil.
-func toldAddons(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.AdapterSpec {
-	if profile == nil || profile.Spec.Adapter == nil || profile.Spec.Adapter.Adapts == nil ||
-		profile.Spec.Adapter.AddonsValuesPath == "" {
+// toldAddons is the profile's spec.bridge when it asks to be told the
+// connected app's add-ons, or nil.
+func toldAddons(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.BridgeSpec {
+	if profile == nil || profile.Spec.Bridge == nil || profile.Spec.Bridge.App == nil ||
+		profile.Spec.Bridge.AddonsValuesPath == "" {
 		return nil
 	}
-	return profile.Spec.Adapter
+	return profile.Spec.Bridge
 }
 
-// adaptedAddonIDs are, for an adapter that asks for them, the IDs of the
-// add-ons selected into the app it adapts in the adapter's own namespace,
+// bridgedAddonIDs are, for a bridge that asks for them, the IDs of the
+// add-ons selected into the app it connects in the bridge's own namespace,
 // resolved as that app's own render resolves them. Empty when the app is
 // not installed there or has none; nil for any other component.
-func (r *ComponentReconciler) adaptedAddonIDs(
+func (r *ComponentReconciler) bridgedAddonIDs(
 	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
 ) ([]string, error) {
-	adapter := toldAddons(profile)
-	if adapter == nil {
+	bridge := toldAddons(profile)
+	if bridge == nil {
 		return nil, nil
 	}
 	list := &gentianov1alpha1.ComponentList{}
@@ -52,7 +52,7 @@ func (r *ComponentReconciler) adaptedAddonIDs(
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
 	for i := range list.Items {
 		app := &list.Items[i]
-		if app.Spec.ProfileRef.Name != adapter.Adapts.Profile || !app.DeletionTimestamp.IsZero() {
+		if app.Spec.ProfileRef.Name != bridge.App.Profile || !app.DeletionTimestamp.IsZero() {
 			continue
 		}
 		ids, err := r.addonIDs(ctx, app)
@@ -67,10 +67,10 @@ func (r *ComponentReconciler) adaptedAddonIDs(
 	return []string{}, nil
 }
 
-// adaptersOfApp re-runs, when a Component changes, the adapters in its
+// bridgesOfApp re-runs, when a Component changes, the bridges in its
 // namespace that are told its add-ons: selecting or removing one changes
 // what they are told.
-func adaptersOfApp(c client.Client) handler.EventHandler {
+func bridgesOfApp(c client.Client) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		app, ok := obj.(*gentianov1alpha1.Component)
 		if !ok {
@@ -80,13 +80,13 @@ func adaptersOfApp(c client.Client) handler.EventHandler {
 		if err := c.List(ctx, profiles); err != nil {
 			return nil
 		}
-		adapters := map[string]bool{}
+		bridges := map[string]bool{}
 		for i := range profiles.Items {
-			if a := toldAddons(&profiles.Items[i]); a != nil && a.Adapts.Profile == app.Spec.ProfileRef.Name {
-				adapters[profiles.Items[i].Name] = true
+			if b := toldAddons(&profiles.Items[i]); b != nil && b.App.Profile == app.Spec.ProfileRef.Name {
+				bridges[profiles.Items[i].Name] = true
 			}
 		}
-		if len(adapters) == 0 {
+		if len(bridges) == 0 {
 			return nil
 		}
 		list := &gentianov1alpha1.ComponentList{}
@@ -95,7 +95,7 @@ func adaptersOfApp(c client.Client) handler.EventHandler {
 		}
 		var out []reconcile.Request
 		for i := range list.Items {
-			if adapters[list.Items[i].Spec.ProfileRef.Name] {
+			if bridges[list.Items[i].Spec.ProfileRef.Name] {
 				out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{
 					Name: list.Items[i].Name, Namespace: list.Items[i].Namespace,
 				}})

@@ -265,7 +265,7 @@ type ServiceRequirements struct {
 //
 // A run is one pod in the tenant's namespace for runs. It reaches the
 // component that started it, at Callback, and nothing else of the platform:
-// its inputs and outputs, a question to a person and a call to an adapter all
+// its inputs and outputs, a question to a person and a call to a bridge all
 // go through the component, with a credential the component made for that
 // run.
 type RunsRequirement struct {

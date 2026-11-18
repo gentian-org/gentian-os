@@ -90,6 +90,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.ways.all(w, self.ways.filter(x, x.name == w.name).size() == 1)",message="a way's name is its own within the bridge: it names the way in the tenant's approvals"
 // +kubebuilder:validation:XValidation:rule="has(self.app) == self.ways.exists(w, w.caller == 'app' || w.callee == 'app')",message="spec.bridge.app names the app of the tenant a way calls or is called by: present exactly when a way's caller or callee is app"
 // +kubebuilder:validation:XValidation:rule="self.ways.filter(w, has(w.root) && w.protocol == 'caldav').size() <= 1 && self.ways.filter(w, has(w.root) && w.protocol == 'carddav').size() <= 1",message="a protocol has one discovery address: at most one way per protocol names a root"
+// +kubebuilder:validation:XValidation:rule="self.ways.filter(w, w.caller == 'agents').size() <= 1",message="an agent bridge has one way from the tenant's agents: the tool server its callers are told of"
+// +kubebuilder:validation:XValidation:rule="!has(self.addonsValuesPath) || has(self.app)",message="addonsValuesPath tells the bridge the add-ons of the app it connects: it needs spec.bridge.app"
 type BridgeSpec struct {
 	// App is the app of the tenant the bridge connects: the app's
 	// ComponentProfile, which must be installed in the same tenant. A way
@@ -106,6 +108,17 @@ type BridgeSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16
 	Ways []BridgeWay `json:"ways"`
+
+	// AddonsValuesPath is the dot-separated Helm values path at which the
+	// bridge is told which add-ons are selected into the app it connects in
+	// its tenant: a list of their IDs (package.addon.id), empty while none is
+	// selected or the app is not installed. The bridge is rendered again
+	// when that selection changes. Absent, it is told nothing about them.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$`
+	AddonsValuesPath string `json:"addonsValuesPath,omitempty"`
 }
 
 // BridgedApp names the app a bridge connects, and which of its versions.
@@ -131,6 +144,7 @@ type BridgedApp struct {
 // +kubebuilder:validation:XValidation:rule="self.caller != 'device' || self.speaksAs == 'person'",message="a program on a person's device speaks as that person"
 // +kubebuilder:validation:XValidation:rule="has(self.paths) == (self.callee == 'app' && (self.caller == 'device' || self.caller == 'outside'))",message="paths are where a caller from outside the platform reaches the app: present exactly for a way from a device or an outside service to the app"
 // +kubebuilder:validation:XValidation:rule="!has(self.root) || ((self.protocol == 'caldav' || self.protocol == 'carddav') && has(self.paths) && self.paths.exists(p, self.root == p || self.root.startsWith(p.endsWith('/') ? p : p + '/')))",message="root is where a calendar or contact program is sent from the discovery address: only for a way in caldav or carddav, and under one of its paths"
+// +kubebuilder:validation:XValidation:rule="!has(self.endpoint) || self.caller == 'agents'",message="endpoint is where the tenant's agents reach the bridge's tool server: only for a way whose caller is agents"
 type BridgeWay struct {
 	// Name names the way within the bridge, and in the tenant's approvals.
 	// +kubebuilder:validation:MinLength=1
@@ -176,6 +190,16 @@ type BridgeWay struct {
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$`
 	Root string `json:"root,omitempty"`
+
+	// Endpoint is where the bridge's tool server answers inside the tenant,
+	// for a way whose caller is the tenant's agents: its Service, the port
+	// and the path. With it the platform tells the tenant's components that
+	// call tools for a person that this bridge is there (the ConfigMap
+	// bridges-<component>). Absent, the bridge is installed and its callers
+	// are not told of it; an agent bridge packaged as an api is reached at
+	// its baseUrl instead.
+	// +optional
+	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
 }
 
 // BridgeDiscoveryPath is the discovery address of a protocol at the door
@@ -391,4 +415,27 @@ func (p *ComponentProfile) BridgeWayEntries() []*ExposureSpec {
 		out = append(out, p.bridgeEntry(w.Name, p.BridgePaths(w.Name)))
 	}
 	return out
+}
+
+// AgentWay is the way of an agent bridge from the tenant's agents, or nil
+// for a profile that is no agent bridge. A bridge has at most one.
+func (p *ComponentProfile) AgentWay() *BridgeWay {
+	if p == nil || p.Spec.Bridge == nil {
+		return nil
+	}
+	for i := range p.Spec.Bridge.Ways {
+		if p.Spec.Bridge.Ways[i].Caller == BridgeCallerAgents {
+			return &p.Spec.Bridge.Ways[i]
+		}
+	}
+	return nil
+}
+
+// BridgedAppName is the ComponentProfile of the app a bridge connects, or
+// "" where it connects none.
+func (p *ComponentProfile) BridgedAppName() string {
+	if p == nil || p.Spec.Bridge == nil || p.Spec.Bridge.App == nil {
+		return ""
+	}
+	return p.Spec.Bridge.App.Profile
 }

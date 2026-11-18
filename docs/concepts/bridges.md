@@ -60,9 +60,14 @@ The names are for prose and the user interface; the schema has the ways.
 
 ## 4. What the platform serves
 
-A way from `device` to `app` in `webdav`, `caldav` or `carddav`, of a bridge
-packaged as `api` with a `backend`, is served at the tenant's **door**. A
-bridge with no such way is held with the reason `WayUnsupported`.
+Two kinds of way are served:
+
+- a way from `device` to `app` in `webdav`, `caldav` or `carddav`, of a bridge
+  packaged as `api` with a `backend`, at the tenant's **door** (§4.1);
+- a way from `agents` in `mcp`, to the tenant's components that call tools for
+  a person (§4.4).
+
+A bridge with neither is held with the reason `WayUnsupported`.
 
 ```yaml
 spec:
@@ -168,4 +173,52 @@ counts failures per username and per source address instead and answers
 | `Bridge` | `PathTaken` | another component serves one of the paths at the door |
 | `TokenEntry` | `Approved`, `ApprovalWaived` | the ways named in the message are served |
 | `TokenEntry` | `AwaitingApproval` | no way is approved |
-| `Ready` | `WayUnsupported` | no way of the bridge is one the door serves |
+| `Ready` | `WayUnsupported` | no way of the bridge is one the platform serves |
+
+### 4.4 Ways from the agents
+
+A bridge with a way from `agents` (an Agent, Service or Partner Bridge) runs a
+tool server (MCP). Its callers are the tenant's components that check every
+tool call made for a person: those that declare
+`requires.services.vouching`. A bridge has at most one such way.
+
+```yaml
+spec:
+  classes: [bridge]
+  launch: none
+  package: {chart: {repository: oci://example/charts, name: openproject-tools, version: "1.0.0"}}
+  bridge:
+    app: {profile: openproject, versions: ["15.4.0"]}
+    ways:
+    - name: tools
+      caller: agents
+      callee: app
+      protocol: mcp
+      speaksAs: person
+      endpoint: {service: openproject-tools, port: 8765, path: /mcp}
+    addonsValuesPath: activeModules
+```
+
+- **Network.** The bridge's pods are left out of the tenant's baseline and
+  admit only the callers; the callers may reach every such bridge. A bridge
+  reaches the app it connects and nothing else in the tenant, and that app
+  admits it ([networking.md](networking.md)).
+- **The list.** Each caller finds a ConfigMap `bridges-<component>` in its
+  namespace. Its one key, `BRIDGES`, is a JSON object from a bridge's install
+  name to its address inside the tenant and the app a call through it is for:
+  `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
+  A bridge without an `endpoint` is installed and on no list.
+- **Whom a call is for.** The app the bridge connects, or, for a bridge that
+  connects none, the bridge itself: the rights check asks `can_use` on it, and
+  the token the bridge is handed is for it (scope `app-<app>`).
+- **Callee `outside`.** The bridge may be packaged as `api` with a `baseUrl`:
+  a tool server outside the cluster, reached where it is. It runs nothing in
+  the tenant; the egress granted to it is given to its callers.
+- **Callee `partner`.** The bridge names the partner's realm in
+  `requires.services.partners.call`, and its token is exchanged for an
+  assertion towards the partner.
+- **Add-ons.** With `addonsValuesPath`, the bridge is told at that chart value
+  the IDs of the add-ons selected into the app it connects, and is rendered
+  again when they change.
+- **Actions.** An action names the bridges whose tools the calling component
+  may call on a run's behalf in `spec.action.bridges`.

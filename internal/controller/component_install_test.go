@@ -315,11 +315,11 @@ func TestAClaimSomethingElseControlsIsNotTaken(t *testing.T) {
 	}
 }
 
-// An adapter is installed like an app and runs as an adapter: the class is
+// A bridge is installed like an app and runs as a bridge: the class is
 // read from its profile. One that was made before its profile arrived was
 // given the class an install usually has; it is replaced once the profile
 // says otherwise, and one whose class was read from its profile never is.
-func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
+func TestABridgeInstallRunsAsABridge(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
@@ -341,7 +341,7 @@ func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
 		return comp
 	}
 
-	// The adapter's profile is not on the cluster yet.
+	// The bridge's profile is not on the cluster yet.
 	if err := r.ensureAppComponents(ctx, tenant); err != nil {
 		t.Fatal(err)
 	}
@@ -353,9 +353,9 @@ func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
 		t.Fatalf("an install whose profile was read has no assumed class: %v", app.Annotations)
 	}
 
-	// The profile arrives, and it is an adapter's: the instance is replaced,
-	// and made again as an adapter.
-	if err := c.Create(ctx, profileFixture("openproject-tools", false, gentianov1alpha1.ComponentClassAdapter)); err != nil {
+	// The profile arrives, and it is a bridge's: the instance is replaced,
+	// and made again as a bridge.
+	if err := c.Create(ctx, profileFixture("openproject-tools", false, gentianov1alpha1.ComponentClassBridge)); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.ensureAppComponents(ctx, tenant); err != nil {
@@ -368,7 +368,7 @@ func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools = get("openproject-tools")
-	if tools.Spec.Class != gentianov1alpha1.ComponentClassAdapter || tools.Annotations[componentClassAssumedAnnotation] != "" {
+	if tools.Spec.Class != gentianov1alpha1.ComponentClassBridge || tools.Annotations[componentClassAssumedAnnotation] != "" {
 		t.Fatalf("made again: class %q, annotations %v", tools.Spec.Class, tools.Annotations)
 	}
 
@@ -378,7 +378,7 @@ func TestAnAdapterInstallRunsAsAnAdapter(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: "openproject"}, profile); err != nil {
 		t.Fatal(err)
 	}
-	profile.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassAdapter}
+	profile.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge}
 	if err := c.Update(ctx, profile); err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestAnExclusiveClassIsTheClassItsInstallRunsAs(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	for _, class := range []gentianov1alpha1.ComponentClass{
-		gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge,
+		gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge,
 	} {
 		tenant := acmeTenantFixture()
 		tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "nextcloud-sync"}}

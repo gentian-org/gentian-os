@@ -72,8 +72,8 @@ func TestAnActionIsInstalledWithoutAWorkload(t *testing.T) {
 	}
 }
 
-// An install takes its class from its profile, for an action as for an
-// adapter.
+// An install takes its class from its profile, for an action as for a
+// bridge.
 func TestAnActionInstallRunsAsAnAction(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
