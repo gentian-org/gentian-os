@@ -110,6 +110,8 @@ type change struct {
 	// credential is the id of a person's credential the write removes:
 	// only ever a device password (devicepasswords.go).
 	credential string
+	// session is the id of a sign-in session the write ends (sessions.go).
+	session string
 }
 
 // classify reads a request path as a write. ok is false for a path this
@@ -154,6 +156,11 @@ func classify(realm, rel string) (w change, ok bool) {
 		default:
 			return change{user: unescape(seg[1])}, true
 		}
+	case "sessions":
+		if len(seg) == 2 {
+			return change{session: unescape(seg[1])}, true
+		}
+		return change{}, false
 	case "groups":
 		if len(seg) == 1 {
 			return change{}, true
@@ -188,6 +195,13 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	// any other identity provider is how that person signs in, and is not
 	// this case in either direction.
 	if w.vouching && method == http.MethodDelete {
+		return nil
+	}
+	// Ending a sign-in session is let through for the same reason: it gives
+	// nobody anything, and the holder of a platform role signs in again.
+	// Whose session it is was settled before (EndSession ends only the
+	// caller's own).
+	if w.session != "" && method == http.MethodDelete {
 		return nil
 	}
 	// Removing a device password is the same: it ends what the person was

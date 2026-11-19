@@ -46,6 +46,8 @@ type fakeKeycloak struct {
 	mints map[string]int
 	// creds per user id, for the two-factor reads.
 	creds map[string][]map[string]string
+	// sessions per user id, for the session reads.
+	sessions map[string][]map[string]any
 	// memberOf is the group paths one user id holds. A user it does not name
 	// holds every group of the realm, which is what the older tests assume.
 	memberOf map[string][]string
@@ -185,6 +187,15 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		if out == nil {
 			out = []map[string]string{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	case r.Method == http.MethodGet && strings.HasSuffix(path, "/sessions") && strings.HasPrefix(path, "/users/"):
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/users/"), "/sessions")
+		f.mu.Lock()
+		out := f.sessions[id]
+		f.mu.Unlock()
+		if out == nil {
+			out = []map[string]any{}
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/members") && strings.HasPrefix(path, "/groups/"):
