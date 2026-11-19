@@ -488,7 +488,9 @@ where the component publishes its signing keys as a JWKS). It needs `trustTier: 
 `trustTier: certified` for a component that only calls the tenant's homes as the person
 (`integrations[].asPerson`, [app-customization.md §2.3](app-customization.md)): such a component
 neither exchanges nor names `director`, and its client is given the scopes of the homes granted to
-it and no app scope. The
+it and no app scope. `homes: true` gives a component of the platform's trust the scopes of
+all the tenant's homes, and has the people who sign in to an app that declares `homeSync` linked to
+it: what the tenant's home sync acts with. The
 platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
 gives it a client of the same name to ask with, and tells it what it has to know in the Secret
 `vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,

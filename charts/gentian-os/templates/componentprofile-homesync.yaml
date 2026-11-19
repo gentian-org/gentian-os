@@ -1,0 +1,50 @@
+{{- /*
+  The home sync (internal/homesync, gentian-os#1156): keeps the calendars and
+  contacts the tenant's apps keep of their own equal to the tenant's home.
+  Every tenant gets one, as it gets a desktop. It acts for the people who sign
+  in to an app that declares homeSync, towards that app and the tenant's
+  homes, with tokens it obtains by vouching -- which is why it is of the
+  platform's trust. It exposes nothing; the realm reads its keys from its
+  Service.
+*/ -}}
+{{- if .Values.homesync.enabled }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: homesync
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    gentianos.io/profile-name: homesync
+spec:
+  classes: [app]
+  launch: none
+  trustTier: platform
+  version: {{ .Values.homesync.chart.version | quote }}
+  placement:
+    tenants: every
+  package:
+    chart:
+      repository: {{ .Values.homesync.chart.repository | quote }}
+      name: {{ .Values.homesync.chart.name | quote }}
+      version: {{ .Values.homesync.chart.version | quote }}
+    valueMapping:
+      platform:
+        tenantKey: tenant
+        registrarUrlKey: registrar.url
+      database:
+        secretNameKey: existingSecret.name
+  requires:
+    services:
+      # Where the state of every pair of records is kept.
+      database:
+        engine: postgresql
+      # A person's token for an app (app-<profile>) and for the tenant's
+      # homes (home-<profile>), asked with statements the realm verifies
+      # against the keys published here.
+      vouching:
+        keys:
+          service: homesync
+          port: 8080
+          path: /.well-known/jwks.json
+        homes: true
+{{- end }}

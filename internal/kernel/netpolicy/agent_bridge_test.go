@@ -289,3 +289,41 @@ func TestAPlacedComponentThatSpeaksAsAPersonIsACallerToo(t *testing.T) {
 		}
 	}
 }
+
+// The tenant's home sync reaches the apps that declare homeSync and the
+// providers of the homes, and they admit it; a tenant without one opens
+// nothing for it.
+func TestTheHomeSyncReachesTheAppsItKeepsEqual(t *testing.T) {
+	t.Parallel()
+	odoo := appProfile()
+	odoo.Spec.HomeSync = &gentianov1alpha1.HomeSyncSpec{}
+	home := appProfile()
+	home.Spec.Provides = []gentianov1alpha1.ContractRef{{Name: "calendar-store"}}
+	in := tenantWith(map[string]*gentianov1alpha1.ComponentProfile{
+		"odoo": odoo, "nextcloud": home, "wiki": appProfile(),
+	})
+	in.Profiles[gentianov1alpha1.HomeSyncProfile] = chaperoneProfile()
+	in.Placed = []string{gentianov1alpha1.HomeSyncProfile}
+	got := byName(netpolicy.BuildDesired(in))
+	out := got["homesync"]
+	if out == nil || len(out.Spec.Egress) != 1 || len(out.Spec.Egress[0].To) != 2 {
+		t.Fatalf("the home sync's way out: %+v", out)
+	}
+	for _, target := range []string{"nextcloud", "odoo"} {
+		if got["homesync-target-"+target] == nil {
+			t.Errorf("%s does not admit the home sync", target)
+		}
+	}
+	if got["homesync-target-wiki"] != nil {
+		t.Error("an app the home sync does not call admits it")
+	}
+	if _, ok := netpolicy.ManagedPolicyNames(in)["homesync"]; !ok {
+		t.Error("the home sync's policy is built and not kept")
+	}
+	in.Placed = nil
+	for name := range byName(netpolicy.BuildDesired(in)) {
+		if strings.HasPrefix(name, "homesync") {
+			t.Errorf("%s built for a tenant without a home sync", name)
+		}
+	}
+}

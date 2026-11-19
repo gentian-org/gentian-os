@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homesync
+  labels:
+    app.kubernetes.io/name: homesync
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  # One: two would keep the same pairs at once.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: homesync
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: homesync
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: homesync
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/homesync"]
+          env:
+            - name: TENANT_ID
+              value: {{ .Values.tenant | quote }}
+            - name: PROFILE
+              value: homesync
+            - name: PLAN_FILE
+              value: /etc/homesync/plan.json
+            - name: REGISTRAR_URL
+              value: {{ .Values.registrar.url | quote }}
+            - name: REGISTRAR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keySecret }}
+                  key: RIGHTS_CHECK_KEY
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: DATABASE_URL
+            - name: LISTEN
+              value: ":{{ .Values.port }}"
+            - name: INTERVAL
+              value: {{ .Values.interval | quote }}
+          envFrom:
+            # VOUCHING_ISSUER, VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET,
+            # VOUCHING_TOKEN_URL.
+            - secretRef:
+                name: {{ .Values.vouchingSecret }}
+          ports:
+            - name: keys
+              containerPort: {{ .Values.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: keys
+          volumeMounts:
+            - name: plan
+              mountPath: /etc/homesync
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        # Absent until the platform writes it: the pod starts, and a round
+        # with no plan syncs nothing.
+        - name: plan
+          configMap:
+            name: {{ .Values.planConfigMap }}
+            optional: true

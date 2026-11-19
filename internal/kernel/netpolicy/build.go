@@ -81,6 +81,7 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
 	out = append(out, AgentBridgeNetworkPolicies(in)...)
+	out = append(out, HomeSyncNetworkPolicies(in)...)
 
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
@@ -180,6 +181,9 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 		}
 	}
 	for _, np := range AgentBridgeNetworkPolicies(in) {
+		names[np.Name] = struct{}{}
+	}
+	for _, np := range HomeSyncNetworkPolicies(in) {
 		names[np.Name] = struct{}{}
 	}
 	// Only while there is a Memcached app to build them for: named

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: homesync
+description: The tenant's home sync — keeps the calendars and contacts the tenant's apps keep of their own equal to the tenant's home.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

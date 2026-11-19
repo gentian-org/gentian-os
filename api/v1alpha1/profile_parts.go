@@ -514,6 +514,7 @@ type PartnersRequirement struct {
 // issuer: the realm believes nothing it says about anybody.
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || (has(self.exchange) && self.exchange)",message="vouching.keys is required: only a component that does nothing but exchange a present person's token (exchange: true) may leave it out"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.director) || size(self.director) == 0",message="vouching.director needs vouching.keys: a token for the director is obtained with a signed statement"
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.homes) || !self.homes",message="vouching.homes needs vouching.keys: a person's token for a home is obtained with a signed statement"
 type VouchingRequirement struct {
 	// Keys says where the component publishes the keys its statements are
 	// signed with, as a JWKS. The realm fetches them from there. Left out
@@ -543,6 +544,14 @@ type VouchingRequirement struct {
 	// connected a program and need not be linked.
 	// +optional
 	Exchange bool `json:"exchange,omitempty"`
+
+	// Homes gives the component's client the scopes of the tenant's homes
+	// (home-<profile> for the provider of calendar-store, contacts-store and
+	// file-store), and has the people who sign in to an app that declares
+	// homeSync linked to it: what the platform's home sync acts with. It
+	// needs keys, and trustTier platform as all vouching for any app does.
+	// +optional
+	Homes bool `json:"homes,omitempty"`
 }
 
 // DirectorScope is one thing a vouched token may do at the director.

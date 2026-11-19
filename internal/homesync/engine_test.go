@@ -212,7 +212,7 @@ func newWorld(t *testing.T) *world {
 	t.Cleanup(homeSrv.Close)
 	t.Cleanup(odooSrv.Close)
 	plan := &Plan{
-		Home: Home{Profile: "nextcloud-base-ce", Calendar: homeSrv.URL + "/dav/"},
+		Home: Home{Calendar: &HomeOf{Profile: "nextcloud-base-ce", URL: homeSrv.URL + "/dav/"}},
 		Apps: []App{{Profile: "odoo-base-ce", URL: odooSrv.URL, Kinds: map[Kind]Mapping{Calendar: {
 			Driver: "odoo", Model: "calendar.event",
 			Fields:   map[Field]string{Summary: "name", Start: "start", End: "stop", AllDay: "allday", StartDate: "start_date", EndDate: "stop_date"},

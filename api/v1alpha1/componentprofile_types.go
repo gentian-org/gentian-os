@@ -173,7 +173,7 @@ type ComponentPlacement struct {
 // tenant. A certified component may vouch only to call the homes it consumes
 // as the person (integrations[].asPerson), and only with keys of its own:
 // its client is given the scopes of the homes granted to it and no other.
-// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching) || self.trustTier == 'platform' || (self.trustTier == 'certified' && has(self.integrations) && self.integrations.exists(i, has(i.asPerson) && i.asPerson) && has(self.requires.services.vouching.keys) && !(has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange) && !(has(self.requires.services.vouching.director) && self.requires.services.vouching.director.size() > 0))",message="requires.services.vouching requires trustTier platform, or trustTier certified for a component that calls a home as the person (integrations[].asPerson) with keys of its own and no exchange or director"
+// +kubebuilder:validation:XValidation:rule="!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching) || self.trustTier == 'platform' || (self.trustTier == 'certified' && has(self.integrations) && self.integrations.exists(i, has(i.asPerson) && i.asPerson) && has(self.requires.services.vouching.keys) && !(has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange) && !(has(self.requires.services.vouching.director) && self.requires.services.vouching.director.size() > 0) && !(has(self.requires.services.vouching.homes) && self.requires.services.vouching.homes))",message="requires.services.vouching requires trustTier platform, or trustTier certified for a component that calls a home as the person (integrations[].asPerson) with keys of its own and no exchange, director or homes"
 // +kubebuilder:validation:XValidation:rule="!has(self.integrations) || !self.integrations.exists(i, has(i.asPerson) && i.asPerson) || (has(self.requires) && has(self.requires.services) && has(self.requires.services.vouching) && has(self.requires.services.vouching.keys))",message="integrations[].asPerson needs requires.services.vouching.keys: the component signs the statements a person's token is asked with"
 // A service may expose -- a console is not a contract surface -- but only on
 // the gateway. The perimeter has no session, and a service console published
@@ -309,6 +309,11 @@ type ComponentProfileSpec struct {
 	// the class is action.
 	// +optional
 	Action *ActionSpec `json:"action,omitempty"`
+
+	// HomeSync is how an app that keeps calendars or contacts of its own
+	// keeps them, so that the platform keeps them equal to the tenant's home.
+	// +optional
+	HomeSync *HomeSyncSpec `json:"homeSync,omitempty"`
 
 	// Secrets are values the platform generates and holds that have no external
 	// counterparty. Credentials that arrive with a granted requirement are not

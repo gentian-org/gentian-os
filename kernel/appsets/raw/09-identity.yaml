@@ -77,7 +77,7 @@ spec:
             # alone leaves Keycloak's pod alone: no restart, and no wait on an
             # image a failed build never published.
             - name: global.eventListener.image
-              value: 'ghcr.io/gentian-org/keycloak-event-listener:src-1d4be81561d2'
+              value: 'ghcr.io/gentian-org/keycloak-event-listener:src-0cca12404d37'
             # The OPERATOR's endpoint, not the director's. Who is in which
             # group is cluster state, so the thing that turns declared state
             # into cluster state projects it; the director reads the graph to

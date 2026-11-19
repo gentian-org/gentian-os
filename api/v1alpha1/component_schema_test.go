@@ -678,3 +678,30 @@ func TestHomesAsPersonRules(t *testing.T) {
 	expect(t, "a tenant that names its homes", tv.check(t, strings.Replace(tenant, "%s", "{calendar-store: nextcloud-base-ce, contacts-store: nextcloud-base-ce}", 1), ""), "")
 	expect(t, "a home for a contract that is no home's", tv.check(t, strings.Replace(tenant, "%s", "{project-management: openproject}", 1), ""), "homes names file-store, calendar-store or contacts-store")
 }
+
+// An app declares homeSync with its API's address and at least one kind, each
+// with a known driver and parts that are parts of an entry; vouching.homes is
+// the platform's home sync's, and needs keys.
+func TestHomeSyncRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	app := "  classes: [app]\n  launch: none\n  trustTier: certified\n"
+	calendar := "    calendar: {driver: odoo, model: calendar.event, fields: {summary: name, start: start}, filter: [[partner_ids, in, [\"$partner\"]]], defaults: {user_id: \"$user\"}}\n"
+	for _, c := range []struct{ name, spec, want string }{
+		{"an app that keeps a calendar", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n" + calendar, ""},
+		{"homeSync that keeps nothing", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n", "homeSync keeps calendar, contacts or both"},
+		{"homeSync without the app's address", app + "  homeSync:\n" + calendar, "endpoint"},
+		{"a driver nobody wrote", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n    contacts: {driver: espo, model: Contact, fields: {name: name}}\n", "Unsupported value"},
+		{"a part that is no part of an entry", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n    contacts: {driver: odoo, model: res.partner, fields: {shoeSize: x}}\n", "a field is one of the parts"},
+		{"a mapping of no field", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n    contacts: {driver: odoo, model: res.partner, fields: {}}\n", "a mapping names at least one field"},
+
+		{"the home sync's vouching", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {homes: true, keys: {service: homesync, port: 8080}}\n", ""},
+		{"homes without keys", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {homes: true, exchange: true}\n", "vouching.homes needs vouching.keys"},
+		{"homes below the platform's trust", app + "  integrations:\n  - {contract: calendar-store, asPerson: true}\n  requires:\n    services:\n      vouching: {homes: true, keys: {service: x, port: 8080}}\n", "requires.services.vouching requires trustTier platform"},
+	} {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+	tv := loadCRD(t, "gentianos.io_tenants.yaml")
+	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  contactsBook: %s\n"
+	expect(t, "a shared address book", tv.check(t, strings.Replace(tenant, "%s", "shared", 1), ""), "")
+	expect(t, "an address book that is neither", tv.check(t, strings.Replace(tenant, "%s", "everyone", 1), ""), "Unsupported value")
+}

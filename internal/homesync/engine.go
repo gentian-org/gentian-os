@@ -58,7 +58,7 @@ func (e *Engine) Round(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read the plan: %w", err)
 	}
-	if plan.Home.Profile == "" || len(plan.Apps) == 0 {
+	if (plan.Home.Calendar == nil && plan.Home.Contacts == nil) || len(plan.Apps) == 0 {
 		return nil
 	}
 	people, err := e.People(ctx)
@@ -66,11 +66,6 @@ func (e *Engine) Round(ctx context.Context) error {
 		return fmt.Errorf("ask who is linked: %w", err)
 	}
 	for _, person := range people {
-		homeToken, err := e.Tokens.For(ctx, person, homeScope(plan.Home.Profile))
-		if err != nil {
-			e.skip(person, "the home", err)
-			continue
-		}
 		for i := range plan.Apps {
 			app := &plan.Apps[i]
 			appToken, err := e.Tokens.For(ctx, person, appScope(app.Profile))
@@ -80,21 +75,20 @@ func (e *Engine) Round(ctx context.Context) error {
 			}
 			for _, kind := range []Kind{Calendar, Contacts} {
 				m, ok := app.Kinds[kind]
-				if !ok {
+				home := plan.Home.of(kind)
+				if !ok || home == nil || home.URL == "" {
 					continue
 				}
-				root := plan.Home.Calendar
-				if kind == Contacts {
-					root = plan.Home.Contacts
-					if plan.ContactsBook == "shared" {
-						e.Log.Warn("a shared address book is not kept yet; contacts are not synced", "app", app.Profile)
-						continue
-					}
-				}
-				if root == "" {
+				if kind == Contacts && plan.ContactsBook == "shared" {
+					e.Log.Warn("a shared address book is not kept yet; contacts are not synced", "app", app.Profile)
 					continue
 				}
-				dav := &DAV{Root: root, Kind: kind, Token: homeToken, Client: e.Client}
+				homeToken, err := e.Tokens.For(ctx, person, homeScope(home.Profile))
+				if err != nil {
+					e.skip(person, home.Profile, err)
+					continue
+				}
+				dav := &DAV{Root: home.URL, Kind: kind, Token: homeToken, Client: e.Client}
 				if err := e.sync(ctx, person, app, kind, &m, dav, appToken); err != nil {
 					e.Log.Warn("sync failed", "person", person, "app", app.Profile, "kind", kind, "error", err.Error())
 				}
