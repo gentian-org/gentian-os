@@ -29,6 +29,15 @@ import (
 // for that person. A record's stamp is its write_date. A person is found by
 // their subject (res.users oauth_uid), and stands as "$user" and "$partner"
 // in a mapping's filter and defaults.
+//
+// A recurring meeting is a series in Odoo: one calendar.event per occurrence,
+// tied by a calendar.recurrence to the base event that carries the rule. The
+// home keeps one entry with a rule. So, for a mapping that keeps the rule
+// (rrule), the driver shows only the base event of a series, writes a change
+// to every occurrence (recurrence_update all_events, which keeps the base
+// event's id), and makes a series whose rule changed or ended anew, since
+// Odoo builds the rule of a rewritten series from its own fields and not
+// from a new rule. A single occurrence moved or cancelled is not kept equal.
 type Odoo struct {
 	Client *http.Client
 }
@@ -139,17 +148,70 @@ func (o *Odoo) Stamps(ctx context.Context, app *App, m *Mapping, token string, w
 		}
 		domain = d
 	}
+	fields := []string{"id", "write_date"}
+	if keepsSeries(m) {
+		fields = append(fields, "recurrence_id")
+	}
 	var rows []map[string]any
 	if err := o.call(ctx, app, token, m.Model, "search_read", map[string]any{
-		"domain": domain, "fields": []string{"id", "write_date"},
+		"domain": domain, "fields": fields,
 	}, &rows); err != nil {
+		return nil, err
+	}
+	bases, err := o.bases(ctx, app, token, rows)
+	if err != nil {
 		return nil, err
 	}
 	out := make(map[string]string, len(rows))
 	for _, r := range rows {
-		out[idOf(r["id"])] = fmt.Sprint(r["write_date"])
+		id := idOf(r["id"])
+		if rec := many2oneID(r["recurrence_id"]); rec != "" && bases[rec] != id {
+			continue // an occurrence that is not the series' base
+		}
+		out[id] = fmt.Sprint(r["write_date"])
 	}
 	return out, nil
+}
+
+// keepsSeries reports whether a mapping keeps the rule of Odoo's series.
+func keepsSeries(m *Mapping) bool {
+	_, ok := m.Fields[RRule]
+	return ok && m.Model == "calendar.event"
+}
+
+// bases are the base events of the series the rows belong to, by series.
+func (o *Odoo) bases(ctx context.Context, app *App, token string, rows []map[string]any) (map[string]string, error) {
+	seen := map[string]bool{}
+	var ids []int64
+	for _, r := range rows {
+		if rec := many2oneID(r["recurrence_id"]); rec != "" && !seen[rec] {
+			seen[rec] = true
+			n, _ := intID(rec)
+			ids = append(ids, n)
+		}
+	}
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var recs []map[string]any
+	if err := o.call(ctx, app, token, "calendar.recurrence", "read", map[string]any{
+		"ids": ids, "fields": []string{"base_event_id"},
+	}, &recs); err != nil {
+		return nil, err
+	}
+	for _, r := range recs {
+		out[idOf(r["id"])] = many2oneID(r["base_event_id"])
+	}
+	return out, nil
+}
+
+// many2oneID is the id of a many2one value ([id, name]), or "".
+func many2oneID(v any) string {
+	if x, ok := v.([]any); ok && len(x) == 2 {
+		return idOf(x[0])
+	}
+	return ""
 }
 
 func idOf(v any) string {
@@ -168,6 +230,9 @@ func (o *Odoo) Read(ctx context.Context, app *App, m *Mapping, token, id string)
 		return nil, "", err
 	}
 	fields := []string{"write_date"}
+	if keepsSeries(m) {
+		fields = append(fields, "recurrence_id")
+	}
 	for _, f := range m.Fields {
 		fields = append(fields, f)
 	}
@@ -184,7 +249,29 @@ func (o *Odoo) Read(ctx context.Context, app *App, m *Mapping, token, id string)
 	for part, field := range m.Fields {
 		v[part] = fromOdoo(part, r[field])
 	}
+	if keepsSeries(m) {
+		if many2oneID(r["recurrence_id"]) == "" {
+			v[RRule] = ""
+		} else {
+			v[RRule] = ruleOnly(v[RRule])
+		}
+	}
 	return v, fmt.Sprint(r["write_date"]), nil
+}
+
+// ruleOnly is the rule of Odoo's serialized rule, which names its start as
+// well ("DTSTART:...\nRRULE:FREQ=..."): the part after RRULE:.
+func ruleOnly(serialized string) string {
+	for _, line := range strings.Split(serialized, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "RRULE:") {
+			return strings.TrimPrefix(line, "RRULE:")
+		}
+	}
+	if strings.HasPrefix(serialized, "FREQ=") {
+		return serialized
+	}
+	return ""
 }
 
 // fromOdoo is an Odoo value as the text of a part.
@@ -245,6 +332,13 @@ func vals(m *Mapping, v Values) (map[string]any, error) {
 				continue
 			}
 			out[field] = s
+		case RRule:
+			// Written as the series it is: a rule makes one, and only
+			// Create and Update say what happens to an existing one.
+			if s != "" && m.Model == "calendar.event" {
+				out["recurrency"] = true
+				out[field] = s
+			}
 		default:
 			if s == "" {
 				out[field] = false
@@ -281,28 +375,68 @@ func (o *Odoo) Create(ctx context.Context, app *App, m *Mapping, token string, w
 	return id, stamp, err
 }
 
-// Update writes the parts onto a record.
-func (o *Odoo) Update(ctx context.Context, app *App, m *Mapping, token, id string, v Values) (string, error) {
+// Update writes the parts onto a record. A series is written as a whole; a
+// series whose rule changed or ended is made anew, and its new id returned.
+func (o *Odoo) Update(ctx context.Context, app *App, m *Mapping, token string, who Person, id string, v Values) (string, string, error) {
 	n, err := intID(id)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	record, err := vals(m, v)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	if keepsSeries(m) {
+		if rule, given := v[RRule]; given {
+			current, _, err := o.Read(ctx, app, m, token, id)
+			if err != nil {
+				return "", "", err
+			}
+			inSeries := current[RRule] != ""
+			switch {
+			case inSeries && rule != current[RRule]:
+				// Changed or ended: Odoo would keep its own rule on a
+				// rewrite, so the series is made again.
+				if err := o.Delete(ctx, app, m, token, id); err != nil {
+					return "", "", err
+				}
+				return o.Create(ctx, app, m, token, who, v)
+			case inSeries:
+				delete(record, "recurrency")
+				delete(record, m.Fields[RRule])
+				record["recurrence_update"] = "all_events"
+			}
+			// Not a series yet: a rule given makes one of this event,
+			// which keeps its id; none leaves it as it is.
+		}
 	}
 	if err := o.call(ctx, app, token, m.Model, "write", map[string]any{"ids": []int64{n}, "vals": record}, nil); err != nil {
-		return "", err
+		return "", "", err
 	}
 	_, stamp, err := o.Read(ctx, app, m, token, id)
-	return stamp, err
+	return id, stamp, err
 }
 
-// Delete removes a record.
+// Delete removes a record; a series' base event removes the series.
 func (o *Odoo) Delete(ctx context.Context, app *App, m *Mapping, token, id string) error {
 	n, err := intID(id)
 	if err != nil {
 		return err
+	}
+	if keepsSeries(m) {
+		var rows []map[string]any
+		err := o.call(ctx, app, token, m.Model, "read", map[string]any{"ids": []int64{n}, "fields": []string{"recurrence_id"}}, &rows)
+		if errors.Is(err, errGone) || (err == nil && len(rows) == 0) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if many2oneID(rows[0]["recurrence_id"]) != "" {
+			return o.call(ctx, app, token, m.Model, "action_mass_deletion", map[string]any{
+				"ids": []int64{n}, "recurrence_update_setting": "all_events",
+			}, nil)
+		}
 	}
 	err = o.call(ctx, app, token, m.Model, "unlink", map[string]any{"ids": []int64{n}}, nil)
 	if errors.Is(err, errGone) {

@@ -32,8 +32,10 @@ type Driver interface {
 	// Create makes a record of the parts, with the mapping's defaults, and
 	// returns its id and stamp.
 	Create(ctx context.Context, app *App, m *Mapping, token string, who Person, v Values) (string, string, error)
-	// Update writes the parts onto a record and returns its new stamp.
-	Update(ctx context.Context, app *App, m *Mapping, token, id string, v Values) (string, error)
+	// Update writes the parts onto a record and returns its id and new
+	// stamp. The id is a new one where the app had to make the record again
+	// (Odoo's series whose rule changed).
+	Update(ctx context.Context, app *App, m *Mapping, token string, who Person, id string, v Values) (string, string, error)
 	// Delete removes a record. One already gone is gone.
 	Delete(ctx context.Context, app *App, m *Mapping, token, id string) error
 }
