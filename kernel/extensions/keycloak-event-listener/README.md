@@ -74,6 +74,13 @@ SPIs it implements are internal and move between minor releases too (the
 admin permission classes the activation link uses changed package between
 26.0 and 26.8). Bump both together and build before pushing.
 
+The image is tagged `src-<hash>` by its tracked files
+(`scripts/tools/listener-tag.sh`), and the identity appset names that tag
+(`kernel/appsets/raw/09-identity.yaml`). Any change in this directory changes
+the tag: run `make lint-listener-tag` and write the line it prints. CI builds
+an image once per tag, and a build that leaves this directory alone does not
+restart Keycloak.
+
 ## The registration form's proof-of-work check
 
 The jar also carries `gentian-pow-captcha` (`io.gentianos.keycloak.captcha`),
