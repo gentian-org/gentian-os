@@ -84,6 +84,7 @@ type Identity interface {
 	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 	UserCount(ctx context.Context, r identity.Realm) (int, error)
 	VouchingLinked(ctx context.Context, r identity.Realm, id, profile string) (bool, error)
+	VouchingPeople(ctx context.Context, r identity.Realm, profile string) ([]string, error)
 	LinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
 	UnlinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
 	DevicePasswords(ctx context.Context, r identity.Realm, id string) ([]identity.DevicePassword, error)
@@ -394,6 +395,7 @@ func (s *Server) routes() {
 	// and taken away by that person, by whoever manages the tenant's people,
 	// and by the component itself.
 	s.guarded("POST /v1/tenants/{t}/vouching/{profile}/link", "can_enter", tenantObject, s.linkVouching)
+	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people", s.vouchingPeople)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
 	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)
 

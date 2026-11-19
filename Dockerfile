@@ -59,6 +59,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o arbiter ./cmd/arbi
 # vault-migrator: what a release changes in the vault, run once per release.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o vault-migrator ./cmd/vault-migrator
 
+# homesync: keeps the calendars and contacts the tenant's apps keep of their
+# own equal to the tenant's home. One per tenant, placed in its namespace.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o homesync ./cmd/homesync
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
@@ -78,6 +82,7 @@ COPY --from=builder /workspace/dispatcher /dispatcher
 COPY --from=builder /workspace/run-program /run-program
 COPY --from=builder /workspace/custodian /custodian
 COPY --from=builder /workspace/registrar /registrar
+COPY --from=builder /workspace/homesync /homesync
 COPY --from=builder /workspace/arbiter /arbiter
 COPY --from=builder /workspace/vault-migrator /vault-migrator
 
