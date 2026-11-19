@@ -72,15 +72,16 @@ type Vouching struct {
 	TokenURL     string // VOUCHING_TOKEN_URL
 }
 
-// realmIssuer is the realm's issuer, which a statement names as its audience:
-// the token address without the path Keycloak puts after the realm.
-func (v Vouching) realmIssuer() string {
+// realmAddress is where the realm answers the service: the token address
+// without the path Keycloak puts after the realm.
+func (v Vouching) realmAddress() string {
 	return strings.TrimSuffix(v.TokenURL, "/protocol/openid-connect/token")
 }
 
-// ErrNotLinked is the realm's answer for a person who is not linked to the
-// service, or a scope the service's client is not given: nothing to retry.
-var ErrNotLinked = errors.New("the realm gives no token of this person for this scope")
+// ErrRefused is the realm's refusal of a statement: the person is not
+// linked to the service, the scope is not the service's client's, or the
+// statement is not what the realm takes. Its reason follows it.
+var ErrRefused = errors.New("the realm refused a token of this person for this scope")
 
 // Tokens obtains a person's token for one scope, and keeps it until shortly
 // before it runs out.
@@ -92,6 +93,9 @@ type Tokens struct {
 
 	mu    sync.Mutex
 	cache map[string]cached
+	// issuer is the realm's issuer, which a statement names as its
+	// audience; read once from the realm's discovery document.
+	issuer string
 }
 
 type cached struct {
@@ -123,7 +127,11 @@ func (t *Tokens) For(ctx context.Context, person, scope string) (string, error) 
 	}
 	t.mu.Unlock()
 
-	statement, err := t.statement(person)
+	issuer, err := t.realmIssuer(ctx)
+	if err != nil {
+		return "", err
+	}
+	statement, err := t.statement(person, issuer)
 	if err != nil {
 		return "", err
 	}
@@ -152,12 +160,13 @@ func (t *Tokens) For(ctx context.Context, person, scope string) (string, error) 
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int64  `json:"expires_in"`
 		Error       string `json:"error"`
+		Description string `json:"error_description"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&answer)
 	switch {
 	case resp.StatusCode == http.StatusOK && answer.AccessToken != "":
 	case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized:
-		return "", fmt.Errorf("%w (%s)", ErrNotLinked, answer.Error)
+		return "", fmt.Errorf("%w: %s %s", ErrRefused, answer.Error, answer.Description)
 	default:
 		return "", fmt.Errorf("the realm answered %d", resp.StatusCode)
 	}
@@ -170,8 +179,47 @@ func (t *Tokens) For(ctx context.Context, person, scope string) (string, error) 
 	return answer.AccessToken, nil
 }
 
-// statement is a signed statement naming the person.
-func (t *Tokens) statement(person string) (string, error) {
+// realmIssuer is the realm's issuer as its discovery document names it. The
+// realm answers the service at an address inside the cluster, but names
+// itself by the address a browser reaches it at (its frontendUrl), and a
+// statement must name that.
+func (t *Tokens) realmIssuer(ctx context.Context) (string, error) {
+	t.mu.Lock()
+	issuer := t.issuer
+	t.mu.Unlock()
+	if issuer != "" {
+		return issuer, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Vouching.realmAddress()+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return "", err
+	}
+	client := t.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("the realm's discovery document could not be read: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var doc struct {
+		Issuer string `json:"issuer"`
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the realm's discovery document answered %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil || doc.Issuer == "" {
+		return "", fmt.Errorf("the realm's discovery document names no issuer")
+	}
+	t.mu.Lock()
+	t.issuer = doc.Issuer
+	t.mu.Unlock()
+	return doc.Issuer, nil
+}
+
+// statement is a signed statement naming the person, for the realm.
+func (t *Tokens) statement(person, audience string) (string, error) {
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: jose.JSONWebKey{Key: t.Keys.private, KeyID: t.Keys.id}},
 		(&jose.SignerOptions{}).WithType("JWT"))
 	if err != nil {
@@ -185,7 +233,7 @@ func (t *Tokens) statement(person string) (string, error) {
 	claims := jwt.Claims{
 		Issuer:   t.Vouching.Issuer,
 		Subject:  person,
-		Audience: jwt.Audience{t.Vouching.realmIssuer()},
+		Audience: jwt.Audience{audience},
 		ID:       hex.EncodeToString(id),
 		IssuedAt: jwt.NewNumericDate(now),
 		Expiry:   jwt.NewNumericDate(now.Add(statementLife)),
