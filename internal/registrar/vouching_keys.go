@@ -16,7 +16,7 @@ import "github.com/gentian-org/gentian-os/internal/componentkeys"
 // lists it for the registrar (the ConfigMap registrar-vouching-keys,
 // internal/controller/vouching_keys.go). Its Component is the profile it
 // runs, which is what its entry in the realm is named after.
-type VouchingKey = componentkeys.Key
+type VouchingKey = componentkeys.Vouching
 
 // VouchingKeys is the list the registrar currently holds, followed as
 // VouchingKeysList. The zero value, and nil, hold none.

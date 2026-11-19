@@ -506,6 +506,14 @@ component's to decide:
 - **Linking needs the person's own token.** `POST /v1/tenants/<t>/vouching/<profile>/link` at the
   registrar, with the person's token as the bearer, links that person and nobody else. A component
   that shows a person a page asking for their consent holds that token while they are on it.
+- **A consent page of another component.** A vouching profile whose consent is asked at another
+  component's address names that component (`spec.requires.services.vouching.consent: <profile>`).
+  The link route for the vouching component then also takes the token the front door hands that
+  page (`exchangeToken`): made out to the named profile, issued to the front door's exchange
+  client, of the tenant's realm. It links the person the token names and opens no other route, so
+  the page is never handed a token that is good for more than giving consent. The name counts while
+  that component is installed in the same tenant at `trustTier: platform` with an `exchangeToken`
+  entry; it reaches the registrar by naming `valueMapping.platform.registrarUrlKey`.
 - **Unlinking only takes away.** `DELETE /v1/tenants/<t>/vouching/<profile>/people/<id>` is the
   person's, an administrator's of the tenant's people, and the component's own, presenting its key
   (`RIGHTS_CHECK_KEY`, which a vouching component is given as well) as the bearer. A component

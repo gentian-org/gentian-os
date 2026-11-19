@@ -94,10 +94,19 @@ type Identity interface {
 	EndSession(ctx context.Context, r identity.Realm, id, sessionID string) error
 }
 
+// ConsentVerifier verifies a person's token that is made out to a component
+// and not to this API: the one a consent page holds (vouching.go).
+type ConsentVerifier interface {
+	VerifyFor(ctx context.Context, raw, audience string) (*authn.Identity, error)
+}
+
 // Config assembles a Server.
 type Config struct {
 	Authn Authenticator
-	Authz authz.Checker
+	// Consent verifies the token of a consent page, on the one route that
+	// takes one. Nil accepts none.
+	Consent ConsentVerifier
+	Authz   authz.Checker
 	// Tenants answers which realm a tenant's people live in. The director
 	// read that from git; the registrar has no git and reads the cluster.
 	Tenants Tenants
@@ -292,7 +301,16 @@ func (s *Server) authorizeAs(
 	w http.ResponseWriter, r *http.Request, pattern string, relationFor func(*authn.Identity) string, obj object,
 ) (c call, ok bool) {
 	relations := func(ident *authn.Identity) []string { return []string{relationFor(ident)} }
-	g, ok := s.gate().Authorize(w, r, pattern, relations, obj)
+	return s.authorizeWith(s.gate(), w, r, pattern, relations, obj)
+}
+
+// authorizeWith is authorizeAs at a guard the caller made: the one route
+// that reads its caller's token itself hands it over (vouching.go).
+func (s *Server) authorizeWith(
+	gate *guard.Guard, w http.ResponseWriter, r *http.Request, pattern string,
+	relations func(*authn.Identity) []string, obj object,
+) (c call, ok bool) {
+	g, ok := gate.Authorize(w, r, pattern, relations, obj)
 	if !ok {
 		return call{}, false
 	}
@@ -400,7 +418,7 @@ func (s *Server) routes() {
 	// enter the tenant and links the caller and nobody else. The link is read
 	// and taken away by that person, by whoever manages the tenant's people,
 	// and by the component itself.
-	s.guarded("POST /v1/tenants/{t}/vouching/{profile}/link", "can_enter", tenantObject, s.linkVouching)
+	s.linking("POST /v1/tenants/{t}/vouching/{profile}/link", s.linkVouching)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people", s.vouchingPeople)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
 	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)

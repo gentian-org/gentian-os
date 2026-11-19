@@ -133,6 +133,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	}
 	srv, err := New(Config{
 		Authn:             verifier,
+		Consent:           verifier,
 		Authz:             graph,
 		Tenants:           tenants,
 		Identity:          idClient,
