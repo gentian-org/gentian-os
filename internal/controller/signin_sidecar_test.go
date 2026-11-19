@@ -1051,7 +1051,7 @@ func TestTheSidecarsRoutesAreAdmittedByTheGatewayAPI(t *testing.T) {
 	}
 
 	host := exposureHost(zone, comp, sidecar.exposure)
-	framers := componentFramers(zone, comp, profile, host)
+	framers := componentFramers(zone, comp, profile, host, nil)
 	app := buildExposureRoute(comp, defaultTenantName(comp), "notes-web", host, zone, sidecar.exposure,
 		exposureAuthz(tenant, comp, profile, "c1", false), r.KernelDomain, framers)
 	app.Spec.Rules = append(signInRouteRules(comp.Namespace, sidecar, frameAncestorsFilters(framers)...), app.Spec.Rules...)

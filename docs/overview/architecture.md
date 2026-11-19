@@ -445,8 +445,8 @@ certificates for multi-level hostnames. See
 The desktop opens apps in frames, so the operator sets the frame policy on
 every route it creates, at the edge and not in the app: it removes upstream
 `X-Frame-Options` and sets `Content-Security-Policy: frame-ancestors 'self'`
-plus, by name, the desktop of the component's own tenant and the component's
-own other hosts. No wildcard is used, and the platform's desktop frames no
+plus, by name, the desktop of the component's own tenant, the desktops of
+the tenants whose people sign in to it, and the component's own other hosts. No wildcard is used, and the platform's desktop frames no
 tenant's app. Keycloak's endpoints on `id.<kernelDomain>` may be framed by
 the desktops and by the hosts of components on more than one host. A frame only
 works where desktop and app are on the same site, because the session cookie
