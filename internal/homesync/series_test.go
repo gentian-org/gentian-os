@@ -189,7 +189,7 @@ func seriesWorld(t *testing.T) (*fakeHome, *seriesOdoo, *Engine) {
 		People:  func(context.Context) ([]string, error) { return []string{"sub-1"}, nil },
 		Tokens:  fakeTokens{},
 		Store:   &Memory{},
-		Drivers: Drivers(nil),
+		Drivers: Drivers(nil, nil),
 		Log:     slog.New(slog.NewTextHandler(testLog{t}, nil)),
 	}
 }

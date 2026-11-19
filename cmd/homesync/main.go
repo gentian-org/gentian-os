@@ -121,7 +121,7 @@ func run(log *slog.Logger) error {
 		People:  (&homesync.Linked{Registrar: registrar, Key: key, Tenant: tenant, Profile: profile, Client: client}).People,
 		Tokens:  &homesync.Tokens{Keys: keys, Vouching: vouching, Client: client},
 		Store:   store,
-		Drivers: homesync.Drivers(client),
+		Drivers: homesync.Drivers(client, log),
 		Client:  client,
 		Log:     log,
 	}

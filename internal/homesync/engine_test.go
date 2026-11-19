@@ -225,7 +225,7 @@ func newWorld(t *testing.T) *world {
 		People:  func(context.Context) ([]string, error) { return []string{"sub-1"}, nil },
 		Tokens:  fakeTokens{},
 		Store:   w.store,
-		Drivers: Drivers(nil),
+		Drivers: Drivers(nil, nil),
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	return w
