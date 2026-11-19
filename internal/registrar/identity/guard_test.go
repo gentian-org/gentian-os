@@ -218,7 +218,7 @@ func TestWithoutTheGroupsNameNothingIsWritten(t *testing.T) {
 // the rule has to know about it.
 func TestAWriteWithNoRuleIsRefused(t *testing.T) {
 	f, c, r := guardedRealm(t)
-	for _, path := range []string{"/clients", "/roles/admin", "/users//groups/g-admin", "/identity-provider/instances"} {
+	for _, path := range []string{"/clients", "/roles/admin", "/users//groups/g-admin", "/identity-provider/instances", "/sessions", "/sessions/s1/x"} {
 		resp, err := c.do(context.Background(), r, http.MethodPost, path, nil, map[string]any{})
 		if resp != nil {
 			_ = resp.Body.Close()
@@ -252,6 +252,7 @@ func TestClassifyReadsEveryWriteThisPackageMakes(t *testing.T) {
 		"/admin/realms/kernel/groups/g1":                      {group: "g1"},
 		"/admin/realms/kernel/groups/g1/children":             {group: "g1"},
 		"/realms/kernel/gentian-activation/users/u1/link":     {user: "u1"},
+		"/admin/realms/kernel/sessions/s1":                    {session: "s1"},
 	} {
 		got, ok := classify("kernel", rel)
 		if !ok || got != want {

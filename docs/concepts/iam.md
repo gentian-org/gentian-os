@@ -423,6 +423,30 @@ Keycloak answered — the HTTP status and its message, on one line, with
 anything that looks like an address or a link removed — and logs it as a
 warning.
 
+### 1.4a A person's own account
+
+The desktop's account panel holds no right of its own. It relays the person's
+token to the registrar, which acts on the token's subject and nobody else,
+with a token of the tenant's realm only (`internal/registrar/account.go`):
+
+| What | Route |
+|---|---|
+| Read names, address, username, second-factor state | `GET /v1/tenants/{t}/account` |
+| Change first and last name | `POST /v1/tenants/{t}/actions/update-own-profile` |
+| List sessions, the caller's own marked | `GET /v1/tenants/{t}/account/sessions` |
+| End one session, or every one but the caller's | `POST …/actions/end-own-session`, `…/actions/end-own-other-sessions` |
+| Device passwords | [bridges.md §4.2](bridges.md) |
+
+- **The address is not changed here.** It is where a password link and a
+  second-factor link are sent, so whoever could change it could take the
+  account over; the tenant's administrators change it (*Members*).
+- **The password is not changed here.** The realm's own pages do that: at
+  sign-in, and through the link *Forgot password* or an administrator sends.
+- A holder of a platform role is not renamed through the registrar (§1.1c);
+  ending their own sessions is allowed.
+- Keycloak's own account API is not used: it takes only a token made out to
+  its `account` client, and no token of the edge is.
+
 ### 1.5 User attributes
 
 | Attribute | Purpose |

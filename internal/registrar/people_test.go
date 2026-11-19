@@ -29,6 +29,10 @@ type fakeIdentity struct {
 	mu sync.Mutex
 	// devicePasswords per realm and person (devicepasswords_test.go).
 	devicePasswords map[string][]identity.DevicePassword
+	// sessions per realm and person, and updates is the last update per
+	// realm and person (account_test.go).
+	sessions map[string][]identity.Session
+	updates  map[string]identity.PersonUpdate
 	// held is the set of realms this registrar has a credential for.
 	held map[string]bool
 	// seen is every realm an operation was performed against, in order.
@@ -401,8 +405,14 @@ func TestAMemberCannotSendSomebodyElseAReset(t *testing.T) {
 	}
 }
 
-func (f *fakeIdentity) UpdatePerson(ctx context.Context, r identity.Realm, id string, _ identity.PersonUpdate) (identity.Person, error) {
+func (f *fakeIdentity) UpdatePerson(ctx context.Context, r identity.Realm, id string, u identity.PersonUpdate) (identity.Person, error) {
 	f.note(ctx, r)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.updates == nil {
+		f.updates = map[string]identity.PersonUpdate{}
+	}
+	f.updates[r.Name()+"/"+id] = u
 	return identity.Person{ID: id}, nil
 }
 

@@ -90,6 +90,8 @@ type Identity interface {
 	DevicePasswords(ctx context.Context, r identity.Realm, id string) ([]identity.DevicePassword, error)
 	CreateDevicePassword(ctx context.Context, r identity.Realm, id, name string, ways []string) (identity.NewDevicePassword, error)
 	RevokeDevicePassword(ctx context.Context, r identity.Realm, id, passwordID string) error
+	Sessions(ctx context.Context, r identity.Realm, id string) ([]identity.Session, error)
+	EndSession(ctx context.Context, r identity.Realm, id, sessionID string) error
 }
 
 // Config assembles a Server.
@@ -241,6 +243,10 @@ type call struct {
 	// token says, in Unix seconds; zero when it does not say. Read by an act
 	// that asks for a sign-in moments before.
 	signedIn int64
+	// session is the realm's session the caller's token belongs to (sid);
+	// empty when the token does not say. Read by the routes about the
+	// caller's own sessions (account.go).
+	session string
 }
 
 // object names what a route's relation is checked against.
@@ -294,7 +300,7 @@ func (s *Server) authorizeAs(
 	if name == "" {
 		name = g.Ident.Name
 	}
-	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision(), signedIn: g.Ident.AuthTime}, true
+	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision(), signedIn: g.Ident.AuthTime, session: g.Ident.SessionID}, true
 }
 
 // gate is the guard of this registrar's routes.
@@ -404,6 +410,14 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/device-passwords", "can_enter", tenantObject, s.listDevicePasswords)
 	s.action("POST /v1/tenants/{t}/actions/create-device-password", "can_enter", tenantObject, s.createDevicePassword)
 	s.action("POST /v1/tenants/{t}/actions/revoke-device-password", "can_enter", tenantObject, s.revokeDevicePassword)
+
+	// A person's own account: names, sessions, second factor (account.go).
+	// Open to whoever may enter the tenant, about the caller and nobody else.
+	s.guarded("GET /v1/tenants/{t}/account", "can_enter", tenantObject, s.getOwnAccount)
+	s.guarded("GET /v1/tenants/{t}/account/sessions", "can_enter", tenantObject, s.listOwnSessions)
+	s.action("POST /v1/tenants/{t}/actions/update-own-profile", "can_enter", tenantObject, s.updateOwnProfile)
+	s.action("POST /v1/tenants/{t}/actions/end-own-session", "can_enter", tenantObject, s.endOwnSession)
+	s.action("POST /v1/tenants/{t}/actions/end-own-other-sessions", "can_enter", tenantObject, s.endOwnOtherSessions)
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {
