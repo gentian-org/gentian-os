@@ -595,6 +595,9 @@ func (r *TileProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&gentianov1alpha1.Component{}, builder.WithPredicates()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, one).
 		Watches(&gentianov1alpha1.Tenant{}, one).
+		// A binding granted or taken back changes the homes a component
+		// may call as the person (grantedHomes).
+		Watches(&gentianov1alpha1.IntegrationBinding{}, one).
 		Watches(&gatewayv1.HTTPRoute{}, one)
 	if r.WatchClusterClaim {
 		b = b.Watches(clusterClaimObject(), one, builder.WithPredicates(storeAddressChanged()))

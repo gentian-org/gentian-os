@@ -367,6 +367,16 @@ type TenantSpec struct {
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
 
+	// Homes names, per contract, the installed app that is the tenant's home
+	// for that kind of data (file-store, calendar-store, contacts-store):
+	// the provider every consumer of the contract is bound to. A contract
+	// not named here is bound to an installed provider of it, the first by
+	// name; one named here whose app is not installed binds nobody.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=3
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['file-store', 'calendar-store', 'contacts-store'])",message="homes names file-store, calendar-store or contacts-store"
+	Homes map[string]string `json:"homes,omitempty"`
+
 	// TokenEntries is how this tenant's token entries come to be served: a
 	// component's address that takes a token of the tenant's realm in place
 	// of a session. Unset, each waits for the perimeter approver's approval.

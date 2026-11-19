@@ -648,3 +648,33 @@ func TestActionProfileRules(t *testing.T) {
 		expect(t, c.name, v.check(t, c.obj, ""), c.want)
 	}
 }
+
+// A component that calls a home as the person (integrations[].asPerson)
+// signs the statements a person's token is asked with, and may do so below
+// the platform's trust: a certified component's client is given only the
+// scopes of the homes granted to it.
+func TestHomesAsPersonRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	keys := "  requires:\n    services:\n      vouching: {keys: {service: odoo-keys, port: 8069}}\n"
+	consumer := func(tier, integrations string) string {
+		return "  classes: [app]\n  launch: none\n  trustTier: " + tier + "\n" + integrations
+	}
+	asPerson := "  integrations:\n  - {contract: calendar-store, asPerson: true}\n"
+	for _, c := range []struct{ name, spec, want string }{
+		{"a certified app that calls its calendar home as the person", consumer("certified", asPerson) + keys, ""},
+		{"a platform component that does", consumer("platform", asPerson) + keys, ""},
+		{"a certified app that vouches with no home", consumer("certified", "") + keys, "requires.services.vouching requires trustTier platform"},
+		{"a community app that calls a home as the person", consumer("community", asPerson) + keys, "requires.services.vouching requires trustTier platform"},
+		{"a home called as the person with no keys", consumer("certified", asPerson), "asPerson needs requires.services.vouching.keys"},
+		{"a certified app that also exchanges", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {exchange: true, keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
+		{"a certified app that asks for the director", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {director: [plans-read], keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
+		{"asPerson on a contract that is no home's", consumer("certified", "  integrations:\n  - {contract: project-management, asPerson: true}\n") + keys, "asPerson is for a home's contract"},
+	} {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+
+	tv := loadCRD(t, "gentianos.io_tenants.yaml")
+	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  homes: %s\n"
+	expect(t, "a tenant that names its homes", tv.check(t, strings.Replace(tenant, "%s", "{calendar-store: nextcloud-base-ce, contacts-store: nextcloud-base-ce}", 1), ""), "")
+	expect(t, "a home for a contract that is no home's", tv.check(t, strings.Replace(tenant, "%s", "{project-management: openproject}", 1), ""), "homes names file-store, calendar-store or contacts-store")
+}

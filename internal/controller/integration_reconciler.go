@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -128,13 +129,21 @@ func (r *TenantReconciler) deleteIntegrationBindings(ctx context.Context, tenant
 // findProviderInTenant scans the tenant's app list for an app whose ComponentProfile
 // declares the given contract in its Provides list. Returns the provider app name
 // or an empty string if none is found. The consumer app is excluded from the search.
+// The apps are asked in the order of their names, so that two providers of one
+// contract give the same answer on every pass; the tenant names the one it means
+// in spec.homes.
 func (r *TenantReconciler) findProviderInTenant(
 	ctx context.Context,
 	contract string,
 	presentApps map[string]struct{},
 	consumerApp string,
 ) string {
+	names := make([]string, 0, len(presentApps))
 	for appName := range presentApps {
+		names = append(names, appName)
+	}
+	sort.Strings(names)
+	for _, appName := range names {
 		if appName == consumerApp {
 			continue
 		}

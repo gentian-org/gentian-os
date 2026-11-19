@@ -75,6 +75,16 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 		extraConfig["gentianos.io/request-parameter-pattern"] = rp.Pattern
 		extraConfig["gentianos.io/request-parameter-redirect-uri"] = rp.RedirectURI
 	}
+	// An app that calls a home as the person names its profile on its own
+	// client: the platform's sign-in extension links a person who signs in
+	// here to the app's vouching entry (vouch-<profile>) where that entry
+	// says so, and the profile is how it finds the entry.
+	for _, integration := range id.profile.Integrations {
+		if integration.AsPerson {
+			extraConfig["gentianos.io/profile"] = id.in.ProfileName
+			break
+		}
+	}
 	name := oidc.Name
 	if name == "" {
 		name = oidc.ClientID

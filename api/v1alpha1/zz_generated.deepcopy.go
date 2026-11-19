@@ -5919,6 +5919,13 @@ func (in *TenantSpec) DeepCopyInto(out *TenantSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.Homes != nil {
+		in, out := &in.Homes, &out.Homes
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.TokenEntries != nil {
 		in, out := &in.TokenEntries, &out.TokenEntries
 		*out = new(TenantTokenEntries)

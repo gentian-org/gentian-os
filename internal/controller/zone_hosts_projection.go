@@ -22,6 +22,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -107,9 +108,24 @@ const (
 	// one writer. The key is absent while no bridge is served, and the
 	// realm then holds none of this.
 	zoneBridgeScopesKey = "bridgeScopes"
+	// zoneHomeScopesKey is, in the same form, what the realm is told of the
+	// tenant's homes that are called as the person: per home, the scope
+	// HomeTokenScope names, carrying the token the home's own sign-in
+	// issues. Only the clients of the components the home is granted to are
+	// given it (the "home=" words of their vouching lines). Absent while no
+	// home is called so.
+	zoneHomeScopesKey = "homeScopes"
 	// vouchingExchangeWord is, in the fifth field of a vouching line, the
 	// word that switches token exchange on at the component's client.
 	vouchingExchangeWord = "exchange"
+	// vouchingNarrowWord is, in the fifth field, the mark of a component
+	// below the platform's trust: its client is given no app scope, only the
+	// scopes of the homes its "home=" words name.
+	vouchingNarrowWord = "narrow"
+	// vouchingHomePrefix starts a word of the fifth field that names a home
+	// granted to the component, which it calls as the person: "home=" and
+	// the home's profile. Its client is given HomeTokenScope of it.
+	vouchingHomePrefix = "home="
 	// vouchingNoKeys stands where a service and a path would, in the line of
 	// a profile that names no keys. Neither a DNS label nor a path can be a
 	// lone hyphen, so it is never mistaken for one.
@@ -160,7 +176,12 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	exchange := map[string]map[string]bool{}
 	vouching := map[string]map[string]string{}
 	partners := map[string]map[string]string{}
+	// The components that call a home as the person (integrations[].asPerson)
+	// by profile, per tenant: their vouching line names the homes granted to
+	// them, which are only known once every binding of the tenant is read.
+	asPerson := map[string]map[string]*gentianov1alpha1.ComponentProfile{}
 	for i := range tenants.Items {
+		asPerson[tenants.Items[i].Name] = map[string]*gentianov1alpha1.ComponentProfile{}
 		hosts[tenants.Items[i].Name] = map[string]bool{}
 		bridged[tenants.Items[i].Name] = map[string]bool{}
 		exchange[tenants.Items[i].Name] = map[string]bool{}
@@ -210,7 +231,10 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// By the profile's name, as above and for the same reason: the
 			// realm knows the component as VouchingAlias(profile), and two
 			// components of one profile are one issuer with one set of keys.
-			vouching[tenant][profile.Name] = vouchingLine(profile, tenant)
+			vouching[tenant][profile.Name] = vouchingLine(profile, tenant, nil)
+			if callsHomesAsPerson(profile) {
+				asPerson[tenant][profile.Name] = profile
+			}
 		}
 		if wantsPartners(profile) {
 			// By the profile's name, as above: the realm knows the
@@ -236,6 +260,21 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		}
 	}
 
+	homeApps := map[string]map[string]bool{}
+	for ns, tenant := range byNamespace {
+		homes, err := r.grantedHomes(ctx, ns, asPerson[tenant])
+		if err != nil {
+			return err
+		}
+		homeApps[tenant] = map[string]bool{}
+		for consumer, providers := range homes {
+			vouching[tenant][consumer] = vouchingLine(asPerson[tenant][consumer], tenant, providers)
+			for _, p := range providers {
+				homeApps[tenant][p] = true
+			}
+		}
+	}
+
 	for tenant, set := range hosts {
 		vouchingLines := make([]string, 0, len(vouching[tenant]))
 		for _, line := range vouching[tenant] {
@@ -248,7 +287,13 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines, sortedValues(partners[tenant]), bridgeScopes); err != nil {
+		// A home's token is the one its own sign-in issues, as a bridged
+		// app's is: the same audience and claims, under a scope of its own.
+		homeScopes, err := r.bridgeScopes(ctx, sortedKeys(homeApps[tenant]))
+		if err != nil {
+			return err
+		}
+		if err := r.writeZoneHosts(ctx, tenant, sortedKeys(set), sortedKeys(exchange[tenant]), vouchingLines, sortedValues(partners[tenant]), bridgeScopes, homeScopes); err != nil {
 			return err
 		}
 	}
@@ -294,7 +339,7 @@ func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
 // vouchingLine is a vouching profile's entry in the projection: its name and
 // where its keys are published, in the form zoneVouchingProfilesKey
 // describes. Only called for a profile wantsVouching says yes to.
-func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string) string {
+func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string, homes []string) string {
 	vouching := profile.Services().Vouching
 	// A profile that names no keys exchanges and does not vouch: the three
 	// fields say so, and the Composition makes no issuer of it.
@@ -318,6 +363,15 @@ func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string) str
 		}
 		sort.Strings(scopes)
 		extra = append(extra, scopes...)
+	}
+	// A certified component vouches only towards its homes: its client is
+	// given their scopes and no app scope. Admission lets no other tier
+	// below the platform's vouch at all.
+	if profile.Spec.TrustTier == gentianov1alpha1.TrustTierCertified {
+		extra = append(extra, vouchingNarrowWord)
+	}
+	for _, home := range homes {
+		extra = append(extra, vouchingHomePrefix+home)
 	}
 	if len(extra) > 0 {
 		fields = append(fields, strings.Join(extra, ","))
@@ -348,7 +402,7 @@ func sortedKeys(set map[string]bool) []string {
 // writeZoneHosts creates the ConfigMap the first time and patches it only
 // when the content differs, so a projection that did not change does not wake
 // every Composition that reads it.
-func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles, partnerProfiles []string, bridgeScopes string) error {
+func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant string, hosts, exchangeProfiles, vouchingProfiles, partnerProfiles []string, bridgeScopes, homeScopes string) error {
 	key := types.NamespacedName{
 		Name:      zoneHostsConfigMapName(tenant),
 		Namespace: layout.Namespace(layout.Control),
@@ -373,6 +427,9 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 	if bridgeScopes != "" {
 		desired.Data[zoneBridgeScopesKey] = bridgeScopes
 	}
+	if homeScopes != "" {
+		desired.Data[zoneHomeScopesKey] = homeScopes
+	}
 
 	return ensureObject(ctx, r.Client, desired, func(existing *corev1.ConfigMap) bool {
 		if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
@@ -381,4 +438,61 @@ func (r *TileProjectionReconciler) writeZoneHosts(ctx context.Context, tenant st
 		existing.Data, existing.Labels = desired.Data, desired.Labels
 		return true
 	})
+}
+
+// HomeTokenScope is the scope a component that calls a home as the person
+// asks the tenant's realm for: a token of that person, made out as the
+// home's own sign-in makes them, valid there and nowhere else.
+func HomeTokenScope(homeProfile string) string { return "home-" + homeProfile }
+
+// callsHomesAsPerson reports whether a profile calls any home as the person
+// (integrations[].asPerson).
+func callsHomesAsPerson(profile *gentianov1alpha1.ComponentProfile) bool {
+	for _, i := range profile.Spec.Integrations {
+		if i.AsPerson {
+			return true
+		}
+	}
+	return false
+}
+
+// grantedHomes are, for each component of a tenant's namespace that calls a
+// home as the person, the homes it may: the providers of its contracts
+// marked asPerson whose binding the tenant's administrator granted in full.
+// Sorted, without repeats.
+func (r *TileProjectionReconciler) grantedHomes(
+	ctx context.Context, namespace string, consumers map[string]*gentianov1alpha1.ComponentProfile,
+) (map[string][]string, error) {
+	if len(consumers) == 0 {
+		return nil, nil
+	}
+	bindings := &gentianov1alpha1.IntegrationBindingList{}
+	if err := r.List(ctx, bindings, client.InNamespace(namespace)); err != nil {
+		if apimeta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	found := map[string]map[string]bool{}
+	for i := range bindings.Items {
+		ib := &bindings.Items[i]
+		profile := consumers[ib.Spec.Consumer.App]
+		if profile == nil || ib.DeletionTimestamp != nil ||
+			!apimeta.IsStatusConditionTrue(ib.Status.Conditions, conditionBindingGranted) {
+			continue
+		}
+		for _, in := range profile.Spec.Integrations {
+			if in.AsPerson && in.Contract == ib.Spec.Contract {
+				if found[ib.Spec.Consumer.App] == nil {
+					found[ib.Spec.Consumer.App] = map[string]bool{}
+				}
+				found[ib.Spec.Consumer.App][ib.Spec.Provider.App] = true
+			}
+		}
+	}
+	out := make(map[string][]string, len(found))
+	for consumer, providers := range found {
+		out[consumer] = sortedKeys(providers)
+	}
+	return out, nil
 }

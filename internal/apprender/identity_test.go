@@ -299,3 +299,44 @@ func TestABridgesRenderIsTheClientOfItsEntryAlone(t *testing.T) {
 		t.Fatal("rendered with no profile")
 	}
 }
+
+// An app that calls a home as the person names its profile on its own
+// sign-in client, which is how the realm's sign-in extension finds the app's
+// vouching entry; any other app's client says nothing of it.
+func TestAnAppThatCallsAHomeAsThePersonNamesItsProfileOnItsClient(t *testing.T) {
+	profileOf := func(in *Input) map[string]string {
+		t.Helper()
+		got, err := Render(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		out := map[string]string{}
+		for _, o := range got.Objects {
+			if o.GetKind() != "Client" || o.GroupVersionKind().Group != "openidclient.keycloak.crossplane.io" {
+				continue
+			}
+			v, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "extraConfig", "gentianos.io/profile")
+			out[o.GetName()] = v
+		}
+		return out
+	}
+	for name, v := range profileOf(fixtureInput(t, "testdata/render/app-build")) {
+		if v != "" {
+			t.Errorf("%s names its profile %q and calls no home", name, v)
+		}
+	}
+	in := fixtureInput(t, "testdata/render/app-build")
+	in.Profile.Integrations = append(in.Profile.Integrations, gentianov1alpha1.IntegrationRef{Contract: "calendar-store", AsPerson: true})
+	named := 0
+	for name, v := range profileOf(in) {
+		if v != "" && v != in.ProfileName {
+			t.Errorf("%s names %q, want %q", name, v, in.ProfileName)
+		}
+		if v == in.ProfileName {
+			named++
+		}
+	}
+	if named == 0 {
+		t.Fatal("no client of the app names its profile")
+	}
+}

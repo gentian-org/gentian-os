@@ -2630,6 +2630,17 @@ spec:
                       description: IntegrationRef identifies an optional integration
                         contract this app can consume.
                       properties:
+                        asPerson:
+                          description: |-
+                            AsPerson says the app calls the contract's provider -- the tenant's
+                            home for that kind of data -- as the person it acts for, with that
+                            person's rights there. The app signs statements as a vouching
+                            component does (requires.services.vouching.keys), and the tenant's
+                            realm answers them with a token valid at that provider and nowhere
+                            else, for as long as the tenant's administrator grants the contract. A
+                            person is linked when they sign in to the app. For file-store,
+                            calendar-store and contacts-store only.
+                          type: boolean
                         capabilities:
                           description: Capabilities lists the specific capabilities
                             required from the contract.
@@ -2647,6 +2658,11 @@ spec:
                       required:
                       - contract
                       type: object
+                      x-kubernetes-validations:
+                      - message: 'asPerson is for a home''s contract: file-store,
+                          calendar-store or contacts-store'
+                        rule: '!has(self.asPerson) || !self.asPerson || self.contract
+                          in [''file-store'', ''calendar-store'', ''contacts-store'']'
                     type: array
                   launch:
                     description: |-
@@ -5000,11 +5016,23 @@ spec:
                   rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.expose)
                     || !self.expose.exists(e, e.surface == ''gateway'' && e.authMode
                     == ''bearer'')'
-                - message: 'requires.services.vouching requires trustTier platform:
-                    the component can obtain a person''s token for any app of the
-                    tenant'
+                - message: requires.services.vouching requires trustTier platform,
+                    or trustTier certified for a component that calls a home as the
+                    person (integrations[].asPerson) with keys of its own and no exchange
+                    or director
                   rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
-                    || self.trustTier == ''platform'''
+                    || self.trustTier == ''platform'' || (self.trustTier == ''certified''
+                    && has(self.integrations) && self.integrations.exists(i, has(i.asPerson)
+                    && i.asPerson) && has(self.requires.services.vouching.keys) &&
+                    !(has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange)
+                    && !(has(self.requires.services.vouching.director) && self.requires.services.vouching.director.size()
+                    > 0))'
+                - message: 'integrations[].asPerson needs requires.services.vouching.keys:
+                    the component signs the statements a person''s token is asked
+                    with'
+                  rule: '!has(self.integrations) || !self.integrations.exists(i, has(i.asPerson)
+                    && i.asPerson) || (has(self.requires) && has(self.requires.services)
+                    && has(self.requires.services.vouching) && has(self.requires.services.vouching.keys))'
                 - message: 'a service exposes on the gateway only: the perimeter has
                     no session'
                   rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)

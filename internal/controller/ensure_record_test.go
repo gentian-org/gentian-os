@@ -320,7 +320,7 @@ func TestEnsureTranscript(t *testing.T) {
 		{
 			name: "zone hosts",
 			run: func(ctx context.Context, c client.Client) error {
-				return (&TileProjectionReconciler{Client: c}).writeZoneHosts(ctx, "demo", []string{"a.example"}, []string{"x"}, nil, []string{"p"}, "")
+				return (&TileProjectionReconciler{Client: c}).writeZoneHosts(ctx, "demo", []string{"a.example"}, []string{"x"}, nil, []string{"p"}, "", "")
 			},
 			written: namedObject(&corev1.ConfigMap{}, layout.Namespace(layout.Control), zoneHostsConfigMapName("demo")),
 			drift: func(obj client.Object) {

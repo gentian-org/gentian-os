@@ -484,7 +484,11 @@ A cluster has one log destination: a second component that declares it is given 
 
 **A component that obtains a person's token while the person is away** declares vouching
 (`spec.requires.services.vouching`, with `keys.service`, `keys.port` and optionally `keys.path`:
-where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`. The
+where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`, or
+`trustTier: certified` for a component that only calls the tenant's homes as the person
+(`integrations[].asPerson`, [app-customization.md §2.3](app-customization.md)): such a component
+neither exchanges nor names `director`, and its client is given the scopes of the homes granted to
+it and no app scope. The
 platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
 gives it a client of the same name to ask with, and tells it what it has to know in the Secret
 `vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,
