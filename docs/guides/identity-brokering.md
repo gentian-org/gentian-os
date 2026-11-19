@@ -147,6 +147,12 @@ each person in the groups named at every sign-in. A group may be one of
 administrators or perimeter approvers. Either side taking its line away ends
 the sign-in.
 
+The source's desktop may then frame the target's apps, so a tile on it opens
+one of them in a window ([routing.md](../concepts/routing.md) §4.3). Only on
+the same site: an app on another registrable domain than the source's desktop
+gets no session in the frame and has to be opened in a tab
+([routing.md](../concepts/routing.md) §4.3, the `SameSite=Lax` cookie).
+
 Declared groups are made as plain groups: the Admin Console puts people in
 them and neither renames nor deletes them. A group of the same name made by
 hand earlier is in the way, and is removed first.

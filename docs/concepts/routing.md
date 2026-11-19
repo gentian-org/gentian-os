@@ -730,8 +730,9 @@ frame policy, set at the edge and not by the component:
 
 - remove upstream `X-Frame-Options`
 - set `Content-Security-Policy: frame-ancestors 'self'` plus, by name, the
-  desktop of the component's own tenant and the component's own other hosts
-  (a file store and the editor it embeds)
+  desktop of the component's own tenant, the desktops of the tenants whose
+  people sign in to it, and the component's own other hosts (a file store and
+  the editor it embeds)
 
 | Component of | May be framed by |
 |---|---|
@@ -739,6 +740,13 @@ frame policy, set at the edge and not by the component:
 | The user tenant, tenancy `single` | `desktop.<kernelDomain>` |
 | The platform tenant (`admin.platform.<kernelDomain>`, …) | `platform.<kernelDomain>` |
 | The kernel's consoles (`argocd.`, `headlamp.`, Keycloak's administration) | `platform.<kernelDomain>` |
+
+A tenant whose people sign in to another tenant
+([identity-brokering.md](../guides/identity-brokering.md)) opens that tenant's
+apps from its own desktop. Where both tenants declare the sign-in (the target
+names the source in `spec.signInFrom`, the source names the target in
+`spec.signInTo`), the source's desktop is a framer of every component of the
+target too. The platform tenant is never such a source.
 
 No wildcard, and the platform's desktop is not a framer of any tenant's
 component: platform administrators do not open tenants' apps.

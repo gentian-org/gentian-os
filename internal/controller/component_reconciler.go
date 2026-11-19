@@ -910,6 +910,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureZoneSecret(ctx, comp, tenant.Name, zone); err != nil {
 			return ctrl.Result{}, fmt.Errorf("zone secret: %w", err)
 		}
+		visitors, err := r.signInDesktops(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		var oidcRoutes []string
 		forward := false
 		for _, e := range routable {
@@ -921,7 +925,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				authz.keepClientToken = kept[e.Name]
 				authz.idTokenSession = !kept[e.Name]
 			}
-			routeName, err := r.ensureExposureRoute(ctx, comp, tenant.Name, profile, zone, e, authz, signIn, held)
+			routeName, err := r.ensureExposureRoute(ctx, comp, tenant.Name, profile, zone, e, authz, signIn, held, visitors)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -1598,10 +1602,13 @@ func componentTenant(tenant *gentianov1alpha1.Tenant, namespace string) string {
 // The entry a sign-in sidecar stands on carries its rules as well: the login
 // path, and the paths that lead to it. They are rules of this route and of
 // no other, so the session and the question of the route are theirs too.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool) (string, error) {
+//
+// visitors are the desktops of the tenants whose people sign in to this one
+// (signInDesktops), which may frame the component too.
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool, visitors []string) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	framers := componentFramers(zone, comp, profile, host)
+	framers := componentFramers(zone, comp, profile, host, visitors)
 	route := buildExposureRoute(comp, tenantName, routeName, host, zone, e, authz, r.KernelDomain, framers)
 	if signIn != nil && signIn.exposure.Name == e.Name {
 		route.Spec.Rules = append(signInRouteRules(comp.Namespace, signIn, frameAncestorsFilters(framers)...), route.Spec.Rules...)
@@ -1849,9 +1856,11 @@ func zoneDesktopHost(zone zoneNames) string {
 
 // componentFramers are the hosts that may put one of a component's pages in a
 // frame, besides the page's own: the desktop of the tenant the component
-// belongs to, which opens it in a window, and the component's own other
-// hosts, because a component may be several programs that embed one another
-// (a file store and the document editor it opens).
+// belongs to, which opens it in a window, the desktops of the tenants whose
+// people sign in to that tenant (visitors, from signInDesktops), whose tiles
+// open it in a window there, and the component's own other hosts, because a
+// component may be several programs that embed one another (a file store and
+// the document editor it opens).
 //
 // Named, each of them, and never as a wildcard over the zone's domain. The
 // user tenant of a single-tenancy cluster is under the cluster's own domain,
@@ -1864,7 +1873,7 @@ func zoneDesktopHost(zone zoneNames) string {
 // every page is a place from which all of them can be overlaid. The platform
 // tenant's own components are framed by the platform's desktop for the same
 // reason any tenant's are framed by its own: it is their zone's desktop.
-func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, host string) []string {
+func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, host string, visitors []string) []string {
 	seen := map[string]bool{"": true, host: true}
 	var framers []string
 	add := func(h string) {
@@ -1874,6 +1883,9 @@ func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *
 		}
 	}
 	add(zoneDesktopHost(zone.zoneNames))
+	for _, h := range visitors {
+		add(h)
+	}
 	for _, h := range componentOwnHosts(zone.zoneNames, comp, profile) {
 		add(h)
 	}
@@ -1904,8 +1916,9 @@ func componentOwnHosts(zone zoneNames, comp *gentianov1alpha1.Component, profile
 // buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.
 //
 // Every rule carries a frame policy: the component may be embedded by the
-// hosts in framers -- its tenant's desktop and its own other hosts
-// (componentFramers) -- and by nothing else. Without one a component is
+// hosts in framers -- its tenant's desktop, the desktops of the tenants
+// signing in to it, and its own other hosts (componentFramers) -- and by
+// nothing else. Without one a component is
 // embeddable by any origin, which is the clickjacking exposure the kernel
 // routes closed, and the desktop opens components in frames, so the policy
 // has to admit exactly that and no more. It is not the component's to choose:
@@ -2188,6 +2201,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// (tenant_country.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
 			builder.WithPredicates(countryChanged())).
+		// Which desktops may frame a tenant's apps turns on the sign-ins the
+		// tenant takes part in, declared on both tenants (signin_framers.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsFramedBySignIn(mgr.GetClient()),
+			builder.WithPredicates(signInFramersChanged(r.KernelDomain, r.TenancyMode, r.KernelRealm))).
 		// The edge's public address, which a component granted the internet
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
