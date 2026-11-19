@@ -195,7 +195,7 @@ type BridgeWay struct {
 	// for a way whose caller is the tenant's agents: its Service, the port
 	// and the path. With it the platform tells the tenant's components that
 	// call tools for a person that this bridge is there (the ConfigMap
-	// bridges-<component>). Absent, the bridge is installed and its callers
+	// agent-bridges-<component>). Absent, the bridge is installed and its callers
 	// are not told of it; an agent bridge packaged as an api is reached at
 	// its baseUrl instead.
 	// +optional

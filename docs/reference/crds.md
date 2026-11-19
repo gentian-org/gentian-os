@@ -305,7 +305,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
 | `spec.action` | object |  | `Action` is what an action takes, returns and runs. |
-| `spec.action.bridges` | []string |  | `Bridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `spec.action.agentBridges` | []string |  | `AgentBridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
 | `spec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
 | `spec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
 | `spec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
@@ -1160,7 +1160,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
 | `status.profileSpec.action` | object |  | `Action` is what an action takes, returns and runs. |
-| `status.profileSpec.action.bridges` | []string |  | `Bridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `status.profileSpec.action.agentBridges` | []string |  | `AgentBridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
 | `status.profileSpec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
 | `status.profileSpec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
 | `status.profileSpec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |

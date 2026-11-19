@@ -74,7 +74,7 @@ REMOVED = {
     ("spec", "requires", "services", "storage", "s3", "bucketPerTenant"): "nothing: every tenant's app has a bucket of its own",
     ("spec", "launchFrom"): "nothing: launch from is the whole statement",
     ("spec", "adapter"): "classes: [bridge] with spec.bridge: app (was adapts), a way from agents with its endpoint, addonsValuesPath",
-    ("spec", "action", "adapters"): "spec.action.bridges",
+    ("spec", "action", "adapters"): "spec.action.agentBridges",
 }
 
 
