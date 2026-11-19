@@ -47,8 +47,13 @@ keycloakx:
   # compiled against this version (keycloak.version in
   # kernel/extensions/keycloak-event-listener/pom.xml) and the two move
   # together: the SPIs it implements are internal.
+  #
+  # The build is named too (-3), not the bare version: upstream re-pushes
+  # "26.8.2" when it rebuilds the image on a newer JDK, and with the pull
+  # policy IfNotPresent a node that already holds the tag never fetches the
+  # rebuild. 26.8.2-3 is the first build on a JDK without CVE-2026-114938.
   image:
-    tag: "26.8.2"
+    tag: "26.8.2-3"
   command:
     - "/opt/keycloak/bin/kc.sh"
   args:
@@ -190,6 +195,11 @@ keycloakx:
   # behavior), and a duplicate `name:` in the same env list is refused by
   # the API server on the next apply.
   extraEnv: |
+    # Turns off the JVM's accelerated Base64 decoder, the code CVE-2026-114938
+    # is in, whatever JDK the image carries. Keycloak decodes Base64 on
+    # requests that arrive before authentication.
+    - name: JAVA_OPTS_APPEND
+      value: "-XX:-UseBASE64Intrinsics"
     - name: KERNEL_DOMAIN
       valueFrom:
         configMapKeyRef:
