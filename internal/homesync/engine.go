@@ -205,13 +205,19 @@ func (e *Engine) fromHome(ctx context.Context, drv Driver, app *App, m *Mapping,
 	if id == "" {
 		id, stamp, err = drv.Create(ctx, app, m, token, who, only(v, m))
 	} else {
-		stamp, err = drv.Update(ctx, app, m, token, id, only(v, m))
+		id, stamp, err = drv.Update(ctx, app, m, token, who, id, only(v, m))
 		if errors.Is(err, errGone) {
 			id, stamp, err = drv.Create(ctx, app, m, token, who, only(v, m))
 		}
 	}
 	if err != nil {
 		return err
+	}
+	if p.AppID != "" && p.AppID != id {
+		// The app made the record again under a new id: the pair moves.
+		if err := e.Store.Remove(ctx, p); err != nil {
+			return err
+		}
 	}
 	p.AppID, p.Stamp, p.ETag = id, stamp, etag
 	return e.Store.Save(ctx, p)

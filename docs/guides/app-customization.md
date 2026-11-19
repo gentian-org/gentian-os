@@ -610,8 +610,10 @@ spec:
   What is new on one side is made on the other. A person's calendar is their first one at the home
   that may be written to, and their contacts their first address book. The tenant's
   `spec.contactsBook` says whether contacts go to each person's own (`person`, the default) or to one
-  the tenant shares (`shared`, not kept yet). Exceptions to single occurrences of a recurring entry
-  are not synced.
+  the tenant shares (`shared`, not kept yet). A recurring entry is kept with its rule, as one entry
+  at the home and, in Odoo, as one series: the driver shows the series' base event alone, writes a
+  change to every occurrence, and makes a series whose rule changed anew. Exceptions to single
+  occurrences of a recurring entry are not synced.
 - **As the person.** The home sync is a component of the platform's trust in every tenant. A person
   who signs in to the app is linked to it (`gentian-home-links`), and it asks the realm for that
   person's token for the app (`app-<profile>`) and for the home (`home-<profile>`). The app accepts
