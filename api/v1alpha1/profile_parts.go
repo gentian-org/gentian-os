@@ -515,6 +515,7 @@ type PartnersRequirement struct {
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || (has(self.exchange) && self.exchange)",message="vouching.keys is required: only a component that does nothing but exchange a present person's token (exchange: true) may leave it out"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.director) || size(self.director) == 0",message="vouching.director needs vouching.keys: a token for the director is obtained with a signed statement"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.homes) || !self.homes",message="vouching.homes needs vouching.keys: a person's token for a home is obtained with a signed statement"
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.consent) || self.consent == ''",message="vouching.consent needs vouching.keys: a person is linked to a component that signs statements"
 type VouchingRequirement struct {
 	// Keys says where the component publishes the keys its statements are
 	// signed with, as a JWKS. The realm fetches them from there. Left out
@@ -552,6 +553,20 @@ type VouchingRequirement struct {
 	// needs keys, and trustTier platform as all vouching for any app does.
 	// +optional
 	Homes bool `json:"homes,omitempty"`
+
+	// Consent names the profile of the component whose page asks people
+	// whether this one may speak for them, where that is not this
+	// component's own page. A person is then linked to this component also
+	// on a request to the registrar that carries the token the front door
+	// made out to the named component for that person (exposure
+	// exchangeToken): the token the page holds while the person is on it.
+	// It links the person the token names and nobody else, and opens no
+	// other route. It counts while the named component is installed in the
+	// same tenant, at trustTier platform, with such an exposure.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Consent string `json:"consent,omitempty"`
 }
 
 // DirectorScope is one thing a vouched token may do at the director.

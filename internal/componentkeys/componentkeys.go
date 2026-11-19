@@ -59,6 +59,17 @@ type Commission struct {
 	Tenants []string `json:"tenants"`
 }
 
+// Vouching is an entry of the registrar's list: a component that vouches for
+// people, and the component whose page collects people's consent to it,
+// where its profile names one (requires.services.vouching.consent) and that
+// component is installed beside it. Consent is that component's profile,
+// which is what a token made out to it names as its audience; empty where
+// people are linked with the platform's own token alone.
+type Vouching struct {
+	Key
+	Consent string `json:"consent,omitempty"`
+}
+
 // Hash is the form a list holds a key in: the SHA-256 of the key, in hex.
 func Hash(key string) string {
 	sum := sha256.Sum256([]byte(key))
@@ -175,6 +186,23 @@ func (l *List[E]) Find(key string) *E {
 		return nil
 	}
 	return Find(*held, key)
+}
+
+// Where returns the first entry match says yes to, or nil.
+func (l *List[E]) Where(match func(E) bool) *E {
+	if l == nil {
+		return nil
+	}
+	held := l.held.Load()
+	if held == nil {
+		return nil
+	}
+	for i := range *held {
+		if match((*held)[i]) {
+			return &(*held)[i]
+		}
+	}
+	return nil
 }
 
 // Follow keeps the list equal to the file until ctx ends; what names the list

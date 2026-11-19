@@ -118,10 +118,11 @@ const (
 )
 
 func operatorsList() []registrar.VouchingKey {
+	key := func(tenant, component, secret string) registrar.VouchingKey {
+		return registrar.VouchingKey{Key: componentkeys.Key{Tenant: tenant, Component: component, KeyHash: componentkeys.Hash(secret)}}
+	}
 	return []registrar.VouchingKey{
-		{Tenant: "demo", Component: "notary", KeyHash: componentkeys.Hash(notaryOfDemo)},
-		{Tenant: "demo", Component: "scribe", KeyHash: componentkeys.Hash(scribeOfDemo)},
-		{Tenant: "solo", Component: "notary", KeyHash: componentkeys.Hash(notaryOfSolo)},
+		key("demo", "notary", notaryOfDemo), key("demo", "scribe", scribeOfDemo), key("solo", "notary", notaryOfSolo),
 	}
 }
 
@@ -143,7 +144,7 @@ func startVouching(t *testing.T, f *fakeIdentity, keys []registrar.VouchingKey) 
 	}
 	decisions := &asked{Checker: dt.Checker(t, vouchingFacts)}
 	srv, err := registrar.New(registrar.Config{
-		Authn: v, Authz: decisions, Cluster: dt.Cluster,
+		Authn: v, Consent: v, Authz: decisions, Cluster: dt.Cluster,
 		Tenants:      fakeTenants{"demo": ownRealm("demo"), "solo": ownRealm("solo")},
 		Identity:     f,
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -502,5 +503,107 @@ func TestAComponentListsThePeopleLinkedToIt(t *testing.T) {
 	}
 	if status, body := h.do(t, http.MethodGet, people, h.token(t, "demo", "tom"), ""); status != http.StatusOK || fmt.Sprint(body["people"]) != "[mia tom]" {
 		t.Errorf("an administrator of the tenant's people: %d %s", status, body)
+	}
+}
+
+// A consent page's token: made out to the component that shows the page,
+// issued to the front door's exchange client.
+func (h *harness) pageToken(t *testing.T, realm, sub, page, issuedTo string) string {
+	t.Helper()
+	return h.issuer.Token(t, dt.Claims{Realm: realm, Subject: sub, Audience: page, Extra: map[string]any{"azp": issuedTo}})
+}
+
+// listWithAPage is the operator's list where the scribe of demo names the
+// component "page" as the one that collects people's consent to it.
+func listWithAPage() []registrar.VouchingKey {
+	keys := operatorsList()
+	keys[1].Consent = "page"
+	return keys
+}
+
+const linkScribe = "/v1/tenants/demo/vouching/scribe/link"
+
+// A person is linked from the consent page a component names, with the token
+// the front door handed that page, and the store is asked the same question
+// as for any other link.
+func TestAPersonIsLinkedFromTheConsentPage(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, listWithAPage())
+	mia := h.pageToken(t, "demo", "mia", "page", "gentian-edge-exchange")
+	if status, body := h.do(t, http.MethodPost, linkScribe, mia, ""); status != http.StatusNoContent {
+		t.Fatalf("mia linked from the page: %d %v", status, body)
+	}
+	if got := f.linkedPeople(); strings.Join(got, ",") != "demo/scribe/mia" {
+		t.Fatalf("linked = %v, want mia at the scribe of demo alone", got)
+	}
+	want := "user:mia can_enter tenant:demo"
+	if q := h.asked.questions(); len(q) == 0 || q[0] != want {
+		t.Fatalf("the store was asked %v, want %q first", q, want)
+	}
+	// The platform's own token links as before.
+	if status, _ := h.do(t, http.MethodPost, linkScribe, h.token(t, "demo", "tom"), ""); status != http.StatusNoContent {
+		t.Fatalf("tom linking himself with his own token: %d", status)
+	}
+}
+
+// The page's token opens the link to the component that named the page, and
+// nothing else: not another component's link, not a read, not a removal, and
+// no other route of the registrar.
+func TestAPagesTokenOpensNothingElse(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, listWithAPage())
+	mia := h.pageToken(t, "demo", "mia", "page", "gentian-edge-exchange")
+	for name, call := range map[string][2]string{
+		"a component that named no page": {http.MethodPost, linkNotary},
+		"asking about a link":            {http.MethodGet, "/v1/tenants/demo/vouching/scribe/people/mia"},
+		"taking a link away":             {http.MethodDelete, "/v1/tenants/demo/vouching/scribe/people/mia"},
+		"listing the linked":             {http.MethodGet, "/v1/tenants/demo/vouching/scribe/people"},
+		"the same component elsewhere":   {http.MethodPost, "/v1/tenants/solo/vouching/scribe/link"},
+		"another route of the registrar": {http.MethodGet, "/v1/tenants/demo/people"},
+	} {
+		if status, _ := h.do(t, call[0], call[1], mia, ""); status != http.StatusUnauthorized {
+			t.Errorf("%s: %d, want 401", name, status)
+		}
+	}
+	if got := f.linkedPeople(); len(got) != 0 {
+		t.Fatalf("linked = %v", got)
+	}
+}
+
+// Only the front door's token counts: one with the page's audience that
+// another client obtained is refused, and so is one of another realm, of
+// somebody who may not enter the tenant, or made out to another component.
+func TestOnlyTheFrontDoorsTokenLinksFromAPage(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, listWithAPage())
+	for name, tc := range map[string]struct {
+		token string
+		want  int
+	}{
+		"obtained by a component that exchanges": {h.pageToken(t, "demo", "mia", "page", "vouch-scribe"), http.StatusForbidden},
+		"issued to a console":                    {h.pageToken(t, "demo", "mia", "page", "gentian-console"), http.StatusForbidden},
+		"of another realm":                       {h.pageToken(t, "solo", "mia", "page", "gentian-edge-exchange"), http.StatusForbidden},
+		"of somebody who may not enter":          {h.pageToken(t, "demo", "tina", "page", "gentian-edge-exchange"), http.StatusForbidden},
+		"made out to another component":          {h.pageToken(t, "demo", "mia", "elsewhere", "gentian-edge-exchange"), http.StatusUnauthorized},
+	} {
+		if status, _ := h.do(t, http.MethodPost, linkScribe, tc.token, ""); status != tc.want {
+			t.Errorf("a token %s: %d, want %d", name, status, tc.want)
+		}
+	}
+	if got := f.linkedPeople(); len(got) != 0 {
+		t.Fatalf("linked = %v", got)
+	}
+}
+
+// A registrar that was told of no page accepts no page's token.
+func TestWithoutANamedPageNoPagesTokenLinks(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, operatorsList())
+	mia := h.pageToken(t, "demo", "mia", "page", "gentian-edge-exchange")
+	if status, _ := h.do(t, http.MethodPost, linkScribe, mia, ""); status != http.StatusUnauthorized {
+		t.Fatalf("a page nobody named: %d, want 401", status)
+	}
+	if got := f.linkedPeople(); len(got) != 0 {
+		t.Fatalf("linked = %v", got)
 	}
 }

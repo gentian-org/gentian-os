@@ -2225,6 +2225,20 @@ spec:
                             signs a short statement naming the person, and the tenant's realm
                             answers with a token of that person for one app.
                           properties:
+                            consent:
+                              description: |-
+                                Consent names the profile of the component whose page asks people
+                                whether this one may speak for them, where that is not this
+                                component's own page. A person is then linked to this component also
+                                on a request to the registrar that carries the token the front door
+                                made out to the named component for that person (exposure
+                                exchangeToken): the token the page holds while the person is on it.
+                                It links the person the token names and nobody else, and opens no
+                                other route. It counts while the named component is installed in the
+                                same tenant, at trustTier platform, with such an exposure.
+                              maxLength: 63
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
                             director:
                               description: |-
                                 Director names what a token the component obtains for a person may do
@@ -2305,6 +2319,10 @@ spec:
                           - message: 'vouching.homes needs vouching.keys: a person''s
                               token for a home is obtained with a signed statement'
                             rule: has(self.keys) || !has(self.homes) || !self.homes
+                          - message: 'vouching.consent needs vouching.keys: a person
+                              is linked to a component that signs statements'
+                            rule: has(self.keys) || !has(self.consent) || self.consent
+                              == ''
                       type: object
                     name:
                       description: |-
@@ -4745,6 +4763,20 @@ spec:
                           signs a short statement naming the person, and the tenant's realm
                           answers with a token of that person for one app.
                         properties:
+                          consent:
+                            description: |-
+                              Consent names the profile of the component whose page asks people
+                              whether this one may speak for them, where that is not this
+                              component's own page. A person is then linked to this component also
+                              on a request to the registrar that carries the token the front door
+                              made out to the named component for that person (exposure
+                              exchangeToken): the token the page holds while the person is on it.
+                              It links the person the token names and nobody else, and opens no
+                              other route. It counts while the named component is installed in the
+                              same tenant, at trustTier platform, with such an exposure.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
                           director:
                             description: |-
                               Director names what a token the component obtains for a person may do
@@ -4825,6 +4857,10 @@ spec:
                         - message: 'vouching.homes needs vouching.keys: a person''s
                             token for a home is obtained with a signed statement'
                           rule: has(self.keys) || !has(self.homes) || !self.homes
+                        - message: 'vouching.consent needs vouching.keys: a person
+                            is linked to a component that signs statements'
+                          rule: has(self.keys) || !has(self.consent) || self.consent
+                            == ''
                     type: object
                 type: object
               secrets:

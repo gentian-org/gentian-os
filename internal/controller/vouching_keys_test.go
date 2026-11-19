@@ -25,6 +25,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/bouncer"
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/registrar"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
@@ -96,8 +97,8 @@ func TestRegistrarListHoldsOnlyComponentsThatVouch(t *testing.T) {
 	}
 	raw, keys := registrarsList(t, c)
 	want := []registrar.VouchingKey{
-		{Tenant: "acme", Component: "notary", KeyHash: notaryHash},
-		{Tenant: "globex", Component: "notary", KeyHash: elsewhereHash},
+		{Key: componentkeys.Key{Tenant: "acme", Component: "notary", KeyHash: notaryHash}},
+		{Key: componentkeys.Key{Tenant: "globex", Component: "notary", KeyHash: elsewhereHash}},
 	}
 	if len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] {
 		t.Fatalf("the list is %+v, want %+v", keys, want)
@@ -163,6 +164,56 @@ func TestOperatorAndRegistrarAgreeOnTheAlias(t *testing.T) {
 	for _, profile := range []string{"notary", "a", "front-desk-2"} {
 		if VouchingAlias(profile) != identity.VouchingAlias(profile) {
 			t.Fatalf("the operator names %q, the registrar %q", VouchingAlias(profile), identity.VouchingAlias(profile))
+		}
+	}
+}
+
+// The registrar is told of a consent page only while the component the
+// vouching profile names is installed in the same tenant, at the platform's
+// trust, with an entry the front door hands an exchanged token: a name
+// nothing is installed under, a component of lesser trust, one whose pages
+// are handed no such token, and the component's own name open nothing.
+func TestRegistrarListNamesAConsentPageOnlyWhileItCounts(t *testing.T) {
+	ctx := context.Background()
+	scheme := rightsScheme(t)
+	page := func(name string, tier gentianov1alpha1.TrustTier, exchanged bool) *gentianov1alpha1.ComponentProfile {
+		profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		profile.Spec.TrustTier = tier
+		profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "consent", ExchangeToken: exchanged}}
+		return profile
+	}
+	for name, tc := range map[string]struct {
+		names     string
+		installed []string
+		page      *gentianov1alpha1.ComponentProfile
+		want      string
+	}{
+		"a page that counts":             {"page", []string{"page"}, page("page", gentianov1alpha1.TrustTierPlatform, true), "page"},
+		"a page that is not installed":   {"page", nil, page("page", gentianov1alpha1.TrustTierPlatform, true), ""},
+		"a page of lesser trust":         {"page", []string{"page"}, page("page", gentianov1alpha1.TrustTierCertified, true), ""},
+		"a page handed no such token":    {"page", []string{"page"}, page("page", gentianov1alpha1.TrustTierPlatform, false), ""},
+		"the component's own name":       {"scribe", []string{"scribe"}, page("page", gentianov1alpha1.TrustTierPlatform, true), ""},
+		"no page named":                  {"", []string{"page"}, page("page", gentianov1alpha1.TrustTierPlatform, true), ""},
+		"a page nobody has a profile of": {"gone", []string{"gone"}, page("page", gentianov1alpha1.TrustTierPlatform, true), ""},
+	} {
+		scribe := rightsComponent("acme", "scribe")
+		profile := vouchingProfile("scribe")
+		profile.Spec.Requires.Services.Vouching.Consent = tc.names
+		tenant := rightsTenant("acme")
+		for _, app := range tc.installed {
+			tenant.Spec.Apps = append(tenant.Spec.Apps, gentianov1alpha1.TenantApp{Profile: app})
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, scribe, profile, tc.page).Build()
+		components := &ComponentReconciler{Client: c, Scheme: scheme}
+		if err := components.ensureRightsCheck(ctx, scribe, defaultTenantName(scribe), profile); err != nil {
+			t.Fatal(err)
+		}
+		if err := (&GatewayPlatformReconciler{Client: c}).ensureRegistrarVouchingKeys(ctx); err != nil {
+			t.Fatal(err)
+		}
+		_, keys := registrarsList(t, c)
+		if len(keys) != 1 || keys[0].Component != "scribe" || keys[0].Consent != tc.want {
+			t.Errorf("%s: the list is %+v, want the scribe with the page %q", name, keys, tc.want)
 		}
 	}
 }
