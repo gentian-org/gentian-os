@@ -2215,6 +2215,7 @@ type ContractEndpoint struct {
 }
 
 // IntegrationRef identifies an optional integration contract this app can consume.
+// +kubebuilder:validation:XValidation:rule="!has(self.asPerson) || !self.asPerson || self.contract in ['file-store', 'calendar-store', 'contacts-store']",message="asPerson is for a home's contract: file-store, calendar-store or contacts-store"
 type IntegrationRef struct {
 	// Contract is the name of the contract to consume.
 	// +kubebuilder:validation:Required
@@ -2228,4 +2229,15 @@ type IntegrationRef struct {
 	// Capabilities lists the specific capabilities required from the contract.
 	// +optional
 	Capabilities []string `json:"capabilities,omitempty"`
+
+	// AsPerson says the app calls the contract's provider -- the tenant's
+	// home for that kind of data -- as the person it acts for, with that
+	// person's rights there. The app signs statements as a vouching
+	// component does (requires.services.vouching.keys), and the tenant's
+	// realm answers them with a token valid at that provider and nowhere
+	// else, for as long as the tenant's administrator grants the contract. A
+	// person is linked when they sign in to the app. For file-store,
+	// calendar-store and contacts-store only.
+	// +optional
+	AsPerson bool `json:"asPerson,omitempty"`
 }

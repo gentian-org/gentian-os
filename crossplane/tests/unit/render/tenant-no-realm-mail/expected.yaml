@@ -1390,6 +1390,7 @@ spec:
     - jboss-logging
     - gentian-director
     - gentian-device-passwords
+    - gentian-home-links
     realmId: user
   providerConfigRef:
     name: keycloak

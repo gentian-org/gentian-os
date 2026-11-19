@@ -1906,6 +1906,7 @@ spec:
     - jboss-logging
     - gentian-director
     - gentian-device-passwords
+    - gentian-home-links
     realmId: render-fixture
   providerConfigRef:
     name: keycloak

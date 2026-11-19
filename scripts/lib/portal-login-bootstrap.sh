@@ -1266,12 +1266,14 @@ ${admin_clients_shell}
               # record is what the realm writes to stdout as it happens.
               # gentian-device-passwords ends a person's device passwords
               # with their password, as in every tenant realm.
+              # gentian-home-links links a person who signs in to an app that
+              # calls a home as the person, as in every tenant realm.
               REALM_EVENTS=\$(jq -n '{
                 eventsEnabled: true,
                 eventsExpiration: 2592000,
                 adminEventsEnabled: true,
                 adminEventsDetailsEnabled: false,
-                eventsListeners: ["jboss-logging", "gentian-director", "gentian-device-passwords"]
+                eventsListeners: ["jboss-logging", "gentian-director", "gentian-device-passwords", "gentian-home-links"]
               }')
               if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/events/config" -d "\${REALM_EVENTS}" >/dev/null 2>&1; then

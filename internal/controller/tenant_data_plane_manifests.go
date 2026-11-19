@@ -318,11 +318,19 @@ func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context
 		}
 		for _, integration := range profile.Spec.Integrations {
 			providerApp := ""
-			if integration.Provider != "" {
+			home, named := tenant.Spec.Homes[integration.Contract]
+			switch {
+			case integration.Provider != "":
 				if _, ok := presentApps[integration.Provider]; ok {
 					providerApp = integration.Provider
 				}
-			} else {
+			case named:
+				// The tenant's home for this kind of data, and no other
+				// provider: one that is not installed binds nobody.
+				if _, ok := presentApps[home]; ok && home != app.Profile {
+					providerApp = home
+				}
+			default:
 				providerApp = r.findProviderInTenant(ctx, integration.Contract, presentApps, app.Profile)
 			}
 			if providerApp == "" {

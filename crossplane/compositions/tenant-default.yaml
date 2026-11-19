@@ -614,7 +614,10 @@ spec:
                  the path its keys are published at, separated by spaces
                  (zoneVouchingProfilesKey in the operator says why a space is
                  safe), and, for a component of the platform tenant, what its
-                 tokens may do at the director, comma-separated. A line that
+                 tokens may do at the director, comma-separated. Among those
+                 words, "narrow" marks a component below the platform's trust,
+                 whose client is given no app scope, and each "home=<profile>"
+                 names a home granted to it, which it calls as the person. A line that
                  is not four or five fields is not guessed at: it is left
                  out, and that component gets nothing rather than an issuer
                  whose keys are fetched from somewhere half-read. A director
@@ -628,16 +631,20 @@ spec:
             {{- $vouchingSeen = append $vouchingSeen (index $f 0) }}
             {{- $director := list }}
             {{- $exchanges := false }}
+            {{- $narrow := false }}
+            {{- $homes := list }}
             {{- if eq (len $f) 5 }}
             {{- range $d := (splitList "," (index $f 4)) }}
             {{- if eq $d "exchange" }}{{- $exchanges = true }}{{- end }}
+            {{- if eq $d "narrow" }}{{- $narrow = true }}{{- end }}
+            {{- if and (hasPrefix "home=" $d) (not (has (trimPrefix "home=" $d) $homes)) }}{{- $homes = append $homes (trimPrefix "home=" $d) }}{{- end }}
             {{- if and (has $d (list "plans-read" "plans-apply")) (not (has $d $director)) }}
             {{- $director = append $director $d }}
             {{- if not (has $d $directorScopes) }}{{- $directorScopes = append $directorScopes $d }}{{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "keyless" (eq (index $f 1) "-")) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "narrow" $narrow "homes" $homes "keyless" (eq (index $f 1) "-")) }}
             {{- end }}
             {{- end }}
             {{- /* The components that call partners or accept their
@@ -1527,6 +1534,99 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* Which home a component calls as the person: the scope
+                 "home-<profile>" (HomeTokenScope in the operator).
+
+                 One per home some component of the tenant is granted to call
+                 so (integrations[].asPerson), as the operator projects them
+                 (homeScopes, the document bridgeScopes is). The token is the
+                 one the home's own sign-in issues: its sign-in client as the
+                 audience, and the claims of its OIDC pack, as a bridged
+                 app's above and for the same reason -- the home verifies it
+                 as it verifies its own. Only the vouching clients of the
+                 components the home is granted to are given it, below; the
+                 edge's exchange client never is. */}}
+            {{- $homeDoc := dig "homeScopes" "" $zhData }}
+            {{- $homeScopes := list }}
+            {{- $homeScopeNames := list }}
+            {{- if $homeDoc }}
+            {{- $homeScopes = dig "scopes" list (fromJson $homeDoc) }}
+            {{- end }}
+            {{- range $h := $homeScopes }}
+            {{- $p := $h.profile }}
+            {{- $scope := printf "home-%s" $p }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-home-scope-{{ $p }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-home-scope-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $scope }}
+                description: {{ printf "A token of the person for %s, the tenant's home, and nothing else" $p | quote }}
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- $scopeID := dig "resources" (printf "keycloak-home-scope-%s" $p) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $scopeID }}
+            {{- $homeScopeNames = append $homeScopeNames $scope }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-home-scope-{{ $p }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-home-scope-{{ $p }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: app-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $h.audience | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- range $m := (default list $h.mappers) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-home-scope-{{ $p }}-claim-{{ $m.slug }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-home-scope-{{ $p }}-claim-{{ $m.slug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: {{ $m.name | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.type | quote }}
+                config:
+                  {{- range $k, $v := (default dict $m.config) }}
+                  {{ $k | quote }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
             {{- /* The app scopes as the exchange client's OPTIONAL scopes, and
                  its only ones.
 
@@ -2024,6 +2124,13 @@ spec:
                 tokenUrl: {{ $vouchIssuer }}
                 extraConfig:
                   jwtAuthorizationGrantEnabled: "true"
+                  {{- /* A component granted a home to call as the person has
+                       the people who sign in to it linked here by the
+                       platform's sign-in extension, which reads this mark
+                       and the profile on the app's own sign-in client. */}}
+                  {{- if gt (len $v.homes) 0 }}
+                  gentianos.io/link-at-sign-in: "true"
+                  {{- end }}
                 clientIdSecretRef:
                   name: {{ $tenant }}-vouching-issuer-credential
                   namespace: {{ $identityNs }}
@@ -2248,7 +2355,16 @@ spec:
 
                  Beside them, the director scopes this component names and
                  no other's, once each exists with its mapper. */}}
+            {{- /* A component below the platform's trust ("narrow") is given
+                 no app scope: only the scopes of the homes granted to it,
+                 which a platform component is given beside its app scopes. */}}
             {{- $optional := $exchangeScopes }}
+            {{- if $v.narrow }}{{- $optional = list }}{{- end }}
+            {{- range $h := $v.homes }}
+            {{- if has (printf "home-%s" $h) $homeScopeNames }}
+            {{- $optional = append $optional (printf "home-%s" $h) }}
+            {{- end }}
+            {{- end }}
             {{- range $d := $v.director }}
             {{- if has $d $directorReady }}
             {{- $optional = append $optional (printf "director-%s" $d) }}
@@ -2321,6 +2437,9 @@ spec:
                   - gentian-director
                   # Ends a person's device passwords with their password.
                   - gentian-device-passwords
+                  # Links a person who signs in to an app that calls a home
+                  # as the person to that app's vouching entry.
+                  - gentian-home-links
               providerConfigRef:
                 name: keycloak
             {{- /* The mailbox store's client is realm state: one per realm,

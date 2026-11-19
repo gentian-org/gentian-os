@@ -544,6 +544,37 @@ whole. Once no granted target answers the contract (the target removed, the gran
 address is emptied again and the password kept. The granted capabilities are recorded and not
 enforced, and the target is not told which app is calling. What a consumer may do there is the target's to check.
 
+**A home, called as the person.** For files, calendars and contacts a tenant has one home each:
+the provider of `file-store` (WebDAV), `calendar-store` (CalDAV) or `contacts-store` (CardDAV)
+that every consumer of the contract is bound to. Where several installed apps provide one, the
+tenant names its home in `spec.homes` (`{calendar-store: nextcloud-base-ce}`); otherwise the first
+provider by name is bound. A consumer that reads and writes there as the person it acts for marks
+the integration `asPerson: true` and publishes the keys it signs statements with
+(`requires.services.vouching.keys`, below). It needs no more than `trustTier: certified`:
+
+```yaml
+spec:
+  integrations:
+    - {contract: calendar-store, asPerson: true}
+    - {contract: contacts-store, asPerson: true}
+  requires:
+    services:
+      vouching:
+        keys: {service: odoo-keys, port: 8069, path: /gentian/jwks}
+```
+
+- **The token.** The component asks the tenant's realm for a person's token with the scope
+  `home-<home's profile>` and gets one made out as the home's own sign-in makes them: the home's
+  sign-in client as audience and the claims of its OIDC pack. It is valid at the home and nowhere
+  else. Its client is given that scope only while the tenant's administrator grants the contract,
+  and a certified component's client is given no other app's scope.
+- **Who is covered.** A person is linked when they sign in to the component, with nobody asked:
+  the realm's `gentian-home-links` listener links them to the component's vouching entry while
+  the component has a home granted. From then on the component obtains their token whether they
+  are present or not.
+- **Paths.** The component never assumes the home's paths. For files the contract gives the root;
+  for calendars and address books it asks the home (`current-user-principal`, the home sets).
+
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
 role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines
 and the ServiceAccount the chart runs under, and the role is bound only where the cluster permits

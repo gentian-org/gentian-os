@@ -771,6 +771,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              homes:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Homes names, per contract, the installed app that is the tenant's home
+                  for that kind of data (file-store, calendar-store, contacts-store):
+                  the provider every consumer of the contract is bound to. A contract
+                  not named here is bound to an installed provider of it, the first by
+                  name; one named here whose app is not installed binds nobody.
+                maxProperties: 3
+                type: object
+                x-kubernetes-validations:
+                - message: homes names file-store, calendar-store or contacts-store
+                  rule: self.all(k, k in ['file-store', 'calendar-store', 'contacts-store'])
               isolation:
                 description: Isolation describes the workload isolation boundaries
                   for this tenant.

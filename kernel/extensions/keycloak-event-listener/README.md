@@ -142,3 +142,18 @@ it among the person's own, the other twenty are a random secret of about 99
 bits, kept as a SHA-256 digest bound to the person and the name. A password
 unused for longer than the realm's offline session idle timeout is refused.
 A wrong one does not count towards Keycloak's lockout of the person.
+
+## Linking to a home's consumer at sign-in
+
+The event listener `gentian-home-links`, listed per realm, links a person who
+signs in (`LOGIN`) to an app that calls the tenant's home as the person to that
+app's vouching entry, `vouch-<profile>`: the link the registrar's link route
+makes, made here with nobody asked. Two marks the platform writes decide it:
+
+| Where | Mark |
+|---|---|
+| the app's own sign-in client | attribute `gentianos.io/profile`: the app's profile |
+| the identity provider `vouch-<profile>` | config `gentianos.io/link-at-sign-in: "true"`, while the tenant grants the app a home |
+
+Without either, or for a disabled person, nothing happens. A person already
+linked is left as they are.

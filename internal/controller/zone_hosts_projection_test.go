@@ -434,3 +434,84 @@ func exchanging(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.Componen
 	p.Spec.Requires.Services.Vouching.Exchange = true
 	return p
 }
+
+// A certified app that calls a home as the person is projected as narrow,
+// with the homes granted to it: a binding of its contract marked asPerson
+// whose grant is in full. A grant taken back, or a contract it does not call
+// as the person, names no home. The homes' scopes are projected beside.
+func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := acmeTenantFixture()
+	ns := tenant.NamespaceName()
+	odoo := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "odoo"}}
+	odoo.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	odoo.Spec.Integrations = []gentianov1alpha1.IntegrationRef{
+		{Contract: "calendar-store", AsPerson: true},
+		{Contract: "contacts-store", AsPerson: true},
+		{Contract: "file-store"},
+	}
+	odoo.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Keys: &gentianov1alpha1.VouchingKeys{Service: "odoo-keys", Port: 8069, Path: "/jwks"}},
+	}}
+	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	binding := func(contract string, granted bool) *gentianov1alpha1.IntegrationBinding {
+		ib := &gentianov1alpha1.IntegrationBinding{ObjectMeta: metav1.ObjectMeta{Name: "odoo-" + contract, Namespace: ns}}
+		ib.Spec.Contract = contract
+		ib.Spec.Consumer.App = "odoo"
+		ib.Spec.Provider.App = "nextcloud"
+		status := metav1.ConditionFalse
+		if granted {
+			status = metav1.ConditionTrue
+		}
+		ib.Status.Conditions = []metav1.Condition{{Type: conditionBindingGranted, Status: status, Reason: "x"}}
+		return ib
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&gentianov1alpha1.IntegrationBinding{}).WithObjects(
+		tenant.DeepCopy(), odoo, home, comp("odoo"), comp("nextcloud"),
+		binding("calendar-store", true),
+		// Not granted: no home by it.
+		binding("contacts-store", false),
+		// Granted, and not called as the person: no home by it either.
+		binding("file-store", true),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo odoo-keys 8069 /jwks narrow,home=nextcloud" {
+		t.Fatalf("vouching profiles = %q", got)
+	}
+
+	// The grant is taken back: the app is still narrow, and has no home.
+	ib := &gentianov1alpha1.IntegrationBinding{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "odoo-calendar-store", Namespace: ns}, ib); err != nil {
+		t.Fatal(err)
+	}
+	ib.Status.Conditions[0].Status = metav1.ConditionFalse
+	if err := c.Status().Update(context.Background(), ib); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo odoo-keys 8069 /jwks narrow" {
+		t.Fatalf("vouching profiles after the grant was taken back = %q", got)
+	}
+}
+
+// A home's scope is its own sign-in's token: projected only while some
+// component is granted the home, from the home's OIDC pack.
+func TestHomeTokenScopeIsNamedForTheHome(t *testing.T) {
+	if got := HomeTokenScope("nextcloud-base-ce"); got != "home-nextcloud-base-ce" {
+		t.Fatalf("HomeTokenScope = %q", got)
+	}
+}
