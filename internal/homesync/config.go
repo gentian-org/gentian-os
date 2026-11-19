@@ -39,8 +39,7 @@ const (
 // homeSync. The platform writes it as JSON (the ConfigMap
 // home-sync-<component>), and it is read again on every round.
 type Plan struct {
-	// Home is the tenant's home: its profile and, per kind, the address its
-	// contract is answered at (the DAV root).
+	// Home is the tenant's home, per kind.
 	Home Home `json:"home"`
 	// Apps are the apps that keep a copy, in the order of their profiles.
 	Apps []App `json:"apps"`
@@ -50,13 +49,26 @@ type Plan struct {
 	ContactsBook string `json:"contactsBook,omitempty"`
 }
 
-// Home is the tenant's home.
+// Home is the tenant's home, per kind: a tenant may keep its calendars in one
+// app and its contacts in another.
 type Home struct {
+	Calendar *HomeOf `json:"calendar,omitempty"`
+	Contacts *HomeOf `json:"contacts,omitempty"`
+}
+
+// HomeOf is the home of one kind: the app's profile, whose token scope the
+// service asks for, and the address its contract is answered at.
+type HomeOf struct {
 	Profile string `json:"profile"`
-	// Calendar and Contacts are the addresses of calendar-store and
-	// contacts-store; empty where the tenant has no home for that kind.
-	Calendar string `json:"calendar,omitempty"`
-	Contacts string `json:"contacts,omitempty"`
+	URL     string `json:"url"`
+}
+
+// of is the home of a kind, or nil.
+func (h Home) of(kind Kind) *HomeOf {
+	if kind == Contacts {
+		return h.Contacts
+	}
+	return h.Calendar
 }
 
 // App is one app that keeps a copy, as its profile declares it.

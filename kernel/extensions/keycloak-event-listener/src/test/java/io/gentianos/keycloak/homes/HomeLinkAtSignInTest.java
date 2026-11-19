@@ -12,9 +12,9 @@ package io.gentianos.keycloak.homes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -22,16 +22,19 @@ import org.junit.jupiter.api.Test;
 class HomeLinkAtSignInTest {
 
     @Test
-    void aClientThatNamesItsProfileLinksToItsVouchingEntry() {
-        assertEquals("vouch-odoo-base-ce", HomeLinkAtSignIn.aliasFor(Map.of("gentianos.io/profile", "odoo-base-ce")));
+    void aClientLinksToTheEntriesItNames() {
+        assertEquals(List.of("vouch-odoo-base-ce", "vouch-homesync"),
+            HomeLinkAtSignIn.aliasesFor(Map.of("gentianos.io/link-to", "vouch-odoo-base-ce, vouch-homesync,vouch-homesync")));
     }
 
     @Test
-    void aClientThatNamesNoProfileLinksNowhere() {
-        assertNull(HomeLinkAtSignIn.aliasFor(null));
-        assertNull(HomeLinkAtSignIn.aliasFor(Map.of()));
-        assertNull(HomeLinkAtSignIn.aliasFor(Map.of("gentianos.io/profile", " ")));
-        assertNull(HomeLinkAtSignIn.aliasFor(Map.of("gentianos.io/managed-by", "platform")));
+    void aClientThatNamesNoEntryLinksNowhere() {
+        assertTrue(HomeLinkAtSignIn.aliasesFor(null).isEmpty());
+        assertTrue(HomeLinkAtSignIn.aliasesFor(Map.of()).isEmpty());
+        assertTrue(HomeLinkAtSignIn.aliasesFor(Map.of("gentianos.io/link-to", " ,vouch-")).isEmpty());
+        // Only vouching entries: a client cannot have people linked to any
+        // identity provider of the realm.
+        assertTrue(HomeLinkAtSignIn.aliasesFor(Map.of("gentianos.io/link-to", "google,partner-x")).isEmpty());
     }
 
     @Test

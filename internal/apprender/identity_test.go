@@ -300,11 +300,11 @@ func TestABridgesRenderIsTheClientOfItsEntryAlone(t *testing.T) {
 	}
 }
 
-// An app that calls a home as the person names its profile on its own
-// sign-in client, which is how the realm's sign-in extension finds the app's
-// vouching entry; any other app's client says nothing of it.
-func TestAnAppThatCallsAHomeAsThePersonNamesItsProfileOnItsClient(t *testing.T) {
-	profileOf := func(in *Input) map[string]string {
+// A person who signs in to an app is linked to the vouching entries its own
+// client names: the app's where it calls a home as the person, the home
+// sync's where it declares homeSync, and none for any other app.
+func TestAnAppsClientNamesTheEntriesItsPeopleAreLinkedTo(t *testing.T) {
+	linkTo := func(in *Input) map[string]string {
 		t.Helper()
 		got, err := Render(in)
 		if err != nil {
@@ -315,28 +315,28 @@ func TestAnAppThatCallsAHomeAsThePersonNamesItsProfileOnItsClient(t *testing.T) 
 			if o.GetKind() != "Client" || o.GroupVersionKind().Group != "openidclient.keycloak.crossplane.io" {
 				continue
 			}
-			v, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "extraConfig", "gentianos.io/profile")
+			v, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "extraConfig", "gentianos.io/link-to")
 			out[o.GetName()] = v
 		}
 		return out
 	}
-	for name, v := range profileOf(fixtureInput(t, "testdata/render/app-build")) {
+	for name, v := range linkTo(fixtureInput(t, "testdata/render/app-build")) {
 		if v != "" {
-			t.Errorf("%s names its profile %q and calls no home", name, v)
+			t.Errorf("%s links to %q and neither calls a home nor keeps a copy", name, v)
 		}
 	}
 	in := fixtureInput(t, "testdata/render/app-build")
 	in.Profile.Integrations = append(in.Profile.Integrations, gentianov1alpha1.IntegrationRef{Contract: "calendar-store", AsPerson: true})
-	named := 0
-	for name, v := range profileOf(in) {
-		if v != "" && v != in.ProfileName {
-			t.Errorf("%s names %q, want %q", name, v, in.ProfileName)
+	in.Profile.HomeSync = &gentianov1alpha1.HomeSyncSpec{}
+	want := "vouch-" + in.ProfileName + ",vouch-homesync"
+	found := false
+	for name, v := range linkTo(in) {
+		if v != "" && v != want {
+			t.Errorf("%s links to %q, want %q", name, v, want)
 		}
-		if v == in.ProfileName {
-			named++
-		}
+		found = found || v == want
 	}
-	if named == 0 {
-		t.Fatal("no client of the app names its profile")
+	if !found {
+		t.Fatal("no client of the app names the entries")
 	}
 }

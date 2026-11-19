@@ -40,6 +40,9 @@ const (
 	// everything but the component that speaks as a person, and open its way
 	// to its app.
 	NetPolicyAgentBridge = "agent-bridge"
+	// NetPolicyHomeSync marks the policies that open the tenant's home sync's
+	// way to the apps it keeps equal and to the homes, and theirs for it.
+	NetPolicyHomeSync = "homesync"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"

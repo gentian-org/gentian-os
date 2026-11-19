@@ -575,6 +575,48 @@ spec:
 - **Paths.** The component never assumes the home's paths. For files the contract gives the root;
   for calendars and address books it asks the home (`current-user-principal`, the home sets).
 
+**An app that keeps a copy of its own.** An app whose pages read its own calendar or contacts
+tables (Odoo, ERPNext, a CRM) declares `homeSync`, and the tenant's home sync keeps those records
+equal to the home, per person who signs in to the app. The app writes no sync code: a driver for
+its framework speaks its API (`odoo`, Odoo's JSON-2), and the declaration says which records hold
+what:
+
+```yaml
+spec:
+  homeSync:
+    endpoint: {service: odoo, port: 8069}          # where the app's API answers
+    calendar:
+      driver: odoo
+      model: calendar.event
+      fields: {summary: name, description: description, location: location,
+               start: start, end: stop, allDay: allday, startDate: start_date, endDate: stop_date}
+      filter: [[partner_ids, in, ["$partner"]]]   # the person's records; $user, $partner
+      defaults: {user_id: "$user", partner_ids: [[4, "$partner"]]}
+    contacts:
+      driver: odoo
+      model: res.partner
+      fields: {name: name, email: email, phone: phone, mobile: mobile, organization: company_name}
+      filter: [[user_id, "=", "$user"]]
+      defaults: {user_id: "$user"}
+```
+
+- **The parts.** A calendar entry is `summary`, `description`, `location`, `start`, `end` (times),
+  `startDate`, `endDate` (the first and last day of an all-day entry), `allDay` and `rrule`; a contact
+  is `name`, `email`, `phone`, `mobile`, `organization`, `title`, `note`, `street`, `city`, `zip`,
+  `country` and `website`. A part the app has no field for is not written there, and what the home
+  keeps beyond the parts (alarms, attendees, other numbers) is kept.
+- **The rules, the same for every app.** The home wins a conflict. A deletion goes both ways, except
+  that an entry changed at the home whose record was deleted in the app is made again in the app.
+  What is new on one side is made on the other. A person's calendar is their first one at the home
+  that may be written to, and their contacts their first address book. The tenant's
+  `spec.contactsBook` says whether contacts go to each person's own (`person`, the default) or to one
+  the tenant shares (`shared`, not kept yet). Exceptions to single occurrences of a recurring entry
+  are not synced.
+- **As the person.** The home sync is a component of the platform's trust in every tenant. A person
+  who signs in to the app is linked to it (`gentian-home-links`), and it asks the realm for that
+  person's token for the app (`app-<profile>`) and for the home (`home-<profile>`). The app accepts
+  a token of the tenant's realm on its API; Odoo's `gentian_os` module does.
+
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
 role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines
 and the ServiceAccount the chart runs under, and the role is bound only where the cluster permits

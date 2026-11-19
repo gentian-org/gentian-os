@@ -180,7 +180,14 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	// by profile, per tenant: their vouching line names the homes granted to
 	// them, which are only known once every binding of the tenant is read.
 	asPerson := map[string]map[string]*gentianov1alpha1.ComponentProfile{}
+	// The components that act for people at every home of the tenant
+	// (vouching.homes), and the installed providers of each home's
+	// contract: the tenant's homes are known once all are read.
+	syncers := map[string]map[string]*gentianov1alpha1.ComponentProfile{}
+	providers := map[string]map[string][]string{}
 	for i := range tenants.Items {
+		syncers[tenants.Items[i].Name] = map[string]*gentianov1alpha1.ComponentProfile{}
+		providers[tenants.Items[i].Name] = map[string][]string{}
 		asPerson[tenants.Items[i].Name] = map[string]*gentianov1alpha1.ComponentProfile{}
 		hosts[tenants.Items[i].Name] = map[string]bool{}
 		bridged[tenants.Items[i].Name] = map[string]bool{}
@@ -235,6 +242,19 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			if callsHomesAsPerson(profile) {
 				asPerson[tenant][profile.Name] = profile
 			}
+			if profile.Services().Vouching.Homes {
+				syncers[tenant][profile.Name] = profile
+			}
+		}
+		for _, c := range profile.Spec.Provides {
+			if isHomeContract(c.Name) {
+				providers[tenant][c.Name] = append(providers[tenant][c.Name], profile.Name)
+			}
+		}
+		if profile.Spec.HomeSync != nil {
+			// The home sync obtains a person's token for this app by its
+			// scope, as a component that vouches does for any app.
+			exchange[tenant][profile.Name] = true
 		}
 		if wantsPartners(profile) {
 			// By the profile's name, as above: the realm knows the
@@ -271,6 +291,23 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			vouching[tenant][consumer] = vouchingLine(asPerson[tenant][consumer], tenant, providers)
 			for _, p := range providers {
 				homeApps[tenant][p] = true
+			}
+		}
+	}
+
+	for i := range tenants.Items {
+		tenant := &tenants.Items[i]
+		homes := dataHomes(tenant, providers[tenant.Name])
+		if len(homes) == 0 {
+			continue
+		}
+		if homeApps[tenant.Name] == nil {
+			homeApps[tenant.Name] = map[string]bool{}
+		}
+		for name, profile := range syncers[tenant.Name] {
+			vouching[tenant.Name][name] = vouchingLine(profile, tenant.Name, homes)
+			for _, h := range homes {
+				homeApps[tenant.Name][h] = true
 			}
 		}
 	}
@@ -495,4 +532,42 @@ func (r *TileProjectionReconciler) grantedHomes(
 		out[consumer] = sortedKeys(providers)
 	}
 	return out, nil
+}
+
+// homeContracts are the contracts a home provides.
+var homeContracts = []string{"calendar-store", "contacts-store", "file-store"}
+
+func isHomeContract(name string) bool {
+	for _, c := range homeContracts {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// dataHomes are the tenant's homes, sorted and without repeats: per home
+// contract, the provider the tenant names in spec.homes where it is installed,
+// and otherwise the first installed provider by name -- the provider every
+// consumer of the contract is bound to.
+func dataHomes(tenant *gentianov1alpha1.Tenant, providers map[string][]string) []string {
+	set := map[string]bool{}
+	for _, contract := range homeContracts {
+		installed := providers[contract]
+		if len(installed) == 0 {
+			continue
+		}
+		sorted := append([]string(nil), installed...)
+		sort.Strings(sorted)
+		if named := tenant.Spec.Homes[contract]; named != "" {
+			for _, p := range sorted {
+				if p == named {
+					set[named] = true
+				}
+			}
+			continue
+		}
+		set[sorted[0]] = true
+	}
+	return sortedKeys(set)
 }

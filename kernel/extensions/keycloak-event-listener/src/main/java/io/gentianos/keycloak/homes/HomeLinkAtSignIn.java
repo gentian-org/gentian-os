@@ -10,6 +10,8 @@
 
 package io.gentianos.keycloak.homes;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.jboss.logging.Logger;
@@ -25,23 +27,24 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 
 /**
- * Links a person who signs in to an app that calls the tenant's home as the
- * person (integrations[].asPerson) to that app's vouching entry, so that the
- * app may later ask for the person's token at the home. The link is what the
- * registrar's link route makes; here it is made at sign-in, with nobody asked,
- * because the person signing in to the app is the consent.
+ * Links a person who signs in to an app to the vouching entries the app's
+ * own sign-in client names ({@value #LINK_TO_ATTRIBUTE}, comma-separated):
+ * the app's own where it calls the tenant's home as the person, and the home
+ * sync's where it keeps calendars or contacts the home sync keeps equal to
+ * the home. The link is what the registrar's link route makes; here it is
+ * made at sign-in, with nobody asked, because the person signing in to the
+ * app is the consent.
  *
- * <p>Two marks decide it, both written by the platform: the app's own sign-in
- * client names its profile ({@value #PROFILE_ATTRIBUTE}), and the vouching
- * entry vouch-&lt;profile&gt; says it links at sign-in ({@value #LINK_CONFIG})
- * while the tenant has granted the app a home. Without either nothing happens.
+ * <p>An entry links only while it says so itself ({@value #LINK_CONFIG}),
+ * which the platform writes while the app has a home to use. Without both
+ * marks nothing happens.
  */
 public class HomeLinkAtSignIn implements EventListenerProvider {
 
     private static final Logger LOG = Logger.getLogger(HomeLinkAtSignIn.class);
 
-    /** The client attribute the platform writes the app's profile into. */
-    public static final String PROFILE_ATTRIBUTE = "gentianos.io/profile";
+    /** The client attribute the platform writes the entries to link to into. */
+    public static final String LINK_TO_ATTRIBUTE = "gentianos.io/link-to";
 
     /** The identity provider config entry that asks for links at sign-in. */
     public static final String LINK_CONFIG = "gentianos.io/link-at-sign-in";
@@ -56,18 +59,26 @@ public class HomeLinkAtSignIn implements EventListenerProvider {
     }
 
     /**
-     * The vouching entry a sign-in to a client with these attributes links to,
-     * or null. Pure, so it is tested without a Keycloak.
+     * The vouching entries a sign-in to a client with these attributes links
+     * to: the attribute's entries that are vouching entries at all, without
+     * repeats. Pure, so it is tested without a Keycloak.
      */
-    static String aliasFor(Map<String, String> clientAttributes) {
+    static List<String> aliasesFor(Map<String, String> clientAttributes) {
+        List<String> out = new ArrayList<>();
         if (clientAttributes == null) {
-            return null;
+            return out;
         }
-        String profile = clientAttributes.get(PROFILE_ATTRIBUTE);
-        if (profile == null || profile.isBlank()) {
-            return null;
+        String list = clientAttributes.get(LINK_TO_ATTRIBUTE);
+        if (list == null) {
+            return out;
         }
-        return VOUCHING_PREFIX + profile.trim();
+        for (String alias : list.split(",")) {
+            String a = alias.trim();
+            if (a.startsWith(VOUCHING_PREFIX) && a.length() > VOUCHING_PREFIX.length() && !out.contains(a)) {
+                out.add(a);
+            }
+        }
+        return out;
     }
 
     /** Whether a vouching entry with this config links at sign-in. */
@@ -85,24 +96,26 @@ public class HomeLinkAtSignIn implements EventListenerProvider {
             return;
         }
         ClientModel client = realm.getClientByClientId(event.getClientId());
-        String alias = client == null ? null : aliasFor(client.getAttributes());
-        if (alias == null) {
-            return;
-        }
-        IdentityProviderModel entry = session.identityProviders().getByAlias(alias);
-        if (entry == null || !entry.isEnabled() || !linksAtSignIn(entry.getConfig())) {
+        List<String> aliases = client == null ? List.of() : aliasesFor(client.getAttributes());
+        if (aliases.isEmpty()) {
             return;
         }
         UserModel user = session.users().getUserById(realm, event.getUserId());
         if (user == null || !user.isEnabled()) {
             return;
         }
-        if (session.users().getFederatedIdentity(realm, user, alias) != null) {
-            return;
+        for (String alias : aliases) {
+            IdentityProviderModel entry = session.identityProviders().getByAlias(alias);
+            if (entry == null || !entry.isEnabled() || !linksAtSignIn(entry.getConfig())) {
+                continue;
+            }
+            if (session.users().getFederatedIdentity(realm, user, alias) != null) {
+                continue;
+            }
+            session.users().addFederatedIdentity(realm, user,
+                new FederatedIdentityModel(alias, user.getId(), user.getUsername()));
+            LOG.infof("linked user %s to %s at sign-in to %s in realm %s", user.getId(), alias, event.getClientId(), realm.getName());
         }
-        session.users().addFederatedIdentity(realm, user,
-            new FederatedIdentityModel(alias, user.getId(), user.getUsername()));
-        LOG.infof("linked user %s to %s at sign-in to %s in realm %s", user.getId(), alias, event.getClientId(), realm.getName());
     }
 
     @Override

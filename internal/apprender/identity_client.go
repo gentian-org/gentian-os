@@ -75,15 +75,23 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 		extraConfig["gentianos.io/request-parameter-pattern"] = rp.Pattern
 		extraConfig["gentianos.io/request-parameter-redirect-uri"] = rp.RedirectURI
 	}
-	// An app that calls a home as the person names its profile on its own
-	// client: the platform's sign-in extension links a person who signs in
-	// here to the app's vouching entry (vouch-<profile>) where that entry
-	// says so, and the profile is how it finds the entry.
+	// The vouching entries a person who signs in here is linked to, by the
+	// platform's sign-in extension (gentian-home-links): the app's own where
+	// it calls a home as the person, and the home sync's where it keeps
+	// calendars or contacts the home sync keeps equal to the home. An entry
+	// links only while it says so itself.
+	var linkTo []string
 	for _, integration := range id.profile.Integrations {
 		if integration.AsPerson {
-			extraConfig["gentianos.io/profile"] = id.in.ProfileName
+			linkTo = append(linkTo, "vouch-"+id.in.ProfileName)
 			break
 		}
+	}
+	if id.profile.HomeSync != nil {
+		linkTo = append(linkTo, "vouch-"+gentianov1alpha1.HomeSyncProfile)
+	}
+	if len(linkTo) > 0 {
+		extraConfig["gentianos.io/link-to"] = strings.Join(linkTo, ",")
 	}
 	name := oidc.Name
 	if name == "" {

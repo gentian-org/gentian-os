@@ -185,6 +185,10 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	if err := r.ensureAgentBridgeLists(ctx, tenant, in); err != nil {
 		return err
 	}
+	// What the tenant's home sync keeps equal follows the same installs.
+	if err := r.ensureHomeSyncPlan(ctx, tenant, in); err != nil {
+		return err
+	}
 
 	for _, np := range desired {
 		if err := controllerutil.SetControllerReference(tenant, np, r.Scheme); err != nil {

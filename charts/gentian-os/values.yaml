@@ -336,6 +336,18 @@ adminConsole:
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 
+# The home sync: keeps the calendars and contacts the tenant's apps keep of
+# their own equal to the tenant's home, in every tenant. Off by default; the
+# v5 bootstrap turns it on. Its chart is this repository's, published per
+# branch and per commit with the image it runs, and the installer pins the
+# commit's.
+homesync:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: homesync
+    version: 0.1.0-develop
+
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
 # turns it on. Like the consoles it comes from gentian-ui as a moving chart

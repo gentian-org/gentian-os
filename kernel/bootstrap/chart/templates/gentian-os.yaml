@@ -128,6 +128,22 @@ spec:
           enabled: true
           chart:
             version: {{ .Values.concierge.chartVersion | default (printf "0.1.0-%s" (.Values.concierge.chartBranch | default "develop")) | quote }}
+        # The home sync: every tenant's, from this repository's own chart,
+        # published with the image the operator runs. The image's tag names
+        # the chart: <branch>-<sha> was published as 0.1.0-<branch>.<sha>, a
+        # release X.Y.Z as 0.1.0-vX.Y.Z; anything else follows the moving
+        # chart of develop.
+        {{- $hsTag := .Values.operator.tag | default "" }}
+        {{- $hsVersion := "0.1.0-develop" }}
+        {{- if regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+$" $hsTag }}
+        {{- $hsVersion = printf "0.1.0-v%s" $hsTag }}
+        {{- else if regexMatch "^[a-z0-9-]+-[0-9a-f]{7}$" $hsTag }}
+        {{- $hsVersion = regexReplaceAll "^(.+)-([0-9a-f]{7})$" $hsTag "0.1.0-${1}.${2}" }}
+        {{- end }}
+        homesync:
+          enabled: true
+          chart:
+            version: {{ $hsVersion | quote }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

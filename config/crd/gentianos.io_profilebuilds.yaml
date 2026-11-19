@@ -2331,6 +2331,14 @@ spec:
                                     exchange is what came in through such an entry: a person present, who
                                     connected a program and need not be linked.
                                   type: boolean
+                                homes:
+                                  description: |-
+                                    Homes gives the component's client the scopes of the tenant's homes
+                                    (home-<profile> for the provider of calendar-store, contacts-store and
+                                    file-store), and has the people who sign in to an app that declares
+                                    homeSync linked to it: what the platform's home sync acts with. It
+                                    needs keys, and trustTier platform as all vouching for any app does.
+                                  type: boolean
                                 keys:
                                   description: |-
                                     Keys says where the component publishes the keys its statements are
@@ -2371,6 +2379,9 @@ spec:
                                   statement'
                                 rule: has(self.keys) || !has(self.director) || size(self.director)
                                   == 0
+                              - message: 'vouching.homes needs vouching.keys: a person''s
+                                  token for a home is obtained with a signed statement'
+                                rule: has(self.keys) || !has(self.homes) || !self.homes
                           type: object
                         name:
                           description: |-
@@ -2439,6 +2450,157 @@ spec:
                       - name
                       type: object
                     type: array
+                  homeSync:
+                    description: |-
+                      HomeSync is how an app that keeps calendars or contacts of its own
+                      keeps them, so that the platform keeps them equal to the tenant's home.
+                    properties:
+                      calendar:
+                        description: Calendar is how the app keeps calendar entries.
+                        properties:
+                          defaults:
+                            additionalProperties:
+                              x-kubernetes-preserve-unknown-fields: true
+                            description: |-
+                              Defaults are written onto a record made from the home, in the
+                              driver's form, with the same placeholders.
+                            maxProperties: 16
+                            type: object
+                          driver:
+                            description: Driver is the driver of the app's framework.
+                            enum:
+                            - odoo
+                            type: string
+                          fields:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Fields maps a part of an entry to the app's field. The parts of a
+                              calendar entry are summary, description, location, start, end,
+                              startDate, endDate, allDay and rrule; of a contact name, email,
+                              phone, mobile, organization, title, note, street, city, zip, country
+                              and website.
+                            maxProperties: 16
+                            type: object
+                            x-kubernetes-validations:
+                            - message: a field is one of the parts of a calendar entry
+                                or a contact
+                              rule: self.all(k, k in ['summary', 'description', 'location',
+                                'start', 'end', 'startDate', 'endDate', 'allDay',
+                                'rrule', 'name', 'email', 'phone', 'mobile', 'organization',
+                                'title', 'note', 'street', 'city', 'zip', 'country',
+                                'website'])
+                          filter:
+                            description: |-
+                              Filter selects a person's records, in the driver's form (for Odoo, a
+                              domain); "$user" and "$partner" stand for the person in the app.
+                            x-kubernetes-preserve-unknown-fields: true
+                          model:
+                            description: 'Model is the app''s record type (for Odoo,
+                              the model: calendar.event).'
+                            maxLength: 128
+                            minLength: 1
+                            type: string
+                        required:
+                        - driver
+                        - fields
+                        - model
+                        type: object
+                        x-kubernetes-validations:
+                        - message: a mapping names at least one field
+                          rule: self.fields.size() > 0
+                      contacts:
+                        description: Contacts is how the app keeps contacts.
+                        properties:
+                          defaults:
+                            additionalProperties:
+                              x-kubernetes-preserve-unknown-fields: true
+                            description: |-
+                              Defaults are written onto a record made from the home, in the
+                              driver's form, with the same placeholders.
+                            maxProperties: 16
+                            type: object
+                          driver:
+                            description: Driver is the driver of the app's framework.
+                            enum:
+                            - odoo
+                            type: string
+                          fields:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Fields maps a part of an entry to the app's field. The parts of a
+                              calendar entry are summary, description, location, start, end,
+                              startDate, endDate, allDay and rrule; of a contact name, email,
+                              phone, mobile, organization, title, note, street, city, zip, country
+                              and website.
+                            maxProperties: 16
+                            type: object
+                            x-kubernetes-validations:
+                            - message: a field is one of the parts of a calendar entry
+                                or a contact
+                              rule: self.all(k, k in ['summary', 'description', 'location',
+                                'start', 'end', 'startDate', 'endDate', 'allDay',
+                                'rrule', 'name', 'email', 'phone', 'mobile', 'organization',
+                                'title', 'note', 'street', 'city', 'zip', 'country',
+                                'website'])
+                          filter:
+                            description: |-
+                              Filter selects a person's records, in the driver's form (for Odoo, a
+                              domain); "$user" and "$partner" stand for the person in the app.
+                            x-kubernetes-preserve-unknown-fields: true
+                          model:
+                            description: 'Model is the app''s record type (for Odoo,
+                              the model: calendar.event).'
+                            maxLength: 128
+                            minLength: 1
+                            type: string
+                        required:
+                        - driver
+                        - fields
+                        - model
+                        type: object
+                        x-kubernetes-validations:
+                        - message: a mapping names at least one field
+                          rule: self.fields.size() > 0
+                      endpoint:
+                        description: |-
+                          Endpoint is where the app's API answers inside the tenant: its
+                          Service, the port and the path the driver's calls go under.
+                        properties:
+                          path:
+                            description: |-
+                              Path is appended to the address the consumer is told, for an API
+                              served below the root.
+                            maxLength: 253
+                            pattern: ^/[A-Za-z0-9._~/-]*$
+                            type: string
+                          port:
+                            description: |-
+                              Port is the Service's port, and must be the port the provider's pods
+                              listen on: a network policy matches the port a pod listens on, and
+                              the way it opens is to this port and no other.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          service:
+                            description: Service is the provider's Service, in the
+                              namespace it is installed in.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - port
+                        - service
+                        type: object
+                    required:
+                    - endpoint
+                    type: object
+                    x-kubernetes-validations:
+                    - message: homeSync keeps calendar, contacts or both
+                      rule: has(self.calendar) || has(self.contacts)
                   hooks:
                     description: Hooks are lifecycle actions at install, upgrade and
                       resync.
@@ -4708,6 +4870,14 @@ spec:
                                   exchange is what came in through such an entry: a person present, who
                                   connected a program and need not be linked.
                                 type: boolean
+                              homes:
+                                description: |-
+                                  Homes gives the component's client the scopes of the tenant's homes
+                                  (home-<profile> for the provider of calendar-store, contacts-store and
+                                  file-store), and has the people who sign in to an app that declares
+                                  homeSync linked to it: what the platform's home sync acts with. It
+                                  needs keys, and trustTier platform as all vouching for any app does.
+                                type: boolean
                               keys:
                                 description: |-
                                   Keys says where the component publishes the keys its statements are
@@ -4747,6 +4917,9 @@ spec:
                                 for the director is obtained with a signed statement'
                               rule: has(self.keys) || !has(self.director) || size(self.director)
                                 == 0
+                            - message: 'vouching.homes needs vouching.keys: a person''s
+                                token for a home is obtained with a signed statement'
+                              rule: has(self.keys) || !has(self.homes) || !self.homes
                         type: object
                     type: object
                   secrets:
@@ -5018,15 +5191,15 @@ spec:
                     == ''bearer'')'
                 - message: requires.services.vouching requires trustTier platform,
                     or trustTier certified for a component that calls a home as the
-                    person (integrations[].asPerson) with keys of its own and no exchange
-                    or director
+                    person (integrations[].asPerson) with keys of its own and no exchange,
+                    director or homes
                   rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
                     || self.trustTier == ''platform'' || (self.trustTier == ''certified''
                     && has(self.integrations) && self.integrations.exists(i, has(i.asPerson)
                     && i.asPerson) && has(self.requires.services.vouching.keys) &&
                     !(has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange)
                     && !(has(self.requires.services.vouching.director) && self.requires.services.vouching.director.size()
-                    > 0))'
+                    > 0) && !(has(self.requires.services.vouching.homes) && self.requires.services.vouching.homes))'
                 - message: 'integrations[].asPerson needs requires.services.vouching.keys:
                     the component signs the statements a person''s token is asked
                     with'

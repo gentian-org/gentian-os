@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,13 +97,27 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// The platform writes the address in the form a Python app reads it
+	// (postgresql+psycopg://); the driver here reads the plain one.
+	for _, prefix := range []string{"postgresql+psycopg://", "postgresql+psycopg2://"} {
+		if strings.HasPrefix(dsn, prefix) {
+			dsn = "postgresql://" + strings.TrimPrefix(dsn, prefix)
+		}
+	}
 	store, err := homesync.OpenPostgres(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	client := &http.Client{Timeout: 60 * time.Second}
 	engine := &homesync.Engine{
-		Plan:    func() (*homesync.Plan, error) { return homesync.ReadPlan(plan) },
+		Plan: func() (*homesync.Plan, error) {
+			p, err := homesync.ReadPlan(plan)
+			if errors.Is(err, os.ErrNotExist) {
+				// Not written yet: nothing to keep equal.
+				return &homesync.Plan{}, nil
+			}
+			return p, err
+		},
 		People:  (&homesync.Linked{Registrar: registrar, Key: key, Tenant: tenant, Profile: profile, Client: client}).People,
 		Tokens:  &homesync.Tokens{Keys: keys, Vouching: vouching, Client: client},
 		Store:   store,

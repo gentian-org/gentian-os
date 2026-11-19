@@ -143,17 +143,17 @@ bits, kept as a SHA-256 digest bound to the person and the name. A password
 unused for longer than the realm's offline session idle timeout is refused.
 A wrong one does not count towards Keycloak's lockout of the person.
 
-## Linking to a home's consumer at sign-in
+## Linking at sign-in
 
 The event listener `gentian-home-links`, listed per realm, links a person who
-signs in (`LOGIN`) to an app that calls the tenant's home as the person to that
-app's vouching entry, `vouch-<profile>`: the link the registrar's link route
-makes, made here with nobody asked. Two marks the platform writes decide it:
+signs in (`LOGIN`) to an app to the vouching entries the app's own sign-in
+client names: the link the registrar's link route makes, made here with nobody
+asked. Two marks the platform writes decide it:
 
 | Where | Mark |
 |---|---|
-| the app's own sign-in client | attribute `gentianos.io/profile`: the app's profile |
-| the identity provider `vouch-<profile>` | config `gentianos.io/link-at-sign-in: "true"`, while the tenant grants the app a home |
+| the app's own sign-in client | attribute `gentianos.io/link-to`: the entries, comma-separated. `vouch-<profile>` for an app that calls a home as the person, `vouch-homesync` for an app that declares `homeSync` |
+| the identity provider `vouch-<profile>` | config `gentianos.io/link-at-sign-in: "true"`, while the component has a home to use |
 
-Without either, or for a disabled person, nothing happens. A person already
-linked is left as they are.
+Only vouching entries are linked, only while they carry the mark, and not for
+a disabled person. A person already linked is left as they are.

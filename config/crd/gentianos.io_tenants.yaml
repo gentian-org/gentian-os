@@ -453,6 +453,15 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                 type: object
+              contactsBook:
+                default: person
+                description: |-
+                  ContactsBook is whose address book at the home the contacts an app
+                  keeps are kept equal to: each person's own, or one the tenant shares.
+                enum:
+                - person
+                - shared
+                type: string
               country:
                 description: |-
                   Country is the country the tenant is in, as an ISO 3166-1 alpha-2 code

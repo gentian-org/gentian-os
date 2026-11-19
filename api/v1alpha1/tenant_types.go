@@ -377,6 +377,13 @@ type TenantSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['file-store', 'calendar-store', 'contacts-store'])",message="homes names file-store, calendar-store or contacts-store"
 	Homes map[string]string `json:"homes,omitempty"`
 
+	// ContactsBook is whose address book at the home the contacts an app
+	// keeps are kept equal to: each person's own, or one the tenant shares.
+	// +optional
+	// +kubebuilder:validation:Enum=person;shared
+	// +kubebuilder:default=person
+	ContactsBook string `json:"contactsBook,omitempty"`
+
 	// TokenEntries is how this tenant's token entries come to be served: a
 	// component's address that takes a token of the tenant's realm in place
 	// of a session. Unset, each waits for the perimeter approver's approval.

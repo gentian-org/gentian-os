@@ -531,6 +531,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `spec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `spec.extensions[].kernelRequirements.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `spec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -545,6 +546,23 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].valueMapping.oidc.clientSecretOpenbaoPath` | string |  | `ClientSecretOpenbaoPath` overrides the default per-tenant OpenBao secret path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC client secret. |
 | `spec.extensions[].valueMapping.oidc.clientSecretOpenbaoProperty` | string |  | `ClientSecretOpenbaoProperty` overrides the property name within the OpenBao secret (default: "client-secret"). |
 | `spec.extensions[].valueMapping.oidc.issuerKey` | string |  | `IssuerKey` is the Helm value key for the OIDC issuer URL. |
+| `spec.homeSync` | object |  | `HomeSync` is how an app that keeps calendars or contacts of its own keeps them, so that the platform keeps them equal to the tenant's home. |
+| `spec.homeSync.calendar` | object |  | `Calendar` is how the app keeps calendar entries. |
+| `spec.homeSync.calendar.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `spec.homeSync.calendar.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `spec.homeSync.calendar.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `spec.homeSync.calendar.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `spec.homeSync.calendar.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `spec.homeSync.contacts` | object |  | `Contacts` is how the app keeps contacts. |
+| `spec.homeSync.contacts.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `spec.homeSync.contacts.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `spec.homeSync.contacts.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `spec.homeSync.contacts.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `spec.homeSync.contacts.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `spec.homeSync.endpoint` | object | yes | `Endpoint` is where the app's API answers inside the tenant: its Service, the port and the path the driver's calls go under. |
+| `spec.homeSync.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `spec.homeSync.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `spec.homeSync.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.hooks` | object |  | `Hooks` are lifecycle actions at install, upgrade and resync. |
 | `spec.hooks.postInstall` | object |  | `PostInstall` runs once after the component is first ready. |
 | `spec.hooks.postInstall.envFrom` | []string |  | `EnvFrom` names Secrets already present in the tenant namespace to inject wholesale (matches how this app's own secrets already land — e.g.… |
@@ -816,6 +834,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `spec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `spec.requires.services.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `spec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1387,6 +1406,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1401,6 +1421,23 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].valueMapping.oidc.clientSecretOpenbaoPath` | string |  | `ClientSecretOpenbaoPath` overrides the default per-tenant OpenBao secret path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC client secret. |
 | `status.profileSpec.extensions[].valueMapping.oidc.clientSecretOpenbaoProperty` | string |  | `ClientSecretOpenbaoProperty` overrides the property name within the OpenBao secret (default: "client-secret"). |
 | `status.profileSpec.extensions[].valueMapping.oidc.issuerKey` | string |  | `IssuerKey` is the Helm value key for the OIDC issuer URL. |
+| `status.profileSpec.homeSync` | object |  | `HomeSync` is how an app that keeps calendars or contacts of its own keeps them, so that the platform keeps them equal to the tenant's home. |
+| `status.profileSpec.homeSync.calendar` | object |  | `Calendar` is how the app keeps calendar entries. |
+| `status.profileSpec.homeSync.calendar.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `status.profileSpec.homeSync.calendar.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `status.profileSpec.homeSync.calendar.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `status.profileSpec.homeSync.calendar.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `status.profileSpec.homeSync.calendar.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `status.profileSpec.homeSync.contacts` | object |  | `Contacts` is how the app keeps contacts. |
+| `status.profileSpec.homeSync.contacts.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `status.profileSpec.homeSync.contacts.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `status.profileSpec.homeSync.contacts.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `status.profileSpec.homeSync.contacts.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `status.profileSpec.homeSync.contacts.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `status.profileSpec.homeSync.endpoint` | object | yes | `Endpoint` is where the app's API answers inside the tenant: its Service, the port and the path the driver's calls go under. |
+| `status.profileSpec.homeSync.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `status.profileSpec.homeSync.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `status.profileSpec.homeSync.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.hooks` | object |  | `Hooks` are lifecycle actions at install, upgrade and resync. |
 | `status.profileSpec.hooks.postInstall` | object |  | `PostInstall` runs once after the component is first ready. |
 | `status.profileSpec.hooks.postInstall.envFrom` | []string |  | `EnvFrom` names Secrets already present in the tenant namespace to inject wholesale (matches how this app's own secrets already land — e.g.… |
@@ -1672,6 +1709,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
 | `status.profileSpec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `status.profileSpec.requires.services.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `status.profileSpec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1788,6 +1826,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.catalogue.sources[].oci.artifact` | string | yes | `Artifact` is the reference, without a scheme: \<registry host>/\<repository>:\<tag>, or @sha256:\<digest> in place of or after the tag. |
 | `spec.catalogue.sources[].oci.repository` | string | yes | `Repository` is the name of the repository whose credential the artifact is read with: one declared for the tenant, for a tenant's catalog; one declared for the… |
 | `spec.catalogue.sources[].url` | string |  | `URL` is the https address the catalog is served from. |
+| `spec.contactsBook` | string |  | `ContactsBook` is whose address book at the home the contacts an app keeps are kept equal to: each person's own, or one the tenant shares. |
 | `spec.country` | string |  | `Country` is the country the tenant is in, as an ISO 3166-1 alpha-2 code in upper case (CH, DE). |
 | `spec.deletion` | object |  | `Deletion` refines what a Delete leaves behind. |
 | `spec.deletion.keepBundles` | boolean |  | `KeepBundles` keeps the tenant's backup bucket and the bundles in it when everything else is deleted: the offboarding case, where the tenant was handed a copy… |
