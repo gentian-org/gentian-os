@@ -183,6 +183,28 @@ func (s *Server) vouchingLinked(w http.ResponseWriter, r *http.Request, c call) 
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "profile": profile, "person": id, "linked": linked})
 }
 
+// vouchingPeople lists who is linked to a component: for the component itself,
+// which acts for exactly them, and for whoever manages the tenant's people.
+func (s *Server) vouchingPeople(w http.ResponseWriter, r *http.Request, c call) {
+	profile, ok := s.vouchingProfile(w, r)
+	if !ok {
+		return
+	}
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	people, err := s.cfg.Identity.VouchingPeople(identityContext(r), realm, profile)
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	if people == nil {
+		people = []string{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "profile": profile, "people": people})
+}
+
 // unlinkVouching takes a person's link to a component away. Somebody who is
 // not linked is left as they are, and the answer is the same.
 func (s *Server) unlinkVouching(w http.ResponseWriter, r *http.Request, c call) {

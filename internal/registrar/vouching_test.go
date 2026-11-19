@@ -12,6 +12,7 @@ package registrar_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,6 +59,21 @@ func (f *fakeIdentity) VouchingLinked(ctx context.Context, r identity.Realm, id,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.links[r.Name()+"/"+profile+"/"+id], nil
+}
+
+func (f *fakeIdentity) VouchingPeople(ctx context.Context, r identity.Realm, profile string) ([]string, error) {
+	f.note(ctx, r)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	prefix := r.Name() + "/" + profile + "/"
+	var out []string
+	for k, linked := range f.links {
+		if linked && strings.HasPrefix(k, prefix) {
+			out = append(out, strings.TrimPrefix(k, prefix))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (f *fakeIdentity) LinkVouching(ctx context.Context, r identity.Realm, id, profile string) error {
@@ -461,4 +477,30 @@ func TestTheListFollowsTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	becomes("after the file went", 0)
+}
+
+// A component lists the people linked to it with its key, and nobody else's;
+// a member who does not manage the tenant's people may not list them.
+func TestAComponentListsThePeopleLinkedToIt(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, operatorsList())
+	for _, who := range []string{"mia", "tom"} {
+		if status, _ := h.do(t, http.MethodPost, linkNotary, h.token(t, "demo", who), ""); status != http.StatusNoContent {
+			t.Fatalf("linking %s", who)
+		}
+	}
+	const people = "/v1/tenants/demo/vouching/notary/people"
+	status, body := h.do(t, http.MethodGet, people, notaryOfDemo, "")
+	if status != http.StatusOK || fmt.Sprint(body["people"]) != "[mia tom]" {
+		t.Fatalf("the notary's own list: %d %s", status, body)
+	}
+	if status, _ := h.do(t, http.MethodGet, people, scribeOfDemo, ""); status != http.StatusForbidden {
+		t.Errorf("another component's key: %d, want 403", status)
+	}
+	if status, _ := h.do(t, http.MethodGet, people, h.token(t, "demo", "mia"), ""); status != http.StatusForbidden {
+		t.Errorf("a member who does not manage people: %d, want 403", status)
+	}
+	if status, body := h.do(t, http.MethodGet, people, h.token(t, "demo", "tom"), ""); status != http.StatusOK || fmt.Sprint(body["people"]) != "[mia tom]" {
+		t.Errorf("an administrator of the tenant's people: %d %s", status, body)
+	}
 }
