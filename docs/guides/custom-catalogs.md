@@ -1079,6 +1079,14 @@ moved back to the older build finds its pieces, and the data of an uninstalled a
 its profile. What stays is no longer checked and no bundle owns it — and an `OIDCPackCatalog` left
 this way is still read.
 
+**One exception: what the platform's schema no longer takes.** A profile or a build that an earlier
+release wrote in a shape this one does not have (a class or a field it removed) can never be applied
+again, and while the catalog directory lists it, Argo CD's diff of the whole directory fails. The
+director takes such files out of git at start and every 30 minutes, as one commit by
+`platform:catalogue` that names each file. The objects stay on the cluster, so an installed app keeps
+running and retained data stays where its purge finds it; removing the profile from the cluster is
+the residue removal below, as for any profile.
+
 The cluster's administrator sees what is left, and removes one piece at a time:
 
 ```bash
