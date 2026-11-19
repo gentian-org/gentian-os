@@ -115,6 +115,14 @@ var uiComponents = []struct{ key, chart, base string }{
 	{"concierge", "concierge", "0.1.0"},
 }
 
+// derivedFromImage are the operator chart's values it works out from
+// image.tag when they are left empty. A value an earlier install wrote there
+// would hold its component at that build through every release, so it is
+// taken out whenever the image moves.
+var derivedFromImage = [][]string{
+	{"homesync", "chart", "version"},
+}
+
 // NeedLeaderElection keeps one replica applying.
 func (r *ReleaseReconciler) NeedLeaderElection() bool { return true }
 
@@ -414,6 +422,9 @@ func (r *ReleaseReconciler) apply(ctx context.Context, plan *releasePlan) (int, 
 				for key, version := range plan.UI {
 					touched = setIfDiffers(src, version, "helm", "valuesObject", key, "chart", "version") || touched
 				}
+				for _, fields := range derivedFromImage {
+					touched = removeIfSet(src, append([]string{"helm", "valuesObject"}, fields...)...) || touched
+				}
 			}
 		}
 		if !touched {
@@ -433,6 +444,23 @@ func setIfDiffers(m map[string]any, value string, fields ...string) bool {
 		return false
 	}
 	_ = unstructured.SetNestedField(m, value, fields...)
+	return true
+}
+
+// removeIfSet takes a value out, and with it the maps it leaves empty, so
+// that the chart's default applies again.
+func removeIfSet(m map[string]any, fields ...string) bool {
+	if _, found, _ := unstructured.NestedFieldNoCopy(m, fields...); !found {
+		return false
+	}
+	unstructured.RemoveNestedField(m, fields...)
+	for n := len(fields) - 1; n > 0; n-- {
+		parent, found, _ := unstructured.NestedMap(m, fields[:n]...)
+		if !found || len(parent) > 0 {
+			break
+		}
+		unstructured.RemoveNestedField(m, fields[:n]...)
+	}
 	return true
 }
 

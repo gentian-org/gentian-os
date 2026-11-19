@@ -535,7 +535,9 @@ The director writes `spec.release` and points the `gentian` catalog source
 at the released catalog, in one signed commit. The operator reads the claim,
 looks the release up in the index, moves every Application on the gentian-os
 repository to the tag, its own image to `X.Y.Z` and the gentian-ui charts to
-the ones the index names for the release, and writes `status.release`.
+the ones the index names for the release, takes out a home sync chart
+version an earlier install pinned (the chart follows the image), and writes
+`status.release`.
 `kubectl gentian release show` follows it; the move is done when the state
 is `Applied` and the operator's build is the release:
 
