@@ -243,7 +243,12 @@ opened is the gateway's port and nothing else in its namespace, so a profile
 that declares `llm` does not name `system-llm` in
 `gentianos.io/kernel-egress-namespaces`. On a cluster that serves no models
 the app is not installed: its Component waits and says the cluster has no
-model gateway. An app that keeps the key somewhere of its own on first start
+model gateway. An app that also runs without models declares `llm: {optional:
+true}`: while the cluster serves none, or its key is not delivered yet, it is
+installed without the two values, without `LLM_BASE_URL` and `LLM_API_KEY`
+and without a path to the gateway, and is rendered again when the key
+arrives. Its chart's defaults for the two values are what tell it there is no
+gateway. An app that keeps the key somewhere of its own on first start
 has to take it again when it changes -- the platform replaces a key at the
 gateway, it cannot reach into an app's database.
 
@@ -269,8 +274,7 @@ spec:
 `optional` is for such a component: while the cluster serves no models, or the
 key is not delivered yet, it is released without credentials and without a
 path to the gateway, `availableKey` receives `false`, and it is rendered again
-when the key arrives. For an app a tenant installs the requirement holds the
-release whether or not `optional` is set. Nobody uninstalls a placed
+when the key arrives. Nobody uninstalls a placed
 component, so its key goes when the tenant is deleted with its data, when the
 profile stops declaring `llm`, or when the platform takes the component away.
 

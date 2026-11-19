@@ -84,6 +84,10 @@ type Input struct {
 	// operator's: both reach the chart through ExtraValues, and nothing of
 	// either is read from the tenant's store.
 	Placed bool
+	// ModelAccessWithheld says the app's model gateway requirement is
+	// optional and not met: nothing of the gateway is read from the tenant's
+	// store, so the release and its hooks go without address and key.
+	ModelAccessWithheld bool
 
 	// What the component asks of its install beyond its profile.
 	PullSecrets        PullSecrets

@@ -147,17 +147,35 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
+	// An app whose optional model gateway requirement is not met has no path
+	// to the gateway, as its release has no address and no key.
+	withheld := map[string]bool{}
+	for _, app := range installed {
+		profile := profiles[app.Profile]
+		if profile == nil {
+			continue
+		}
+		without, err := modelAccessWithheld(ctx, r.Client, nsName, app.Profile, profile, tenant)
+		if err != nil {
+			return fmt.Errorf("read whether %s holds a key at the model gateway: %w", app.Profile, err)
+		}
+		if without {
+			withheld[app.Profile] = true
+		}
+	}
+
 	in := netpolicy.BuildInput{
-		TenantName:    tenant.Name,
-		Namespace:     nsName,
-		Apps:          installed,
-		Placed:        placed,
-		Profiles:      profiles,
-		Bindings:      bindings,
-		Grants:        grants,
-		PodSelectors:  selectors,
-		Config:        r.tenantNetPolicyConfig(),
-		KubeAPIEndpts: loadKubeAPIEndpointSlice(ctx, r.Client),
+		TenantName:          tenant.Name,
+		Namespace:           nsName,
+		Apps:                installed,
+		Placed:              placed,
+		Profiles:            profiles,
+		Bindings:            bindings,
+		Grants:              grants,
+		PodSelectors:        selectors,
+		ModelAccessWithheld: withheld,
+		Config:              r.tenantNetPolicyConfig(),
+		KubeAPIEndpts:       loadKubeAPIEndpointSlice(ctx, r.Client),
 	}
 	desired := netpolicy.BuildDesired(in)
 	desiredNames := netpolicy.ManagedPolicyNames(in)

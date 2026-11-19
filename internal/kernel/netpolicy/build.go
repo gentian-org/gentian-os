@@ -65,9 +65,13 @@ type BuildInput struct {
 	// PodSelectors are the labels each app's pods carry, for an app whose
 	// delivery does not put the app label on them. A contract's two sides,
 	// and the app's own policies (forPods), are selected by these.
-	PodSelectors  map[string]map[string]string
-	Config        Config
-	KubeAPIEndpts *discoveryv1.EndpointSlice
+	PodSelectors map[string]map[string]string
+	// ModelAccessWithheld are the apps released without the model gateway:
+	// the requirement is optional and the app's key is not delivered. Such
+	// an app's policy opens no path to the gateway.
+	ModelAccessWithheld map[string]bool
+	Config              Config
+	KubeAPIEndpts       *discoveryv1.EndpointSlice
 }
 
 // BuildDesired returns all operator-managed NetworkPolicies for a tenant.
@@ -83,7 +87,7 @@ func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 		if profile == nil {
 			continue
 		}
-		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config); np != nil {
+		if np := kernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config, !in.ModelAccessWithheld[app.Profile]); np != nil {
 			out = append(out, in.forPods(app.Profile, np))
 		}
 		out = append(out, in.forPods(app.Profile, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile)))

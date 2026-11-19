@@ -1992,14 +1992,14 @@ spec:
                                   description: |-
                                     Optional means the component runs without the gateway. While the
                                     cluster serves no models, or the component's key is not delivered yet,
-                                    it is released all the same: without credentials, without a network
-                                    path to the gateway, and told so through valueMapping.llm.availableKey.
-                                    When the key arrives the component is rendered again with it.
+                                    it is released all the same: without credentials and without a network
+                                    path to the gateway. When the key arrives the component is rendered
+                                    again with it.
 
-                                    Honored for a component the platform places on tenants itself. For an
-                                    app a tenant installs the requirement holds the release as if this
-                                    were not set: its chart's values read the key from where it is kept,
-                                    and its release cannot be rendered without it.
+                                    A component the platform places on tenants itself is told so through
+                                    valueMapping.llm.availableKey. An app a tenant installs is given
+                                    neither valueMapping.llm.baseUrlKey nor apiKeyKey until then, so its
+                                    chart's defaults for the two are what say there is no gateway.
                                   type: boolean
                               type: object
                             logDestination:
@@ -4353,14 +4353,14 @@ spec:
                                 description: |-
                                   Optional means the component runs without the gateway. While the
                                   cluster serves no models, or the component's key is not delivered yet,
-                                  it is released all the same: without credentials, without a network
-                                  path to the gateway, and told so through valueMapping.llm.availableKey.
-                                  When the key arrives the component is rendered again with it.
+                                  it is released all the same: without credentials and without a network
+                                  path to the gateway. When the key arrives the component is rendered
+                                  again with it.
 
-                                  Honored for a component the platform places on tenants itself. For an
-                                  app a tenant installs the requirement holds the release as if this
-                                  were not set: its chart's values read the key from where it is kept,
-                                  and its release cannot be rendered without it.
+                                  A component the platform places on tenants itself is told so through
+                                  valueMapping.llm.availableKey. An app a tenant installs is given
+                                  neither valueMapping.llm.baseUrlKey nor apiKeyKey until then, so its
+                                  chart's defaults for the two are what say there is no gateway.
                                 type: boolean
                             type: object
                           logDestination:

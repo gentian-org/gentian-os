@@ -590,6 +590,57 @@ func TestADeclaringAppWaitsWhereThereIsNoGateway(t *testing.T) {
 	}
 }
 
+// An app the tenant installed whose requirement is optional is never held:
+// where there is no gateway, and while its key is not delivered, it is
+// released without the gateway, and with it once the key is there. The
+// tenant's policies are told the same.
+func TestAnOptionalRequirementReleasesAnInstalledAppWithoutTheGateway(t *testing.T) {
+	ctx := context.Background()
+	w := newModelAccessWorld(t, []string{"chat", "wiki"})
+	w.profiles["chat"].Services().LLM.Optional = true
+	comp := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "chat", Namespace: "tenant-demo"}}
+	verdict := func(when string, withheld bool) {
+		t.Helper()
+		v, err := modelAccessFor(ctx, w.r.Client, comp, w.profiles["chat"], w.tenant)
+		if err != nil || v.reason != "" {
+			t.Fatalf("%s: held: %q %q %v", when, v.reason, v.message, err)
+		}
+		if v.withheld != withheld || v.placed || v.delivered {
+			t.Errorf("%s: verdict = %+v, want withheld=%v", when, v, withheld)
+		}
+		policy, err := modelAccessWithheld(ctx, w.r.Client, "tenant-demo", "chat", w.profiles["chat"], w.tenant)
+		if err != nil || policy != withheld {
+			t.Errorf("%s: the policies are told withheld=%v (%v), want %v", when, policy, err, withheld)
+		}
+	}
+
+	t.Setenv("LLM_SUPPORT", "false")
+	w.pass(t)
+	verdict("no gateway", true)
+
+	t.Setenv("LLM_SUPPORT", "true")
+	w.gateway.down = true
+	w.pass(t)
+	verdict("gateway down", true)
+
+	w.gateway.down = false
+	w.pass(t)
+	verdict("served", false)
+
+	// The cluster stops serving models: the app goes without again.
+	t.Setenv("LLM_SUPPORT", "false")
+	verdict("gateway gone", true)
+
+	// A requirement that is not optional is not withheld, it holds.
+	if policy, err := modelAccessWithheld(ctx, w.r.Client, "tenant-demo", "wiki", w.profiles["wiki"], w.tenant); err != nil || policy {
+		t.Errorf("an app that declared no gateway is withheld: %v %v", policy, err)
+	}
+	w.profiles["chat"].Services().LLM.Optional = false
+	if policy, err := modelAccessWithheld(ctx, w.r.Client, "tenant-demo", "chat", w.profiles["chat"], w.tenant); err != nil || policy {
+		t.Errorf("a required gateway is withheld rather than held: %v %v", policy, err)
+	}
+}
+
 // A gateway that does not answer keeps an undeclared app's key on record:
 // it may still authenticate. The Secret, which nothing consumes, goes.
 func TestAKeyThatCannotBeRemovedStaysOnRecord(t *testing.T) {
