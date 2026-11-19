@@ -221,11 +221,18 @@ check "operator: no image tag refuses to render" \
 check "operator: the tag the installer resolved is the image" \
     "$(has "$(render false true false)" 'tag: "develop-abc1234"' && echo 1 || echo 0)"
 
-# The home sync's chart is published with the operator's image, and its pin
-# follows the image's tag: a commit's chart, or a release's.
+# The home sync is on, and its chart is left to follow the image the
+# gentian-os chart runs: Image Updater moves image.tag, not this pin.
+check "homesync: on, with no pinned chart" \
+    "$(r="$(render false true false)"; has "$r" 'homesync:' && ! has "$r" '0.1.0-develop.abc1234' && echo 1 || echo 0)"
+
+# In the gentian-os chart, the home sync's chart follows image.tag: a
+# commit's chart, or a release's.
+hs() { helm template x charts/gentian-os --set homesync.enabled=true "$@" \
+    --show-only templates/componentprofile-homesync.yaml 2>&1; }
 check "homesync: a commit's image pins that commit's chart" \
-    "$(has "$(render false true false)" 'version: "0.1.0-develop.abc1234"' && echo 1 || echo 0)"
+    "$(has "$(hs --set-string image.tag=develop-abc1234)" 'version: "0.1.0-develop.abc1234"' && echo 1 || echo 0)"
 check "homesync: a release's image pins that release's chart" \
-    "$(has "$(render false true false --set-string operator.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
+    "$(has "$(hs --set-string image.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
 
 finish
