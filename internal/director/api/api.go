@@ -120,6 +120,7 @@ type Repository interface {
 	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	TakeOutRefused(ctx context.Context, refused gitops.Refuser, meta gitops.Meta) (gitops.Result, map[string][]string, error)
 	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
@@ -213,9 +214,14 @@ type Config struct {
 	// It keeps the placement of the platform's apps (platform_apps.go) from
 	// running on its own too; PlacePlatformApps still places.
 	UpdaterOff bool
-	Authn      Authenticator
-	Authz      authz.Checker
-	Repo       Repository
+	// TakeOutRefused has the director take out of the catalog directory
+	// what this release's schema refuses, at start and every so often
+	// (catalogue_refused.go). Off unless the program turns it on, so that a
+	// test's catalog of minimal profiles is left as it wrote it.
+	TakeOutRefused bool
+	Authn          Authenticator
+	Authz          authz.Checker
+	Repo           Repository
 	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
 	// catalogue's index when one is listed. Which catalogs there are is
 	// not its to know: they are read from git when they are needed, per
@@ -297,6 +303,7 @@ func New(cfg Config) (*Server, error) {
 	s.routes()
 	s.startUpdater()
 	s.startPlatformApps()
+	s.startTakeOutRefused()
 	return s, nil
 }
 

@@ -316,6 +316,7 @@ func run(log *slog.Logger) error {
 		envvar.Or("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
+		TakeOutRefused: true,
 		Catalogue:      entries,
 		StoreURL:       storeURL,
 		Cluster:        cluster,
