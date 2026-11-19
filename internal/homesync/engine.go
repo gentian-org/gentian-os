@@ -99,10 +99,6 @@ func (e *Engine) Round(ctx context.Context) error {
 }
 
 func (e *Engine) skip(person, what string, err error) {
-	if errors.Is(err, ErrNotLinked) {
-		e.Log.Debug("no token", "person", person, "for", what, "error", err.Error())
-		return
-	}
 	e.Log.Warn("no token", "person", person, "for", what, "error", err.Error())
 }
 

@@ -360,7 +360,7 @@ type tokensExcept struct{ person string }
 
 func (t tokensExcept) For(ctx context.Context, person, scope string) (string, error) {
 	if person == t.person {
-		return "", ErrNotLinked
+		return "", ErrRefused
 	}
 	return fakeTokens{}.For(ctx, person, scope)
 }
