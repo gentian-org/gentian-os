@@ -1085,7 +1085,9 @@ again, and while the catalog directory lists it, Argo CD's diff of the whole dir
 director takes such files out of git at start and every 30 minutes, as one commit by
 `platform:catalogue` that names each file. The objects stay on the cluster, so an installed app keeps
 running and retained data stays where its purge finds it; removing the profile from the cluster is
-the residue removal below, as for any profile.
+the residue removal below, as for any profile. A build whose bundle carries a profile of such a
+shape stays in git; the operator refuses it (`Verified=False`, reason `BundleRefused`) and renders
+no tenant from it.
 
 The cluster's administrator sees what is left, and removes one piece at a time:
 

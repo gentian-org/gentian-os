@@ -51,7 +51,7 @@ func (s *Server) startTakeOutRefused() {
 func (s *Server) TakeOutRefused(ctx context.Context) int {
 	set := schemacheck.Embedded()
 	meta := gitops.Meta{Principal: refusedPrincipal, Decision: "this release's schema refuses them"}
-	res, why, err := s.cfg.Repo.TakeOutRefused(ctx, set.Refused, meta)
+	res, why, err := s.cfg.Repo.TakeOutRefused(ctx, set.Removed, meta)
 	if err != nil {
 		s.cfg.Log.Warn("what the schema refuses could not be taken out of the catalog directory", "error", err.Error())
 		return 0

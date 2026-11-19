@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/schemacheck"
 )
 
 // BuildLabel is the label a ProfileBuild carries with its own name, so a
@@ -65,10 +66,27 @@ func FromBuild(build *gentianov1alpha1.ProfileBuild) (*gentianov1alpha1.Componen
 		return nil, nil, &Refusal{Reason: ReasonUnverifiable,
 			Message: fmt.Sprintf("ProfileBuild %s: its profile cannot be read as a ComponentProfile: %v", build.Name, err)}
 	}
+	// A build an earlier release wrote can carry a profile in a shape this
+	// one no longer has: a required field it added, a rule the old shape
+	// breaks. Its spec cannot be stored, on the status or anywhere, and while
+	// an earlier status holds it the build's object cannot be applied again.
+	if invalid := invalidProfile(read.Profile); len(invalid) > 0 {
+		return nil, nil, &Refusal{Reason: ReasonRefused,
+			Message: fmt.Sprintf("ProfileBuild %s carries a profile this platform's schema refuses: %s", build.Name, strings.Join(invalid, "; "))}
+	}
 	if profile.Annotations == nil {
 		profile.Annotations = map[string]string{}
 	}
 	profile.Annotations[Annotation] = build.Spec.Bundle
 	profile.Annotations[OriginAnnotation] = build.Spec.Origin
 	return profile, bundle, nil
+}
+
+// invalidProfile is what the API server would refuse of the bundle's profile.
+func invalidProfile(profile map[string]any) []string {
+	invalid, err := schemacheck.Embedded().Invalid(profile)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return invalid
 }
