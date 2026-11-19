@@ -346,7 +346,8 @@ homesync:
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: homesync
-    version: 0.1.0-develop
+    # Empty: the chart published with image.tag (componentprofile-homesync.yaml).
+    version: ""
 
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
