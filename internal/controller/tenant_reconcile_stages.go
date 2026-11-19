@@ -447,6 +447,14 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	if _, err := r.ensureModelAccess(ctx, tenant, profiles); err != nil {
 		return ctrl.Result{}, fmt.Errorf("model access: %w", err)
 	}
+	// An app whose requirement is optional has its path to the gateway
+	// opened by whether its key is delivered, which the policies written
+	// earlier in this pass could not know yet.
+	if installsOptionalModelAccess(tenant, profiles) {
+		if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("network policies after model access: %w", err)
+		}
+	}
 
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())

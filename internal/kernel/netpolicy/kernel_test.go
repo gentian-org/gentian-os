@@ -331,6 +331,43 @@ func TestTheModelGatewayIsOpenedForADeclaringAppOnItsPortAlone(t *testing.T) {
 	}
 }
 
+// An app released without the model gateway -- its requirement is optional
+// and its key is not delivered -- has no path to the gateway, and keeps every
+// other path its profile declares.
+func TestAnAppReleasedWithoutTheModelGatewayHasNoPathToIt(t *testing.T) {
+	t.Parallel()
+	llm := fmt.Sprintf("%s:%d", layout.System("llm"), provisioner.ModelGatewayPort)
+	cache := fmt.Sprintf("%s:%d", layout.System("cache"), provisioner.CachePort)
+	profile := profileRequiring(gentianov1alpha1.ServiceRequirements{
+		LLM:   &gentianov1alpha1.LLMRequirement{Optional: true},
+		Cache: &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineRedis},
+	}, nil)
+	kernelAccess := func(withheld map[string]bool) []string {
+		in := netpolicy.BuildInput{
+			TenantName:          "acme",
+			Namespace:           "tenant-acme",
+			Apps:                []gentianov1alpha1.TenantApp{{Profile: "chat"}},
+			Profiles:            map[string]*gentianov1alpha1.ComponentProfile{"chat": profile},
+			ModelAccessWithheld: withheld,
+		}
+		for _, np := range netpolicy.BuildDesired(in) {
+			if np.Name == "kernel-access-chat" {
+				return opened(t, np)
+			}
+		}
+		t.Fatal("no kernel-access policy for chat")
+		return nil
+	}
+	want := []string{cache, llm}
+	sort.Strings(want)
+	if got := kernelAccess(nil); !reflect.DeepEqual(got, want) {
+		t.Errorf("with its key: opened = %v, want %v", got, want)
+	}
+	if got := kernelAccess(map[string]bool{"chat": true}); !reflect.DeepEqual(got, []string{cache}) {
+		t.Errorf("without its key: opened = %v, want %v", got, []string{cache})
+	}
+}
+
 // An app that signs people in itself reaches the identity provider and the
 // edge. An app whose people are signed in by the platform's sidecar reaches
 // neither: it never talks to the identity provider, and the sidecar that

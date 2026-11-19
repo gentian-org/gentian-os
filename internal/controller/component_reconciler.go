@@ -778,6 +778,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 		in.Placed = operatorPlaced(profile)
+		in.ModelAccessWithheld = models.withheld
 		in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
 		// The realm client of the token entry, for as long as the entry is
 		// approved: without the approval the realm issues nobody a token

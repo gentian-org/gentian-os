@@ -685,6 +685,10 @@ type modelAccessVerdict struct {
 	placed bool
 	// delivered says the placed component's key is in its Secret.
 	delivered bool
+	// withheld says an app the tenant installed is released without the
+	// gateway: its requirement is optional and its key is not delivered.
+	// Its release reads no gateway value and its policy opens no path there.
+	withheld bool
 }
 
 // modelAccessFor answers whether a component that declares the model gateway
@@ -692,9 +696,9 @@ type modelAccessVerdict struct {
 // installs anything, the way it asks for a database: a requirement that is
 // not met holds the release, and the Component says which one.
 //
-// An optional requirement of a placed component holds nothing: the verdict
-// says whether the key is delivered, and the component is rendered with or
-// without it.
+// An optional requirement holds nothing: the verdict says whether the key is
+// delivered (a placed component) or withheld (an app the tenant installed),
+// and the component is rendered with or without it.
 func modelAccessFor(ctx context.Context, c client.Client, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (modelAccessVerdict, error) {
 	var v modelAccessVerdict
 	if !provisioner.MatchModelAccessProfile(profile) || profile.IsAPI() {
@@ -714,9 +718,10 @@ func modelAccessFor(ctx context.Context, c client.Client, comp *gentianov1alpha1
 			return v, nil
 		}
 	}
-	optional := v.placed && modelAccessOptional(profile)
+	optional := (v.placed || isApp) && modelAccessOptional(profile)
 	if !clusterLLMEnabled(ctx, c) {
 		if optional {
+			v.withheld = !v.placed
 			return v, nil
 		}
 		v.reason, v.message = "ModelGatewayUnavailable", fmt.Sprintf(
@@ -751,9 +756,23 @@ func modelAccessFor(ctx context.Context, c client.Client, comp *gentianov1alpha1
 		v.delivered = v.placed
 	}
 	if optional {
+		v.withheld = !v.placed && v.reason != ""
 		v.reason, v.message = "", ""
 	}
 	return v, nil
+}
+
+// modelAccessWithheld reports, for the tenant's policies, whether an app the
+// tenant installed goes without the gateway: the same answer its Component
+// renders its release by (modelAccessFor).
+func modelAccessWithheld(ctx context.Context, c client.Client, namespace, app string, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	if !modelAccessOptional(profile) || operatorPlaced(profile) {
+		return false, nil
+	}
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = app, namespace
+	v, err := modelAccessFor(ctx, c, comp, profile, tenant)
+	return v.withheld, err
 }
 
 // modelAccessValues tells a placed component's chart about the gateway, where
@@ -814,4 +833,16 @@ func componentsOfModelCredentials() handler.EventHandler {
 		}
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name, Namespace: obj.GetNamespace()}}}
 	})
+}
+
+// installsOptionalModelAccess reports whether the tenant installed an app
+// whose model gateway requirement is optional.
+func installsOptionalModelAccess(tenant *gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) bool {
+	for _, app := range tenant.Spec.Apps {
+		profile, ok := profileFromIndex(profiles, app.Profile)
+		if ok && modelAccessOptional(profile) && !operatorPlaced(profile) {
+			return true
+		}
+	}
+	return false
 }
