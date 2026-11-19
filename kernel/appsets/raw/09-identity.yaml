@@ -69,11 +69,15 @@ spec:
             # Where Keycloak states a user's groups. The director runs in the
             # control namespace and is reached on the cluster network, never
             # through the edge: this is the kernel talking to itself.
-            # The provider jar is built from this repository, so it follows
-            # the same ref the manifests do. A tag of its own would let the
-            # jar and the values that configure it come from different commits.
+            # The provider jar is built from this repository and named by what
+            # it is built from: src-<hash of its sources>, which
+            # scripts/tools/listener-tag.sh prints and lint-listener-tag holds
+            # this line to. The jar and the values that configure it still
+            # come from the same commit, and a build that leaves the listener
+            # alone leaves Keycloak's pod alone: no restart, and no wait on an
+            # image a failed build never published.
             - name: global.eventListener.image
-              value: 'ghcr.io/gentian-org/keycloak-event-listener:gentian.os.revision.placeholder'
+              value: 'ghcr.io/gentian-org/keycloak-event-listener:src-8838ff4d582e'
             # The OPERATOR's endpoint, not the director's. Who is in which
             # group is cluster state, so the thing that turns declared state
             # into cluster state projects it; the director reads the graph to
