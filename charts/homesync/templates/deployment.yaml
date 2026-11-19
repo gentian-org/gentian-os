@@ -55,11 +55,12 @@ spec:
               value: ":{{ .Values.port }}"
             - name: INTERVAL
               value: {{ .Values.interval | quote }}
-          envFrom:
-            # VOUCHING_ISSUER, VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET,
-            # VOUCHING_TOKEN_URL.
-            - secretRef:
-                name: {{ .Values.vouchingSecret }}
+            # The service's client in the tenant's realm, as files the
+            # service reads when it asks for a token: the platform keeps the
+            # Secret current, and a mounted Secret follows it in place (no
+            # subPath), so a change reaches the running pod.
+            - name: VOUCHING_DIR
+              value: /etc/vouching
           ports:
             - name: keys
               containerPort: {{ .Values.port }}
@@ -71,6 +72,9 @@ spec:
             - name: plan
               mountPath: /etc/homesync
               readOnly: true
+            - name: vouching
+              mountPath: /etc/vouching
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -79,6 +83,9 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: vouching
+          secret:
+            secretName: {{ .Values.vouchingSecret }}
         # Absent until the platform writes it: the pod starts, and a round
         # with no plan syncs nothing.
         - name: plan

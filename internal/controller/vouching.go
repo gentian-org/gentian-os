@@ -11,6 +11,14 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"context"
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
@@ -46,4 +54,47 @@ const (
 func wantsVouching(profile *gentianov1alpha1.ComponentProfile) bool {
 	services := profile.Services()
 	return services != nil && services.Vouching != nil
+}
+
+// keepVouchingIssuer keeps VOUCHING_ISSUER in the component's Secret equal to
+// what its profile says now: present while it signs statements (names
+// keys), absent while it only exchanges.
+//
+// The Composition writes the Secret once, with the issuer where the profile
+// named keys then, and never again: the client secret in it must not change.
+// A profile that starts or stops publishing keys later would otherwise leave
+// the component without the issuer it signs as, or with one the realm no
+// longer trusts. Only this one key is touched; the issuer is no secret, and
+// the component reads the Secret mounted, so the change reaches it without
+// a restart.
+//
+// A Secret not made yet is left to the Composition, whose template writes
+// the issuer as this would.
+func (r *TileProjectionReconciler) keepVouchingIssuer(ctx context.Context, namespace, profile string, signs bool) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: VouchingSecretName(profile)}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	current, present := secret.Data[VouchingIssuerKey]
+	want := VouchingIssuer(namespace, profile)
+	switch {
+	case signs && present && string(current) == want, !signs && !present:
+		return nil
+	}
+	before := secret.DeepCopy()
+	if signs {
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		secret.Data[VouchingIssuerKey] = []byte(want)
+	} else {
+		delete(secret.Data, VouchingIssuerKey)
+	}
+	if err := r.Patch(ctx, secret, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("keep the issuer in %s/%s: %w", namespace, secret.Name, err)
+	}
+	return nil
 }

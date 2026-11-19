@@ -494,7 +494,10 @@ it: what the tenant's home sync acts with. The
 platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
 gives it a client of the same name to ask with, and tells it what it has to know in the Secret
 `vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,
-`VOUCHING_TOKEN_URL`). The component signs a statement of at most a few minutes that names the
+`VOUCHING_TOKEN_URL`). The platform keeps that Secret current: the issuer follows the profile's
+`keys`, and a Secret made again carries a new client secret, which the realm's client follows. So
+the component mounts the Secret as files (without `subPath`) and reads them each time it asks for a
+token; read once from the environment, a change reaches it only at its next start. The component signs a statement of at most a few minutes that names the
 issuer, the person's subject (their id in the realm), an id of its own, and as its audience the
 realm's issuer as the realm's discovery document names it, and posts it to the token address with the grant `urn:ietf:params:oauth:grant-type:jwt-bearer` and one scope,
 `app-<profile of the app>`. The realm answers with a token of that person for that app and nothing

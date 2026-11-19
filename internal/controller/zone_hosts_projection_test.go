@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -513,5 +514,66 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 func TestHomeTokenScopeIsNamedForTheHome(t *testing.T) {
 	if got := HomeTokenScope("nextcloud-base-ce"); got != "home-nextcloud-base-ce" {
 		t.Fatalf("HomeTokenScope = %q", got)
+	}
+}
+
+// The Secret the Composition wrote once follows the profile: a component
+// that starts to publish keys is told its issuer, one that stops is no
+// longer, and the client secret beside it is never touched. A Secret not
+// made yet is left to the Composition.
+func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := platformTenantFixture()
+	ns := tenant.NamespaceName()
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	secret := func(name string, data map[string]string) *corev1.Secret {
+		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName(name), Namespace: ns}, Data: map[string][]byte{}}
+		for k, v := range data {
+			s.Data[k] = []byte(v)
+		}
+		return s
+	}
+	signer := keyless("signer")
+	signer.Spec.Requires.Services.Vouching.Keys = &gentianov1alpha1.VouchingKeys{Service: "signer", Port: 8080}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(),
+		// Wrote no issuer when it was made: the profile named no keys then.
+		signer, comp("signer"),
+		secret("signer", map[string]string{VouchingClientSecretKey: "s1", VouchingClientIDKey: "vouch-signer"}),
+		// Named keys once and no longer does.
+		keyless("stopped"), comp("stopped"),
+		secret("stopped", map[string]string{VouchingClientSecretKey: "s2", VouchingIssuerKey: VouchingIssuer(ns, "stopped")}),
+		// Its Secret is not made yet.
+		keyless("new"), comp("new"),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) map[string][]byte {
+		s := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName(name)}, s); err != nil {
+			t.Fatal(err)
+		}
+		return s.Data
+	}
+	got := read("signer")
+	if string(got[VouchingIssuerKey]) != VouchingIssuer(ns, "signer") || string(got[VouchingClientSecretKey]) != "s1" || string(got[VouchingClientIDKey]) != "vouch-signer" {
+		t.Fatalf("signer's Secret = %q", got)
+	}
+	got = read("stopped")
+	if _, ok := got[VouchingIssuerKey]; ok || string(got[VouchingClientSecretKey]) != "s2" {
+		t.Fatalf("stopped's Secret = %q", got)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName("new")}, &corev1.Secret{}); !errors.IsNotFound(err) {
+		t.Fatalf("a Secret not made yet was made: %v", err)
 	}
 }

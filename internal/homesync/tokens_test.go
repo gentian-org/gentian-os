@@ -16,6 +16,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -76,7 +78,7 @@ func TestATokenIsAskedWithAStatementTheRealmCanVerify(t *testing.T) {
 	}, Client: &http.Client{Transport: rewrite{to: realm.URL}}}
 	now := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
 	tokens.Now = func() time.Time { return now }
-	statement, err := tokens.statement("sub-1", "https://id.acme.example/auth/realms/acme")
+	statement, err := tokens.statement("https://vouch-home-sync.tenant-acme.svc", "sub-1", "https://id.acme.example/auth/realms/acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,4 +115,32 @@ func (r rewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 	target, _ := http.NewRequestWithContext(req.Context(), req.Method, r.to+u.Path, req.Body)
 	target.Header = req.Header
 	return http.DefaultTransport.RoundTrip(target)
+}
+
+// The client is read from the mounted Secret each time a token is asked
+// for: a value the platform changes while the service runs is the one used
+// next, and a key not there yet stops only the asking.
+func TestTheClientIsReadWhenATokenIsAskedFor(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, value string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("VOUCHING_CLIENT_ID", "vouch-home-sync")
+	write("VOUCHING_CLIENT_SECRET", "s1")
+	write("VOUCHING_TOKEN_URL", "http://kc/realms/acme/protocol/openid-connect/token")
+	if _, err := ReadVouching(dir); err == nil || !strings.Contains(err.Error(), "VOUCHING_ISSUER") {
+		t.Fatalf("an issuer not there yet: %v", err)
+	}
+	write("VOUCHING_ISSUER", "https://vouch-home-sync.tenant-acme.svc\n")
+	v, err := ReadVouching(dir)
+	if err != nil || v.Issuer != "https://vouch-home-sync.tenant-acme.svc" || v.ClientSecret != "s1" {
+		t.Fatalf("read %+v (%v)", v, err)
+	}
+	write("VOUCHING_CLIENT_SECRET", "s2")
+	tokens := &Tokens{Read: func() (Vouching, error) { return ReadVouching(dir) }}
+	if v, err := tokens.settings(); err != nil || v.ClientSecret != "s2" {
+		t.Fatalf("after the secret changed: %+v (%v)", v, err)
+	}
 }
