@@ -604,11 +604,13 @@ spec:
   `startDate`, `endDate` (the first and last day of an all-day entry), `allDay` and `rrule`; a contact
   is `name`, `email`, `phone`, `mobile`, `organization`, `title`, `note`, `street`, `city`, `zip`,
   `country` and `website`. A part the app has no field for is not written there, and what the home
-  keeps beyond the parts (alarms, attendees, other numbers) is kept.
+  keeps beyond the parts (alarms, attendees, other numbers) is kept. A mapped field the installed
+  app does not have (one an app release removed) is left out, with a warning in the home sync's log.
 - **The rules, the same for every app.** The home wins a conflict. A deletion goes both ways, except
   that an entry changed at the home whose record was deleted in the app is made again in the app.
-  What is new on one side is made on the other. A person's calendar is their first one at the home
-  that may be written to, and their contacts their first address book. The tenant's
+  What is new on one side is made on the other. A person's calendar is the one the home names as
+  the default for new events (`schedule-default-calendar-URL`), else their first one whose entries
+  may be written; their contacts are their first address book. The tenant's
   `spec.contactsBook` says whether contacts go to each person's own (`person`, the default) or to one
   the tenant shares (`shared`, not kept yet). A recurring entry is kept with its rule, as one entry
   at the home and, in Odoo, as one series: the driver shows the series' base event alone, writes a

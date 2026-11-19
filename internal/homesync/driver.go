@@ -13,6 +13,7 @@ package homesync
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 )
 
@@ -45,8 +46,8 @@ type Driver interface {
 type Person map[string]any
 
 // Drivers are the drivers by name, as a mapping names them.
-func Drivers(client *http.Client) map[string]Driver {
-	return map[string]Driver{"odoo": &Odoo{Client: client}}
+func Drivers(client *http.Client, log *slog.Logger) map[string]Driver {
+	return map[string]Driver{"odoo": &Odoo{Client: client, Log: log}}
 }
 
 func driverFor(drivers map[string]Driver, m *Mapping) (Driver, error) {

@@ -102,6 +102,12 @@ type multistatus struct {
 				AddressbookHome struct {
 					Href string `xml:"href"`
 				} `xml:"urn:ietf:params:xml:ns:carddav addressbook-home-set"`
+				ScheduleInbox struct {
+					Href string `xml:"href"`
+				} `xml:"urn:ietf:params:xml:ns:caldav schedule-inbox-URL"`
+				ScheduleDefault struct {
+					Href string `xml:"href"`
+				} `xml:"urn:ietf:params:xml:ns:caldav schedule-default-calendar-URL"`
 				ResourceType struct {
 					Calendar    *struct{} `xml:"urn:ietf:params:xml:ns:caldav calendar"`
 					Addressbook *struct{} `xml:"urn:ietf:params:xml:ns:carddav addressbook"`
@@ -140,8 +146,11 @@ func (d *DAV) propfind(ctx context.Context, href, depth, props string) (*multist
 }
 
 // Collection finds the person's collection of this kind that may be written
-// to: of the collections in their home set, the first by address that holds
-// entries of the kind and grants the person write.
+// to: of the collections in their home set that hold entries of the kind and
+// grant the person write, the calendar the home names as the default for new
+// events (RFC 6638 schedule-default-calendar-URL), or else the first by
+// address. A collection whose properties alone may be written (a calendar of
+// birthdays the home keeps itself) is not one.
 func (d *DAV) Collection(ctx context.Context) (string, error) {
 	ms, err := d.propfind(ctx, d.Root, "0", `<d:current-user-principal/>`)
 	if err != nil {
@@ -158,7 +167,7 @@ func (d *DAV) Collection(ctx context.Context) (string, error) {
 	if principal == "" {
 		return "", errors.New("the home names no principal for the person")
 	}
-	homeProp := `<c:calendar-home-set/>`
+	homeProp := `<c:calendar-home-set/><c:schedule-inbox-URL/>`
 	if d.Kind == Contacts {
 		homeProp = `<a:addressbook-home-set/>`
 	}
@@ -166,9 +175,12 @@ func (d *DAV) Collection(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	homeSet := ""
+	homeSet, inbox := "", ""
 	for _, r := range ms.Responses {
 		for _, ps := range r.Propstat {
+			if ps.Prop.ScheduleInbox.Href != "" {
+				inbox = ps.Prop.ScheduleInbox.Href
+			}
 			if d.Kind == Contacts && ps.Prop.AddressbookHome.Href != "" {
 				homeSet = ps.Prop.AddressbookHome.Href
 			}
@@ -204,8 +216,7 @@ func (d *DAV) Collection(ctx context.Context) (string, error) {
 				}
 			}
 			for _, priv := range p.Privileges.Privilege {
-				s := string(priv.Inner)
-				if strings.Contains(s, "write") || strings.Contains(s, ":all") || strings.Contains(s, "<all") {
+				if grantsWrite(priv.Inner) {
 					writable = true
 				}
 			}
@@ -218,7 +229,52 @@ func (d *DAV) Collection(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("the person has no %s at the home that may be written to", d.Kind)
 	}
 	sort.Strings(found)
+	if d.Kind == Calendar && inbox != "" {
+		if def := d.defaultCalendar(ctx, inbox); def != "" {
+			for _, f := range found {
+				if strings.TrimSuffix(f, "/") == strings.TrimSuffix(def, "/") {
+					return f, nil
+				}
+			}
+		}
+	}
 	return found[0], nil
+}
+
+// defaultCalendar is the calendar the person's scheduling inbox names as the
+// default for new events; nothing where it names none.
+func (d *DAV) defaultCalendar(ctx context.Context, inbox string) string {
+	ms, err := d.propfind(ctx, inbox, "0", `<c:schedule-default-calendar-URL/>`)
+	if err != nil {
+		return ""
+	}
+	for _, r := range ms.Responses {
+		for _, ps := range r.Propstat {
+			if h := ps.Prop.ScheduleDefault.Href; h != "" {
+				return h
+			}
+		}
+	}
+	return ""
+}
+
+// grantsWrite reports whether a privilege of current-user-privilege-set lets
+// entries be made and changed: write, write-content, bind or all, and not
+// write-properties or write-acl, which leave the entries as they are.
+func grantsWrite(inner []byte) bool {
+	dec := xml.NewDecoder(bytes.NewReader(inner))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if el, ok := tok.(xml.StartElement); ok {
+			switch el.Name.Local {
+			case "write", "write-content", "bind", "all":
+				return true
+			}
+		}
+	}
 }
 
 // List is the collection's entries: each one's address and version.

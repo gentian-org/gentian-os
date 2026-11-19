@@ -17,10 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,8 +40,59 @@ import (
 // event's id), and makes a series whose rule changed or ended anew, since
 // Odoo builds the rule of a rewritten series from its own fields and not
 // from a new rule. A single occurrence moved or cancelled is not kept equal.
+//
+// A mapped field the installed Odoo does not have (one an Odoo release
+// removed) is left out, with a warning once, rather than failing every
+// record of the kind.
 type Odoo struct {
 	Client *http.Client
+	Log    *slog.Logger
+
+	mu    sync.Mutex
+	known map[string]map[string]bool // by app address and model
+}
+
+// mapped is the mapping with only the fields the app's model has. Where the
+// app does not say which it has, the mapping is used as it is.
+func (o *Odoo) mapped(ctx context.Context, app *App, m *Mapping, token string) *Mapping {
+	key := app.URL + "\n" + m.Model
+	o.mu.Lock()
+	has, asked := o.known[key]
+	o.mu.Unlock()
+	if !asked {
+		var fields map[string]any
+		if err := o.call(ctx, app, token, m.Model, "fields_get", map[string]any{"attributes": []string{"type"}}, &fields); err != nil || len(fields) == 0 {
+			return m
+		}
+		has = make(map[string]bool, len(fields))
+		for f := range fields {
+			has[f] = true
+		}
+		var missing []string
+		for _, f := range m.Fields {
+			if !has[f] {
+				missing = append(missing, f)
+			}
+		}
+		if len(missing) > 0 && o.Log != nil {
+			sort.Strings(missing)
+			o.Log.Warn("fields the app does not have are left out", "app", app.Profile, "model", m.Model, "fields", missing)
+		}
+		o.mu.Lock()
+		if o.known == nil {
+			o.known = map[string]map[string]bool{}
+		}
+		o.known[key] = has
+		o.mu.Unlock()
+	}
+	out := *m
+	out.Fields = make(map[Field]string, len(m.Fields))
+	for part, f := range m.Fields {
+		if has[f] {
+			out.Fields[part] = f
+		}
+	}
+	return &out
 }
 
 const odooTime = "2006-01-02 15:04:05"
@@ -225,6 +278,7 @@ func intID(id string) (int64, error) { return strconv.ParseInt(id, 10, 64) }
 
 // Read reads one record's mapped fields.
 func (o *Odoo) Read(ctx context.Context, app *App, m *Mapping, token, id string) (Values, string, error) {
+	m = o.mapped(ctx, app, m, token)
 	n, err := intID(id)
 	if err != nil {
 		return nil, "", err
@@ -352,6 +406,7 @@ func vals(m *Mapping, v Values) (map[string]any, error) {
 
 // Create makes a record with the mapping's defaults.
 func (o *Odoo) Create(ctx context.Context, app *App, m *Mapping, token string, who Person, v Values) (string, string, error) {
+	m = o.mapped(ctx, app, m, token)
 	record, err := vals(m, v)
 	if err != nil {
 		return "", "", err
@@ -378,6 +433,7 @@ func (o *Odoo) Create(ctx context.Context, app *App, m *Mapping, token string, w
 // Update writes the parts onto a record. A series is written as a whole; a
 // series whose rule changed or ended is made anew, and its new id returned.
 func (o *Odoo) Update(ctx context.Context, app *App, m *Mapping, token string, who Person, id string, v Values) (string, string, error) {
+	m = o.mapped(ctx, app, m, token)
 	n, err := intID(id)
 	if err != nil {
 		return "", "", err
