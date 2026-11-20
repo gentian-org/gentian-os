@@ -48,7 +48,7 @@ func profileRequestingEgress(name string) *gentianov1alpha1.ComponentProfile {
 			Egress: []gentianov1alpha1.EgressRequest{{
 				Name:   "smtp-relay",
 				Reason: "sends invitations through the customer's relay",
-				Rule: networkingv1.NetworkPolicyEgressRule{
+				Rule: &networkingv1.NetworkPolicyEgressRule{
 					To: []networkingv1.NetworkPolicyPeer{{
 						IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.0/24"},
 					}},

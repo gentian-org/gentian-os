@@ -133,7 +133,7 @@ func TestAGrantedComponentsPolicyReachesTheClustersOwnAddress(t *testing.T) {
 	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "shop"}}
 	granted := publicOn(443)
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
-		Egress: []gentianov1alpha1.EgressRequest{{Name: "intake", Reason: "reads the website's order requests", Rule: granted}},
+		Egress: []gentianov1alpha1.EgressRequest{{Name: "intake", Reason: "reads the website's order requests", Rule: &granted}},
 	}}
 	comp := tileFixtureComponent("shop", "tenant-acme", "shop")
 	comp.Spec.Privileges = []gentianov1alpha1.PrivilegeGrant{{

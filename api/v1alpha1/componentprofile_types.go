@@ -532,11 +532,13 @@ type PrivilegeRequest struct {
 	PodSecurity []PodSecurityWaiver `json:"podSecurity,omitempty"`
 
 	// Egress opens outbound network beyond the tenant baseline. Tenant scope:
-	// the traffic leaves the tenant's own namespace.
+	// the traffic leaves the tenant's own namespace. A profile names all its
+	// hosts in one request, so that they are answered once.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:XValidation:rule="self.filter(e, has(e.hosts)).size() <= 1",message="a profile names its hosts in one egress request"
 	Egress []EgressRequest `json:"egress,omitempty"`
 
 	// ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
@@ -575,13 +577,33 @@ type PodSecurityWaiver struct {
 	Reason string `json:"reason"`
 }
 
-// EgressRequest asks for outbound network beyond the tenant baseline.
+// EgressRequest asks for outbound network beyond the tenant baseline: hosts
+// outside the cluster by name, or a network rule by address.
+//
+// Hosts is the form for a destination that has a name. The connections pass
+// the gateway for outgoing connections, which lets through the hosts that
+// were granted and records each connection. Rule is for what that gateway
+// cannot carry, a protocol that names no host, and the approver reads it as
+// addresses and ports.
+// +kubebuilder:validation:XValidation:rule="has(self.rule) != has(self.hosts)",message="an egress request states hosts or a rule, one of the two"
 type EgressRequest struct {
 	// Name is what a PrivilegeGrant refers to. Unique within the profile.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
-	// Rule is the egress to allow.
-	Rule networkingv1.NetworkPolicyEgressRule `json:"rule"`
+	// Hosts are the hosts outside the cluster the component connects to, each
+	// one name, lower case, with a port where it is not 443:
+	// "graph.microsoft.com", "example.org:8443". A pattern is not a host. The
+	// connection is TLS and opens with the host's name.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=259
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$`
+	Hosts []string `json:"hosts,omitempty"`
+	// Rule is the egress to allow by address.
+	// +optional
+	Rule *networkingv1.NetworkPolicyEgressRule `json:"rule,omitempty"`
 	// Reason is what the approver reads.
 	// +kubebuilder:validation:MinLength=10
 	Reason string `json:"reason"`

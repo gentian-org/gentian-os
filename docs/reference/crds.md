@@ -733,9 +733,10 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
 | `spec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `spec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
+| `spec.requires.privileges.egress[].hosts` | []string |  | `Hosts` are the hosts outside the cluster the component connects to, each one name, lower case, with a port where it is not 443: "graph.microsoft.com"… |
 | `spec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
 | `spec.requires.privileges.egress[].reason` | string | yes | `Reason` is what the approver reads. |
-| `spec.requires.privileges.egress[].rule` | object | yes | `Rule` is the egress to allow. |
+| `spec.requires.privileges.egress[].rule` | object |  | `Rule` is the egress to allow by address. |
 | `spec.requires.privileges.egress[].rule.ports` | []object |  | `ports` is a list of destination ports for outgoing traffic. |
 | `spec.requires.privileges.egress[].rule.ports[].endPort` | integer (int32) |  | `endPort` indicates that the range of ports from port to endPort if set, inclusive, should be allowed by the policy. |
 | `spec.requires.privileges.egress[].rule.ports[].port` | int-or-string |  | `port` represents the port on the given protocol. |
@@ -1624,9 +1625,10 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
 | `status.profileSpec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `status.profileSpec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
+| `status.profileSpec.requires.privileges.egress[].hosts` | []string |  | `Hosts` are the hosts outside the cluster the component connects to, each one name, lower case, with a port where it is not 443: "graph.microsoft.com"… |
 | `status.profileSpec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
 | `status.profileSpec.requires.privileges.egress[].reason` | string | yes | `Reason` is what the approver reads. |
-| `status.profileSpec.requires.privileges.egress[].rule` | object | yes | `Rule` is the egress to allow. |
+| `status.profileSpec.requires.privileges.egress[].rule` | object |  | `Rule` is the egress to allow by address. |
 | `status.profileSpec.requires.privileges.egress[].rule.ports` | []object |  | `ports` is a list of destination ports for outgoing traffic. |
 | `status.profileSpec.requires.privileges.egress[].rule.ports[].endPort` | integer (int32) |  | `endPort` indicates that the range of ports from port to endPort if set, inclusive, should be allowed by the policy. |
 | `status.profileSpec.requires.privileges.egress[].rule.ports[].port` | int-or-string |  | `port` represents the port on the given protocol. |
