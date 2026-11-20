@@ -192,9 +192,9 @@ var (
 		return map[string]string{"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/instance": "gentian-os", "app.kubernetes.io/component": component}
 	}
 	envoyPod = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy"}
-	// A proxy pod of a fleet Envoy Gateway runs for another class: the label
+	// A proxy pod of the fleet for outgoing connections: the label
 	// every proxy pod has, and not the inbound class.
-	otherFleet  = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gateway-name": "outgoing"}
+	otherFleet  = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy-out"}
 	openfgaPod  = map[string]string{"app.kubernetes.io/name": "openfga", "app.kubernetes.io/instance": "gentian-openfga"}
 	openbaoPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao"}
 	transitPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao-transit"}
@@ -219,6 +219,7 @@ func TestTheFlowsAClusterNeeds(t *testing.T) {
 	}{
 		{"Envoy asks the bouncer", at("kernel-edge", envoyPod), at("kernel-edge", chart("bouncer")), 9001},
 		{"Envoy fetches its configuration", at("kernel-edge", envoyPod), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
+		{"the outgoing fleet fetches its configuration", at("kernel-edge", otherFleet), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
 		{"the bouncer asks OpenFGA", at("kernel-edge", chart("bouncer")), at("kernel-authorization", openfgaPod), 8080},
 		{"the bouncer reads Keycloak's keys", at("kernel-edge", chart("bouncer")), at("kernel-authentication", keycloakPod), 8080},
 		{"Envoy routes id.<kernel> to Keycloak", at("kernel-edge", envoyPod), at("kernel-authentication", keycloakPod), 8080},

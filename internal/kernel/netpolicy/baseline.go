@@ -129,6 +129,19 @@ func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []netw
 // EdgeGatewayClassName is the GatewayClass of the inbound Gateways.
 const EdgeGatewayClassName = "gentian-envoy"
 
+// OutgoingGatewayClassName is the GatewayClass of the Gateways for outgoing
+// connections, served by a fleet of their own in the edge namespace.
+const OutgoingGatewayClassName = "gentian-envoy-out"
+
+// OutgoingProxyPodLabels select the Envoy proxy pods of the fleet for
+// outgoing connections in the edge namespace.
+func OutgoingProxyPodLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":                    "envoy",
+		"gateway.envoyproxy.io/owning-gatewayclass": OutgoingGatewayClassName,
+	}
+}
+
 // EdgeProxyPodLabels select the Envoy proxy pods of the inbound Gateways in
 // the edge namespace, and of no other fleet Envoy Gateway runs there.
 //
