@@ -214,6 +214,38 @@ spec:
 - **Callee `outside`.** The bridge may be packaged as `api` with a `baseUrl`:
   a tool server outside the cluster, reached where it is. It runs nothing in
   the tenant; the egress granted to it is given to its callers.
+  The platform does not ask such a server what its tools are. The way says
+  it, under `outside`, and the callers are told of the bridge only when it
+  does and the address is `https`:
+
+  ```yaml
+  package: {api: {baseUrl: https://tools.example/mcp}}
+  bridge:
+    ways:
+    - name: tools
+      caller: agents
+      callee: outside
+      protocol: mcp
+      speaksAs: person
+      outside:
+        tools:
+        - name: list-files          # the name on the platform
+          tool: list_files          # the name at the server; absent, the same
+          version: 1
+          class: read               # read or change
+          description: Lists the person's recordings.
+          inputSchema: {type: object, properties: {limit: {type: integer}}}
+        signIn:
+          oauth: {issuer: https://tools.example, scopes: []}
+  ```
+
+  A tool the way does not name is not called. `version` is raised when a
+  tool is reviewed again. `signIn.oauth` names the authorization server a
+  person signs in at (its metadata is read at
+  `/.well-known/oauth-authorization-server`, RFC 8414); the component that
+  keeps people's connections obtains the credential a call carries. The list
+  entry of such a bridge carries the address, the bridge itself as `app`,
+  and the whole of `outside`.
 - **Callee `partner`.** The bridge names the partner's realm in
   `requires.services.partners.call`, and its token is exchanged for an
   assertion towards the partner.

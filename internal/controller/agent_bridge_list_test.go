@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -148,5 +149,40 @@ func TestEveryCallerIsToldTheTenantsAgentBridges(t *testing.T) {
 	}
 	if _, ok := list("usher"); ok {
 		t.Fatal("a component that is a caller no more kept its list")
+	}
+}
+
+// A bridge to an outside tool server is listed by the entry's address, with
+// the tools the entry names and where a person signs in, and with the bridge
+// itself as the app a person's right is asked about. One whose address is
+// not https is on nobody's list.
+func TestABridgeToAnOutsideToolServerIsListedWithWhatItsEntrySays(t *testing.T) {
+	bridge := []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge}
+	outside := func(base string) *gentianov1alpha1.ComponentProfile {
+		return bridgeListProfile(bridge, func(p *gentianov1alpha1.ComponentProfile) {
+			p.Spec.Package.API = &gentianov1alpha1.APIIntegration{BaseURL: base}
+			p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{Ways: []gentianov1alpha1.BridgeWay{{
+				Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents, Callee: gentianov1alpha1.BridgeCalleeOutside,
+				Protocol: gentianov1alpha1.BridgeProtocolMCP, SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson,
+				Outside: &gentianov1alpha1.OutsideToolServer{
+					Tools: []gentianov1alpha1.OutsideTool{{
+						Name: "list-files", Tool: "list_files", Version: 1, Class: "read", Description: "Lists recordings.",
+						InputSchema: &apiextensionsv1.JSON{Raw: []byte(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
+					}},
+					SignIn: &gentianov1alpha1.OutsideSignIn{OAuth: &gentianov1alpha1.OutsideOAuth{Issuer: "https://tools.example"}},
+				},
+			}}}
+		})
+	}
+	raw, err := agentBridgeList("tenant-acme", []string{"recorder", "plain"}, map[string]*gentianov1alpha1.ComponentProfile{
+		"recorder": outside("https://tools.example/mcp"),
+		"plain":    outside("http://tools.example/mcp"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"recorder":{"url":"https://tools.example/mcp","app":"recorder","outside":{"tools":[{"name":"list-files","tool":"list_files","version":1,"class":"read","description":"Lists recordings.","inputSchema":{"type":"object","properties":{"limit":{"type":"integer"}}}}],"signIn":{"oauth":{"issuer":"https://tools.example"}}}}}`
+	if raw != want {
+		t.Fatalf("the list:\n%s\nwant:\n%s", raw, want)
 	}
 }

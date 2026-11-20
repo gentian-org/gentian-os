@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -54,18 +55,32 @@ func AgentBridgeListName(component string) string { return "agent-bridges-" + co
 
 // agentBridgeListEntry is one agent bridge as a caller is told of it.
 type agentBridgeListEntry struct {
+	// URL is where the tool server answers.
 	URL string `json:"url"`
+	// App is the app a person's right is asked about: the app the bridge
+	// connects, or the bridge itself.
 	App string `json:"app"`
+	// Outside is what the entry says of a tool server outside the platform
+	// (spec.bridge.ways[].outside): the tools that may be called and where
+	// a person signs in. Absent for a bridge inside the tenant, which is
+	// asked for its tools.
+	Outside *gentianov1alpha1.OutsideToolServer `json:"outside,omitempty"`
 }
 
-// bridgeList is the list for a tenant: its installed agent bridges that say
-// where they answer. JSON with sorted keys, so the same bridges are the
-// same bytes.
+// agentBridgeList is the tenant's agent bridges as their callers are told:
+// by name, each with the address of its tool server and the app a person's
+// right is asked about. A bridge inside the tenant is listed by its way's
+// endpoint. A bridge to an outside tool server is listed by the entry's
+// baseUrl, with what the entry says of the server.
 func agentBridgeList(namespace string, bridges []string, profiles map[string]*gentianov1alpha1.ComponentProfile) (string, error) {
 	list := map[string]agentBridgeListEntry{}
 	for _, name := range bridges {
 		profile := profiles[name]
 		if profile == nil {
+			continue
+		}
+		if outside := outsideToolServer(profile); outside != nil {
+			list[name] = agentBridgeListEntry{URL: profile.Spec.Package.API.BaseURL, App: name, Outside: outside}
 			continue
 		}
 		app := agentBridgeApp(name, profile)
@@ -78,8 +93,22 @@ func agentBridgeList(namespace string, bridges []string, profiles map[string]*ge
 	return string(raw), err
 }
 
-// ensureAgentBridgeLists writes the list for every caller of the tenant and
-// removes the list of a component that is a caller no more.
+// outsideToolServer is what a bridge's entry says of an outside tool server,
+// or nil where it has none or names no address for it. The schema asks for
+// an https address; it is asked again here, because the list is what makes
+// a caller send a person's credential there.
+func outsideToolServer(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.OutsideToolServer {
+	way := profile.AgentWay()
+	if way == nil || way.Outside == nil || way.Callee != gentianov1alpha1.BridgeCalleeOutside {
+		return nil
+	}
+	api := profile.Spec.Package.API
+	if api == nil || !strings.HasPrefix(api.BaseURL, "https://") {
+		return nil
+	}
+	return way.Outside
+}
+
 func (r *TenantReconciler) ensureAgentBridgeLists(ctx context.Context, tenant *gentianov1alpha1.Tenant, in netpolicy.BuildInput) error {
 	bridges, callers := netpolicy.AgentBridgeRoles(in)
 	list, err := agentBridgeList(in.Namespace, bridges, in.Profiles)

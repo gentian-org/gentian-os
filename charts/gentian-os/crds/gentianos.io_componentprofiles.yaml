@@ -456,6 +456,109 @@ spec:
                           minLength: 1
                           pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                           type: string
+                        outside:
+                          description: |-
+                            Outside describes a tool server outside the platform, for a way from
+                            the tenant's agents to the outside in mcp, on a bridge packaged as an
+                            api whose baseUrl is the server's address. With it the platform tells
+                            the tenant's components that call tools for a person that this bridge
+                            is there, as it does for an endpoint, and hands them what is written
+                            here: the tools that may be called and where a person signs in.
+                          properties:
+                            signIn:
+                              description: |-
+                                SignIn is how a person the calls are made for is known to the server.
+                                Absent, the server is called without a credential of a person.
+                              properties:
+                                oauth:
+                                  description: |-
+                                    OAuth is a sign-in by OAuth 2.0 authorization code with PKCE: the
+                                    person is sent to the service, and the component that keeps people's
+                                    connections is handed a credential it presents for them afterwards.
+                                  properties:
+                                    issuer:
+                                      description: |-
+                                        Issuer is the authorization server: its metadata is read at
+                                        /.well-known/oauth-authorization-server below it (RFC 8414).
+                                      maxLength: 512
+                                      pattern: ^https://[^\s/]+(/[^\s]*)?$
+                                      type: string
+                                    scopes:
+                                      description: Scopes are the scopes asked for.
+                                      items:
+                                        maxLength: 128
+                                        pattern: ^[\x21\x23-\x5B\x5D-\x7E]+$
+                                        type: string
+                                      maxItems: 32
+                                      type: array
+                                      x-kubernetes-list-type: set
+                                  required:
+                                  - issuer
+                                  type: object
+                              required:
+                              - oauth
+                              type: object
+                            tools:
+                              description: Tools are the tools that may be called.
+                              items:
+                                description: OutsideTool is one tool of an outside
+                                  tool server.
+                                properties:
+                                  class:
+                                    description: |-
+                                      Class is read for a tool that changes nothing at the service, and
+                                      change for one that does.
+                                    enum:
+                                    - read
+                                    - change
+                                    type: string
+                                  description:
+                                    description: Description is what a person who
+                                      builds with the tool reads.
+                                    maxLength: 1024
+                                    minLength: 1
+                                    type: string
+                                  inputSchema:
+                                    description: |-
+                                      InputSchema is the JSON Schema of the tool's arguments. Absent, the
+                                      tool takes none.
+                                    x-kubernetes-preserve-unknown-fields: true
+                                  name:
+                                    description: |-
+                                      Name is the tool's name on the platform: with the bridge's name and
+                                      Version it is what a person allows and what a call names.
+                                    maxLength: 63
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                  tool:
+                                    description: Tool is the name the server knows
+                                      the tool by. Absent, it is Name.
+                                    maxLength: 128
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9_.-]+$
+                                    type: string
+                                  version:
+                                    description: |-
+                                      Version is the version of what is written here: raised when the tool
+                                      is reviewed again because its inputs or what it does changed.
+                                    format: int32
+                                    minimum: 1
+                                    type: integer
+                                required:
+                                - class
+                                - description
+                                - name
+                                - version
+                                type: object
+                              maxItems: 64
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                          required:
+                          - tools
+                          type: object
                         paths:
                           description: |-
                             Paths are the path prefixes of the app a caller from outside the
@@ -524,6 +627,15 @@ spec:
                           self.protocol == ''carddav'') && has(self.paths) && self.paths.exists(p,
                           self.root == p || self.root.startsWith(p.endsWith(''/'')
                           ? p : p + ''/'')))'
+                      - message: 'outside describes a tool server outside the platform
+                          that the tenant''s agents call: only for a way from agents
+                          to outside in mcp'
+                        rule: '!has(self.outside) || (self.caller == ''agents'' &&
+                          self.callee == ''outside'' && self.protocol == ''mcp'')'
+                      - message: 'a way names where its tool server answers once:
+                          endpoint inside the tenant, or outside with the entry''s
+                          baseUrl'
+                        rule: '!has(self.outside) || !has(self.endpoint)'
                       - message: 'endpoint is where the tenant''s agents reach the
                           bridge''s tool server: only for a way whose caller is agents'
                         rule: '!has(self.endpoint) || self.caller == ''agents'''
@@ -5275,6 +5387,11 @@ spec:
               rule: '!has(self.bridge) || !has(self.__package__.api) || ((has(self.__package__.api.backend)
                 || self.bridge.ways.all(w, w.caller == ''agents'' && w.callee == ''outside''))
                 && !has(self.__package__.api.tile))'
+            - message: 'a way to an outside tool server needs the server''s address:
+                package.api.baseUrl, over https'
+              rule: '!has(self.bridge) || !self.bridge.ways.exists(w, has(w.outside))
+                || (has(self.__package__.api) && has(self.__package__.api.baseUrl)
+                && self.__package__.api.baseUrl.startsWith(''https://''))'
             - message: 'package.api.backend is for a bridge: every other entry packaged
                 as an api names a baseUrl'
               rule: has(self.bridge) || !has(self.__package__.api) || !has(self.__package__.api.backend)
