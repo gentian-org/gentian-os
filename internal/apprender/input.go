@@ -51,8 +51,12 @@ type Input struct {
 	ReleaseObject string
 	HelmRelease   string
 	// KeepVolumes names the ConfigMap the release reads its post-render patch
-	// from: the keep rule and the label rule.
+	// from: the keep rule, the label rule and the host rule.
 	KeepVolumes string
+	// HostAliases are the entries of the pods' host table: each host outside
+	// the cluster the component was granted, at the address of that host's
+	// Service on the gateway for outgoing connections.
+	HostAliases []HostAlias
 	// Composite names what the Composition named after the app's composite
 	// resource -- its OIDC clients' secrets in the provisioning namespace,
 	// which the clients read by that name, and its extensions' release
@@ -169,4 +173,10 @@ func (in *Input) extensionReleaseObject(extension string) string {
 // observed returns the object rendered before under this name, or nil.
 func (in *Input) observed(name string) *unstructured.Unstructured {
 	return in.Observed[name]
+}
+
+// HostAlias is one line of a pod's host table.
+type HostAlias struct {
+	IP       string
+	Hostname string
 }

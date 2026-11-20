@@ -132,6 +132,14 @@ func (r *ComponentReconciler) renderInput(
 		return nil, err
 	}
 	in.Addons = ids
+	// The granted hosts outside, in the pods' host table, at the address of
+	// each host's Service on the gateway for outgoing connections. The
+	// reconciler holds the chart until every one is carried.
+	ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+	if err != nil {
+		return nil, err
+	}
+	in.HostAliases = ways.aliases
 	if in.BridgedAddons, err = r.bridgedAddonIDs(ctx, comp, profile); err != nil {
 		return nil, err
 	}
