@@ -48,16 +48,14 @@ unmanaged:
 
 peers:
   envoy:
-    what: the Gateway's Envoy proxy pods
+    what: the Envoy proxy pods of the inbound Gateways, and of no other fleet Envoy Gateway runs
     namespace: kernel-edge
-    podLabels: {app.kubernetes.io/name: envoy}
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
     evidence:
       - "Envoy Gateway v1.9.3 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
+      - "Envoy Gateway v1.9.3 internal/gatewayapi/helpers.go OwningGatewayClassLabel: the class, on the proxy pods of merged Gateways"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
       - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
-  edge:
-    what: every pod of the edge namespace (the Envoy proxies and the bouncer)
-    namespace: kernel-edge
   bouncer:
     what: the bouncer, the Gateway's external authorization service
     namespace: kernel-edge
@@ -464,9 +462,12 @@ namespaces:
           - port: 8080
             what: every realm's endpoints and the administration API
             from:
-              - peer: edge
-                why: the Gateway routes id.<kernel> to it, and the bouncer reads the realms' keys
-                evidence: [internal/controller/kernel_gateway_routes.go:335, charts/gentian-os/templates/bouncer.yaml:118]
+              - peer: envoy
+                why: the Gateway routes id.<kernel> to it
+                evidence: [internal/controller/kernel_gateway_routes.go:335]
+              - peer: bouncer
+                why: the bouncer reads the realms' keys
+                evidence: [charts/gentian-os/templates/bouncer.yaml:118]
               - peer: control-programs
                 why: director, usher, custodian and registrar read the realms' keys; the operator and the registrar call the administration API
                 evidence:
@@ -689,7 +690,7 @@ namespaces:
       - name: envoy
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
-        podLabels: {app.kubernetes.io/name: envoy}
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
         allIngress: >-
           The cluster's public listeners. A connection arrives from the
           internet through a load balancer or the tunnel, and from every pod

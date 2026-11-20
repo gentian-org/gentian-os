@@ -126,8 +126,15 @@ func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []netw
 	return egress
 }
 
-// EdgeProxyPodLabels select the Gateway's Envoy proxy pods in the edge
-// namespace.
+// EdgeGatewayClassName is the GatewayClass of the inbound Gateways.
+const EdgeGatewayClassName = "gentian-envoy"
+
+// EdgeProxyPodLabels select the Envoy proxy pods of the inbound Gateways in
+// the edge namespace, and of no other fleet Envoy Gateway runs there.
+//
+// The second label names the fleet: Envoy Gateway puts the first on every
+// proxy pod of every class, so by the first alone a fleet for another
+// direction would be admitted wherever the edge is.
 //
 // The label is Envoy Gateway's own, on every proxy pod it creates
 // (EnvoyAppLabel in its internal/infrastructure/kubernetes/proxy), and the
@@ -136,7 +143,10 @@ func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []netw
 // (internal/kernel/kernelnet, peer envoy) and a test there holds the two
 // equal.
 func EdgeProxyPodLabels() map[string]string {
-	return map[string]string{"app.kubernetes.io/name": "envoy"}
+	return map[string]string{
+		"app.kubernetes.io/name":                    "envoy",
+		"gateway.envoyproxy.io/owning-gatewayclass": EdgeGatewayClassName,
+	}
 }
 
 // namespacePeer selects a namespace by its immutable metadata.name label.

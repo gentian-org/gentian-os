@@ -191,7 +191,10 @@ var (
 	chart = func(component string) map[string]string {
 		return map[string]string{"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/instance": "gentian-os", "app.kubernetes.io/component": component}
 	}
-	envoyPod    = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway"}
+	envoyPod = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy"}
+	// A proxy pod of a fleet Envoy Gateway runs for another class: the label
+	// every proxy pod has, and not the inbound class.
+	otherFleet  = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gateway-name": "outgoing"}
 	openfgaPod  = map[string]string{"app.kubernetes.io/name": "openfga", "app.kubernetes.io/instance": "gentian-openfga"}
 	openbaoPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao"}
 	transitPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao-transit"}
@@ -308,6 +311,12 @@ func TestWhatIsRefused(t *testing.T) {
 		{"the administration console reaches the operator on the registrar's port", adminConsole, at("kernel-control", chart("operator")), 9445},
 		{"a component reaches cert-manager on the rights check's port", tenantApp, certManager, 8082},
 		{"Envoy reaches cert-manager on the bouncer's port", at("kernel-edge", envoyPod), certManager, 9001},
+		// The edge is the inbound fleet. Another fleet in the edge namespace
+		// is admitted nowhere the edge is, and takes no connection as it.
+		{"another fleet asks the bouncer", at("kernel-edge", otherFleet), at("kernel-edge", chart("bouncer")), 9001},
+		{"another fleet reaches Keycloak", at("kernel-edge", otherFleet), at("kernel-authentication", keycloakPod), 8080},
+		{"another fleet reaches headlamp", at("kernel-edge", otherFleet), at("kernel-observability", map[string]string{"app.kubernetes.io/name": "headlamp"}), 4466},
+		{"a component reaches another fleet as a public listener", tenantApp, at("kernel-edge", otherFleet), 10443},
 	} {
 		if admitted(policies, f.src, f.dst, f.port) {
 			t.Errorf("admitted: %s (%s -> %s:%d)", f.what, f.src.namespace, f.dst.namespace, f.port)
