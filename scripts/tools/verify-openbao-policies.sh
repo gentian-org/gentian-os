@@ -3,8 +3,8 @@
 # scripts/tools/verify-openbao-policies.sh — the OpenBao policies deny what they
 # claim to deny
 # =============================================================================
-# Phase 7, criterion 5. The Cluster composition renders three OpenBao policies —
-# eso-read, cluster-admin and tenant-admin — the Tenant composition a fourth
+# Phase 7, criterion 5. The Cluster composition renders four OpenBao policies —
+# eso-read, cluster-admin, tenant-admin and confidant-people — the Tenant composition a fifth
 # for each tenant, eso-tenant-<tenant>, and the tenant-admin deny on
 # gentian-os/kernel/* is the one authz rule in the system where a mistake is a
 # breach rather than an annoyance. Nothing asserted it.
@@ -146,7 +146,7 @@ if [[ -z "${JWT_ACCESSOR}" || "${JWT_ACCESSOR}" == "null" ]]; then
 fi
 
 loaded=0
-for name in eso-read cluster-admin tenant-admin; do
+for name in eso-read cluster-admin tenant-admin confidant-people; do
     body="$(policy_from_golden "${name}")"
     if [[ -z "${body}" || "${body}" == "null" ]]; then
         echo "  ${RED}✗${NC} ${name} — not present in ${GOLDEN}"
@@ -194,6 +194,7 @@ fi
 
 CLUSTER_TOKEN="$(bao token create -policy=cluster-admin -ttl=10m -format=json 2>/dev/null | jq -r '.auth.client_token')"
 ESO_TOKEN="$(bao token create -policy=eso-read -ttl=10m -format=json 2>/dev/null | jq -r '.auth.client_token')"
+CONFIDANT_TOKEN="$(bao token create -policy=confidant-people -ttl=10m -format=json 2>/dev/null | jq -r '.auth.client_token')"
 
 # ── assertions ───────────────────────────────────────────────────────────────
 pass=0; fail=0
@@ -231,6 +232,11 @@ expect "${TENANT_TOKEN}" "allowed own tenant data" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "create,patch,read,update"
 expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)" \
     "secret/metadata/gentian-os/tenants/acme/repositories/x" "create,list,read,update"
+# What components keep for the tenant's people is only the confidant's.
+expect "${TENANT_TOKEN}" "DENIED a secret a component keeps for one of its people" \
+    "secret/data/gentian-os/tenants/acme/people/ada/liaison/token" "deny"
+expect "${TENANT_TOKEN}" "DENIED its metadata" \
+    "secret/metadata/gentian-os/tenants/acme/people/ada/liaison/token" "deny"
 # Escrow, one subtree down from the cluster's. The tenant administrator writes
 # it and reads it back for a restore; nothing else may.
 # patch as well as update: Bao.Write sends a merge patch so supplying one field
@@ -268,6 +274,23 @@ expect "${CLUSTER_TOKEN}" "DENIED paths outside gentian-os" \
 # about.
 expect "${CLUSTER_TOKEN}" "allowed the escrowed backup identity — this is who escrow is for" \
     "secret/data/gentian-os/kernel/backup/identity" "create,patch,read,update"
+
+echo ""
+echo "  confidant-people ${DIM}(the confidant's one role)${NC}"
+expect "${CONFIDANT_TOKEN}" "allowed keeping and reading a person's secret, in any tenant" \
+    "secret/data/gentian-os/tenants/acme/people/ada/liaison/token" "create,read,update"
+expect "${CONFIDANT_TOKEN}" "allowed its metadata: one version, a listing, removal" \
+    "secret/metadata/gentian-os/tenants/acme/people/ada/liaison" "create,delete,list,update"
+expect "${CONFIDANT_TOKEN}" "DENIED an app's credentials" \
+    "secret/data/gentian-os/tenants/acme/apps/nextcloud/database" "deny"
+expect "${CONFIDANT_TOKEN}" "DENIED a tenant's backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${CONFIDANT_TOKEN}" "DENIED kernel data" \
+    "secret/data/gentian-os/kernel/dns/cloudflare" "deny"
+expect "${CONFIDANT_TOKEN}" "DENIED a listing of the tenant's other paths" \
+    "secret/metadata/gentian-os/tenants/acme" "deny"
+expect "${ESO_TOKEN}" "DENIED to ESO: a person's secret never becomes a Secret" \
+    "secret/data/gentian-os/tenants/acme/people/ada/liaison/token" "deny"
 
 echo ""
 echo "  eso-read ${DIM}(the only identity ESO holds)${NC}"

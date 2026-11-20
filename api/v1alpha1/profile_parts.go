@@ -236,6 +236,13 @@ type ServiceRequirements struct {
 	// +optional
 	Vouching *VouchingRequirement `json:"vouching,omitempty"`
 
+	// PersonSecrets declares that the component keeps secrets that belong to
+	// one person each, with the confidant: the lasting credential of a
+	// sign-in a person gave it at a service outside the cluster, for example.
+	// See PersonSecretsRequirement.
+	// +optional
+	PersonSecrets *PersonSecretsRequirement `json:"personSecrets,omitempty"`
+
 	// Partners declares that the component calls apps of partner realms on
 	// a person's behalf, takes such calls, or commissions partners of other
 	// tenants. See PartnersRequirement.
@@ -481,6 +488,21 @@ type PartnersRequirement struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	ServiceAccount string `json:"serviceAccount,omitempty"`
 }
+
+// PersonSecretsRequirement declares that a component keeps secrets of
+// people with the confidant (docs/security/secrets.md).
+//
+// The component is given a key of its own and the confidant's address, in
+// the Secret rights-check-<component> (RIGHTS_CHECK_KEY, CONFIDANT_URL), and
+// the confidant is told the key's digest. With the key the component reads,
+// replaces and removes its own entries of the people of its own tenant, and
+// no other component's. The first entry it keeps for a person needs a token
+// of that person as well: the one the front door hands the component's own
+// page for them (an exposure with exchangeToken).
+//
+// It requires trustTier platform: a secret kept for a person opens what
+// that person may reach somewhere else.
+type PersonSecretsRequirement struct{}
 
 // VouchingRequirement declares that a component vouches for people at the
 // tenant's realm (RFC 7523, the JWT authorization grant).

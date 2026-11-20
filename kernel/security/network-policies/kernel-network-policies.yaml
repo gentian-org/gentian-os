@@ -69,6 +69,13 @@ spec:
           kubernetes.io/metadata.name: kernel-control
       podSelector:
         matchLabels:
+          app.kubernetes.io/component: confidant
+          app.kubernetes.io/name: gentian-os
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-control
+      podSelector:
+        matchLabels:
           app.kubernetes.io/component: custodian
           app.kubernetes.io/name: gentian-os
     - namespaceSelector:
@@ -416,6 +423,32 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/component: custodian
+      app.kubernetes.io/name: gentian-os
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: control
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-ingress-confidant
+  namespace: kernel-control
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 9446
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: confidant
       app.kubernetes.io/name: gentian-os
   policyTypes:
   - Ingress

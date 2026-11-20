@@ -45,6 +45,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o run-program ./cmd/
 # to. Its own process and ServiceAccount, so the identity that can write a
 # secret is not shared with anything that can read one.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o custodian ./cmd/custodian
+# The confidant: what keeps secrets of a person for the components that act
+# for them (cmd/confidant).
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o confidant ./cmd/confidant
 
 # The registrar: what keeps the list of people at Keycloak. Its own process
 # and ServiceAccount, so the credential that manages who may sign in is not
@@ -81,6 +84,7 @@ COPY --from=builder /workspace/usher /usher
 COPY --from=builder /workspace/dispatcher /dispatcher
 COPY --from=builder /workspace/run-program /run-program
 COPY --from=builder /workspace/custodian /custodian
+COPY --from=builder /workspace/confidant /confidant
 COPY --from=builder /workspace/registrar /registrar
 COPY --from=builder /workspace/homesync /homesync
 COPY --from=builder /workspace/arbiter /arbiter

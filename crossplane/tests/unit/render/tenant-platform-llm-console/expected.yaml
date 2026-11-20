@@ -1158,6 +1158,14 @@ spec:
       path "secret/metadata/gentian-os/tenants/platform/*" {
         capabilities = ["list", "delete"]
       }
+      # Not what components keep for the tenant's people: only
+      # the confidant holds that.
+      path "secret/data/gentian-os/tenants/platform/people/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/platform/people/*" {
+        capabilities = ["deny"]
+      }
   providerConfigRef:
     name: openbao
 ---

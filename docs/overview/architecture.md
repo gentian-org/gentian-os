@@ -54,7 +54,7 @@ the same five with plain labels; here each carries its components.
 flowchart TB
     apps["<b>Your apps</b> — from a catalog, or your own<br/><small>Nextcloud · OpenProject · Element · XWiki · Odoo · Open WebUI · …</small>"]
     ui["<b>One desktop, one sign-in, one app store</b> — what people see<br/><small>gentian-ui: desktop · admin console · App Store · sign-in</small>"]
-    os["<b>The operating system</b> — onboards tenants, installs apps, enforces policy, routes traffic<br/><small>gentian-os: operator · director · usher · custodian · registrar · bouncer · arbiter</small>"]
+    os["<b>The operating system</b> — onboards tenants, installs apps, enforces policy, routes traffic<br/><small>gentian-os: operator · director · usher · custodian · confidant · registrar · bouncer · arbiter</small>"]
     shared["<b>Shared services</b> — identity, secrets, databases, storage, mail, AI models<br/><small>Keycloak · OpenFGA · OpenBao · Argo CD · Crossplane · Envoy Gateway · Kyverno · PostgreSQL · MariaDB · Valkey · SeaweedFS · Postfix · Dovecot · LiteLLM</small>"]
     ground["<b>Your servers, or any provider you choose</b><br/><small>Kubernetes, anywhere</small>"]
     apps ~~~ ui ~~~ os ~~~ shared ~~~ ground
@@ -191,7 +191,7 @@ the kernel realm) and, on a single-tenancy cluster, the one user tenant
 
 | From | What | By |
 |---|---|---|
-| `gentian-os` | the bootstrap Applications (Reloader, CNPG, Kyverno, Headlamp, OpenBao and its seal, the kernel Postgres) and the platform's own chart, `charts/gentian-os` (operator, director, usher, custodian, registrar, bouncer) | `kernel/bootstrap/chart`, applied by the installer |
+| `gentian-os` | the bootstrap Applications (Reloader, CNPG, Kyverno, Headlamp, OpenBao and its seal, the kernel Postgres) and the platform's own chart, `charts/gentian-os` (operator, director, usher, custodian, confidant, registrar, bouncer) | `kernel/bootstrap/chart`, applied by the installer |
 | `gentian-os` | the system tier's data plane, identity (Keycloak, OpenFGA), and — where the claim asks — mail and the model gateway | the ApplicationSets of `kernel/appsets/raw/` |
 | deployments repository | `clusters/<cluster>/kernel/claims/` — the cluster's Crossplane claims | `gentian-claims` |
 | deployments repository | `clusters/<cluster>/catalogue/` — the profiles tenants have installed | `gentian-catalogue` |
@@ -352,7 +352,7 @@ Namespaces are named by tier and function; the list is
 | Authentication | Keycloak | `kernel-authentication` |
 | Authorization | OpenFGA | `kernel-authorization` |
 | Kernel data | CloudNativePG operator and the kernel's own Postgres | `kernel-data` |
-| Control | operator, director, usher, custodian, registrar | `kernel-control` |
+| Control | operator, director, usher, custodian, confidant, registrar | `kernel-control` |
 | Edge | Envoy Gateway and the two Gateways, the bouncer, cert-manager, external-dns | `kernel-edge` |
 | Admission | Kyverno and the baseline policies | `kernel-admission` |
 | Cluster view | Headlamp | `kernel-observability` |
@@ -509,7 +509,7 @@ The path layout, the derivation, rotation and the recovery kit are in
 ```
 gentian-os/              # The OS itself
 ├── api/                 # The resource types (a Go module of its own)
-├── cmd/, internal/      # Operator, director, usher, custodian, registrar, bouncer, arbiter
+├── cmd/, internal/      # Operator, director, usher, custodian, confidant, registrar, bouncer, arbiter
 ├── charts/gentian-os/   # The chart that installs them, with the CRDs
 ├── crossplane/          # XRDs, Compositions, providers
 ├── kernel/              # What Argo CD applies that is not composed
@@ -594,7 +594,7 @@ See [data-lifecycle.md](../concepts/data-lifecycle.md),
 
 ### 11.1 The platform's own image
 
-Operator, director, usher, custodian, registrar, bouncer and arbiter are one image
+Operator, director, usher, custodian, confidant, registrar, bouncer and arbiter are one image
 and one chart, delivered by the `gentian-os` Argo CD Application
 (`kernel/bootstrap/chart/templates/gentian-os.yaml`). The installer pins the
 image to the build of the commit it is installing from

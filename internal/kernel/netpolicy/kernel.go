@@ -201,6 +201,10 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config,
 			// And the realm, which it posts its statements to.
 			add(layout.Namespace(layout.Authentication))
 		}
+		// Secrets of people: the confidant's one port.
+		if kr.PersonSecrets != nil {
+			add(layout.Namespace(layout.Control), ConfidantPort)
+		}
 		// Partners: the realm, where the component exchanges a person's
 		// token for an assertion towards a partner, or hands in one it
 		// accepts. An app that signs people in reaches it already; an
