@@ -268,6 +268,16 @@ type ComponentStatus struct {
 	// +kubebuilder:validation:items:MaxLength=80
 	PendingPrivileges []string `json:"pendingPrivileges,omitempty"`
 
+	// OutgoingHosts are the hosts outside the cluster this component was
+	// granted, each a name with its port where it is not 443. The gateway
+	// for outgoing connections carries them: a listener for each, which this
+	// component's pods and no others reach.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=259
+	OutgoingHosts []string `json:"outgoingHosts,omitempty"`
+
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

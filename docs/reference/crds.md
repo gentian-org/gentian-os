@@ -277,6 +277,7 @@ Component is an installed instance of a ComponentProfile.
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.fulfilment` | string |  | `Fulfilment` is "dedicated" or "shared". |
+| `status.outgoingHosts` | []string |  | `OutgoingHosts` are the hosts outside the cluster this component was granted, each a name with its port where it is not 443. |
 | `status.pendingPrivileges` | []string |  | `PendingPrivileges` are requests of the profile that nobody has granted yet, as \<kind>/\<name>. |
 | `status.rollout` | object |  | `Rollout` is which build this instance actually runs, and how the last move to the pinned build went. |
 | `status.rollout.digest` | string |  | `Digest` is the build the instance runs: the last one that rolled out and verified. |

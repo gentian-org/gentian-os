@@ -422,6 +422,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.OutgoingGatewayReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "OutgoingGateway")
+		os.Exit(1)
+	}
+
 	componentDiscovery, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
 	if err != nil {
 		setupLog.Error(err, "unable to create discovery client")

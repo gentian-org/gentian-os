@@ -221,6 +221,17 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 		return err
 	}
 	rules := append(outside, security.GrantedEgressRulesUnder(profile, comp, time.Now(), preApproved)...)
+	// The hosts outside it was granted: the pods of the gateway for outgoing
+	// connections, on the listeners of those hosts (outgoing_hosts.go). A
+	// host the gateway does not carry yet opens nothing.
+	hosts, _ := grantedOutgoingHosts(profile, comp, preApproved)
+	ways, err := readOutgoingWays(ctx, r.Client, hosts)
+	if err != nil {
+		return fmt.Errorf("read where the granted hosts are carried: %w", err)
+	}
+	if ways.rule != nil {
+		rules = append(rules, *ways.rule)
+	}
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is
 	// the edge's pods, which those rules do not name (own_public_address.go).

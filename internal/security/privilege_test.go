@@ -238,3 +238,32 @@ func TestAListedCatalogsEgressIsAnsweredByThePolicy(t *testing.T) {
 		}
 	}
 }
+
+// A request by host opens no rule by address, and its hosts are the
+// component's only once the request was granted or the cluster's policy
+// answers it.
+func TestGrantedHostsAreThoseOfAGrantedRequest(t *testing.T) {
+	profile := profileAsking()
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected",
+		Hosts: []string{"graph.microsoft.com", "login.microsoftonline.com"},
+	})
+	now := time.Now()
+	if got := security.GrantedEgressHostsUnder(profile, componentGranting("egress/smtp-relay"), now, nil); len(got) != 0 {
+		t.Errorf("hosts without their grant: %v", got)
+	}
+	got := security.GrantedEgressHostsUnder(profile, componentGranting("egress/outside"), now, nil)
+	if strings.Join(got, ",") != "graph.microsoft.com,login.microsoftonline.com" {
+		t.Errorf("granted hosts = %v", got)
+	}
+	if rules := security.GrantedEgressRulesUnder(profile, componentGranting("egress/outside"), now, nil); len(rules) != 0 {
+		t.Errorf("a request by host opened rules by address: %v", rules)
+	}
+	answered := map[string]struct{}{"egress/outside": {}}
+	if got := security.GrantedEgressHostsUnder(profile, componentGranting(), now, answered); len(got) != 2 {
+		t.Errorf("hosts the cluster's policy answers = %v", got)
+	}
+	if got := security.GrantedEgressHostsUnder(nil, nil, now, answered); got != nil {
+		t.Errorf("hosts of no profile = %v", got)
+	}
+}

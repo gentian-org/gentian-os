@@ -494,10 +494,18 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	comp.Status.PendingPrivileges = security.PendingPrivilegesUnder(profile, comp, time.Now(), preApproved)
+	// The hosts outside it was granted, said before anything holds the
+	// install: the gateway for outgoing connections carries what is listed
+	// here, so a grant that went takes its host's listener with it at once.
+	var hostRefusal string
+	comp.Status.OutgoingHosts, hostRefusal = grantedOutgoingHosts(profile, comp, preApproved)
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
 			componentRequeue)
+	}
+	if hostRefusal != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, "EgressHostRefused", hostRefusal, componentRequeue)
 	}
 	// Granted and not installed: a component started without its types
 	// fails on its first read of them.
@@ -516,6 +524,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		if awaits := actionAwaits(ctx, r.Client, tenant.Name, comp, profile); awaits != "" {
 			return r.status(ctx, comp, metav1.ConditionFalse, "CredentialsPending", awaits, componentRequeue)
+		}
+		// A granted host the gateway for outgoing connections does not
+		// carry yet holds every run, as it holds a component's chart.
+		ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("outgoing hosts: %w", err)
+		}
+		if len(ways.waiting) > 0 {
+			return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending", outgoingGatewayPending(ways.waiting), componentRequeue)
 		}
 		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
 	}
@@ -679,6 +696,17 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Whichever way the chart is delivered.
 	if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
 		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
+	}
+	// A granted host the gateway for outgoing connections does not carry
+	// yet holds the chart: a pod started without the host in its host table
+	// resolves the host's real address, which its policy does not open, and
+	// fails with a timeout that says nothing of why.
+	ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("outgoing hosts: %w", err)
+	}
+	if len(ways.waiting) > 0 {
+		return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending", outgoingGatewayPending(ways.waiting), componentRequeue)
 	}
 	// The certificate and the way in for the platform's log forwarder, for
 	// the component of the platform tenant that declares it, before the chart

@@ -467,6 +467,18 @@ spec:
                 - dedicated
                 - shared
                 type: string
+              outgoingHosts:
+                description: |-
+                  OutgoingHosts are the hosts outside the cluster this component was
+                  granted, each a name with its port where it is not 443. The gateway
+                  for outgoing connections carries them: a listener for each, which this
+                  component's pods and no others reach.
+                items:
+                  maxLength: 259
+                  type: string
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: set
               pendingPrivileges:
                 description: |-
                   PendingPrivileges are requests of the profile that nobody has granted

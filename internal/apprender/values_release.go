@@ -51,7 +51,21 @@ var valuesPodLabelKinds = []struct{ group, kind string }{
 // to is said here, by the operator, and not by the chart: whatever a chart
 // writes under either key is replaced. As in the keep rule, a target names
 // no object and so matches every one of its kind.
-func valuesPodLabelsPatch(app, tenant string) string {
+//
+// With host aliases the same patches carry the host rule: the hosts outside
+// the cluster the component was granted, in the host table of every pod, at
+// the address of each host's Service on the gateway for outgoing
+// connections. A component connects to a granted host as it always does and
+// arrives at the gateway; it is given no proxy address. The entries are
+// merged by address into what a chart writes itself.
+func valuesPodLabelsPatch(app, tenant string, aliases []HostAlias) string {
+	var hosts strings.Builder
+	if len(aliases) > 0 {
+		hosts.WriteString("          spec:\n            hostAliases:\n")
+		for _, a := range aliases {
+			fmt.Fprintf(&hosts, "              - ip: %q\n                hostnames: [%q]\n", a.IP, a.Hostname)
+		}
+	}
 	var b strings.Builder
 	for _, k := range valuesPodLabelKinds {
 		fmt.Fprintf(&b, `  - target:
@@ -69,16 +83,16 @@ func valuesPodLabelsPatch(app, tenant string) string {
             labels:
               gentianos.io/app: %[4]q
               gentianos.io/tenant: %[5]q
-`, k.group, k.kind, strings.ToLower(k.kind), app, tenant)
+%[6]s`, k.group, k.kind, strings.ToLower(k.kind), app, tenant, hosts.String())
 	}
 	return b.String()
 }
 
-// releasePatch is what the release's post-renderer applies: the keep rule
-// and the label rule, for every chart. A chart the platform places is told
+// releasePatch is what the release's post-renderer applies: the keep rule,
+// the label rule and the host rule, for every chart. A chart the platform places is told
 // nothing of the labels in its values; its pods carry them all the same.
 func (r *valuesRender) releasePatch() string {
-	return valuesKeepPatch + valuesPodLabelsPatch(r.in.App, r.tenant)
+	return valuesKeepPatch + valuesPodLabelsPatch(r.in.App, r.tenant, r.in.HostAliases)
 }
 
 // keepVolumes is the ConfigMap the release reads its patch from.

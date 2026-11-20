@@ -180,6 +180,9 @@ type installedAction struct {
 	// preApproved are its egress requests the cluster's policy answers
 	// (security.PreApprovedEgress).
 	preApproved map[string]struct{}
+	// outgoing is the way to the hosts outside it was granted: the fleet's
+	// pods on those hosts' listeners (outgoing_hosts.go). Nil with none.
+	outgoing *networkingv1.NetworkPolicyEgressRule
 }
 
 // tenantRuns is everything about runs in one tenant.
@@ -355,9 +358,20 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		if !meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready") {
 			continue
 		}
+		// The hosts outside it was granted, for its runs' host table and
+		// their policy. A Ready action's hosts are all carried: its install
+		// waits until they are (OutgoingGatewayPending).
+		ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range ways.aliases {
+			runnable.HostAliases = append(runnable.HostAliases, dispatcher.HostAlias{IP: a.IP, Hostname: a.Hostname})
+		}
 		of(holder).actions = append(of(holder).actions, installedAction{
 			comp: comp, profile: profile, runnable: runnable,
 			preApproved: security.PreApprovedEgress(profile, preApprovedCatalogs),
+			outgoing:    ways.rule,
 		})
 	}
 	for _, runs := range out {
@@ -835,6 +849,9 @@ func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, l
 
 	for _, action := range runs.actions {
 		granted := security.GrantedEgressRulesUnder(action.profile, action.comp, now, action.preApproved)
+		if action.outgoing != nil {
+			granted = append(granted, *action.outgoing)
+		}
 		if len(granted) == 0 {
 			continue
 		}

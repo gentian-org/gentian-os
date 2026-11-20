@@ -1850,6 +1850,11 @@ func (in *ComponentStatus) DeepCopyInto(out *ComponentStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.OutgoingHosts != nil {
+		in, out := &in.OutgoingHosts, &out.OutgoingHosts
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))
