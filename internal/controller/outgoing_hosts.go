@@ -26,6 +26,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/apprender"
 	"github.com/gentian-org/gentian-os/internal/egress"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
@@ -135,4 +136,12 @@ func readOutgoingWays(ctx context.Context, c client.Reader, hosts []string) (out
 	}
 	out.rule = egress.CallerRule(edge, carried, ports)
 	return out, nil
+}
+
+// outgoingGatewayPending is what a component says while it waits for a
+// granted host to be carried.
+func outgoingGatewayPending(waiting []string) string {
+	return fmt.Sprintf("waiting for the gateway for outgoing connections to carry %s; "+
+		"it does once the cluster's GatewayClass %s exists, which the installer's step A-05 applies",
+		strings.Join(waiting, ", "), netpolicy.OutgoingGatewayClassName)
 }

@@ -30,6 +30,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/egress"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -185,18 +186,38 @@ func ensureOutgoingObject[T client.Object](ctx context.Context, c client.Client,
 
 // grants are the hosts every Component lists in its status, each with the
 // pods that may call it: the component's own, by the labels the operator
-// sets on every pod template of its release (apprender, the label rule).
+// sets on every pod template of its release (apprender, the label rule), or,
+// for an installed action, the pods of its runs in the tenant's namespace
+// for runs, by the label the dispatcher starts them with.
 func (r *OutgoingGatewayReconciler) grants(ctx context.Context) ([]egress.Grant, error) {
 	comps := &gentianov1alpha1.ComponentList{}
 	if err := r.List(ctx, comps); err != nil {
 		return nil, err
 	}
+	var tenants *gentianov1alpha1.TenantList
 	byHost := map[egress.Host]*egress.Grant{}
 	var order []egress.Host
 	for i := range comps.Items {
 		comp := &comps.Items[i]
-		if !comp.DeletionTimestamp.IsZero() {
+		if !comp.DeletionTimestamp.IsZero() || len(comp.Status.OutgoingHosts) == 0 {
 			continue
+		}
+		caller := egress.Caller{Namespace: comp.Namespace, PodLabels: map[string]string{appLabel: comp.Name}}
+		if comp.Spec.Class == gentianov1alpha1.ComponentClassAction {
+			if tenants == nil {
+				tenants = &gentianov1alpha1.TenantList{}
+				if err := r.List(ctx, tenants); err != nil {
+					return nil, err
+				}
+			}
+			holder := gentianov1alpha1.TenantInNamespace(tenants.Items, comp.Namespace)
+			if holder == nil {
+				continue
+			}
+			caller = egress.Caller{
+				Namespace: layout.TenantRuns(holder.Name),
+				PodLabels: map[string]string{dispatcher.LabelAction: comp.Name},
+			}
 		}
 		for _, s := range comp.Status.OutgoingHosts {
 			h, err := egress.ParseHost(s)
@@ -211,10 +232,7 @@ func (r *OutgoingGatewayReconciler) grants(ctx context.Context) ([]egress.Grant,
 				byHost[h] = g
 				order = append(order, h)
 			}
-			g.Callers = append(g.Callers, egress.Caller{
-				Namespace: comp.Namespace,
-				PodLabels: map[string]string{appLabel: comp.Name},
-			})
+			g.Callers = append(g.Callers, caller)
 		}
 	}
 	out := make([]egress.Grant, 0, len(order))

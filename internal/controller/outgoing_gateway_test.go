@@ -14,6 +14,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -27,6 +28,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/dispatcher"
 	"github.com/gentian-org/gentian-os/internal/egress"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -283,5 +285,59 @@ func TestAComponentListsTheHostsItWasGranted(t *testing.T) {
 	}
 	if !strings.Contains(refusal, "vault.kernel-secrets.svc") {
 		t.Errorf("a name inside the cluster was not refused: %q", refusal)
+	}
+}
+
+// An installed action's hosts are for its runs: the gateway admits the pods
+// of its runs in the tenant's namespace for runs, and those pods' policy
+// opens the listeners of its hosts.
+func TestAnActionsHostsAreForItsRuns(t *testing.T) {
+	ctx := context.Background()
+	tenant := rightsTenant("acme")
+	action := componentWithHosts(tenantNamespaceName(tenant), "ocr", "api.example.org")
+	action.Spec.Class = gentianov1alpha1.ComponentClassAction
+	c := fake.NewClientBuilder().WithScheme(outgoingScheme()).WithObjects(outgoingClass(), tenant, action).Build()
+	if _, err := (&OutgoingGatewayReconciler{Client: c}).Reconcile(ctx, reconcile.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	state := readOutgoing(t, c)
+	var admitted []string
+	for name, p := range state.policies {
+		if name == egress.FleetPolicyName {
+			continue
+		}
+		for _, from := range p.Spec.Ingress[0].From {
+			admitted = append(admitted, from.NamespaceSelector.MatchLabels[corev1.LabelMetadataName]+"/"+from.PodSelector.MatchLabels[dispatcher.LabelAction])
+			if from.PodSelector.MatchLabels[appLabel] != "" {
+				t.Errorf("an action's host admits pods by the app label: %v", from.PodSelector.MatchLabels)
+			}
+		}
+	}
+	if strings.Join(admitted, ",") != layout.TenantRuns("acme")+"/ocr" {
+		t.Fatalf("admitted to the action's host: %v", admitted)
+	}
+
+	// The runs' side: the action's policy carries the way to the listener.
+	ports, err := egress.Allocate(nil, []egress.Host{{Name: "api.example.org", Port: 443}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := egress.CallerRule(layout.Namespace(layout.Edge), []egress.Host{{Name: "api.example.org", Port: 443}}, ports)
+	runs := &tenantRuns{tenant: tenant, actions: []installedAction{
+		{comp: action, profile: &gentianov1alpha1.ComponentProfile{}, runnable: dispatcher.Runnable{Name: "ocr"}, outgoing: rule},
+		{comp: action, profile: &gentianov1alpha1.ComponentProfile{}, runnable: dispatcher.Runnable{Name: "plain"}},
+	}}
+	var found *networkingv1.NetworkPolicy
+	for _, p := range runNamespacePolicies(runs, layout.TenantRuns("acme"), tenantNamespaceName(tenant), nil, time.Now()) {
+		switch p.Name {
+		case "action-ocr":
+			found = p
+		case "action-plain":
+			t.Error("an action with no granted host has a policy of its own")
+		}
+	}
+	if found == nil || found.Spec.PodSelector.MatchLabels[dispatcher.LabelAction] != "ocr" || len(found.Spec.Egress) != 1 ||
+		found.Spec.Egress[0].Ports[0].Port.IntVal != ports[egress.Host{Name: "api.example.org", Port: 443}] {
+		t.Fatalf("the policy of the action's runs: %+v", found)
 	}
 }

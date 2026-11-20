@@ -135,11 +135,20 @@ func Pod(tenant *Tenant, caller *Caller, runnable Runnable, own bool, start Star
 		}})
 		mounts = append(mounts, corev1.VolumeMount{Name: "credentials", MountPath: CredentialsPath, ReadOnly: true})
 	}
+	// The hosts outside the action was granted, at the gateway for outgoing
+	// connections. A caller's own run was granted none.
+	var hosts []corev1.HostAlias
+	if !own {
+		for _, a := range runnable.HostAliases {
+			hosts = append(hosts, corev1.HostAlias{IP: a.IP, Hostnames: []string{a.Hostname}})
+		}
+	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: PodName(hash, start.Attempt), Namespace: tenant.Namespace, Labels: labels, Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
+			HostAliases:                  hosts,
 			RestartPolicy:                corev1.RestartPolicyNever,
 			ActiveDeadlineSeconds:        &deadline,
 			ServiceAccountName:           ServiceAccount,

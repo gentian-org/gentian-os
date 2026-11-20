@@ -89,6 +89,17 @@ type Runnable struct {
 	// an installed action takes and returns. Empty for an action that
 	// states neither; a caller's own run has none.
 	Schemas string `json:"schemas,omitempty"`
+	// HostAliases are the entries of the pod's host table: each host outside
+	// the cluster an installed action was granted, at the address of that
+	// host's Service on the gateway for outgoing connections. A caller's own
+	// run never has one.
+	HostAliases []HostAlias `json:"hostAliases,omitempty"`
+}
+
+// HostAlias is one line of a run's host table.
+type HostAlias struct {
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
 }
 
 // Ref is the image a pod names: the repository at the digest.

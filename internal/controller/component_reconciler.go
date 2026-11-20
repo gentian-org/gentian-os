@@ -42,7 +42,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/apprender"
 	"github.com/gentian-org/gentian-os/internal/credentialprobe"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
-	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -522,6 +521,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if awaits := actionAwaits(ctx, r.Client, tenant.Name, comp, profile); awaits != "" {
 			return r.status(ctx, comp, metav1.ConditionFalse, "CredentialsPending", awaits, componentRequeue)
 		}
+		// A granted host the gateway for outgoing connections does not
+		// carry yet holds every run, as it holds a component's chart.
+		ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("outgoing hosts: %w", err)
+		}
+		if len(ways.waiting) > 0 {
+			return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending", outgoingGatewayPending(ways.waiting), componentRequeue)
+		}
 		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
 	}
 
@@ -694,11 +702,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("outgoing hosts: %w", err)
 	}
 	if len(ways.waiting) > 0 {
-		return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending",
-			fmt.Sprintf("waiting for the gateway for outgoing connections to carry %s; "+
-				"it does once the cluster's GatewayClass %s exists, which the installer's step A-05 applies",
-				strings.Join(ways.waiting, ", "), netpolicy.OutgoingGatewayClassName),
-			componentRequeue)
+		return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending", outgoingGatewayPending(ways.waiting), componentRequeue)
 	}
 	// The certificate and the way in for the platform's log forwarder, for
 	// the component of the platform tenant that declares it, before the chart
