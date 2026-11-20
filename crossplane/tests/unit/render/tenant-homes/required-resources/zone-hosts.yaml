@@ -4,7 +4,10 @@
 #
 # "scribe" is certified ("narrow"): its client is given the home scopes
 # granted to it and no app scope. "steward" is of the platform's trust: it
-# keeps the app scopes and is given its home's scope beside them.
+# keeps the app scopes and is given its home's scope beside them. "notes" is
+# certified and names no keys: it calls its home only while the person is
+# present. The token the edge hands it names its client too, and that client
+# is given its home's scope and may exchange.
 #
 # "files" has a sign-in client and a pack of two mappers, and its scope has
 # been observed: it gets the audience mapper, a mapper per claim, and a place
@@ -27,6 +30,7 @@ data:
     notes
     wiki
   vouchingProfiles: |
+    notes - 0 - exchange,narrow,home=files
     scribe scribe 8080 /.well-known/jwks.json narrow,home=files,home=contacts
     steward steward-keys 8443 /keys/current.json exchange,home=files
     warden - 0 - exchange

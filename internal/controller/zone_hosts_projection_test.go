@@ -509,6 +509,85 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 	}
 }
 
+// A certified app that names no keys calls its home only while the person is
+// present: it is projected with no keys, exchanging and narrow, with the
+// homes granted to it. The Composition makes it a client that exchanges and
+// no issuer.
+func TestAnAppThatCallsItsHomeOnlyWhileThePersonIsPresent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := acmeTenantFixture()
+	ns := tenant.NamespaceName()
+	editor := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "editor"}}
+	editor.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	editor.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "file-store", AsPerson: true}}
+	editor.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Exchange: true},
+	}}
+	editor.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: "oidc", ExchangeToken: true,
+	}}
+	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	ib := &gentianov1alpha1.IntegrationBinding{ObjectMeta: metav1.ObjectMeta{Name: "editor-file-store", Namespace: ns}}
+	ib.Spec.Contract = "file-store"
+	ib.Spec.Consumer.App = "editor"
+	ib.Spec.Provider.App = "nextcloud"
+	ib.Status.Conditions = []metav1.Condition{{Type: conditionBindingGranted, Status: metav1.ConditionTrue, Reason: "x"}}
+	// The Secret the Composition wrote for the app, with a home's scope left
+	// from a contract it is no longer granted.
+	told := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName("editor"), Namespace: ns}}
+	told.Data = map[string][]byte{
+		VouchingClientIDKey:               []byte("vouch-editor"),
+		VouchingHomeKey("calendar-store"): []byte("home-elsewhere"),
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&gentianov1alpha1.IntegrationBinding{}).WithObjects(
+		tenant.DeepCopy(), editor, home, comp("editor"), comp("nextcloud"), ib, told,
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "editor - 0 - exchange,narrow,home=nextcloud" {
+		t.Fatalf("vouching profiles = %q", got)
+	}
+
+	// The app is told the scope to ask for, by contract, and nothing of a
+	// home it is not granted.
+	key := types.NamespacedName{Name: told.Name, Namespace: ns}
+	if err := c.Get(context.Background(), key, told); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(told.Data["VOUCHING_HOME_FILE_STORE"]); got != "home-nextcloud" {
+		t.Fatalf("VOUCHING_HOME_FILE_STORE = %q", got)
+	}
+	if _, left := told.Data[VouchingHomeKey("calendar-store")]; left || len(told.Data) != 2 {
+		t.Fatalf("the Secret holds %v", told.Data)
+	}
+
+	// The grant is taken back: the scope's name goes.
+	ib.Status.Conditions[0].Status = metav1.ConditionFalse
+	if err := c.Status().Update(context.Background(), ib); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), key, told); err != nil {
+		t.Fatal(err)
+	}
+	if len(told.Data) != 1 {
+		t.Fatalf("after the grant was taken back the Secret holds %v", told.Data)
+	}
+}
+
 // A home's scope is its own sign-in's token: projected only while some
 // component is granted the home, from the home's OIDC pack.
 func TestHomeTokenScopeIsNamedForTheHome(t *testing.T) {

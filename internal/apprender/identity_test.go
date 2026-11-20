@@ -328,6 +328,15 @@ func TestAnAppsClientNamesTheEntriesItsPeopleAreLinkedTo(t *testing.T) {
 	in := fixtureInput(t, "testdata/render/app-build")
 	in.Profile.Integrations = append(in.Profile.Integrations, gentianov1alpha1.IntegrationRef{Contract: "calendar-store", AsPerson: true})
 	in.Profile.HomeSync = &gentianov1alpha1.HomeSyncSpec{}
+	if in.Profile.Requires == nil {
+		in.Profile.Requires = &gentianov1alpha1.RequirementSpec{}
+	}
+	if in.Profile.Requires.Services == nil {
+		in.Profile.Requires.Services = &gentianov1alpha1.ServiceRequirements{}
+	}
+	in.Profile.Requires.Services.Vouching = &gentianov1alpha1.VouchingRequirement{
+		Keys: &gentianov1alpha1.VouchingKeys{Service: "keys", Port: 8080},
+	}
 	want := "vouch-" + in.ProfileName + ",vouch-homesync"
 	found := false
 	for name, v := range linkTo(in) {
@@ -338,5 +347,14 @@ func TestAnAppsClientNamesTheEntriesItsPeopleAreLinkedTo(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no client of the app names the entries")
+	}
+
+	// An app that names no keys calls its home only while the person is
+	// present: it has no entry, and nobody is linked to it.
+	in.Profile.Requires.Services.Vouching = &gentianov1alpha1.VouchingRequirement{Exchange: true}
+	for name, v := range linkTo(in) {
+		if v != "" && v != "vouch-homesync" {
+			t.Errorf("%s links to %q for an app with no keys", name, v)
+		}
 	}
 }

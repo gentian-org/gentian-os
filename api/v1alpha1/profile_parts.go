@@ -567,6 +567,13 @@ type VouchingRequirement struct {
 	// (exchangedBy on the entry) names this one. So what the component can
 	// exchange is what came in through such an entry: a person present, who
 	// connected a program and need not be linked.
+	//
+	// A certified component that calls a home as the person
+	// (integrations[].asPerson) and names no keys exchanges too, and only
+	// this: the token the edge hands it on an entry that says exchangeToken
+	// also names its client, and its client is given the scopes of the homes
+	// granted to it and no other. It reaches a home for a person who is
+	// signed in and at its address, and for nobody else.
 	// +optional
 	Exchange bool `json:"exchange,omitempty"`
 
@@ -2280,12 +2287,21 @@ type IntegrationRef struct {
 
 	// AsPerson says the app calls the contract's provider -- the tenant's
 	// home for that kind of data -- as the person it acts for, with that
-	// person's rights there. The app signs statements as a vouching
-	// component does (requires.services.vouching.keys), and the tenant's
-	// realm answers them with a token valid at that provider and nowhere
-	// else, for as long as the tenant's administrator grants the contract. A
-	// person is linked when they sign in to the app. For file-store,
-	// calendar-store and contacts-store only.
+	// person's rights there, for as long as the tenant's administrator
+	// grants the contract. The tenant's realm gives it a token valid at that
+	// provider and nowhere else, in one of two ways.
+	//
+	// An app that acts while the person is away signs statements as a
+	// vouching component does (requires.services.vouching.keys). A person is
+	// linked when they sign in to the app, and the app obtains their token
+	// from then on.
+	//
+	// An app that acts only while the person is present names no keys
+	// (requires.services.vouching.exchange): it exchanges the token the edge
+	// hands it for that person. Nobody is linked, and it obtains a token for
+	// nobody who is not signed in at its address at that moment.
+	//
+	// For file-store, calendar-store and contacts-store only.
 	// +optional
 	AsPerson bool `json:"asPerson,omitempty"`
 }

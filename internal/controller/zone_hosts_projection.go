@@ -294,10 +294,22 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			return err
 		}
 		homeApps[tenant] = map[string]bool{}
-		for consumer, providers := range homes {
+		for consumer, byContract := range homes {
+			set := map[string]bool{}
+			for _, p := range byContract {
+				set[p] = true
+			}
+			providers := sortedKeys(set)
 			vouching[tenant][consumer] = vouchingLine(asPerson[tenant][consumer], tenant, providers)
 			for _, p := range providers {
 				homeApps[tenant][p] = true
+			}
+		}
+		// Every component that calls a home as the person, with or without
+		// one granted now: a grant taken back takes the scope's name away.
+		for consumer := range asPerson[tenant] {
+			if err := r.keepVouchingHomes(ctx, ns, consumer, homes[consumer]); err != nil {
+				return err
 			}
 		}
 	}
@@ -511,10 +523,10 @@ func callsHomesAsPerson(profile *gentianov1alpha1.ComponentProfile) bool {
 // grantedHomes are, for each component of a tenant's namespace that calls a
 // home as the person, the homes it may: the providers of its contracts
 // marked asPerson whose binding the tenant's administrator granted in full.
-// Sorted, without repeats.
+// By contract: a contract has one home.
 func (r *TileProjectionReconciler) grantedHomes(
 	ctx context.Context, namespace string, consumers map[string]*gentianov1alpha1.ComponentProfile,
-) (map[string][]string, error) {
+) (map[string]map[string]string, error) {
 	if len(consumers) == 0 {
 		return nil, nil
 	}
@@ -525,7 +537,7 @@ func (r *TileProjectionReconciler) grantedHomes(
 		}
 		return nil, err
 	}
-	found := map[string]map[string]bool{}
+	found := map[string]map[string]string{}
 	for i := range bindings.Items {
 		ib := &bindings.Items[i]
 		profile := consumers[ib.Spec.Consumer.App]
@@ -536,17 +548,13 @@ func (r *TileProjectionReconciler) grantedHomes(
 		for _, in := range profile.Spec.Integrations {
 			if in.AsPerson && in.Contract == ib.Spec.Contract {
 				if found[ib.Spec.Consumer.App] == nil {
-					found[ib.Spec.Consumer.App] = map[string]bool{}
+					found[ib.Spec.Consumer.App] = map[string]string{}
 				}
-				found[ib.Spec.Consumer.App][ib.Spec.Provider.App] = true
+				found[ib.Spec.Consumer.App][ib.Spec.Contract] = ib.Spec.Provider.App
 			}
 		}
 	}
-	out := make(map[string][]string, len(found))
-	for consumer, providers := range found {
-		out[consumer] = sortedKeys(providers)
-	}
-	return out, nil
+	return found, nil
 }
 
 // homeContracts are the contracts a home provides.

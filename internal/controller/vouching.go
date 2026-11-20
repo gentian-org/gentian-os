@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -50,6 +51,16 @@ const (
 	VouchingClientSecretKey = "VOUCHING_CLIENT_SECRET" //nolint:gosec // Secret key name, not a credential.
 	VouchingTokenURLKey     = "VOUCHING_TOKEN_URL"     //nolint:gosec // Secret key name, not a credential.
 )
+
+// VouchingHomeKey is the entry of that Secret that names the scope a
+// component asks a person's token for a home with, per contract it calls as
+// the person: VOUCHING_HOME_FILE_STORE for file-store. Present while the
+// tenant's administrator grants the contract.
+func VouchingHomeKey(contract string) string {
+	return vouchingHomeKeyPrefix + strings.ToUpper(strings.ReplaceAll(contract, "-", "_"))
+}
+
+const vouchingHomeKeyPrefix = "VOUCHING_HOME_"
 
 func wantsVouching(profile *gentianov1alpha1.ComponentProfile) bool {
 	services := profile.Services()
@@ -95,6 +106,53 @@ func (r *TileProjectionReconciler) keepVouchingIssuer(ctx context.Context, names
 	}
 	if err := r.Patch(ctx, secret, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("keep the issuer in %s/%s: %w", namespace, secret.Name, err)
+	}
+	return nil
+}
+
+// keepVouchingHomes keeps the scopes of the homes granted to a component in
+// its Secret, one entry per contract (VouchingHomeKey, HomeTokenScope): what
+// the component asks the realm for, which it could not work out itself, since
+// it is told a home's address and never which app that is.
+//
+// Written by the operator and not by the Composition, as the issuer is and
+// for the same reason: the Secret is written once and the homes change with
+// every grant. The names are no secret, and the component reads the Secret
+// mounted. A Secret not made yet is filled on a later pass.
+func (r *TileProjectionReconciler) keepVouchingHomes(ctx context.Context, namespace, profile string, homes map[string]string) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: VouchingSecretName(profile)}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	want := map[string]string{}
+	for contract, home := range homes {
+		want[VouchingHomeKey(contract)] = HomeTokenScope(home)
+	}
+	before := secret.DeepCopy()
+	changed := false
+	for key := range secret.Data {
+		if _, keep := want[key]; strings.HasPrefix(key, vouchingHomeKeyPrefix) && !keep {
+			delete(secret.Data, key)
+			changed = true
+		}
+	}
+	for key, scope := range want {
+		if string(secret.Data[key]) != scope {
+			if secret.Data == nil {
+				secret.Data = map[string][]byte{}
+			}
+			secret.Data[key] = []byte(scope)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := r.Patch(ctx, secret, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("keep the homes in %s/%s: %w", namespace, secret.Name, err)
 	}
 	return nil
 }

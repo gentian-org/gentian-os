@@ -74,8 +74,12 @@ spec:
               are known only in a tenant's zone.
               Vouching at trustTier platform yields a person's token for any app of the
               tenant. A certified component may vouch only to call the homes it consumes
-              as the person (integrations[].asPerson), and only with keys of its own:
-              its client is given the scopes of the homes granted to it and no other.
+              as the person (integrations[].asPerson): its client is given the scopes of
+              the homes granted to it and no other. It does so in one of two ways. With
+              keys of its own and no exchange, it signs statements and acts for a person
+              who is away. With exchange and no keys, it swaps the token the edge hands
+              it for a person who is present (an entry that says exchangeToken), and can
+              do nothing for anybody else.
               A service may expose -- a console is not a contract surface -- but only on
               the gateway. The perimeter has no session, and a service console published
               there is never what anybody meant.
@@ -2387,6 +2391,13 @@ spec:
                                 (exchangedBy on the entry) names this one. So what the component can
                                 exchange is what came in through such an entry: a person present, who
                                 connected a program and need not be linked.
+
+                                A certified component that calls a home as the person
+                                (integrations[].asPerson) and names no keys exchanges too, and only
+                                this: the token the edge hands it on an entry that says exchangeToken
+                                also names its client, and its client is given the scopes of the homes
+                                granted to it and no other. It reaches a home for a person who is
+                                signed in and at its address, and for nobody else.
                               type: boolean
                             homes:
                               description: |-
@@ -2853,12 +2864,21 @@ spec:
                       description: |-
                         AsPerson says the app calls the contract's provider -- the tenant's
                         home for that kind of data -- as the person it acts for, with that
-                        person's rights there. The app signs statements as a vouching
-                        component does (requires.services.vouching.keys), and the tenant's
-                        realm answers them with a token valid at that provider and nowhere
-                        else, for as long as the tenant's administrator grants the contract. A
-                        person is linked when they sign in to the app. For file-store,
-                        calendar-store and contacts-store only.
+                        person's rights there, for as long as the tenant's administrator
+                        grants the contract. The tenant's realm gives it a token valid at that
+                        provider and nowhere else, in one of two ways.
+
+                        An app that acts while the person is away signs statements as a
+                        vouching component does (requires.services.vouching.keys). A person is
+                        linked when they sign in to the app, and the app obtains their token
+                        from then on.
+
+                        An app that acts only while the person is present names no keys
+                        (requires.services.vouching.exchange): it exchanges the token the edge
+                        hands it for that person. Nobody is linked, and it obtains a token for
+                        nobody who is not signed in at its address at that moment.
+
+                        For file-store, calendar-store and contacts-store only.
                       type: boolean
                     capabilities:
                       description: Capabilities lists the specific capabilities required
@@ -4932,6 +4952,13 @@ spec:
                               (exchangedBy on the entry) names this one. So what the component can
                               exchange is what came in through such an entry: a person present, who
                               connected a program and need not be linked.
+
+                              A certified component that calls a home as the person
+                              (integrations[].asPerson) and names no keys exchanges too, and only
+                              this: the token the edge hands it on an entry that says exchangeToken
+                              also names its client, and its client is given the scopes of the homes
+                              granted to it and no other. It reaches a home for a person who is
+                              signed in and at its address, and for nobody else.
                             type: boolean
                           homes:
                             description: |-
@@ -5253,26 +5280,33 @@ spec:
               rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.expose)
                 || !self.expose.exists(e, e.surface == ''gateway'' && e.authMode ==
                 ''bearer'')'
-            - message: requires.services.vouching requires trustTier platform, or
+            - message: 'requires.services.vouching requires trustTier platform, or
                 trustTier certified for a component that calls a home as the person
-                (integrations[].asPerson) with keys of its own and no exchange, director
-                or homes
+                (integrations[].asPerson): with keys of its own and no exchange, or
+                with exchange, no keys and an entry that says exchangeToken; never
+                director or homes'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
                 || self.trustTier == ''platform'' || (self.trustTier == ''certified''
                 && has(self.integrations) && self.integrations.exists(i, has(i.asPerson)
-                && i.asPerson) && has(self.requires.services.vouching.keys) && !(has(self.requires.services.vouching.exchange)
-                && self.requires.services.vouching.exchange) && !(has(self.requires.services.vouching.director)
+                && i.asPerson) && !(has(self.requires.services.vouching.director)
                 && self.requires.services.vouching.director.size() > 0) && !(has(self.requires.services.vouching.homes)
-                && self.requires.services.vouching.homes))'
+                && self.requires.services.vouching.homes) && (has(self.requires.services.vouching.keys)
+                ? !(has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange)
+                : (has(self.expose) && self.expose.exists(e, has(e.exchangeToken)
+                && e.exchangeToken))))'
             - message: 'requires.services.personSecrets requires trustTier platform:
                 a secret kept for a person opens what that person may reach elsewhere'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.personSecrets)
                 || self.trustTier == ''platform'''
-            - message: 'integrations[].asPerson needs requires.services.vouching.keys:
-                the component signs the statements a person''s token is asked with'
+            - message: 'integrations[].asPerson needs requires.services.vouching:
+                keys, for a component that signs the statements a person''s token
+                is asked with, or at trustTier certified exchange without keys, for
+                one that acts only while the person is present'
               rule: '!has(self.integrations) || !self.integrations.exists(i, has(i.asPerson)
                 && i.asPerson) || (has(self.requires) && has(self.requires.services)
-                && has(self.requires.services.vouching) && has(self.requires.services.vouching.keys))'
+                && has(self.requires.services.vouching) && (has(self.requires.services.vouching.keys)
+                || (self.trustTier == ''certified'' && has(self.requires.services.vouching.exchange)
+                && self.requires.services.vouching.exchange)))'
             - message: 'a service exposes on the gateway only: the perimeter has no
                 session'
               rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)

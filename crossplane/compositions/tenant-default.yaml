@@ -655,6 +655,18 @@ spec:
             {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "narrow" $narrow "homes" $homes "keyless" (eq (index $f 1) "-")) }}
             {{- end }}
             {{- end }}
+            {{- /* $presentCallers are the profiles among them that call a home
+                 as the person only while that person is present: below the
+                 platform's trust, with no keys, exchanging, and with a home
+                 granted. The token the edge hands such an app names its
+                 client as well (at the app scope, below), so that client can
+                 exchange it for a home's and nothing else can. */}}
+            {{- $presentCallers := list }}
+            {{- range $v := $vouchingProfiles }}
+            {{- if and $v.narrow $v.keyless $v.exchange (gt (len $v.homes) 0) }}
+            {{- $presentCallers = append $presentCallers $v.profile }}
+            {{- end }}
+            {{- end }}
             {{- /* The components that call partners or accept their
                  assertions (requires.services.partners), from the same
                  projection: one line each, "<profile> <service account>
@@ -1377,6 +1389,36 @@ spec:
                 protocolMapper: oidc-audience-mapper
                 config:
                   included.custom.audience: {{ printf "partner-%s" $p }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- /* And the app's vouching client, for an app that calls a home
+                 as the person while that person is present: the token it is
+                 handed names that client, which may then exchange it for one
+                 of a home granted to it. Only while a home is granted, so a
+                 client with no home's scope holds no token it can exchange. */}}
+            {{- if has $p $presentCallers }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}-vouching-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}-vouching-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: vouching-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ printf "vouch-%s" $p }}
                   id.token.claim: "false"
                   access.token.claim: "true"
                   introspection.token.claim: "true"
