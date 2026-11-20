@@ -601,7 +601,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.hooks.provisioning.syncJob.script` | string | yes | `Script` executed with /bin/sh. |
 | `spec.hooks.provisioning.syncJob.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount. |
 | `spec.integrations` | []object |  | `Integrations` are opportunistic relationships with peer components. |
-| `spec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there. |
+| `spec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there… |
 | `spec.integrations[].capabilities` | []string |  | `Capabilities` lists the specific capabilities required from the contract. |
 | `spec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
 | `spec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
@@ -1492,7 +1492,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.hooks.provisioning.syncJob.script` | string | yes | `Script` executed with /bin/sh. |
 | `status.profileSpec.hooks.provisioning.syncJob.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount. |
 | `status.profileSpec.integrations` | []object |  | `Integrations` are opportunistic relationships with peer components. |
-| `status.profileSpec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there. |
+| `status.profileSpec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there… |
 | `status.profileSpec.integrations[].capabilities` | []string |  | `Capabilities` lists the specific capabilities required from the contract. |
 | `status.profileSpec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
 | `status.profileSpec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |

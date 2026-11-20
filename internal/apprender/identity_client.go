@@ -79,10 +79,12 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 	// platform's sign-in extension (gentian-home-links): the app's own where
 	// it calls a home as the person, and the home sync's where it keeps
 	// calendars or contacts the home sync keeps equal to the home. An entry
-	// links only while it says so itself.
+	// links only while it says so itself. An app that names no keys has no
+	// entry: it acts for a person only while they are present, and nobody is
+	// linked to it.
 	var linkTo []string
 	for _, integration := range id.profile.Integrations {
-		if integration.AsPerson {
+		if integration.AsPerson && signsStatements(id.profile) {
 			linkTo = append(linkTo, "vouch-"+id.in.ProfileName)
 			break
 		}
@@ -358,4 +360,12 @@ func (id *identityScope) scopeMapper(mapper string, tmpl gentianov1alpha1.OIDCMa
 		},
 		"providerConfigRef": identityProvider,
 	})
+}
+
+// signsStatements reports whether a profile vouches with keys of its own
+// (requires.services.vouching.keys): the kind of component people are linked
+// to.
+func signsStatements(profile *gentianov1alpha1.ComponentProfileSpec) bool {
+	return profile.Requires != nil && profile.Requires.Services != nil &&
+		profile.Requires.Services.Vouching != nil && profile.Requires.Services.Vouching.Keys != nil
 }

@@ -252,9 +252,35 @@ status:
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
+  name: render-fixture-vouching-notes-password
+  annotations:
+    crossplane.io/composition-resource-name: vouching-password-notes
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
   name: render-fixture-vouching-warden-secret
   annotations:
     crossplane.io/composition-resource-name: vouching-secret-warden
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: render-fixture-vouching-notes-secret
+  annotations:
+    crossplane.io/composition-resource-name: vouching-secret-notes
 status:
   conditions:
   - type: Ready

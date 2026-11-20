@@ -650,9 +650,10 @@ func TestActionProfileRules(t *testing.T) {
 }
 
 // A component that calls a home as the person (integrations[].asPerson)
-// signs the statements a person's token is asked with, and may do so below
-// the platform's trust: a certified component's client is given only the
-// scopes of the homes granted to it.
+// may do so below the platform's trust: a certified component's client is
+// given only the scopes of the homes granted to it. It signs the statements
+// a person's token is asked with, or names no keys and exchanges the token
+// of a person who is present.
 func TestHomesAsPersonRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
 	keys := "  requires:\n    services:\n      vouching: {keys: {service: odoo-keys, port: 8069}}\n"
@@ -660,13 +661,22 @@ func TestHomesAsPersonRules(t *testing.T) {
 		return "  classes: [app]\n  launch: none\n  trustTier: " + tier + "\n" + integrations
 	}
 	asPerson := "  integrations:\n  - {contract: calendar-store, asPerson: true}\n"
+	// The lighter way, for an app that acts only while the person is
+	// present: no keys, and the token the edge hands it to exchange.
+	present := "  requires:\n    services:\n      vouching: {exchange: true}\n"
+	handed := "  expose:\n  - {name: web, surface: gateway, authMode: oidc, exchangeToken: true, backend: {service: x, port: 80}}\n"
 	for _, c := range []struct{ name, spec, want string }{
 		{"a certified app that calls its calendar home as the person", consumer("certified", asPerson) + keys, ""},
 		{"a platform component that does", consumer("platform", asPerson) + keys, ""},
 		{"a certified app that vouches with no home", consumer("certified", "") + keys, "requires.services.vouching requires trustTier platform"},
 		{"a community app that calls a home as the person", consumer("community", asPerson) + keys, "requires.services.vouching requires trustTier platform"},
-		{"a home called as the person with no keys", consumer("certified", asPerson), "asPerson needs requires.services.vouching.keys"},
+		{"a home called as the person with no vouching", consumer("certified", asPerson), "asPerson needs requires.services.vouching"},
 		{"a certified app that also exchanges", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {exchange: true, keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
+		{"a certified app that acts only while the person is present", consumer("certified", asPerson) + present + handed, ""},
+		{"one that is handed no token to exchange", consumer("certified", asPerson) + present, "requires.services.vouching requires trustTier platform"},
+		{"one with no home", consumer("certified", "") + present + handed, "requires.services.vouching requires trustTier platform"},
+		{"a community app that does", consumer("community", asPerson) + present + handed, "requires.services.vouching requires trustTier platform"},
+		{"a platform component that calls a home as the person with no keys", consumer("platform", asPerson) + present + handed, "asPerson needs requires.services.vouching"},
 		{"a certified app that asks for the director", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {director: [plans-read], keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
 		{"asPerson on a contract that is no home's", consumer("certified", "  integrations:\n  - {contract: project-management, asPerson: true}\n") + keys, "asPerson is for a home's contract"},
 	} {
