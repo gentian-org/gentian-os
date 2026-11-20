@@ -337,6 +337,9 @@ func newPurgeWorld(t *testing.T, tenant *gentianov1alpha1.Tenant, objects []clie
 			"gentian-os/tenants/demo/apps/wiki-mcp/internal/key": true,
 			"gentian-os/tenants/demo/apps/drive/database":        true,
 			"gentian-os/tenants/demo/admin":                      true,
+			// What two apps keep for one person with the confidant.
+			"gentian-os/tenants/demo/people/u-ada/wiki/token":  true,
+			"gentian-os/tenants/demo/people/u-ada/drive/token": true,
 		}},
 		groups: &fakeGroups{members: map[string][]string{
 			keycloak.TenantAppGroup("demo", "wiki"): {"ada", "bob"},
@@ -460,7 +463,8 @@ func TestAPurgeDestroysEveryKindTheAppOwnsAndNothingElse(t *testing.T) {
 	}
 
 	// Every vault path the app owns: its own and its extension's.
-	if want := []string{"gentian-os/tenants/demo/apps/wiki", "gentian-os/tenants/demo/apps/wiki-mcp"}; !reflect.DeepEqual(w.vault.deleted, want) {
+	if want := []string{"gentian-os/tenants/demo/apps/wiki", "gentian-os/tenants/demo/apps/wiki-mcp",
+		"gentian-os/tenants/demo/people/u-ada/wiki"}; !reflect.DeepEqual(w.vault.deleted, want) {
 		t.Errorf("vault paths deleted = %v, want %v", w.vault.deleted, want)
 	}
 	for _, kept := range []string{"gentian-os/tenants/demo/apps/drive/database", "gentian-os/tenants/demo/admin"} {

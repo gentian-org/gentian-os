@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -23,6 +24,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
@@ -107,4 +109,44 @@ func (r *GatewayPlatformReconciler) ensureConfidantKeys(ctx context.Context) err
 		return err
 	}
 	return ensureKeyList(ctx, r.Client, confidantKeysConfigMap, confidantKeysKey, keys)
+}
+
+// personSecretsVault is the vault as far as ending people's secrets asks it.
+type personSecretsVault interface {
+	DeleteTree(ctx context.Context, logicalPath string) error
+}
+
+// personID is a person's id in a realm, as it may stand in a vault path.
+var personID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,63}$`)
+
+// PersonSecretsDepartures removes what components keep for a person when
+// the realm says the person is gone (membership.Departures): everything
+// under that person's part of the vault, in every tenant whose people are in
+// that realm. The secrets of a person who no longer exists open something
+// for nobody the platform can ask.
+type PersonSecretsDepartures struct {
+	Client client.Reader
+	Vault  personSecretsVault
+}
+
+// PersonRemoved implements membership.Departures.
+func (d *PersonSecretsDepartures) PersonRemoved(ctx context.Context, realm, sub string) error {
+	if !personID.MatchString(sub) {
+		// Not an id the confidant would have kept anything under.
+		return nil
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := d.Client.List(ctx, tenants); err != nil {
+		return err
+	}
+	for i := range tenants.Items {
+		tenant := &tenants.Items[i]
+		if keycloak.RealmName(tenant) != realm {
+			continue
+		}
+		if err := d.Vault.DeleteTree(ctx, secrets.PersonPath(tenant.Name, sub)); err != nil {
+			return fmt.Errorf("remove what is kept for a removed person of tenant %s: %w", tenant.Name, err)
+		}
+	}
+	return nil
 }

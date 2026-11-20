@@ -49,6 +49,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/membership"
 	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
 	"github.com/gentian-org/gentian-os/internal/releaseindex"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
@@ -712,7 +713,17 @@ func main() {
 			Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 			Arbiter:   arbiterPlatform,
 		}
-		listener, err := controller.NewMembershipListener(graph, mirror, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		// What components keep for a person in the vault ends when the
+		// realm says the person is gone. Without a vault there is nothing
+		// kept.
+		var departures membership.Departures
+		if addr := os.Getenv("BAO_ADDR"); addr != "" {
+			departures = &controller.PersonSecretsDepartures{
+				Client: mgr.GetClient(),
+				Vault:  secrets.NewKVClient(addr, envvar.Or("BAO_ROLE", "gentian-os-operator"), ""),
+			}
+		}
+		listener, err := controller.NewMembershipListener(graph, mirror, departures, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		if err != nil {
 			setupLog.Error(err, "unable to create the membership listener")
 			os.Exit(1)

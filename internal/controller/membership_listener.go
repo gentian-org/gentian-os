@@ -67,7 +67,7 @@ type MembershipListener struct {
 // follows from being in a group is refused to everyone. That is a
 // configuration a person may have chosen, and it is also exactly what a
 // forgotten secret looks like, so it says so at start either way.
-func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logger *slog.Logger) (*MembershipListener, error) {
+func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, departures membership.Departures, logger *slog.Logger) (*MembershipListener, error) {
 	if graph == nil {
 		return nil, nil
 	}
@@ -102,6 +102,11 @@ func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, logge
 	// as it was.
 	if mirror != nil {
 		receiver.SetMirror(mirror)
+	}
+	// And a person who is gone, on to what is kept for that person alone
+	// (person_secrets.go).
+	if departures != nil {
+		receiver.SetDepartures(departures)
 	}
 	return &MembershipListener{
 		Addr:     envvar.Or("GENTIAN_MEMBERSHIP_ADDR", ":8090"),

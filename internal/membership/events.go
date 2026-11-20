@@ -81,8 +81,10 @@ type Receiver struct {
 	// mirror carries the same statements on to the app stores that mirror
 	// the realm's groups; nil when there is nothing to carry them to.
 	mirror Mirror
-	log    *slog.Logger
-	now    func() time.Time
+	// departures, when set, is told of every person a realm says is gone.
+	departures Departures
+	log        *slog.Logger
+	now        func() time.Time
 
 	mu   sync.Mutex
 	seen map[string]time.Time // event id → when it may be forgotten
@@ -117,6 +119,16 @@ type Mirror interface {
 
 // SetMirror has the receiver carry what it applies on to m as well.
 func (rc *Receiver) SetMirror(m Mirror) { rc.mirror = m }
+
+// Departures is told of a person who no longer exists in a realm, after the
+// projection, so that what is kept for that person alone ends with them.
+type Departures interface {
+	PersonRemoved(ctx context.Context, realm, sub string) error
+}
+
+// SetDepartures has the receiver tell d of every person a realm says is
+// gone.
+func (rc *Receiver) SetDepartures(d Departures) { rc.departures = d }
 
 // ParseKeys reads "id=base64key,id=base64key".
 func ParseKeys(s string) (map[string]ed25519.PublicKey, error) {
@@ -181,6 +193,9 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		change, err = rc.proj.SetUserGroups(ctx, ev.Realm, ev.User, groups)
 		if err == nil && rc.mirror != nil {
 			err = rc.mirror.SetUserGroups(ctx, ev.Realm, ev.User, groups)
+		}
+		if err == nil && rc.departures != nil && ev.Type == TypeUserDeleted {
+			err = rc.departures.PersonRemoved(ctx, ev.Realm, ev.User)
 		}
 	case TypeGroupDeleted:
 		change, err = rc.proj.RemoveGroup(ctx, ev.Realm, ev.Group)
