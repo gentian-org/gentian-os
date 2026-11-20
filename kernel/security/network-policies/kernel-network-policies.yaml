@@ -545,6 +545,13 @@ spec:
         matchLabels:
           app.kubernetes.io/name: envoy
           gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-edge
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy
+          gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out
     ports:
     - port: 18000
       protocol: TCP

@@ -1,0 +1,82 @@
+{{- /*
+The fleet for outgoing connections: a GatewayClass of its own and the
+EnvoyProxy it points at. No Gateway is declared here. The operator writes the
+Gateways of this class from the hosts that were granted, and Envoy Gateway
+starts the fleet with the first of them.
+
+A class of its own, because the two directions share nothing but the
+controller: a different Service, different pods, different rules. The rules
+that admit "the edge" name the inbound class
+(gateway.envoyproxy.io/owning-gatewayclass), so these pods are admitted
+nowhere inside the cluster.
+*/ -}}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: gentian-outgoing
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  # A Gateway holds 64 listeners and a granted host is a listener. Merged,
+  # every Gateway of the class is served by the one fleet, and its pods carry
+  # the class in gateway.envoyproxy.io/owning-gatewayclass, which is what the
+  # rules for this fleet select by.
+  mergeGateways: true
+  # One line per connection, as JSON on stdout. The fleet does not open TLS:
+  # the host is the name the connection opened with, and there is no path,
+  # method or header to record.
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: JSON
+            json:
+              time: "%START_TIME%"
+              host: "%REQUESTED_SERVER_NAME%"
+              port: "%DOWNSTREAM_LOCAL_PORT%"
+              client: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              bytes_received: "%BYTES_RECEIVED%"
+              bytes_sent: "%BYTES_SENT%"
+              duration_ms: "%DURATION%"
+              flags: "%RESPONSE_FLAGS%"
+              details: "%RESPONSE_CODE_DETAILS%"
+              upstream: "%UPSTREAM_HOST%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.envoy.replicas }}
+        container:
+          image: {{ .Values.envoy.image | quote }}
+        pod:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: envoy
+                  gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out
+      # Reached from inside the cluster only.
+      envoyService:
+        type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: gentian-envoy-out
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  controllerName: {{ .Values.controllerName | quote }}
+  description: Gentian OS outgoing connections via Envoy Gateway
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: gentian-outgoing
+    namespace: {{ .Values.namespace }}

@@ -56,6 +56,12 @@ peers:
       - "Envoy Gateway v1.9.3 internal/gatewayapi/helpers.go OwningGatewayClassLabel: the class, on the proxy pods of merged Gateways"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
       - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
+  envoy-outgoing:
+    what: the Envoy proxy pods of the fleet for outgoing connections
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
+    evidence:
+      - kernel/manifests/gateway/chart/templates/outgoing.yaml:25
   bouncer:
     what: the bouncer, the Gateway's external authorization service
     namespace: kernel-edge
@@ -717,6 +723,20 @@ namespaces:
           - port: 19002
             what: shutdown manager
             open: see allIngress; the kubelet only
+      - name: envoy-outgoing
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.3
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
+        ports:
+          - port: 19001
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 19003
+            what: readiness
+            closed: the kubelet's probes only
+          - port: 19002
+            what: shutdown manager
+            closed: the kubelet only
       - name: envoy-gateway
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
@@ -728,6 +748,9 @@ namespaces:
               - peer: envoy
                 why: every proxy pod fetches its configuration here
                 evidence: [scripts/steps/A-05-envoy-gateway.sh:52]
+              - peer: envoy-outgoing
+                why: the proxies of the outgoing fleet fetch theirs here too
+                evidence: [kernel/manifests/gateway/chart/templates/outgoing.yaml:25]
           - port: 18001
             what: configuration for a rate limit service
             closed: no rate limit service is installed
