@@ -53,7 +53,7 @@ peers:
     podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
     evidence:
       - "Envoy Gateway v1.9.3 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
-      - "Envoy Gateway v1.9.3 internal/gatewayapi/helpers.go OwningGatewayClassLabel: gateway.envoyproxy.io/owning-gatewayclass on the proxy pods of a class with merged Gateways"
+      - "Envoy Gateway v1.9.3 internal/gatewayapi/helpers.go OwningGatewayClassLabel: the class, on the proxy pods of merged Gateways"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
       - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
   bouncer:
