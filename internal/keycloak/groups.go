@@ -20,6 +20,10 @@ func tenantPrefix(tenant string) string {
 	return "gentian:tenant:" + tenant + ":"
 }
 
+// TenantGroupPrefix is what the name of every group of a tenant starts with:
+// the platform's own groups for it and the ones its administrators make.
+func TenantGroupPrefix(tenant string) string { return tenantPrefix(tenant) }
+
 // TenantMembersGroup is the Keycloak group for all tenant members.
 func TenantMembersGroup(tenant string) string {
 	return tenantPrefix(tenant) + "members"

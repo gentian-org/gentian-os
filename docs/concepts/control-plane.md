@@ -939,10 +939,17 @@ and asks OpenFGA before it answers.
 | Every domain the cluster serves, the DNS records it needs and whether the internet has them | `can_audit` on the cluster |
 | Who holds which role on a tenant, and what each role carries (`…/authorization`) | `can_view` on the tenant |
 | Who holds which role on the cluster | `can_audit` on the cluster |
+| What one person holds on a tenant and on each of its apps, through which group, and which permissions are in effect for them (`…/access/people/{id}`); what one of the tenant's groups gives (`…/access/groups?group=`); who holds which role on one app (`…/access/apps/{p}`) | `can_manage_users` on the tenant |
 | What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
 The tiles come from a file the operator writes. Which permissions a caller
-holds, and who holds which role, are OpenFGA's answers. All other answers are the
+holds, who holds which role, and what a person or a group holds are OpenFGA's
+answers. What a person holds is read from both ends: the roles they hold with
+the group each is held through, and the store's own answer to every
+permission, so that a permission a held role carries and the model withholds,
+and one in effect that follows from the cluster, are both said. The state of a
+tenant's apps carries, for each app, its profile's trust tier and what the
+profile has the component hold on people's behalf (`holds`). All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
 itself: each answer is worked out inside the operator, and reading the
 objects behind it would mean giving the usher access to every tenant's

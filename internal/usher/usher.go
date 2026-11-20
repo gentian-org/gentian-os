@@ -67,6 +67,10 @@ type Config struct {
 	// console's read-only authorization view. Nil leaves that view
 	// unregistered.
 	Viewer authz.Viewer
+	// Access reads what one person or one group holds in a tenant, for the
+	// console's access page. It needs Viewer too, which answers for an app;
+	// with either nil the page's routes are unregistered.
+	Access authz.AccessReader
 	// TilesPath is the file the operator's tile catalogue is mounted at.
 	TilesPath string
 	Log       *slog.Logger
@@ -126,6 +130,14 @@ func New(cfg Config) *Server {
 		if cfg.Cluster != "" {
 			s.guarded("GET /v1/clusters/{c}/authorization", "can_audit", clusterObject, s.clusterAuthorization)
 		}
+	}
+	// What a person, a group or an app holds in a tenant, and through what:
+	// for whoever manages the tenant's people, who already reads who is in
+	// which group.
+	if cfg.Viewer != nil && cfg.Access != nil {
+		s.guarded("GET /v1/tenants/{t}/access/people/{id}", "can_manage_users", tenantObject, s.personAccess)
+		s.guarded("GET /v1/tenants/{t}/access/groups", "can_manage_users", tenantObject, s.groupAccess)
+		s.guarded("GET /v1/tenants/{t}/access/apps/{p}", "can_manage_users", tenantObject, s.appAccess)
 	}
 	if cfg.Lifecycle != nil {
 		s.stateRoutes()

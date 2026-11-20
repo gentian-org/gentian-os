@@ -103,6 +103,13 @@ type AppState struct {
 	// for its profile, and its privileges are asked, approved and declined
 	// under that name, not the app's.
 	Addons []AddonState `json:"addons,omitempty"`
+	// TrustTier is the profile's trust tier, and Holds what the profile has
+	// the component hold on people's behalf (holds.go): what an
+	// administrator is shown when asking what an app may do for the
+	// tenant's people. Both absent for a component whose profile the
+	// cluster no longer has.
+	TrustTier string `json:"trustTier,omitempty"`
+	Holds     []Hold `json:"holds,omitempty"`
 }
 
 // AddonState is one add-on of an app, as its own Component has it.
@@ -114,6 +121,9 @@ type AddonState struct {
 	Message                   string             `json:"message,omitempty"`
 	PendingPrivileges         []string           `json:"pendingPrivileges,omitempty"`
 	PendingPrivilegeApprovals []PendingPrivilege `json:"pendingPrivilegeApprovals,omitempty"`
+	// TrustTier and Holds are the add-on's own, as on AppState.
+	TrustTier string `json:"trustTier,omitempty"`
+	Holds     []Hold `json:"holds,omitempty"`
 }
 
 // PendingPrivilege is one request nobody has granted yet, and who may.
@@ -321,6 +331,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		}
 		if found {
 			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, allowed, time.Now())
+			state.TrustTier, state.Holds = string(cp.Spec.TrustTier), holdsOf(cp)
 		}
 		pods, err := s.componentPods(ctx, comp)
 		if err != nil {
@@ -361,6 +372,8 @@ func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.Component
 		Profile: state.Profile, Name: state.Name, Ready: state.Ready, Phase: state.Phase, Message: state.Message,
 		PendingPrivileges:         state.PendingPrivileges,
 		PendingPrivilegeApprovals: pendingApprovals(comp, cp, allowed, time.Now()),
+		TrustTier:                 string(cp.Spec.TrustTier),
+		Holds:                     holdsOf(cp),
 	}
 }
 
