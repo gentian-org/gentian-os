@@ -111,3 +111,36 @@ func TestPersonSecretsOpenOnePortOfTheControlNamespace(t *testing.T) {
 		t.Fatalf("ports %+v", rule.Ports)
 	}
 }
+
+type deletedPaths []string
+
+func (d *deletedPaths) DeleteTree(_ context.Context, path string) error {
+	*d = append(*d, path)
+	return nil
+}
+
+// A person the realm says is gone loses what components kept for them, in
+// every tenant whose people are in that realm and in no other.
+func TestAPersonWhoIsGoneLosesWhatWasKeptForThem(t *testing.T) {
+	renamed := rightsTenant("globex")
+	renamed.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "shared"}
+	also := rightsTenant("initech")
+	also.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "shared"}
+	c := fake.NewClientBuilder().WithScheme(rightsScheme(t)).WithObjects(rightsTenant("acme"), renamed, also).Build()
+	var deleted deletedPaths
+	d := &PersonSecretsDepartures{Client: c, Vault: &deleted}
+	if err := d.PersonRemoved(context.Background(), "acme", "u-ada"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PersonRemoved(context.Background(), "shared", "u-bob"); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing that could not be a person's part of the path is asked for.
+	if err := d.PersonRemoved(context.Background(), "acme", "../apps"); err != nil {
+		t.Fatal(err)
+	}
+	want := "gentian-os/tenants/acme/people/u-ada,gentian-os/tenants/globex/people/u-bob,gentian-os/tenants/initech/people/u-bob"
+	if got := strings.Join(deleted, ","); got != want {
+		t.Fatalf("deleted %s, want %s", got, want)
+	}
+}

@@ -1216,6 +1216,11 @@ who knows their desktop's address can still sign in there.
   component, the person, the entry's name and how it ended, refusals
   included. Never a value.
 
+An entry ends with its owner. The component removes one, or everything it
+keeps for a person. The operator removes the rest, with its own vault role:
+a person's entries when the realm says the person no longer exists, an
+app's when the app is purged, and a tenant's with the tenant.
+
 Its routes: `PUT`, `GET` and `DELETE /v1/people/{person}/secrets/{name}`,
 `DELETE /v1/people/{person}`. The component key is the bearer credential; the
 person's token is in the header `Gentian-Person-Token`.

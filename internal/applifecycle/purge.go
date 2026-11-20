@@ -585,6 +585,23 @@ func (s *Service) purgeCredentials(ctx context.Context, tenant *gentianov1alpha1
 			return fmt.Errorf("delete the vault path %s: %w", path, err)
 		}
 	}
+	// And what the app kept for people with the confidant: its part of each
+	// person's secrets. They are under the person, so that a person's end
+	// is one subtree; the app's end walks the people.
+	people, err := s.vault.ListChildren(ctx, secrets.PeoplePath(tenant.Name))
+	if err != nil {
+		return fmt.Errorf("list the people the tenant's components keep secrets for: %w", err)
+	}
+	for _, person := range people {
+		person = strings.TrimSuffix(person, "/")
+		if person == "" {
+			continue
+		}
+		path := secrets.PersonComponentPath(tenant.Name, person, app)
+		if err := s.vault.DeleteTree(ctx, path); err != nil {
+			return fmt.Errorf("delete the vault path %s: %w", path, err)
+		}
+	}
 	return nil
 }
 

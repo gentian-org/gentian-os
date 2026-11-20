@@ -468,3 +468,54 @@ func TestTheAppStoresAreToldEveryGroupAfterTheKernel(t *testing.T) {
 		t.Fatalf("a statement the app stores did not take: %d", code)
 	}
 }
+
+// recordingDepartures is what ends with a person, with whom it was told of.
+type recordingDepartures struct {
+	gone []string
+	fail bool
+}
+
+func (d *recordingDepartures) PersonRemoved(_ context.Context, realm, sub string) error {
+	if d.fail {
+		return fmt.Errorf("the vault did not answer")
+	}
+	d.gone = append(d.gone, realm+"/"+sub)
+	return nil
+}
+
+// What is kept for a person alone is told when the realm says the person is
+// gone, and of nothing else; where it could not be ended, the statement is
+// refused so that the listener sends it again.
+func TestAPersonWhoIsGoneIsToldOn(t *testing.T) {
+	store := newStore(t)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	proj, _ := membership.NewProjector(store, scope, quiet)
+	rc, _ := membership.NewReceiver(map[string]ed25519.PublicKey{"k1": pub}, proj, quiet)
+	departures := &recordingDepartures{}
+	rc.SetDepartures(departures)
+	ts := httptest.NewServer(rc)
+	t.Cleanup(ts.Close)
+	l := &listener{t: t, url: ts.URL, keyID: "k1", key: priv}
+
+	l.send(membership.Event{Realm: "demo", Type: membership.TypeUserMemberships, User: "u-tom", Groups: []string{"book-club"}})
+	l.send(membership.Event{Realm: "demo", Type: membership.TypeGroupDeleted, Group: "book-club"})
+	if len(departures.gone) != 0 {
+		t.Fatalf("told of %v, and nobody is gone", departures.gone)
+	}
+	l.send(membership.Event{Realm: "demo", Type: membership.TypeUserDeleted, User: "u-tom"})
+	if strings.Join(departures.gone, ",") != "demo/u-tom" {
+		t.Fatalf("told of %v", departures.gone)
+	}
+
+	departures.fail = true
+	if code := l.send(membership.Event{Realm: "demo", Type: membership.TypeUserDeleted, User: "u-ann"}); code != http.StatusServiceUnavailable {
+		t.Fatalf("a departure that could not be carried out: %d", code)
+	}
+	departures.fail = false
+	if code := l.send(membership.Event{Realm: "demo", Type: membership.TypeUserDeleted, User: "u-ann"}); code != http.StatusNoContent {
+		t.Fatalf("the statement sent again: %d", code)
+	}
+	if strings.Join(departures.gone, ",") != "demo/u-tom,demo/u-ann" {
+		t.Fatalf("told of %v", departures.gone)
+	}
+}
