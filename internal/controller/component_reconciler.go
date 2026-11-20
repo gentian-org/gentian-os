@@ -110,6 +110,10 @@ type ComponentReconciler struct {
 	// CRDReader gets CustomResourceDefinitions by name, uncached: the
 	// operator may not list or watch them (component_api_extensions.go).
 	CRDReader client.Reader
+	// VolumeReader lists a tenant's volume claims, uncached, for whether an
+	// app holds data before a move (component_move.go); nil reads through
+	// Client.
+	VolumeReader client.Reader
 	// Discovery tells which resources a group serves, for an API
 	// extension's check that its group is its own.
 	Discovery discovery.DiscoveryInterface

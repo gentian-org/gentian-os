@@ -47,9 +47,15 @@ func (f *recordingExec) Exec(_ context.Context, _, _, _ string, argv []string) (
 	return "", nil
 }
 
-// wikiWithVerify is the wiki profile with a verification command.
-const wikiWithVerify = wikiBundle + `  backup:
-    restore:
+// wikiWithData is the wiki profile with data of its own, a volume: what a
+// move exports first.
+const wikiWithData = wikiBundle + `  backup:
+    volumes:
+      include: [wiki-data]
+`
+
+// wikiWithVerify is the wiki profile with data and a verification command.
+const wikiWithVerify = wikiWithData + `    restore:
       verify: ["true"]
 `
 
@@ -157,8 +163,8 @@ func (h *digestHarness) endExport(name string, phase gentianov1alpha1.TenantExpo
 // A moved pin exports first, keeps the old build running until the export
 // is ready, then rolls the new build out and records it once it is up.
 func TestAMoveExportsFirstThenRollsOutAndRecordsTheBuild(t *testing.T) {
-	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
-	h, oldDigest, newDigest := startMove(t, wikiBundle, newer)
+	newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, oldDigest, newDigest := startMove(t, wikiWithData, newer)
 
 	got := h.reconcile()
 	ro := got.Status.Rollout
@@ -171,6 +177,10 @@ func TestAMoveExportsFirstThenRollsOutAndRecordsTheBuild(t *testing.T) {
 	export := h.export(ro.Export)
 	if export == nil || len(export.Spec.Apps) != 1 || export.Spec.Apps[0] != "wiki" || export.Spec.Destination.Mode != gentianov1alpha1.ExportDestinationPlatform {
 		t.Fatalf("export = %+v", export)
+	}
+	// Unless a policy says otherwise, the app alone.
+	if export.CapturesTenantCore() {
+		t.Fatalf("the export captures the tenant's own: %+v", export.Spec)
 	}
 	// While it runs, the old build stays.
 	h.reconcile()
@@ -248,8 +258,8 @@ func TestAMoveWhoseVerificationFailsIsRolledBack(t *testing.T) {
 
 // An export that fails ends the move before anything changed.
 func TestAMoveWhoseExportFailsDoesNotStart(t *testing.T) {
-	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
-	h, oldDigest, _ := startMove(t, wikiBundle, newer)
+	newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, oldDigest, _ := startMove(t, wikiWithData, newer)
 	got := h.reconcile()
 	h.endExport(got.Status.Rollout.Export, gentianov1alpha1.TenantExportPhaseFailed)
 	got = h.reconcile()
@@ -266,8 +276,8 @@ func TestAMoveWhoseExportFailsDoesNotStart(t *testing.T) {
 // A later request after a failed export exports afresh: it does not stop on
 // the failure of the attempt before, which stays as its record.
 func TestARetriedMoveTakesAFreshExport(t *testing.T) {
-	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
-	h, _, newDigest := startMove(t, wikiBundle, newer)
+	newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, _, newDigest := startMove(t, wikiWithData, newer)
 	got := h.reconcile()
 	failed := got.Status.Rollout.Export
 	h.endExport(failed, gentianov1alpha1.TenantExportPhaseFailed)
@@ -295,8 +305,8 @@ func TestARetriedMoveTakesAFreshExport(t *testing.T) {
 
 // A build that does not come up within the deadline is rolled back.
 func TestAMoveThatDoesNotComeUpInTimeIsRolledBack(t *testing.T) {
-	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
-	h, oldDigest, _ := startMove(t, wikiBundle, newer)
+	newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, oldDigest, _ := startMove(t, wikiWithData, newer)
 	got := h.reconcile()
 	h.endExport(got.Status.Rollout.Export, gentianov1alpha1.TenantExportPhaseReady)
 	h.markReleaseNotReady()
@@ -449,5 +459,114 @@ func TestOlderExportsTakenBeforeMovesAreRemoved(t *testing.T) {
 	got := strings.Join(left, ",")
 	if got != "move-shop-1,move-wiki-1,move-wiki-3,move-wiki-4,move-wiki-5,nightly" {
 		t.Fatalf("left %s; want the two newest finished, the last move's, the running one, and the others' untouched", got)
+	}
+}
+
+// backupPolicy is a backup policy saying what is exported before a move: the
+// cluster's when tenant is "", else that tenant's own.
+func backupPolicy(tenant string, beforeMove gentianov1alpha1.BeforeMoveExport, allowOverride *bool) *gentianov1alpha1.BackupPolicy {
+	p := &gentianov1alpha1.BackupPolicy{Spec: gentianov1alpha1.BackupPolicySpec{
+		Scope: "cluster", BeforeMove: beforeMove, AllowTenantOverride: allowOverride}}
+	p.Name = clusterBackupPolicy
+	if tenant != "" {
+		p.Name, p.Spec.Scope, p.Spec.Tenant = tenant, "tenant", tenant
+	}
+	return p
+}
+
+// startedWithoutExport checks that the pass after the pin moved rolled the
+// pinned build out at once, with no export taken.
+func startedWithoutExport(t *testing.T, h *digestHarness, oldDigest, newDigest string) {
+	t.Helper()
+	got := h.reconcile()
+	ro := got.Status.Rollout
+	if ro.Phase != gentianov1alpha1.RolloutRolling || ro.Target != newDigest || ro.Digest != oldDigest || ro.Export != "" || ro.StartedAt == nil {
+		t.Fatalf("after the pin moved: %+v", ro)
+	}
+	if h.releasedVersion() != "2.0.0" {
+		t.Fatalf("the release is at %q, not the pinned build", h.releasedVersion())
+	}
+	exports := &gentianov1alpha1.TenantExportList{}
+	if err := h.c.List(context.Background(), exports); err != nil {
+		t.Fatal(err)
+	}
+	if len(exports.Items) != 0 {
+		t.Fatalf("an export was taken: %s", exports.Items[0].Name)
+	}
+	// And it ends as any move does.
+	h.markReleaseReady()
+	ro = h.reconcile().Status.Rollout
+	if ro.Phase != gentianov1alpha1.RolloutDone || ro.Digest != newDigest || ro.Previous != oldDigest {
+		t.Fatalf("after the release came up: %+v", ro)
+	}
+}
+
+// An app that holds no data -- no database, no bucket, no volume -- is not
+// exported before a move, whatever the policy says: the pinned build rolls
+// out at once.
+func TestAMoveOfAnAppThatHoldsNothingRollsOutAtOnce(t *testing.T) {
+	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, oldDigest, newDigest := startMove(t, wikiBundle, newer)
+	if err := h.c.Create(context.Background(), backupPolicy("", gentianov1alpha1.BeforeMoveTenant, nil)); err != nil {
+		t.Fatal(err)
+	}
+	startedWithoutExport(t, h, oldDigest, newDigest)
+}
+
+// A volume the app's release holds is data, though the profile names none.
+func TestAMoveOfAnAppWithAVolumeExportsIt(t *testing.T) {
+	newer := strings.ReplaceAll(wikiBundle, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, _, _ := startMove(t, wikiBundle, newer)
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+		Name: "data-wiki-0", Namespace: h.comp.Namespace,
+		Labels: map[string]string{"gentianos.io/app": "wiki"}}}
+	if err := h.c.Create(context.Background(), pvc); err != nil {
+		t.Fatal(err)
+	}
+	if ro := h.reconcile().Status.Rollout; ro.Phase != gentianov1alpha1.RolloutExporting || h.export(ro.Export) == nil {
+		t.Fatalf("after the pin moved: %+v", ro)
+	}
+}
+
+// The policy says what a move of an app with data exports: the app and the
+// tenant's own, or nothing.
+func TestTheBackupPolicySaysWhatAMoveExports(t *testing.T) {
+	no := false
+	for _, tc := range []struct {
+		name     string
+		policies []client.Object
+		// core is whether the export captures the tenant's own; none that
+		// there is no export.
+		core, none bool
+	}{
+		{name: "no policy: the app alone"},
+		{name: "the cluster's: tenant", policies: []client.Object{backupPolicy("", gentianov1alpha1.BeforeMoveTenant, nil)}, core: true},
+		{name: "the tenant's over the cluster's", policies: []client.Object{
+			backupPolicy("", gentianov1alpha1.BeforeMoveTenant, nil), backupPolicy("acme", gentianov1alpha1.BeforeMoveApp, nil)}},
+		{name: "the tenant's: none", policies: []client.Object{backupPolicy("acme", gentianov1alpha1.BeforeMoveNone, nil)}, none: true},
+		{name: "the tenant's, where the cluster allows none", policies: []client.Object{
+			backupPolicy("", gentianov1alpha1.BeforeMoveTenant, &no), backupPolicy("acme", gentianov1alpha1.BeforeMoveNone, nil)}, core: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`)
+			h, oldDigest, newDigest := startMove(t, wikiWithData, newer)
+			for _, p := range tc.policies {
+				if err := h.c.Create(context.Background(), p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.none {
+				startedWithoutExport(t, h, oldDigest, newDigest)
+				return
+			}
+			ro := h.reconcile().Status.Rollout
+			export := h.export(ro.Export)
+			if ro.Phase != gentianov1alpha1.RolloutExporting || export == nil {
+				t.Fatalf("after the pin moved: %+v", ro)
+			}
+			if export.CapturesTenantCore() != tc.core {
+				t.Fatalf("the export captures the tenant's own: %v, want %v", export.CapturesTenantCore(), tc.core)
+			}
+		})
 	}
 }

@@ -451,7 +451,9 @@ func main() {
 		// An API extension's definitions, by name and uncached
 		// (component_api_extensions.go), and its group's other types.
 		CRDReader: mgr.GetAPIReader(),
-		Discovery: componentDiscovery,
+		// A tenant's volume claims, uncached as the export reads them.
+		VolumeReader: mgr.GetAPIReader(),
+		Discovery:    componentDiscovery,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)

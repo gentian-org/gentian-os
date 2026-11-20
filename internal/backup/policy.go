@@ -105,6 +105,10 @@ type Effective struct {
 	// destination — the difference between bundles the platform can reach and
 	// bundles it may not be able to.
 	Overridden bool
+
+	// BeforeMove is what is exported before an app moves to another build:
+	// app unless a policy says otherwise.
+	BeforeMove gentianov1alpha1.BeforeMoveExport
 }
 
 // PlatformStorage reports whether bundles go to the platform's own object store.
@@ -191,7 +195,7 @@ func ResolveEffective(
 	cluster *gentianov1alpha1.BackupPolicy,
 	override *gentianov1alpha1.BackupPolicy,
 ) (Effective, error) {
-	eff := Effective{Bucket: BackupBucket(tenant)}
+	eff := Effective{Bucket: BackupBucket(tenant), BeforeMove: gentianov1alpha1.BeforeMoveApp}
 
 	apply := func(p *gentianov1alpha1.BackupPolicy) {
 		if d := p.Spec.Destination; d.IsSet() {
@@ -213,6 +217,9 @@ func ResolveEffective(
 			// alongside would answer a different question than the one asked.
 			eff.Recipients = slices.Clone(p.Spec.Encryption.Recipients)
 		}
+		if p.Spec.BeforeMove != "" {
+			eff.BeforeMove = p.Spec.BeforeMove
+		}
 	}
 
 	if cluster != nil {
@@ -229,7 +236,7 @@ func ResolveEffective(
 	if cluster != nil {
 		overrideAllowed = cluster.Spec.OverrideAllowed()
 	}
-	states := override.Spec.Destination.IsSet() || override.Spec.Encryption.IsSet()
+	states := override.Spec.Destination.IsSet() || override.Spec.Encryption.IsSet() || override.Spec.BeforeMove != ""
 	if !overrideAllowed && states {
 		return eff, fmt.Errorf(
 			"this cluster does not permit tenants to set their own backup policy (allowTenantOverride is false)")
