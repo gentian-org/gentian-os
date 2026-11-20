@@ -29,6 +29,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // BridgeCaller is who opens the calls of a way.
@@ -144,6 +146,8 @@ type BridgedApp struct {
 // +kubebuilder:validation:XValidation:rule="self.caller != 'device' || self.speaksAs == 'person'",message="a program on a person's device speaks as that person"
 // +kubebuilder:validation:XValidation:rule="has(self.paths) == (self.callee == 'app' && (self.caller == 'device' || self.caller == 'outside'))",message="paths are where a caller from outside the platform reaches the app: present exactly for a way from a device or an outside service to the app"
 // +kubebuilder:validation:XValidation:rule="!has(self.root) || ((self.protocol == 'caldav' || self.protocol == 'carddav') && has(self.paths) && self.paths.exists(p, self.root == p || self.root.startsWith(p.endsWith('/') ? p : p + '/')))",message="root is where a calendar or contact program is sent from the discovery address: only for a way in caldav or carddav, and under one of its paths"
+// +kubebuilder:validation:XValidation:rule="!has(self.outside) || (self.caller == 'agents' && self.callee == 'outside' && self.protocol == 'mcp')",message="outside describes a tool server outside the platform that the tenant's agents call: only for a way from agents to outside in mcp"
+// +kubebuilder:validation:XValidation:rule="!has(self.outside) || !has(self.endpoint)",message="a way names where its tool server answers once: endpoint inside the tenant, or outside with the entry's baseUrl"
 // +kubebuilder:validation:XValidation:rule="!has(self.endpoint) || self.caller == 'agents'",message="endpoint is where the tenant's agents reach the bridge's tool server: only for a way whose caller is agents"
 type BridgeWay struct {
 	// Name names the way within the bridge, and in the tenant's approvals.
@@ -200,6 +204,99 @@ type BridgeWay struct {
 	// its baseUrl instead.
 	// +optional
 	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+
+	// Outside describes a tool server outside the platform, for a way from
+	// the tenant's agents to the outside in mcp, on a bridge packaged as an
+	// api whose baseUrl is the server's address. With it the platform tells
+	// the tenant's components that call tools for a person that this bridge
+	// is there, as it does for an endpoint, and hands them what is written
+	// here: the tools that may be called and where a person signs in.
+	// +optional
+	Outside *OutsideToolServer `json:"outside,omitempty"`
+}
+
+// OutsideToolServer is what an entry says of a tool server the platform does
+// not run. The server is not asked what its tools are: the entry lists the
+// ones that may be called, as they were when the entry was reviewed, and no
+// other tool of the server is called.
+type OutsideToolServer struct {
+	// Tools are the tools that may be called.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	Tools []OutsideTool `json:"tools"`
+
+	// SignIn is how a person the calls are made for is known to the server.
+	// Absent, the server is called without a credential of a person.
+	// +optional
+	SignIn *OutsideSignIn `json:"signIn,omitempty"`
+}
+
+// OutsideToolClass says whether a tool reads or changes.
+// +kubebuilder:validation:Enum=read;change
+type OutsideToolClass string
+
+// OutsideTool is one tool of an outside tool server.
+type OutsideTool struct {
+	// Name is the tool's name on the platform: with the bridge's name and
+	// Version it is what a person allows and what a call names.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// Tool is the name the server knows the tool by. Absent, it is Name.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_.-]+$`
+	Tool string `json:"tool,omitempty"`
+
+	// Version is the version of what is written here: raised when the tool
+	// is reviewed again because its inputs or what it does changed.
+	// +kubebuilder:validation:Minimum=1
+	Version int32 `json:"version"`
+
+	// Class is read for a tool that changes nothing at the service, and
+	// change for one that does.
+	Class OutsideToolClass `json:"class"`
+
+	// Description is what a person who builds with the tool reads.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Description string `json:"description"`
+
+	// InputSchema is the JSON Schema of the tool's arguments. Absent, the
+	// tool takes none.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	InputSchema *apiextensionsv1.JSON `json:"inputSchema,omitempty"`
+}
+
+// OutsideSignIn is how a person signs in at an outside service.
+type OutsideSignIn struct {
+	// OAuth is a sign-in by OAuth 2.0 authorization code with PKCE: the
+	// person is sent to the service, and the component that keeps people's
+	// connections is handed a credential it presents for them afterwards.
+	OAuth *OutsideOAuth `json:"oauth"`
+}
+
+// OutsideOAuth names the authorization server of an outside service.
+type OutsideOAuth struct {
+	// Issuer is the authorization server: its metadata is read at
+	// /.well-known/oauth-authorization-server below it (RFC 8414).
+	// +kubebuilder:validation:Pattern=`^https://[^\s/]+(/[^\s]*)?$`
+	// +kubebuilder:validation:MaxLength=512
+	Issuer string `json:"issuer"`
+
+	// Scopes are the scopes asked for.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=128
+	// +kubebuilder:validation:items:Pattern=`^[\x21\x23-\x5B\x5D-\x7E]+$`
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // BridgeDiscoveryPath is the discovery address of a protocol at the door

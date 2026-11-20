@@ -343,6 +343,18 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.bridge.ways[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
 | `spec.bridge.ways[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
+| `spec.bridge.ways[].outside` | object |  | `Outside` describes a tool server outside the platform, for a way from the tenant's agents to the outside in mcp, on a bridge packaged as an api whose baseUrl… |
+| `spec.bridge.ways[].outside.signIn` | object |  | `SignIn` is how a person the calls are made for is known to the server. |
+| `spec.bridge.ways[].outside.signIn.oauth` | object | yes | `OAuth` is a sign-in by OAuth 2.0 authorization code with PKCE: the person is sent to the service, and the component that keeps people's connections is handed a… |
+| `spec.bridge.ways[].outside.signIn.oauth.issuer` | string | yes | `Issuer` is the authorization server: its metadata is read at /.well-known/oauth-authorization-server below it (RFC 8414). |
+| `spec.bridge.ways[].outside.signIn.oauth.scopes` | []string |  | `Scopes` are the scopes asked for. |
+| `spec.bridge.ways[].outside.tools` | []object | yes | `Tools` are the tools that may be called. |
+| `spec.bridge.ways[].outside.tools[].class` | string | yes | `Class` is read for a tool that changes nothing at the service, and change for one that does. |
+| `spec.bridge.ways[].outside.tools[].description` | string | yes | `Description` is what a person who builds with the tool reads. |
+| `spec.bridge.ways[].outside.tools[].inputSchema` | object |  | `InputSchema` is the JSON Schema of the tool's arguments. |
+| `spec.bridge.ways[].outside.tools[].name` | string | yes | `Name` is the tool's name on the platform: with the bridge's name and Version it is what a person allows and what a call names. |
+| `spec.bridge.ways[].outside.tools[].tool` | string |  | `Tool` is the name the server knows the tool by. |
+| `spec.bridge.ways[].outside.tools[].version` | integer (int32) | yes | `Version` is the version of what is written here: raised when the tool is reviewed again because its inputs or what it does changed. |
 | `spec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
 | `spec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
 | `spec.bridge.ways[].root` | string |  | `Root` is where a calendar or contact program that found the door by its discovery address (RFC 6764: /.well-known/caldav, /.well-known/carddav) is sent, to ask… |
@@ -1222,6 +1234,18 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.bridge.ways[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
 | `status.profileSpec.bridge.ways[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
+| `status.profileSpec.bridge.ways[].outside` | object |  | `Outside` describes a tool server outside the platform, for a way from the tenant's agents to the outside in mcp, on a bridge packaged as an api whose baseUrl… |
+| `status.profileSpec.bridge.ways[].outside.signIn` | object |  | `SignIn` is how a person the calls are made for is known to the server. |
+| `status.profileSpec.bridge.ways[].outside.signIn.oauth` | object | yes | `OAuth` is a sign-in by OAuth 2.0 authorization code with PKCE: the person is sent to the service, and the component that keeps people's connections is handed a… |
+| `status.profileSpec.bridge.ways[].outside.signIn.oauth.issuer` | string | yes | `Issuer` is the authorization server: its metadata is read at /.well-known/oauth-authorization-server below it (RFC 8414). |
+| `status.profileSpec.bridge.ways[].outside.signIn.oauth.scopes` | []string |  | `Scopes` are the scopes asked for. |
+| `status.profileSpec.bridge.ways[].outside.tools` | []object | yes | `Tools` are the tools that may be called. |
+| `status.profileSpec.bridge.ways[].outside.tools[].class` | string | yes | `Class` is read for a tool that changes nothing at the service, and change for one that does. |
+| `status.profileSpec.bridge.ways[].outside.tools[].description` | string | yes | `Description` is what a person who builds with the tool reads. |
+| `status.profileSpec.bridge.ways[].outside.tools[].inputSchema` | object |  | `InputSchema` is the JSON Schema of the tool's arguments. |
+| `status.profileSpec.bridge.ways[].outside.tools[].name` | string | yes | `Name` is the tool's name on the platform: with the bridge's name and Version it is what a person allows and what a call names. |
+| `status.profileSpec.bridge.ways[].outside.tools[].tool` | string |  | `Tool` is the name the server knows the tool by. |
+| `status.profileSpec.bridge.ways[].outside.tools[].version` | integer (int32) | yes | `Version` is the version of what is written here: raised when the tool is reviewed again because its inputs or what it does changed. |
 | `status.profileSpec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
 | `status.profileSpec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
 | `status.profileSpec.bridge.ways[].root` | string |  | `Root` is where a calendar or contact program that found the door by its discovery address (RFC 6764: /.well-known/caldav, /.well-known/carddav) is sent, to ask… |
