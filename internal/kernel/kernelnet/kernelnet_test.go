@@ -459,6 +459,9 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/director/catalogue/address.go": {},
 	// The model gateway, in a system namespace.
 	"internal/modelgateway/modelgateway.go": {},
+	// Recognizes a name inside a cluster, to refuse it as a host outside;
+	// dials none.
+	"internal/egress/egress.go": {},
 }
 
 var inClusterAddress = regexp.MustCompile(`\.svc(\.cluster\.local)?\b`)
