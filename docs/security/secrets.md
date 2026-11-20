@@ -49,6 +49,7 @@ secrets management and password storage.
 | P10 | **The realm**<br>Keycloak's database | A person's password and second factor; device passwords, as digests; a realm's token-signing keys | The person, through Keycloak and the registrar; Keycloak | Keycloak only. Everyone else sees tokens it signed and its public keys | Who a person is, is answered in one place ([principle 2](principles.md)); a credential there ends when the person's password changes or the person is disabled (S8) |
 | P11 | **Nowhere: tokens** | A workload's ServiceAccount token for one audience, ten minutes; a person's sign-in token; a token exchanged for one app | The Kubernetes API server; Keycloak | The one audience named in the token | Nothing is stored, so nothing is there to steal later (S4) |
 | P12 | **The install host**<br>`~/.gentian/` | The keyring with the break-glass signing key; the vault's first root token and recovery key until handover, when the token is revoked and the file deleted | The installer | The person who runs the installation | Installation is the one act that happens before the cluster can keep a secret |
+| P13 | **The vault, people's part**<br>`gentian-os/tenants/<tenant>/people/<person>/<component>/…` | A secret a component keeps for one person: the lasting credential of a sign-in the person gave it at a service outside the cluster | The confidant, for the component that presents its key; the first entry for a person needs that person's token | The confidant, for that same component and no other. Denied to External Secrets and to an administrator's vault sign-in, so it never becomes a Kubernetes Secret | It belongs to a person, not to the tenant or the app: no administrator and no other component reads it, and it ends with the person (S5, S8) |
 
 ## 3. Which secret goes where
 
@@ -58,6 +59,7 @@ secrets management and password storage.
 | A device password, for a calendar or file program | P10, as a digest; shown to the person once | S3 |
 | A credential the platform generates for an app (database, sign-in client, storage) | P2, copied to the app's namespace (P7) | S2, S5 |
 | A credential a person supplies (registry login, backup destination, DNS token, model provider key) | P1 or P2, written through the custodian, which cannot read it back | S1 |
+| A credential of one person at a service outside the cluster, kept by a component that acts for them | P13, through the confidant | S2, S5 |
 | A secret a profile asks to have generated for its app | P2, under the app's own path | S5 |
 | The shared credential of a contract between two apps | P2 for a password both sides use; P8 and P9 for a key the provider only checks | S3 |
 | The key a component proves itself with to a kernel service | P8 for the component, its digest in P9 for the service | S3 |
@@ -81,9 +83,11 @@ Ask in this order, and stop at the first yes.
    it in the cluster, give that side the digest or the public half, and keep
    the value with the one party that presents it (S3, P8 and P9).
 3. **Is it a person's proof of who they are?** It belongs to the realm (P10).
-4. **Does it open the backups, the vault, or sign for the cluster?** It gets a
+4. **Does it belong to one person, and must a component present it again for
+   them?** The component keeps it with the confidant (S5, P13).
+5. **Does it open the backups, the vault, or sign for the cluster?** It gets a
    path no workload receives, and a copy in the recovery kit (S6, P3 to P6).
-5. **Everything else** goes to the vault under its owner's path, written once
+6. **Everything else** goes to the vault under its owner's path, written once
    by the operator or through the custodian, and reaches its workload as a
    copy (S1, S2, S5; P1, P2, P7).
 
