@@ -40,7 +40,7 @@ them.
 A *namespace* is a separate compartment of the cluster. The full list of
 namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 
-### The nine programs
+### The ten programs
 
 | Program | Its job in one sentence | Runs in | Who may call it | What it holds | What it can change |
 | --- | --- | --- | --- | --- | --- |
@@ -52,10 +52,11 @@ namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 | **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. Answers the same question, about one tenant, for a component that was given a key for it. | `kernel-edge` | The Gateway; and, on a second listener, a component whose profile declares the rights check. | Each realm's token-exchange client secret. | Nothing. It lets a request through or refuses it. |
 | **Arbiter** | The one way into the app instance of OpenFGA: answers each component that declares an authorization store, from that component's store and no other. | `system-authorization` | A component with a key for its store; the operator, on a path of its own. | The app instance's key. | The components' stores: it creates, mirrors into, exports, restores and purges them. |
 | **Dispatcher** | Does what is asked for once and follows nothing declared. Starts a run for a component that asks: one pod of an installed action, or of an image of the component's own, in the tenant's namespace for runs. Carries out an act for the director: a backup taken or deleted. | `kernel-control` | A component whose profile declares `requires.services.runs`, with the key the operator gave it; and, on a listener of its own, the director with its workload token. | Nothing: no credential, and no data of a run. | Pods in the tenants' namespaces for runs, and the record a backup is taken from. |
+| **Confidant** | Keeps secrets that belong to one person each, for the component that acts for that person, and gives one back to that component alone. | `kernel-control` | A component whose profile declares `requires.services.personSecrets`, with the key the operator gave it. | A vault role that reads and writes what is under a tenant's `people/` and nothing else. | Those secrets in the vault. |
 | **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published through the platform tenant's DMZ | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
 
-Six of the nine hold the key that opens the kernel's OpenFGA (all but the
-arbiter, the dispatcher and the concierge). That is a known weakness, described in §6.
+Six of the ten hold the key that opens the kernel's OpenFGA (all but the
+arbiter, the dispatcher, the confidant and the concierge). That is a known weakness, described in §6.
 
 ### What they stand between
 
@@ -1192,6 +1193,65 @@ Nothing: no credential, and no session passes through it.
 The bare domain shows no page and pages lose the cluster's branding. Anybody
 who knows their desktop's address can still sign in there.
 
+### 4.10 Confidant
+
+**What it does**
+
+- Keeps a secret of one person for one component: the lasting credential of
+  a sign-in the person gave that component at a service outside the cluster,
+  for example. An entry is at
+  `gentian-os/tenants/<tenant>/people/<person>/<component>/<name>` in the
+  vault, and one version of it is kept.
+- Knows a component by the key it presents. The tenant and the component of
+  an entry come from the key, never from the request, so a component reaches
+  its own entries of its own tenant's people and no others.
+- Asks for the person at the first entry: the first secret a component keeps
+  for a person needs that person's token as well, the one the front door
+  hands the component's page for them (an exposure with `exchangeToken`).
+  Once there is an entry, the component replaces it with its key alone,
+  because a renewed credential arrives while the person is away. When the
+  component removes every entry of a person, the next one needs the person
+  again.
+- Writes every request it decides to its log: the action, the tenant, the
+  component, the person, the entry's name and how it ended, refusals
+  included. Never a value.
+
+Its routes: `PUT`, `GET` and `DELETE /v1/people/{person}/secrets/{name}`,
+`DELETE /v1/people/{person}`. The component key is the bearer credential; the
+person's token is in the header `Gentian-Person-Token`.
+
+**What it must never do**
+
+- Give a secret to anybody but the component that keeps it: not to a person,
+  not to a console, not to another component.
+- Take the tenant, the component or the realm from a request.
+- Reach any other path of the vault.
+
+**What it holds**
+
+- A vault role, bound to its own service account and to a token issued for
+  the vault alone, that creates, reads, replaces and deletes what is under
+  `gentian-os/tenants/+/people/`
+  ([cluster-default.yaml](../../crossplane/compositions/cluster-default.yaml),
+  policy `confidant-people`). The policies a tenant's administrator signs in
+  to the vault with deny those paths.
+- Nothing in the cluster: its service account is granted nothing and its
+  API-server token is not mounted. The components it serves are in a list
+  the operator writes (`confidant-keys`), by the digests of their keys.
+
+**Who calls it, and whom it calls**
+
+- Called by: a component of a tenant whose profile declares
+  `requires.services.personSecrets` at `trustTier: platform`. The tenant's
+  network policy opens the confidant's one port to that component alone.
+- Calls: Keycloak's public keys and the vault.
+
+**If it is unavailable**
+
+A component cannot read or renew what it keeps for a person, so what it does
+for people at outside services stops until the confidant answers again.
+Nothing stored is lost.
+
 ## 5. Who decides what
 
 OpenFGA is the one authority on rights. A *relation* is a named link between
@@ -1469,7 +1529,7 @@ separates tenants.
 
 | Term | Meaning |
 | --- | --- |
-| Director, operator, custodian, registrar, usher, bouncer, arbiter, dispatcher, concierge | The nine programs; §2. |
+| Director, operator, custodian, registrar, usher, bouncer, arbiter, dispatcher, confidant, concierge | The ten programs; §2. |
 | Platform admin | A person who administers the cluster. Lives in the kernel realm. |
 | Tenant admin, user admin | A person who administers one tenant. Called tenant admin on a multi-tenancy cluster and user admin on a single-tenancy one. |
 | Tenant | One organization's separate part of the cluster: its own people, namespaces, data and addresses. |

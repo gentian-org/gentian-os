@@ -62,11 +62,12 @@ func wantsRightsCheck(profile *gentianov1alpha1.ComponentProfile) bool {
 // holdsComponentKey reports whether the component is given a key of its own
 // at all: one that asks the rights check, one that vouches, and one that
 // commissions partners, which presents the key at the director
-// (partner_commissioners.go). The key is one per component whatever it is for; what
+// (partner_commissioners.go), and one that keeps secrets of people, which
+// presents it at the confidant (person_secrets.go). The key is one per component whatever it is for; what
 // it opens is decided where it is presented, by the lists the operator
 // writes for each purpose.
 func holdsComponentKey(profile *gentianov1alpha1.ComponentProfile) bool {
-	return wantsRightsCheck(profile) || wantsPartnerCommission(profile)
+	return wantsRightsCheck(profile) || wantsPartnerCommission(profile) || wantsPersonSecrets(profile)
 }
 
 func rightsCheckURL(bouncerService string) string {
@@ -91,9 +92,16 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 	if wantsPartnerCommission(profile) {
 		director = r.directorURL()
 	}
+	// The confidant's likewise, for a component that keeps secrets of
+	// people.
+	confidant := ""
+	if wantsPersonSecrets(profile) {
+		confidant = confidantURL()
+	}
 	return r.ensureKeySecret(ctx, comp, tenantName, rightsCheckKeys, map[string]string{
 		rightsCheckURLKey:       rightsCheckURL(r.bouncerService()),
 		componentDirectorURLKey: director,
+		confidantURLKey:         confidant,
 	})
 }
 

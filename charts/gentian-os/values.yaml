@@ -269,6 +269,18 @@ director:
 #
 # Off by default, like the director whose people routes it serves; the v5
 # bootstrap turns both on.
+# The confidant: keeps secrets that belong to one person each, for the
+# components whose profile declares requires.services.personSecrets
+# (templates/confidant.yaml). On by default: it holds nothing and serves
+# nobody until such a component is installed.
+confidant:
+  enabled: true
+  port: 9446
+  replicas: 1
+  # The vault role it logs in as (cluster-default, gentian-os-confidant).
+  vaultRole: gentian-os-confidant
+  resources: {}
+
 registrar:
   enabled: false
   port: 9445

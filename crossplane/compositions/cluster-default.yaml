@@ -602,6 +602,17 @@ spec:
                   path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/*" {
                     capabilities = ["create", "update", "read", "list"]
                   }
+                  # What components keep for the tenant's people is no
+                  # administrator's to read or set: it opens what a person
+                  # may reach elsewhere, and only the confidant holds it.
+                  # Named with the tenant, as the grant above is: a path
+                  # with a wildcard earlier in it would lose to that grant.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/people/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/people/*" {
+                    capabilities = ["deny"]
+                  }
                   path "{{ $kvMount }}/data/gentian-os/kernel/*" {
                     capabilities = ["deny"]
                   }
@@ -1192,6 +1203,65 @@ spec:
                 audience: vault://gentian-os-director
                 tokenPolicies:
                   - director-repository-read
+                tokenTtl: 900
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── The confidant ─────────────────────────────────────────────
+                 The confidant (charts/gentian-os/templates/confidant.yaml)
+                 keeps secrets that belong to one person each, for the
+                 components that act for that person
+                 (docs/security/secrets.md). This is all it reaches: what is
+                 under a tenant's people/. No app's, repository's, contract's
+                 or backup's path, and no kernel path.
+
+                 Which tenant, which person and which component an entry is
+                 of is the confidant's to hold, by the key a component
+                 presents. The policy cannot see that, so it bounds what a
+                 confidant that got it wrong could reach.
+
+                 No patch: an entry is replaced whole. Metadata is created to
+                 keep one version, listed to tell whether a component holds
+                 anything for a person, and deleted to remove an entry with
+                 its versions.
+
+                 Bound to the confidant's own ServiceAccount, and to a token
+                 issued for the vault's audience: the confidant's pod mounts
+                 no token the API server accepts. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-confidant-people
+              name: {{ $name }}-policy-confidant-people
+            spec:
+              forProvider:
+                name: confidant-people
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/people/*"     { capabilities = ["create","read","update"] }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/+/people/*" { capabilities = ["create","update","list","delete"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-confidant
+              name: {{ $name }}-auth-role-confidant
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: gentian-os-confidant
+                boundServiceAccountNames:
+                  - gentian-os-confidant
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                audience: vault://gentian-os-confidant
+                tokenPolicies:
+                  - confidant-people
                 tokenTtl: 900
               providerConfigRef:
                 name: openbao

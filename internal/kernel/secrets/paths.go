@@ -76,3 +76,24 @@ const MasterPasswordPath = "gentian-os/kernel/internal/master-password"
 func TenantPath(tenant string) string {
 	return fmt.Sprintf("gentian-os/tenants/%s", tenant)
 }
+
+// PeoplePath is where the secrets components keep for a tenant's people are:
+// "gentian-os/tenants/{tenant}/people".
+func PeoplePath(tenant string) string {
+	return TenantPath(tenant) + "/people"
+}
+
+// PersonPath is one person's part of it, by their id in the realm.
+func PersonPath(tenant, person string) string {
+	return PeoplePath(tenant) + "/" + person
+}
+
+// PersonComponentPath is what one component keeps for one person.
+func PersonComponentPath(tenant, person, component string) string {
+	return PersonPath(tenant, person) + "/" + component
+}
+
+// PersonSecretPath is one entry of it.
+func PersonSecretPath(tenant, person, component, name string) string {
+	return PersonComponentPath(tenant, person, component) + "/" + name
+}

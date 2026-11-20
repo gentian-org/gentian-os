@@ -65,7 +65,7 @@ peers:
     evidence:
       - charts/gentian-os/templates/bouncer.yaml:12
   control-programs:
-    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, registrar)
+    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, confidant, registrar)
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os}
     evidence:
@@ -82,6 +82,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
     evidence:
       - charts/gentian-os/templates/custodian.yaml:1
+  confidant:
+    what: the confidant
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: confidant}
+    evidence:
+      - charts/gentian-os/templates/confidant.yaml:1
   vault-migrator:
     what: the Job that makes the vault what a release needs
     namespace: kernel-control
@@ -292,6 +298,9 @@ namespaces:
               - peer: custodian
                 why: relays a person's credential writes (BAO_ADDR)
                 evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]
+              - peer: confidant
+                why: keeps and reads the secrets components hold for people (BAO_ADDR)
+                evidence: [charts/gentian-os/templates/confidant.yaml:105, internal/kernel/secrets/openbao.go:36]
               - peer: director
                 why: reads the credential of a repository a catalogue artifact is pulled with (DIRECTOR_BAO_ADDR)
                 evidence: [charts/gentian-os/templates/director.yaml:286, internal/kernel/secrets/openbao.go:246]
@@ -636,6 +645,19 @@ namespaces:
               - >-
                 the installer asks its /healthz through the API server's proxy and, where that is refused, by
                 port-forward (scripts/steps/E-03-revoke-bootstrap-token.sh:211)
+      - name: confidant
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: confidant}
+        ports:
+          - port: 9446
+            what: keeps secrets of a person for a component that presents its key
+            from:
+              - peer: tenants
+                why: a component that keeps secrets of people (requires.services.personSecrets)
+                evidence:
+                  - internal/controller/person_secrets.go:67
+                  - internal/kernel/netpolicy/kernel.go:206
       - name: registrar
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os

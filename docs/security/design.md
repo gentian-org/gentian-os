@@ -1323,6 +1323,8 @@ gentian-os/
         │   └── {repository-name}     #   username, password of a declared repository
         ├── contracts/
         │   └── {contract-name}       #   shared credential of a binding (§3.4)
+        ├── people/
+        │   └── {person}/{component}/{name}   # a secret a component keeps for one person
         └── backup/                   #   destination, identity
 ```
 
@@ -1405,6 +1407,11 @@ Who may read what:
   - *The cluster's own registry credential* (`Repository` without a tenant,
     with a `namespaceSelector`) is a kernel path. Where its selector matches
     a tenant's namespace, no pull Secret arrives there.
+- **The confidant alone reads and writes `tenants/+/people/`**, under
+  `confidant-people` (`cluster-default.yaml`), and reaches nothing else.
+  Neither kind of External Secrets store covers those paths, and the
+  policies a tenant's administrator signs in with deny them
+  ([control-plane.md §4.10](../concepts/control-plane.md)).
 - **The director reads repository credentials**, a tenant's and the
   cluster's, under `director-repository-read` (`cluster-default.yaml`), to
   pull a catalog kept as an OCI artifact (§2.17). Read only, on

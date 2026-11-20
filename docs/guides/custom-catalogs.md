@@ -482,6 +482,24 @@ cluster's `logForwarding.destination.endpoint` is then `https://<service>.tenant
 A cluster has one log destination: a second component that declares it is given nothing, and its
 `LogDestination` condition names the first. In any other tenant the declaration does nothing.
 
+**A component that keeps a secret of a person** declares
+`spec.requires.services.personSecrets: {}`, at `trustTier: platform`. Such a secret is the lasting
+credential of a sign-in the person gave the component at a service outside the cluster. The component
+does not keep it in its own database: it asks the confidant
+([control-plane.md §4.10](../concepts/control-plane.md)), with the key in the Secret
+`rights-check-<component>` (`RIGHTS_CHECK_KEY`) at the address in the same Secret (`CONFIDANT_URL`).
+
+- **The first secret for a person needs the person.** `PUT /v1/people/<person>/secrets/<name>` with
+  `{"value": "..."}` takes the component key as the bearer credential and, for the first entry the
+  component keeps for that person, the person's token in `Gentian-Person-Token`: the one the front
+  door hands the component's own page (an exposure with `exchangeToken: true`).
+- **Renewing needs the key alone.** While the component holds an entry for the person, a `PUT`
+  without the person's token replaces one or adds another.
+- **Reading and removing.** `GET` and `DELETE` on the same path; `DELETE /v1/people/<person>` removes
+  everything the component keeps for that person, and is what a component calls when the person
+  disconnects.
+- A value is at most 16 KiB, and one version is kept.
+
 **A component that obtains a person's token while the person is away** declares vouching
 (`spec.requires.services.vouching`, with `keys.service`, `keys.port` and optionally `keys.path`:
 where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`, or

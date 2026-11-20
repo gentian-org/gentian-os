@@ -286,6 +286,14 @@ spec:
                   path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/*" {
                     capabilities = ["list", "delete"]
                   }
+                  # Not what components keep for the tenant's people: only
+                  # the confidant holds that.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ $tenant }}/people/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/people/*" {
+                    capabilities = ["deny"]
+                  }
 
             {{- /* ── The tenant's own secret store ─────────────────────────────
                  What ESO reads for this tenant's namespace, and all it reads

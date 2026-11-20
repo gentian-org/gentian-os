@@ -188,6 +188,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsRightsCheck(profile) {
 		outside = append(outside, rightsCheckEgress())
 	}
+	// The confidant, for a component that keeps secrets of people: its one
+	// port in the control namespace.
+	if wantsPersonSecrets(profile) {
+		outside = append(outside, confidantEgress())
+	}
 	// The arbiter, for a component that declared an authorization store:
 	// its pods on its one port.
 	if wantsAuthorization(profile) {

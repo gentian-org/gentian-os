@@ -376,6 +376,7 @@ type kernelAddress struct {
 // says so here, and the inventory must admit it.
 var inClusterAddressFiles = map[string][]kernelAddress{
 	"charts/gentian-os/templates/bouncer.yaml":    {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}},
+	"charts/gentian-os/templates/confidant.yaml":  {{"kernel-authentication", 8080}, {"kernel-secrets", 8200}},
 	"charts/gentian-os/templates/custodian.yaml":  {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-secrets", 8200}},
 	"charts/gentian-os/templates/deployment.yaml": {{"kernel-authorization", 8080}, {"kernel-secrets", 8200}, {"kernel-authentication", 8080}},
 	"charts/gentian-os/templates/director.yaml":   {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-control", 8082}},
@@ -424,7 +425,8 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/keycloak_tenant_smtp.go": {},
 	"internal/controller/mail_reconciler.go":      {{"kernel-authentication", 8080}},
 	// The address of the bouncer's rights check, handed to a component.
-	"internal/controller/rights_check.go": {{"kernel-edge", 8082}},
+	"internal/controller/person_secrets.go": {{"kernel-control", 9446}},
+	"internal/controller/rights_check.go":   {{"kernel-edge", 8082}},
 	// The arbiter's address, handed to a component: a system namespace.
 	"internal/controller/authorization_service.go": {},
 	// A run's way back to the component that started it, in its tenant.

@@ -70,6 +70,17 @@ type Vouching struct {
 	Consent string `json:"consent,omitempty"`
 }
 
+// PersonSecrets is an entry of the confidant's list: a component that keeps
+// secrets of people. Component is the component's name, which is the part of
+// the path its entries are under. Profile is the profile it runs, the
+// audience of the token the front door hands its page for a person, and
+// Realm the realm its tenant's people sign in to.
+type PersonSecrets struct {
+	Key
+	Profile string `json:"profile"`
+	Realm   string `json:"realm"`
+}
+
 // Hash is the form a list holds a key in: the SHA-256 of the key, in hex.
 func Hash(key string) string {
 	sum := sha256.Sum256([]byte(key))

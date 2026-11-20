@@ -2046,6 +2046,13 @@ spec:
                               pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                               type: string
                           type: object
+                        personSecrets:
+                          description: |-
+                            PersonSecrets declares that the component keeps secrets that belong to
+                            one person each, with the confidant: the lasting credential of a
+                            sign-in a person gave it at a service outside the cluster, for example.
+                            See PersonSecretsRequirement.
+                          type: object
                         rights:
                           description: |-
                             Rights declares that the component asks the platform whether a person
@@ -4586,6 +4593,13 @@ spec:
                             pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                             type: string
                         type: object
+                      personSecrets:
+                        description: |-
+                          PersonSecrets declares that the component keeps secrets that belong to
+                          one person each, with the confidant: the lasting credential of a
+                          sign-in a person gave it at a service outside the cluster, for example.
+                          See PersonSecretsRequirement.
+                        type: object
                       rights:
                         description: |-
                           Rights declares that the component asks the platform whether a person
@@ -5138,6 +5152,10 @@ spec:
                 && self.requires.services.vouching.exchange) && !(has(self.requires.services.vouching.director)
                 && self.requires.services.vouching.director.size() > 0) && !(has(self.requires.services.vouching.homes)
                 && self.requires.services.vouching.homes))'
+            - message: 'requires.services.personSecrets requires trustTier platform:
+                a secret kept for a person opens what that person may reach elsewhere'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.personSecrets)
+                || self.trustTier == ''platform'''
             - message: 'integrations[].asPerson needs requires.services.vouching.keys:
                 the component signs the statements a person''s token is asked with'
               rule: '!has(self.integrations) || !self.integrations.exists(i, has(i.asPerson)
