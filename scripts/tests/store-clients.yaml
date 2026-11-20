@@ -427,7 +427,7 @@ clients:
     when: console
     client: the Gateway's Envoy pods, routing the gateway's console llm.<kernelDomain>
     namespace: kernel-edge
-    podLabels: {app.kubernetes.io/name: envoy}
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
     port: 4000
     built: none
     proof: >-
@@ -802,7 +802,7 @@ denied:
     server: mock
     client: the Gateway's Envoy pods
     namespace: kernel-edge
-    podLabels: {app.kubernetes.io/name: envoy}
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
     port: 8000
   - store: llm
     server: mock

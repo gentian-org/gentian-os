@@ -13,11 +13,12 @@ package controller
 import (
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 const (
-	GentianGatewayClassName      = "gentian-envoy"
+	GentianGatewayClassName      = netpolicy.EdgeGatewayClassName
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
 	// The two edges (networking.md §1): one Envoy fleet, two policy domains,
 	// both Gateways in the edge namespace under mergeGateways. The
