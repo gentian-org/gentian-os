@@ -177,8 +177,8 @@ func EgressRulesFor(profile *gentianov1alpha1.ComponentProfile, granted map[stri
 	var out []networkingv1.NetworkPolicyEgressRule
 	for i := range profile.Privileges().Egress {
 		e := &profile.Privileges().Egress[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
-			out = append(out, e.Rule)
+		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok && e.Rule != nil {
+			out = append(out, *e.Rule)
 		}
 	}
 	return out

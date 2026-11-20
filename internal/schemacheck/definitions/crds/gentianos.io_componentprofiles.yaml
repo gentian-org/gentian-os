@@ -3913,11 +3913,33 @@ spec:
                       egress:
                         description: |-
                           Egress opens outbound network beyond the tenant baseline. Tenant scope:
-                          the traffic leaves the tenant's own namespace.
+                          the traffic leaves the tenant's own namespace. A profile names all its
+                          hosts in one request, so that they are answered once.
                         items:
-                          description: EgressRequest asks for outbound network beyond
-                            the tenant baseline.
+                          description: |-
+                            EgressRequest asks for outbound network beyond the tenant baseline: hosts
+                            outside the cluster by name, or a network rule by address.
+
+                            Hosts is the form for a destination that has a name. The connections pass
+                            the gateway for outgoing connections, which lets through the hosts that
+                            were granted and records each connection. Rule is for what that gateway
+                            cannot carry, a protocol that names no host, and the approver reads it as
+                            addresses and ports.
                           properties:
+                            hosts:
+                              description: |-
+                                Hosts are the hosts outside the cluster the component connects to, each
+                                one name, lower case, with a port where it is not 443:
+                                "graph.microsoft.com", "example.org:8443". A pattern is not a host. The
+                                connection is TLS and opens with the host's name.
+                              items:
+                                maxLength: 259
+                                pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$
+                                type: string
+                              maxItems: 64
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-type: set
                             name:
                               description: Name is what a PrivilegeGrant refers to.
                                 Unique within the profile.
@@ -3928,7 +3950,7 @@ spec:
                               minLength: 10
                               type: string
                             rule:
-                              description: Rule is the egress to allow.
+                              description: Rule is the egress to allow by address.
                               properties:
                                 ports:
                                   description: |-
@@ -4114,13 +4136,19 @@ spec:
                           required:
                           - name
                           - reason
-                          - rule
                           type: object
+                          x-kubernetes-validations:
+                          - message: an egress request states hosts or a rule, one
+                              of the two
+                            rule: has(self.rule) != has(self.hosts)
                         maxItems: 32
                         type: array
                         x-kubernetes-list-map-keys:
                         - name
                         x-kubernetes-list-type: map
+                        x-kubernetes-validations:
+                        - message: a profile names its hosts in one egress request
+                          rule: self.filter(e, has(e.hosts)).size() <= 1
                       podSecurity:
                         description: |-
                           PodSecurity waives a named admission policy for a named part of the

@@ -70,7 +70,7 @@ func actionFixture(tenant, name string, granted bool) (*gentianov1alpha1.Compone
 	}
 	tcp, port := corev1.ProtocolTCP, intstr.FromInt32(443)
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
-		Egress: []gentianov1alpha1.EgressRequest{{Name: "service", Reason: "the service it calls", Rule: networkingv1.NetworkPolicyEgressRule{
+		Egress: []gentianov1alpha1.EgressRequest{{Name: "service", Reason: "the service it calls", Rule: &networkingv1.NetworkPolicyEgressRule{
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
 		}}},
 	}}

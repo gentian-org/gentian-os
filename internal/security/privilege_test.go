@@ -38,11 +38,11 @@ func profileAsking() *gentianov1alpha1.ComponentProfile {
 					}},
 					Egress: []gentianov1alpha1.EgressRequest{
 						{Name: "smtp-relay", Reason: "sends invitations through the relay",
-							Rule: networkingv1.NetworkPolicyEgressRule{
+							Rule: &networkingv1.NetworkPolicyEgressRule{
 								Ports: []networkingv1.NetworkPolicyPort{{Port: &port}},
 							}},
 						{Name: "webhooks", Reason: "posts to the customer's endpoint",
-							Rule: networkingv1.NetworkPolicyEgressRule{}},
+							Rule: &networkingv1.NetworkPolicyEgressRule{}},
 					},
 					ClusterRoles: []gentianov1alpha1.ClusterRoleRequest{{
 						Name: "read-nodes", Reason: "renders a capacity view",

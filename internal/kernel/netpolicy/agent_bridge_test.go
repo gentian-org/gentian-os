@@ -217,7 +217,7 @@ func TestAnAPIAgentBridgeIsReachedThroughTheChaperonesGrantedEgress(t *testing.T
 	tools.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
 		Egress: []gentianov1alpha1.EgressRequest{{
 			Name:   "tool-server",
-			Rule:   networkingv1.NetworkPolicyEgressRule{To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.10/32"}}}},
+			Rule:   &networkingv1.NetworkPolicyEgressRule{To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.10/32"}}}},
 			Reason: "the tool server this bridge offers",
 		}},
 	}}
