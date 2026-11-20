@@ -228,8 +228,9 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				tenantName, ns, export.Namespace))
 	}
 
-	// One export or restore at a time per tenant. Two concurrent captures would
-	// pause the same app twice and race each other's resume.
+	// One export or restore at a time per tenant, or per app for exports
+	// that capture apps alone. Two concurrent captures of one app would pause
+	// it twice and race each other's resume.
 	if holder, blocked, err := r.blockedByAnotherExport(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	} else if blocked {
@@ -238,8 +239,11 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		export.Status.Phase = gentianov1alpha1.TenantExportPhasePending
 		return resultUnlessError(ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, export))
 	}
-	setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportAccepted, metav1.ConditionTrue, "Accepted",
-		"this export holds the tenant")
+	holds := "this export holds the tenant"
+	if !export.CapturesTenantCore() {
+		holds = "this export holds " + strings.Join(export.Spec.Apps, ", ")
+	}
+	setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportAccepted, metav1.ConditionTrue, "Accepted", holds)
 
 	if export.Status.Bundle == nil {
 		// Resolved once, when the bundle is assigned, and recorded on it. An
@@ -334,17 +338,20 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Every app is done; capture what belongs to the tenant rather than to an
-	// app. None of it is quiesced: the realm and the desktop's database are
-	// low-write and internally consistent, a mailbox is copied under the mail
-	// server's own locks, and pausing identity or mail would lock every
-	// member out for the duration.
-	if done, err := r.captureTenantWide(ctx, export, tenant, encryption); err != nil {
-		return ctrl.Result{}, err
-	} else if !done {
-		if why := tenantWideExhausted(export); why != "" {
-			return r.fail(ctx, export, "CaptureFailed", why)
+	// app, unless this export was asked for its apps alone. None of it is
+	// quiesced: the realm and the desktop's database are low-write and
+	// internally consistent, a mailbox is copied under the mail server's own
+	// locks, and pausing identity or mail would lock every member out for
+	// the duration.
+	if export.CapturesTenantCore() {
+		if done, err := r.captureTenantWide(ctx, export, tenant, encryption); err != nil {
+			return ctrl.Result{}, err
+		} else if !done {
+			if why := tenantWideExhausted(export); why != "" {
+				return r.fail(ctx, export, "CaptureFailed", why)
+			}
+			return r.requeueExport(ctx, export, tenant)
 		}
-		return r.requeueExport(ctx, export, tenant)
 	}
 
 	return r.complete(ctx, export, tenant, encryption)
@@ -1018,17 +1025,41 @@ func (r *TenantExportReconciler) effectivePolicy(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 ) (backup.Effective, error) {
-	cluster := &gentianov1alpha1.BackupPolicy{}
-	if err := r.Get(ctx, types.NamespacedName{Name: clusterBackupPolicy}, cluster); err != nil {
+	return tenantBackupPolicy(ctx, r.Client, tenant)
+}
+
+// tenantBackupPolicy resolves a tenant's backup policy: the cluster's, with
+// the tenant's own over it.
+func tenantBackupPolicy(
+	ctx context.Context,
+	c client.Reader,
+	tenant *gentianov1alpha1.Tenant,
+) (backup.Effective, error) {
+	cluster, override, err := backupPolicies(ctx, c, tenant)
+	if err != nil {
+		return backup.Effective{}, err
+	}
+	return backup.ResolveEffective(tenant, cluster, override)
+}
+
+// backupPolicies reads the cluster's backup policy and the tenant's own,
+// each nil when there is none.
+func backupPolicies(
+	ctx context.Context,
+	c client.Reader,
+	tenant *gentianov1alpha1.Tenant,
+) (cluster, override *gentianov1alpha1.BackupPolicy, err error) {
+	cluster = &gentianov1alpha1.BackupPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Name: clusterBackupPolicy}, cluster); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return backup.Effective{}, err
+			return nil, nil, err
 		}
 		cluster = nil
 	}
-	override := &gentianov1alpha1.BackupPolicy{}
-	if err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, override); err != nil {
+	override = &gentianov1alpha1.BackupPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Name: tenant.Name}, override); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return backup.Effective{}, err
+			return nil, nil, err
 		}
 		override = nil
 	}
@@ -1038,7 +1069,7 @@ func (r *TenantExportReconciler) effectivePolicy(
 	if override != nil && (override.Spec.Scope != "tenant" || override.Spec.Tenant != tenant.Name) {
 		override = nil
 	}
-	return backup.ResolveEffective(tenant, cluster, override)
+	return cluster, override, nil
 }
 
 // complete writes the manifest and marks the export done. The manifest is
@@ -1094,6 +1125,13 @@ func (r *TenantExportReconciler) complete(
 		}
 		return r.requeueExport(ctx, export, tenant)
 	}
+	if !export.CapturesTenantCore() {
+		// The entry the manifest's unit is booked on, which nothing else
+		// moves off Pending when the tenant's own is left out.
+		entry := appStatus(&export.Status.Apps, backupTenantComponent)
+		entry.Phase = gentianov1alpha1.TenantExportPhaseReady
+		entry.Message = "the manifest only: this export was asked for its apps alone"
+	}
 
 	if err := r.stopRunningExportJobs(ctx, export); err != nil {
 		return ctrl.Result{}, err
@@ -1144,7 +1182,9 @@ func (r *TenantExportReconciler) notIncluded(
 	export *gentianov1alpha1.TenantExport,
 ) ([]string, error) {
 	var out []string
-	if r.Reconciler != nil {
+	if !export.CapturesTenantCore() {
+		out = append(out, "the tenant's own: its realm, its desktop's database and its mailboxes (this export was asked for its apps alone)")
+	} else if r.Reconciler != nil {
 		// Mailboxes on a domain that is not the tenant's alone.
 		if _, shared, err := r.Reconciler.mailboxesOf(ctx, tenant); err != nil {
 			return nil, err
@@ -1302,14 +1342,17 @@ func (r *TenantExportReconciler) buildManifest(
 		// Where and by what the bundle was written, for a restore to compare
 		// with where it restores to.
 		OperatorVersion: backup.PlatformVersionLine,
-		Identity: &backup.ManifestIdentity{
+		NotIncluded:     export.Status.NotIncluded,
+	}
+	// The realm, unless the export left the tenant's own out.
+	if export.CapturesTenantCore() {
+		m.Identity = &backup.ManifestIdentity{
 			Realm: keycloakRealmName(tenant),
 			Path:  backup.IdentityArtefact,
 			// Keycloak's partial-export carries no credentials, so a restore
 			// must re-invite rather than pretend the old passwords survived.
 			PasswordsIncluded: false,
-		},
-		NotIncluded: export.Status.NotIncluded,
+		}
 	}
 	if r.Reconciler != nil {
 		m.Domain = r.Reconciler.tenantEffectiveDomain(tenant)
@@ -1734,7 +1777,7 @@ func (r *TenantExportReconciler) requeueExport(
 }
 
 // blockedByAnotherExport reports whether an older, unfinished export holds the
-// tenant. Ordering by creation time makes the winner deterministic, so two
+// tenant, or one of the apps this one captures when both capture apps alone. Ordering by creation time makes the winner deterministic, so two
 // exports created together do not each decide the other should go first.
 func (r *TenantExportReconciler) blockedByAnotherExport(
 	ctx context.Context,
@@ -1746,7 +1789,7 @@ func (r *TenantExportReconciler) blockedByAnotherExport(
 	}
 	for i := range others.Items {
 		other := &others.Items[i]
-		if other.Name == export.Name || other.IsTerminal() {
+		if other.Name == export.Name || other.IsTerminal() || !export.OverlapsWith(other) {
 			continue
 		}
 		if other.CreationTimestamp.Before(&export.CreationTimestamp) ||

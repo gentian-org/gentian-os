@@ -124,6 +124,7 @@ BackupPolicy is where a tenant's bundles go and who can read them. Cluster-scope
 |---|---|---|---|
 | `spec` | object |  | BackupPolicySpec is one backup arrangement: the cluster's default, or one tenant's override of it. |
 | `spec.allowTenantOverride` | boolean |  | `AllowTenantOverride` lets tenants state policies of their own. |
+| `spec.beforeMove` | string |  | `BeforeMove` is what is exported before an installed app moves to another build (docs/concepts/versioning.md §5): tenant, the app and the tenant's own -- its… |
 | `spec.destination` | object |  | `Destination` is where bundles are written. |
 | `spec.destination.addressingStyle` | string |  | `AddressingStyle` is how a bucket is named in a request to Endpoint: path (https://host/bucket/key, the default when empty) or virtualHost… |
 | `spec.destination.bucket` | string |  | `Bucket` holds the bundles. |
@@ -143,6 +144,7 @@ BackupPolicy is where a tenant's bundles go and who can read them. Cluster-scope
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.credentialRequirement` | string |  | `CredentialRequirement` names the requirement carrying this destination's keys, and CredentialSatisfied reports whether it has been filled. |
 | `status.credentialSatisfied` | boolean |  |  |
+| `status.effectiveBeforeMove` | string |  | `EffectiveBeforeMove` is what is exported before an app moves, after inheritance. |
 | `status.effectiveBucket` | string |  |  |
 | `status.effectiveEndpoint` | string |  | `EffectiveEndpoint` and EffectiveBucket are the values in force after inheritance, published so an admin reads what applies rather than recomputing the merge. |
 | `status.effectiveRecipients` | []string |  | `EffectiveRecipients` are the age public keys in force, empty when the cluster's own key is used. |
@@ -2064,6 +2066,7 @@ TenantExport captures one tenant's data into an encrypted bundle.
 | `spec.encryption.passphraseSecretRef.key` | string |  | `Key` defaults to "passphrase". |
 | `spec.encryption.passphraseSecretRef.name` | string | yes |  |
 | `spec.encryption.recipients` | []string |  | `Recipients` are age public keys (age1…) to encrypt to, used with mode: recipient. |
+| `spec.tenantCore` | boolean |  | `TenantCore` says whether the tenant's own is captured beside the apps: its realm, its desktop's database and its mailboxes. |
 | `spec.ttlSeconds` | integer (int64) |  | `TTLSeconds` is how long the bundle should be kept before it may be collected. |
 | `status` | object |  | TenantExportStatus reports progress, and carries the state needed to undo a half-finished export after a controller restart. |
 | `status.apps` | []object |  | `Apps` reports per-app progress, including the window each app was paused for. |

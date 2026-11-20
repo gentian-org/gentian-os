@@ -47,7 +47,7 @@ service's answer from OpenFGA.
 | **Groups** | Custom groups and who is in each group, the app groups included | registrar |
 | **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
 | **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
-| **Export** | Take one export now; download or delete the exports a person started. Scheduled backups are not listed | usher (read), director |
+| **Export** | Take one export now; download or delete the exports a person started. Scheduled backups are not listed. What is exported before an app update: the tenant's backup policy's `beforeMove` ([versioning.md](versioning.md) §5), read-only when the cluster allows tenants no policy of their own | usher (read), director |
 | **Security** | The realm's password, session and lockout policy (§4.5) | director |
 | **Integrations** | What the tenant's apps consume from each other, and the grants | director |
 | **Credentials** | Repository credentials, backup identity | custodian, director |
@@ -435,7 +435,7 @@ that on (*Security* → *Platform administrators may enter this tenant*,
 These stay outside the console:
 
 - Installing apps (the App Store app, or the command line)
-- Scheduled backups, the backup policy and its destinations (the Operations Console)
+- Scheduled backups, the backup policy's destinations and keys (the Operations Console)
 - Editing NetworkPolicy, Kyverno policy or other MAC rules
 - Authoring a `ComponentProfile` or a catalog
 

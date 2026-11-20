@@ -224,7 +224,14 @@ and the operator carries the move out (`internal/controller/component_move.go`):
 2. **Export** the app's data to the platform's own storage, as a manual
    export of that app; the instance keeps running the build it ran until the
    export is ready, and an export that fails ends the move with nothing
-   changed.
+   changed. What is exported is the tenant's backup policy's
+   `spec.beforeMove`: `app` (the default) exports the app alone and holds
+   only the app, so moves of other apps run beside it; `tenant` adds the
+   tenant's own (its realm, its desktop's database, its mailboxes) and holds
+   the whole tenant; `none` exports nothing, and the last backup is what
+   there is to go back to. An app that holds no data (no database, no
+   bucket, no volume, in the build it runs or the one it moves to) is never
+   exported: its move starts at step 3.
 3. **Materialize** the new build beside the old one and repoint the
    `Component`.
 4. **Verify**: wait for the release, run the profile's

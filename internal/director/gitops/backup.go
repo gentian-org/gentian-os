@@ -51,6 +51,9 @@ type BackupPolicy struct {
 	// AllowTenantOverride is read from the cluster's policy only. A tenant
 	// cannot grant itself the right to state one.
 	AllowTenantOverride *bool `json:"allowTenantOverride,omitempty"`
+	// BeforeMove is what is exported before an app moves to another build:
+	// tenant, app or none; empty inherits.
+	BeforeMove string `json:"beforeMove,omitempty"`
 }
 
 // BackupDestination is where bundles are written.
@@ -77,6 +80,12 @@ func (p BackupPolicy) validate() error {
 			return fmt.Errorf("%w: destination.addressingStyle is %q; it is path or virtualHost",
 				ErrInvalidBackupPolicy, d.AddressingStyle)
 		}
+	}
+	switch gentianov1alpha1.BeforeMoveExport(p.BeforeMove) {
+	case "", gentianov1alpha1.BeforeMoveTenant, gentianov1alpha1.BeforeMoveApp, gentianov1alpha1.BeforeMoveNone:
+	default:
+		return fmt.Errorf("%w: beforeMove is %q; it is tenant, app or none",
+			ErrInvalidBackupPolicy, p.BeforeMove)
 	}
 	return nil
 }
@@ -371,6 +380,7 @@ func renderBackupPolicy(scope, tenant string, p BackupPolicy) string {
 			b.WriteString("    - " + quoteScalar(r) + "\n")
 		}
 	}
+	writeScalar(&b, "  beforeMove", p.BeforeMove)
 	if p.AllowTenantOverride != nil {
 		fmt.Fprintf(&b, "  allowTenantOverride: %t\n", *p.AllowTenantOverride)
 	}

@@ -5372,6 +5372,11 @@ func (in *TenantExportSpec) DeepCopyInto(out *TenantExportSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.TenantCore != nil {
+		in, out := &in.TenantCore, &out.TenantCore
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Encryption != nil {
 		in, out := &in.Encryption, &out.Encryption
 		*out = new(ExportEncryption)
