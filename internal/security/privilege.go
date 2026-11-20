@@ -246,6 +246,40 @@ func GrantedEgressRulesUnder(profile *gentianov1alpha1.ComponentProfile, comp *g
 	return EgressRulesFor(profile, granted)
 }
 
+// EgressHostsFor are the hosts of the egress requests in granted, as the
+// profile wrote them, in the profile's own order.
+func EgressHostsFor(profile *gentianov1alpha1.ComponentProfile, granted map[string]struct{}) []string {
+	if profile == nil || profile.Privileges() == nil {
+		return nil
+	}
+	var out []string
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
+			out = append(out, e.Hosts...)
+		}
+	}
+	return out
+}
+
+// GrantedEgressHostsUnder are the hosts outside the cluster a component was
+// granted: those of its egress requests by host that a person granted or the
+// cluster's policy answers. The counterpart of GrantedEgressRulesUnder for
+// the requests that name hosts.
+func GrantedEgressHostsUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
+	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
+		return nil
+	}
+	granted := GrantedPrivileges(comp, now)
+	if granted == nil {
+		granted = map[string]struct{}{}
+	}
+	for ref := range policy {
+		granted[ref] = struct{}{}
+	}
+	return EgressHostsFor(profile, granted)
+}
+
 // OriginAnnotation is where a materialized profile records the catalog it
 // was fetched from (profilebundle.OriginAnnotation, which the director
 // writes and a catalog source never states).
