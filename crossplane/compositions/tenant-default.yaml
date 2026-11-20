@@ -2200,10 +2200,14 @@ spec:
                  which is why the one value it fills in is written inside a
                  raw string.
 
-                 Written once, like the secret in it. So an address that
-                 changes later -- a cluster that moves its Keycloak -- is not
-                 followed: the Secret is deleted and made again, which is
-                 also a new client secret. */}}
+                 Written once, like the secret in it. The issuer alone is
+                 kept current afterwards, by the operator (keepVouchingIssuer),
+                 for a profile that starts or stops naming keys. Anything else
+                 that changes later -- a cluster that moves its Keycloak -- is
+                 not followed: the Secret is deleted and made again, which is
+                 also a new client secret, and the client below follows it.
+                 The component reads the Secret mounted, so either reaches it
+                 without a restart. */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object

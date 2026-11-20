@@ -18,7 +18,9 @@ SPDX-License-Identifier: MPL-2.0
 //	PROFILE             the service's own profile, as the realm knows it
 //	PLAN_FILE           what to sync, as the platform writes it
 //	DATABASE_URL        where the pairs are kept
-//	VOUCHING_ISSUER, VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL
+//	VOUCHING_DIR: the Secret vouching-<profile> mounted, one file per key
+//	(VOUCHING_ISSUER, VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET,
+//	VOUCHING_TOKEN_URL), read each time a token is asked for
 //	                    the client the platform gave it (vouching-<profile>)
 //	REGISTRAR_URL, REGISTRAR_KEY
 //	                    where it asks who is linked to it, and its key there
@@ -68,10 +70,7 @@ func run(log *slog.Logger) error {
 		return v
 	}
 	tenant, profile, plan, dsn := get("TENANT_ID"), get("PROFILE"), get("PLAN_FILE"), get("DATABASE_URL")
-	vouching := homesync.Vouching{
-		Issuer: get("VOUCHING_ISSUER"), ClientID: get("VOUCHING_CLIENT_ID"),
-		ClientSecret: get("VOUCHING_CLIENT_SECRET"), TokenURL: get("VOUCHING_TOKEN_URL"),
-	}
+	vouchingDir := get("VOUCHING_DIR")
 	registrar, key := get("REGISTRAR_URL"), get("REGISTRAR_KEY")
 	if missing != nil {
 		return missing
@@ -104,6 +103,12 @@ func run(log *slog.Logger) error {
 			dsn = "postgresql://" + strings.TrimPrefix(dsn, prefix)
 		}
 	}
+	// Read when used, not here: the platform may add the issuer, or make
+	// the client's secret again, while the service runs.
+	readVouching := func() (homesync.Vouching, error) { return homesync.ReadVouching(vouchingDir) }
+	if _, err := readVouching(); err != nil {
+		log.Warn("the service's client is not complete yet; no person's token is obtained until it is", "error", err.Error())
+	}
 	store, err := homesync.OpenPostgres(ctx, dsn)
 	if err != nil {
 		return err
@@ -119,7 +124,7 @@ func run(log *slog.Logger) error {
 			return p, err
 		},
 		People:  (&homesync.Linked{Registrar: registrar, Key: key, Tenant: tenant, Profile: profile, Client: client}).People,
-		Tokens:  &homesync.Tokens{Keys: keys, Vouching: vouching, Client: client},
+		Tokens:  &homesync.Tokens{Keys: keys, Read: readVouching, Client: client},
 		Store:   store,
 		Drivers: homesync.Drivers(client, log),
 		Client:  client,

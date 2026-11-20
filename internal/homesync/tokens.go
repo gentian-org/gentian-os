@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -72,6 +74,39 @@ type Vouching struct {
 	TokenURL     string // VOUCHING_TOKEN_URL
 }
 
+// ReadVouching reads the Secret vouching-<profile> mounted as files in dir,
+// one per key. The platform keeps it current, and a mounted Secret follows
+// it in place, so a value read when it is used is the value of now: an
+// issuer the platform adds later, or a client secret it makes again,
+// reaches the service without a restart.
+func ReadVouching(dir string) (Vouching, error) {
+	read := func(name string) (string, error) {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", name, err)
+		}
+		v := strings.TrimSpace(string(b))
+		if v == "" {
+			return "", fmt.Errorf("%s is empty", name)
+		}
+		return v, nil
+	}
+	var v Vouching
+	var err error
+	for _, f := range []struct {
+		name string
+		to   *string
+	}{
+		{"VOUCHING_ISSUER", &v.Issuer}, {"VOUCHING_CLIENT_ID", &v.ClientID},
+		{"VOUCHING_CLIENT_SECRET", &v.ClientSecret}, {"VOUCHING_TOKEN_URL", &v.TokenURL},
+	} {
+		if *f.to, err = read(f.name); err != nil {
+			return Vouching{}, err
+		}
+	}
+	return v, nil
+}
+
 // realmAddress is where the realm answers the service: the token address
 // without the path Keycloak puts after the realm.
 func (v Vouching) realmAddress() string {
@@ -86,8 +121,11 @@ var ErrRefused = errors.New("the realm refused a token of this person for this s
 // Tokens obtains a person's token for one scope, and keeps it until shortly
 // before it runs out.
 type Tokens struct {
-	Keys     *Keys
+	Keys *Keys
+	// Vouching is the service's client, unless Read is set: then it is read
+	// each time a token is asked for (ReadVouching).
 	Vouching Vouching
+	Read     func() (Vouching, error)
 	Client   *http.Client
 	Now      func() time.Time
 
@@ -127,22 +165,26 @@ func (t *Tokens) For(ctx context.Context, person, scope string) (string, error) 
 	}
 	t.mu.Unlock()
 
-	issuer, err := t.realmIssuer(ctx)
+	v, err := t.settings()
 	if err != nil {
 		return "", err
 	}
-	statement, err := t.statement(person, issuer)
+	issuer, err := t.realmIssuer(ctx, v)
+	if err != nil {
+		return "", err
+	}
+	statement, err := t.statement(v.Issuer, person, issuer)
 	if err != nil {
 		return "", err
 	}
 	form := url.Values{
 		"grant_type":    {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
 		"assertion":     {statement},
-		"client_id":     {t.Vouching.ClientID},
-		"client_secret": {t.Vouching.ClientSecret},
+		"client_id":     {v.ClientID},
+		"client_secret": {v.ClientSecret},
 		"scope":         {scope},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Vouching.TokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -183,14 +225,14 @@ func (t *Tokens) For(ctx context.Context, person, scope string) (string, error) 
 // realm answers the service at an address inside the cluster, but names
 // itself by the address a browser reaches it at (its frontendUrl), and a
 // statement must name that.
-func (t *Tokens) realmIssuer(ctx context.Context) (string, error) {
+func (t *Tokens) realmIssuer(ctx context.Context, v Vouching) (string, error) {
 	t.mu.Lock()
 	issuer := t.issuer
 	t.mu.Unlock()
 	if issuer != "" {
 		return issuer, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.Vouching.realmAddress()+"/.well-known/openid-configuration", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.realmAddress()+"/.well-known/openid-configuration", nil)
 	if err != nil {
 		return "", err
 	}
@@ -218,8 +260,21 @@ func (t *Tokens) realmIssuer(ctx context.Context) (string, error) {
 	return doc.Issuer, nil
 }
 
-// statement is a signed statement naming the person, for the realm.
-func (t *Tokens) statement(person, audience string) (string, error) {
+// settings is the service's client as it is now.
+func (t *Tokens) settings() (Vouching, error) {
+	if t.Read == nil {
+		return t.Vouching, nil
+	}
+	v, err := t.Read()
+	if err != nil {
+		return Vouching{}, fmt.Errorf("the platform's settings for this service's client: %w", err)
+	}
+	return v, nil
+}
+
+// statement is a signed statement of the issuer naming the person, for the
+// realm.
+func (t *Tokens) statement(issuer, person, audience string) (string, error) {
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: jose.JSONWebKey{Key: t.Keys.private, KeyID: t.Keys.id}},
 		(&jose.SignerOptions{}).WithType("JWT"))
 	if err != nil {
@@ -231,7 +286,7 @@ func (t *Tokens) statement(person, audience string) (string, error) {
 	}
 	now := t.now()
 	claims := jwt.Claims{
-		Issuer:   t.Vouching.Issuer,
+		Issuer:   issuer,
 		Subject:  person,
 		Audience: jwt.Audience{audience},
 		ID:       hex.EncodeToString(id),

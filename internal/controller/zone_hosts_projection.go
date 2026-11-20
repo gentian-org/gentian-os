@@ -175,6 +175,9 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	bridged := map[string]map[string]bool{}
 	exchange := map[string]map[string]bool{}
 	vouching := map[string]map[string]string{}
+	// Per tenant namespace, the profiles that vouch, and whether each signs
+	// statements (names keys): what keepVouchingIssuer is told.
+	issuers := map[string]map[string]bool{}
 	partners := map[string]map[string]string{}
 	// The components that call a home as the person (integrations[].asPerson)
 	// by profile, per tenant: their vouching line names the homes granted to
@@ -239,6 +242,10 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			// realm knows the component as VouchingAlias(profile), and two
 			// components of one profile are one issuer with one set of keys.
 			vouching[tenant][profile.Name] = vouchingLine(profile, tenant, nil)
+			if issuers[comp.Namespace] == nil {
+				issuers[comp.Namespace] = map[string]bool{}
+			}
+			issuers[comp.Namespace][profile.Name] = profile.Services().Vouching.Keys != nil
 			if callsHomesAsPerson(profile) {
 				asPerson[tenant][profile.Name] = profile
 			}
@@ -308,6 +315,14 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			vouching[tenant.Name][name] = vouchingLine(profile, tenant.Name, homes)
 			for _, h := range homes {
 				homeApps[tenant.Name][h] = true
+			}
+		}
+	}
+
+	for ns, profiles := range issuers {
+		for profile, signs := range profiles {
+			if err := r.keepVouchingIssuer(ctx, ns, profile, signs); err != nil {
+				return err
 			}
 		}
 	}

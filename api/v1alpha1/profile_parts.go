@@ -495,7 +495,9 @@ type PartnersRequirement struct {
 //     audience);
 //   - delivers the client's secret and what the component has to know in the
 //     Secret vouching-<profile> of the tenant's namespace (VOUCHING_ISSUER,
-//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL);
+//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), kept
+//     current, which the component mounts as files and reads when it uses
+//     them;
 //   - gives it the component's own key (the Secret rights-check-<profile>),
 //     as for requires.services.rights.
 //
