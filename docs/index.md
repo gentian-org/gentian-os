@@ -97,6 +97,7 @@ The architectural decisions, numbered AD-1 onward, each with its reason:
 |---|---|
 | [principles.md](security/principles.md) | The normative rules every change is held to |
 | [design.md](security/design.md) | Identity, authorization, isolation, secrets, TLS: the security design |
+| [secrets.md](security/secrets.md) | Where every secret and key is kept, who writes and reads it, and the rules that decide |
 | [audit-events.md](security/audit-events.md) | Audit events, log forwarding and monitoring |
 | [controls.md](security/controls.md) | The controls, as an auditor reads them |
 

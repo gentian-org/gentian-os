@@ -1259,6 +1259,9 @@ A person signs in at their tenant's realm. The front door asks the rights store 
 
 ## 4. Secrets topology
 
+The rules that decide where a secret or key is kept, and the places with
+their writers and readers on one page, are in [secrets.md](secrets.md).
+
 ```mermaid
 flowchart TD
     OpenBao["OpenBao (KV v2)<br>where credentials are kept"]

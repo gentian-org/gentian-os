@@ -84,6 +84,7 @@
 - [Control catalog](https://github.com/gentian-org/gentian-os/blob/develop/docs/security/controls.md): One row per control objective: the principle it serves (security/principles.md), the mechanism that implements it, and the query that produces its evidence.
 - [Gentian Cloud OS — Security Architecture](https://github.com/gentian-org/gentian-os/blob/develop/docs/security/design.md): Architecture reference.
 - [Security principles](https://github.com/gentian-org/gentian-os/blob/develop/docs/security/principles.md): Nine rules that keep authentication, authorization and traffic one framework as tenants, users and apps multiply.
+- [Secrets and keys: what is kept where](https://github.com/gentian-org/gentian-os/blob/develop/docs/security/secrets.md): Every secret and key of a cluster has one place.
 
 ## Releases
 
