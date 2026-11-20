@@ -36,7 +36,8 @@ BIN="${SANDBOX}/bin"; mkdir -p "${BIN}" "${SANDBOX}/home"
 # pinned Crossplane release when ${STATE}/helm-installed exists.
 cat > "${BIN}/helm" <<'STUB'
 #!/usr/bin/env bash
-printf 'helm' >> "${STATE}/calls.log"; printf ' %s' "$@" >> "${STATE}/calls.log"; echo >> "${STATE}/calls.log"
+# One append per call: two stand-ins of one pipeline write at the same time.
+printf 'helm%s\n' "$(printf ' %s' "$@")" >> "${STATE}/calls.log"
 case "${1:-}" in
     list)
         if [[ -f "${STATE}/helm-installed" ]]; then cat "${STATE}/helm-installed"; else echo '[]'; fi ;;
@@ -50,7 +51,8 @@ STUB
 # "<kind>/<name>"; an annotation read answers with ${STATE}/sha.
 cat > "${BIN}/kubectl" <<'STUB'
 #!/usr/bin/env bash
-printf 'kubectl' >> "${STATE}/calls.log"; printf ' %s' "$@" >> "${STATE}/calls.log"; echo >> "${STATE}/calls.log"
+# One append per call: two stand-ins of one pipeline write at the same time.
+printf 'kubectl%s\n' "$(printf ' %s' "$@")" >> "${STATE}/calls.log"
 verb="${1:-}"; shift || true
 jsonpath=""; file=""; args=()
 while [[ $# -gt 0 ]]; do
