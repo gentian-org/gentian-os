@@ -11,6 +11,8 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -95,6 +97,15 @@ func (r *valuesRender) releasePatch() string {
 	return valuesKeepPatch + valuesPodLabelsPatch(r.in.App, r.tenant, r.in.HostAliases)
 }
 
+// ReleasePatchAnnotation holds, on the Release, a digest of the patch its
+// post-renderer applies.
+const ReleasePatchAnnotation = "gentianos.io/release-patch"
+
+func releasePatchDigest(patch string) string {
+	sum := sha256.Sum256([]byte(patch))
+	return hex.EncodeToString(sum[:8])
+}
+
 // keepVolumes is the ConfigMap the release reads its patch from.
 func (r *valuesRender) keepVolumes() *unstructured.Unstructured {
 	cm := valuesObject("v1", "ConfigMap", r.in.KeepVolumes, r.ns)
@@ -107,7 +118,13 @@ func (r *valuesRender) release(v *valuesSensitive, values map[string]interface{}
 	chart := r.spec.Package.Chart
 	rel := valuesObject("helm.crossplane.io/v1beta1", "Release", r.in.ReleaseObject, "")
 	// The Helm release name; without it the provider uses the object's.
-	rel.SetAnnotations(map[string]string{"crossplane.io/external-name": r.in.HelmRelease})
+	rel.SetAnnotations(map[string]string{
+		"crossplane.io/external-name": r.in.HelmRelease,
+		// The provider reads the patch from a ConfigMap it does not watch,
+		// and would see a change there only at its next poll, minutes
+		// later. A change to this annotation makes it look at once.
+		ReleasePatchAnnotation: releasePatchDigest(r.releasePatch()),
+	})
 
 	chartSpec := map[string]interface{}{
 		"repository": chart.Repository,

@@ -208,6 +208,9 @@ func compareObjects(t *testing.T, what string, want, got []*unstructured.Unstruc
 			if norm.GetKind() == "Release" {
 				// The Release object's own name is the operator's to choose.
 				unstructured.RemoveNestedField(norm.Object, "metadata", "name")
+				// The digest of its patch is the operator's too: the
+				// Composition named none.
+				unstructured.RemoveNestedField(norm.Object, "metadata", "annotations", ReleasePatchAnnotation)
 			}
 			if _, dup := m[objectKey(obj)]; dup {
 				t.Errorf("%s: %s rendered twice", what, objectKey(obj))
