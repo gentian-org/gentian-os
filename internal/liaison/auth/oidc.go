@@ -91,7 +91,7 @@ func (o *OIDC) jwks(ctx context.Context, refresh bool) ([]json.RawMessage, error
 	if err != nil {
 		return nil, unavailable(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, unavailable(fmt.Errorf("%s answered %d", url, resp.StatusCode))
 	}
