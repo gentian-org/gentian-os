@@ -247,3 +247,67 @@ func TestTheLastAdministratorKeepsTheRole(t *testing.T) {
 		t.Errorf("in a tenant with no administrator: %v, %v", changed, err)
 	}
 }
+
+// Against the model: every kind of assignment is one the store takes, and
+// what is given answers.
+func TestWhatIsGivenAnswersInTheStore(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tenant = "give-a"
+	apps := []InstalledApp{{Profile: "wiki"}, {Profile: "shop", Addons: []InstalledApp{
+		{Profile: "shop-sales", Roles: []DeclaredRole{{Name: "manager"}}},
+	}}}
+	if err := c.ReconcileTenants(ctx, "give-cluster", TenantsNamed(tenant)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReconcileApps(ctx, map[string][]InstalledApp{tenant: apps}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReconcilePositions(ctx, map[string][]PositionSpec{tenant: ShippedPositions(apps)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []Assignment{
+		{Position: PositionTenantAdministrator}, {Position: PositionUser}, {Role: RoleUser}, {Role: RoleAdmin},
+		{App: "wiki", Role: RoleUser}, {App: "shop", Role: RoleAdmin}, {App: "shop-sales", Role: "manager"},
+	} {
+		if changed, err := Give(ctx, c, tenant, "g-anna", a); err != nil || !changed {
+			t.Fatalf("give %+v: %v, %v", a, changed, err)
+		}
+	}
+	held, err := Assignments(ctx, c, tenant, "g-anna")
+	if err != nil || len(held) != 7 {
+		t.Fatalf("assignments = %+v, %v", held, err)
+	}
+	for _, q := range [][2]string{
+		{"can_manage_users", Tenant(tenant)}, {"can_use", App(tenant, "wiki")},
+		{"can_administer", App(tenant, "shop-sales")}, {"holder", Role(tenant, "shop-sales", "manager")},
+	} {
+		if ok, err := c.Check(ctx, "test", "user:g-anna", q[0], q[1]); err != nil || !ok {
+			t.Errorf("%s on %s = %v, %v", q[0], q[1], ok, err)
+		}
+	}
+	if got, err := Administrators(ctx, c, tenant); err != nil || strings.Join(got, ",") != "g-anna" {
+		t.Errorf("administrators = %v, %v", got, err)
+	}
+	if n, err := RemovePerson(ctx, c, tenant, "g-anna"); !errors.Is(err, ErrLastAdministrator) || n != 0 {
+		t.Errorf("the last administrator removed: %d, %v", n, err)
+	}
+	if _, err := Give(ctx, c, tenant, "g-ben", Assignment{Position: PositionTenantAdministrator}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := RemovePerson(ctx, c, tenant, "g-anna"); err != nil || n != 7 {
+		t.Errorf("removed: %d, %v", n, err)
+	}
+	if ok, _ := c.Check(ctx, "test", "user:g-anna", "can_use", App(tenant, "wiki")); ok {
+		t.Error("a removed person still uses an app")
+	}
+}
