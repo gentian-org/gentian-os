@@ -86,6 +86,7 @@ func TestThePortersPlanFollowsTheTenant(t *testing.T) {
 	if *plan.Home != (porter.Home{
 		Profile: "nextcloud", URL: "http://nextcloud.tenant-acme.svc.cluster.local:8080/remote.php/dav/",
 		Root: "/files/{principal}/", IDProperty: "{http://owncloud.org/ns}fileid", Open: "https://cloud.acme.example.org/f/{id}",
+		Scope: "home-nextcloud",
 	}) {
 		t.Fatalf("home: %+v", plan.Home)
 	}

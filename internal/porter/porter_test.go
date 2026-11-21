@@ -91,7 +91,7 @@ func (s *standIn) vouching(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, value := range map[string]string{
-		toldClientID: "vouch-porter", toldClientSecret: "s3\n", toldHomeScope: "home-nextcloud-base-ce",
+		toldClientID: "vouch-porter", toldClientSecret: "s3\n",
 		toldTokenURL: s.URL + "/realms/acme/protocol/openid-connect/token",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o600); err != nil {
@@ -105,6 +105,7 @@ func (s *standIn) home() *Home {
 	return &Home{
 		Profile: "nextcloud-base-ce", URL: s.URL + "/dav/", Root: "/files/{principal}/",
 		IDProperty: "{http://owncloud.org/ns}fileid", Open: "https://nextcloud.acme.example/f/{id}",
+		Scope: "home-nextcloud-base-ce",
 	}
 }
 
@@ -258,7 +259,7 @@ func TestThePlanIsReadAsWritten(t *testing.T) {
 		}
 		return path
 	}
-	good := `{"home":{"profile":"nextcloud-base-ce","url":"http://nextcloud.tenant-acme.svc.cluster.local:8080/remote.php/dav/","root":"/files/{principal}/","idProperty":"{http://owncloud.org/ns}fileid","open":"https://nextcloud.acme.example/f/{id}"},"apps":[{"profile":"odoo-base-ce","origins":["https://odoo.acme.example"],"uses":["pick"]}]}`
+	good := `{"home":{"profile":"nextcloud-base-ce","url":"http://nextcloud.tenant-acme.svc.cluster.local:8080/remote.php/dav/","root":"/files/{principal}/","idProperty":"{http://owncloud.org/ns}fileid","open":"https://nextcloud.acme.example/f/{id}","scope":"home-nextcloud-base-ce"},"apps":[{"profile":"odoo-base-ce","origins":["https://odoo.acme.example"],"uses":["pick"]}]}`
 	p, err = ReadPlan(write(good))
 	if err != nil || p.AppOf("https://odoo.acme.example", Pick) == nil || p.AppOf("https://odoo.acme.example", Save) != nil {
 		t.Fatalf("the plan: %+v (%v)", p, err)
@@ -267,6 +268,7 @@ func TestThePlanIsReadAsWritten(t *testing.T) {
 		strings.Replace(good, "{http://owncloud.org/ns}fileid", "fileid", 1),
 		strings.Replace(good, "/f/{id}", "/f/", 1),
 		strings.Replace(good, "https://nextcloud.acme.example/f/{id}", "http://nextcloud.acme.example/f/{id}", 1),
+		strings.Replace(good, `"scope":"home-nextcloud-base-ce"`, `"scope":""`, 1),
 	} {
 		if _, err := ReadPlan(write(bad)); err == nil {
 			t.Fatalf("a plan that should not be read was: %s", bad)
