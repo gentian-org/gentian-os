@@ -71,10 +71,11 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// binding nobody granted opens nothing, and a reader has to be able to
 	// see that this, and no fault, is why the two apps cannot reach each
 	// other.
-	granted, err := r.grantedCondition(ctx, &ib)
+	grant, err := r.grantOf(ctx, &ib)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	granted := grantedCondition(&ib, grant)
 	apimeta.SetStatusCondition(&ib.Status.Conditions, granted)
 
 	// The address is the consumer's once it was granted the contract, and
@@ -83,7 +84,9 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// (clearUngrantedContractEndpoints).
 	var seedErr error
 	var again time.Duration
-	if granted.Reason != reasonNotGranted {
+	// Only what reaches the provider is wired: a grant of the file dialog
+	// alone hands the consumer neither the address nor the credential.
+	if len(netpolicy.ReachCapabilities(&ib, grant)) > 0 {
 		var endpoint string
 		endpoint, seedErr = r.seedContract(ctx, &ib)
 		if seedErr == nil && endpoint != "" {
@@ -227,12 +230,11 @@ const conditionBindingGranted = "Granted"
 // contract was granted.
 const reasonNotGranted = "NotGranted"
 
-// grantedCondition compares what the binding asks for with the consumer's
-// grant. True only when every capability asked for was granted.
-func (r *IntegrationBindingReconciler) grantedCondition(ctx context.Context, ib *gentianov1alpha1.IntegrationBinding) (metav1.Condition, error) {
+// grantOf is the consumer's grant, or nil where it has none.
+func (r *IntegrationBindingReconciler) grantOf(ctx context.Context, ib *gentianov1alpha1.IntegrationBinding) (*gentianov1alpha1.AppGrant, error) {
 	var grants gentianov1alpha1.AppGrantList
 	if err := r.List(ctx, &grants, client.InNamespace(ib.Namespace)); err != nil {
-		return metav1.Condition{}, fmt.Errorf("list AppGrants in %s: %w", ib.Namespace, err)
+		return nil, fmt.Errorf("list AppGrants in %s: %w", ib.Namespace, err)
 	}
 	var grant *gentianov1alpha1.AppGrant
 	for i := range grants.Items {
@@ -240,6 +242,12 @@ func (r *IntegrationBindingReconciler) grantedCondition(ctx context.Context, ib 
 			grant = &grants.Items[i]
 		}
 	}
+	return grant, nil
+}
+
+// grantedCondition compares what the binding asks for with the consumer's
+// grant. True only when every capability asked for was granted.
+func grantedCondition(ib *gentianov1alpha1.IntegrationBinding, grant *gentianov1alpha1.AppGrant) metav1.Condition {
 	effective := netpolicy.EffectiveContractCapabilities(ib, grant)
 	have := make(map[string]struct{}, len(effective))
 	for _, c := range effective {
@@ -268,7 +276,7 @@ func (r *IntegrationBindingReconciler) grantedCondition(ctx context.Context, ib 
 		cond.Reason = "Granted"
 		cond.Message = "granted: " + strings.Join(effective, ", ")
 	}
-	return cond, nil
+	return cond
 }
 
 // seedContract writes what the consumer needs to address the provider, and

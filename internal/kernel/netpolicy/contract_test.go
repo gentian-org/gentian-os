@@ -225,3 +225,26 @@ func TestTheRightsCheckOpensOnePortOfTheEdge(t *testing.T) {
 		t.Fatalf("no way to the edge in %+v", np.Spec.Egress)
 	}
 }
+
+// The file dialog's capabilities open nothing between the two apps: the
+// porter reaches the home, the consumer is handed what the person picked.
+// A grant that also gives the store itself opens the way as before.
+func TestAGrantOfTheFileDialogAloneOpensNothing(t *testing.T) {
+	binding, grant := contractFixture()
+	binding.Spec.Capabilities = []string{netpolicy.DialogCapability("pick")}
+	grant.Spec.Consume[0].Granted = []string{"dialog:pick"}
+	if netpolicy.AsksReach(binding) {
+		t.Fatal("a binding of the dialog alone asks to reach the provider")
+	}
+	if got := netpolicy.ContractNetworkPolicies("acme", binding, grant, nil); got != nil {
+		t.Fatalf("the dialog alone opens %d policies", len(got))
+	}
+	if got := netpolicy.ReachCapabilities(binding, grant); got != nil {
+		t.Fatalf("reach = %v", got)
+	}
+	grant.Spec.Consume[0].Granted = []string{"dialog:pick", "call"}
+	if got := netpolicy.ContractNetworkPolicies("acme", binding, grant, nil); len(got) != 2 ||
+		got[0].Labels["gentianos.io/granted-capabilities"] != "call" {
+		t.Fatalf("with the store granted too: %+v", got)
+	}
+}
