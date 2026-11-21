@@ -1157,6 +1157,86 @@ spec:
                       the tenant's own administrators turn it on.
                     type: boolean
                 type: object
+              positions:
+                description: |-
+                  Positions are the tenant's own positions, beside the three every
+                  tenant has; see TenantPosition.
+                items:
+                  description: |-
+                    TenantPosition is a position of the tenant: a named set of roles a kind of
+                    person holds, "Sales intern" or "Engineering manager". What it is, is
+                    declared here; who holds it is not, and lives in the rights store.
+
+                    Every tenant has three positions it does not declare: user, a person of
+                    the tenant, with the apps installed for everyone; app-administrator, who
+                    administers every installed app; and tenant-administrator, who administers
+                    the tenant and holds no role on any app.
+                  properties:
+                    description:
+                      description: Description says who the position is for.
+                      maxLength: 400
+                      type: string
+                    includes:
+                      description: |-
+                        Includes are other positions of the tenant whose roles the holders of
+                        this one hold too: executive includes sales-manager. A circle of
+                        positions including each other is refused.
+                      items:
+                        type: string
+                      maxItems: 20
+                      type: array
+                      x-kubernetes-list-type: set
+                    name:
+                      description: |-
+                        Name is the position's name in the tenant. Not one of the three every
+                        tenant has.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: user, app-administrator and tenant-administrator
+                          are positions every tenant has
+                        rule: '!(self in [''user'', ''app-administrator'', ''tenant-administrator''])'
+                    roles:
+                      description: Roles are the roles the position holds itself.
+                      items:
+                        description: |-
+                          TenantPositionRole is one role a position holds: on an app of the tenant,
+                          or on the tenant itself.
+                        properties:
+                          app:
+                            description: |-
+                              App is the profile name of the app, or of the add-on, the role is
+                              held on. Empty for a role on the tenant itself.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                          role:
+                            description: |-
+                              Role is user, admin, or a role the app's profile declares. On the
+                              tenant itself: user or admin.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - role
+                        type: object
+                      maxItems: 200
+                      type: array
+                    title:
+                      description: Title is the position as people read it.
+                      maxLength: 80
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               privileges:
                 description: |-
                   Privileges are the privilege requests a person granted for this
