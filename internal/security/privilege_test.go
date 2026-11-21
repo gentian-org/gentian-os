@@ -267,3 +267,58 @@ func TestGrantedHostsAreThoseOfAGrantedRequest(t *testing.T) {
 		t.Errorf("hosts of no profile = %v", got)
 	}
 }
+
+// A request by host is answered by trusted domains when every one of its
+// hosts is in one, or under one. A domain covers whole labels, a request
+// with one host outside is a person's to answer, and a request by address
+// is in no domain.
+func TestTrustedDomainsAnswerARequestWhoseHostsAreAllInThem(t *testing.T) {
+	profile := profileAsking()
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected",
+		Hosts: []string{"graph.microsoft.com", "login.microsoftonline.com:8443"},
+	})
+	for name, c := range map[string]struct {
+		domains  []string
+		answered bool
+	}{
+		"both domains":             {[]string{"microsoft.com", "microsoftonline.com"}, true},
+		"the hosts themselves":     {[]string{"graph.microsoft.com", "login.microsoftonline.com"}, true},
+		"one host outside":         {[]string{"microsoft.com"}, false},
+		"no domain":                {nil, false},
+		"a name that only ends so": {[]string{"soft.com", "online.com"}, false},
+		"a top-level name":         {[]string{"com"}, true},
+		"an empty entry":           {[]string{""}, false},
+	} {
+		got := security.TrustedEgress(profile, c.domains)
+		if _, ok := got["egress/outside"]; ok != c.answered {
+			t.Errorf("%s: answered = %v, want %v", name, ok, c.answered)
+		}
+		for ref := range got {
+			if ref != "egress/outside" {
+				t.Errorf("%s: a request by address was answered: %s", name, ref)
+			}
+		}
+	}
+	for host, want := range map[string]bool{
+		"example.org": true, "api.example.org": true, "api.example.org:8443": true,
+		"notexample.org": false, "example.org.evil.net": false, "org": false,
+	} {
+		if got := security.InTrustedDomain(host, []string{"example.org"}); got != want {
+			t.Errorf("%s in example.org = %v", host, got)
+		}
+	}
+
+	// A tenant's own list counts only while the cluster delegated one.
+	tenant := &gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{TrustedDomains: &gentianov1alpha1.TenantTrustedDomains{Domains: []string{"example.org"}}}}
+	if got := security.TenantTrustedDomains(tenant); got != nil {
+		t.Errorf("a tenant's list without the delegation: %v", got)
+	}
+	tenant.Spec.TrustedDomains.Delegated = true
+	if got := security.TenantTrustedDomains(tenant); len(got) != 1 || got[0] != "example.org" {
+		t.Errorf("a delegated tenant's list: %v", got)
+	}
+	if got := security.TenantTrustedDomains(nil); got != nil {
+		t.Errorf("no tenant: %v", got)
+	}
+}

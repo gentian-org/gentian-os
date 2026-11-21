@@ -347,6 +347,9 @@ spec:
   allowedMacWaivers: []
   preApprovedEgressCatalogs:
   - cluster/acme
+  trustedDomains:
+  - github.com
+  - example.org
 `})
 	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
 	ctx := context.Background()
@@ -366,5 +369,10 @@ spec:
 	if !strings.Contains(written, "preApprovedEgressCatalogs:\n  - \"cluster/acme\"") &&
 		!strings.Contains(written, "preApprovedEgressCatalogs:\n  - cluster/acme") {
 		t.Fatalf("the director's writes dropped the pre-approved catalogs:\n%s", written)
+	}
+	// The trusted domains are the cluster operator's in the same way.
+	if !strings.Contains(written, "trustedDomains:\n  - \"github.com\"\n  - \"example.org\"") &&
+		!strings.Contains(written, "trustedDomains:\n  - github.com\n  - example.org") {
+		t.Fatalf("the director's writes dropped the trusted domains:\n%s", written)
 	}
 }

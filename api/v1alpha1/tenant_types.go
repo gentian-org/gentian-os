@@ -459,6 +459,12 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxItems=256
 	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
 
+	// TrustedDomains are domains outside the cluster trusted for this
+	// tenant alone, beside those the cluster trusts
+	// (PlatformSecurityPolicy spec.trustedDomains).
+	// +optional
+	TrustedDomains *TenantTrustedDomains `json:"trustedDomains,omitempty"`
+
 	// Grants are what each app of the tenant may consume from the others,
 	// and which of them may consume from it, as the tenant's administrators
 	// granted it (can_grant). The director writes them as the patch
@@ -1021,6 +1027,28 @@ const DefaultTokenEntrySessionHours int32 = 4
 // TokenEntryApprovalWaived is spec.tokenEntries.approval of a tenant whose
 // token entries need no approval.
 const TokenEntryApprovalWaived = "waived"
+
+// TenantTrustedDomains is a tenant's own list of trusted domains and whether
+// the tenant may keep one.
+type TenantTrustedDomains struct {
+	// Delegated says the tenant's perimeter approver may add and remove
+	// domains for this tenant. Off unless the cluster's administrator turns
+	// it on; a tenant's administrator cannot. While it is off, Domains
+	// answers nothing.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
+
+	// Domains are trusted for this tenant: an egress request of one of its
+	// installs that names hosts is granted without a further answer when
+	// every host is in a domain listed here or in the cluster's list, or
+	// under one.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`
+	Domains []string `json:"domains,omitempty"`
+}
 
 // TenantCatalogue is a tenant's own catalogs and who may add them.
 type TenantCatalogue struct {

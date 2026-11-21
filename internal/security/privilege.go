@@ -280,6 +280,64 @@ func GrantedEgressHostsUnder(profile *gentianov1alpha1.ComponentProfile, comp *g
 	return EgressHostsFor(profile, granted)
 }
 
+// TrustedEgress are the egress requests of profile that trusted domains
+// answer: each request by host whose every host is in one of domains, or
+// under one. A request with one host outside them is answered by a person,
+// who then sees all of its hosts. A request by address is never answered
+// here: an address is in no domain.
+func TrustedEgress(profile *gentianov1alpha1.ComponentProfile, domains []string) map[string]struct{} {
+	if profile == nil || len(domains) == 0 || profile.Privileges() == nil {
+		return nil
+	}
+	var out map[string]struct{}
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if len(e.Hosts) == 0 {
+			continue
+		}
+		all := true
+		for _, h := range e.Hosts {
+			if !InTrustedDomain(h, domains) {
+				all = false
+				break
+			}
+		}
+		if all {
+			if out == nil {
+				out = map[string]struct{}{}
+			}
+			out[PrivilegeRef(PrivilegeEgress, e.Name)] = struct{}{}
+		}
+	}
+	return out
+}
+
+// InTrustedDomain says whether host, as an egress request names it (a name
+// with an optional port), is one of domains or a name under one. A domain
+// covers whole labels: "example.org" covers "api.example.org" and not
+// "notexample.org".
+func InTrustedDomain(host string, domains []string) bool {
+	name := host
+	if i := strings.LastIndexByte(name, ':'); i >= 0 {
+		name = name[:i]
+	}
+	for _, d := range domains {
+		if d != "" && (name == d || strings.HasSuffix(name, "."+d)) {
+			return true
+		}
+	}
+	return false
+}
+
+// TenantTrustedDomains are the domains trusted for a tenant alone: its own
+// list while the cluster's administrator delegated one, none otherwise.
+func TenantTrustedDomains(tenant *gentianov1alpha1.Tenant) []string {
+	if tenant == nil || tenant.Spec.TrustedDomains == nil || !tenant.Spec.TrustedDomains.Delegated {
+		return nil
+	}
+	return tenant.Spec.TrustedDomains.Domains
+}
+
 // OriginAnnotation is where a materialized profile records the catalog it
 // was fetched from (profilebundle.OriginAnnotation, which the director
 // writes and a catalog source never states).

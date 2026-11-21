@@ -178,7 +178,7 @@ type installedAction struct {
 	profile  *gentianov1alpha1.ComponentProfile
 	runnable dispatcher.Runnable
 	// preApproved are its egress requests the cluster's policy answers
-	// (security.PreApprovedEgress).
+	// (answeredEgress).
 	preApproved map[string]struct{}
 	// outgoing is the way to the hosts outside it was granted: the fleet's
 	// pods on those hosts' listeners (outgoing_hosts.go). Nil with none.
@@ -250,12 +250,6 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 	// The cluster's own comes first, where the cluster has one: the run
 	// program is taken from the platform's image, which is pulled with it.
 	clusters, err := r.clusterPullSecret(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// The catalogs whose apps' egress the cluster answers itself: an action
-	// of one is given its egress as if it had been granted.
-	preApprovedCatalogs, err := security.LoadPreApprovedEgressCatalogs(ctx, r.Client)
 	if err != nil {
 		return nil, err
 	}
@@ -368,9 +362,16 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		for _, a := range ways.aliases {
 			runnable.HostAliases = append(runnable.HostAliases, dispatcher.HostAlias{IP: a.IP, Hostname: a.Hostname})
 		}
+		// The egress the cluster's policy answers itself -- its catalog's,
+		// or hosts in a trusted domain: an action is given it as if it had
+		// been granted.
+		answered, err := answeredEgress(ctx, r.Client, profile, holder)
+		if err != nil {
+			return nil, err
+		}
 		of(holder).actions = append(of(holder).actions, installedAction{
 			comp: comp, profile: profile, runnable: runnable,
-			preApproved: security.PreApprovedEgress(profile, preApprovedCatalogs),
+			preApproved: answered,
 			outgoing:    ways.rule,
 		})
 	}

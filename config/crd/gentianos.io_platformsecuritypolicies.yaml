@@ -114,6 +114,22 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: set
+              trustedDomains:
+                description: |-
+                  TrustedDomains are the domains outside the cluster this cluster
+                  trusts, whatever travels. An egress request that names hosts is
+                  granted without an approver when every one of its hosts is in a domain
+                  listed here, or under one, for as long as the domain is listed.
+                  Removing a domain makes the requests it answered pending again. Trust
+                  is in the destination: where a profile came from grants nothing, and a
+                  profile cannot add to this list.
+                items:
+                  maxLength: 253
+                  pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$
+                  type: string
+                maxItems: 256
+                type: array
+                x-kubernetes-list-type: set
             type: object
           status:
             description: PlatformSecurityPolicyStatus reports observed policy state.
