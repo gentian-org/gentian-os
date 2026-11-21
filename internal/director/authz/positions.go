@@ -353,3 +353,16 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 	}
 	return errors.Join(refused...)
 }
+
+// ValidatePositions reports why a tenant's own positions cannot be declared
+// as given, or nil: together with the three every tenant has, which a
+// tenant's own may include and may not redefine.
+func ValidatePositions(tenant string, own []PositionSpec) error {
+	for _, p := range own {
+		if Shipped(p.Name) {
+			return fmt.Errorf("tenant %s: %s is a position every tenant has, and is not a tenant's to declare", tenant, p.Name)
+		}
+	}
+	_, err := positionTuples(tenant, append(ShippedPositions(nil), own...))
+	return err
+}
