@@ -28,9 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
-	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // The authorization graph's STRUCTURE is cluster state, so the operator
@@ -127,14 +125,19 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 
 	// What each tenant has installed, so that an app's tile and its route can
-	// be asked about: the app attached to its tenant, and entitled by the
-	// Keycloak group the identity reconciler creates for it.
-	apps, err := r.installedApps(ctx)
+	// be asked about, and the positions each tenant has: the three every
+	// tenant has, and the ones it declares.
+	apps, positions, err := r.declared(ctx)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("list installed apps: %w", err)
+		return ctrl.Result{}, fmt.Errorf("list installed apps and positions: %w", err)
 	}
 	if err := r.Graph.ReconcileApps(ctx, apps); err != nil {
 		return ctrl.Result{}, fmt.Errorf("project installed apps: %w", err)
+	}
+	// A tenant whose declared positions the store cannot hold is left as it
+	// is and the others are written; the error names it and asks again.
+	if err := r.Graph.ReconcilePositions(ctx, positions); err != nil {
+		return ctrl.Result{}, fmt.Errorf("project positions: %w", err)
 	}
 
 	logger.V(1).Info("authorization structure projected",
@@ -304,44 +307,30 @@ func (r *AuthzProjectionReconciler) isAdmin(ctx context.Context, tenant, sub str
 // ids are UUIDs.
 var holderSubject = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-// installedApps is what every tenant has installed, by profile name, with the
-// addons activated inside each. A tenant being deleted is listed with nothing,
-// so its apps leave the graph with it.
-//
-// From spec.apps, which is the same list the identity reconciler creates the
-// apps' groups from: an app has a group exactly when it has an object here.
-// An entry whose profile cannot be named is skipped rather than failing the
-// projection, because one unresolvable install must not stop every other
-// tenant's rights from being written.
-func (r *AuthzProjectionReconciler) installedApps(ctx context.Context) (map[string][]authz.InstalledApp, error) {
+// declared is what every tenant has installed and which positions it has.
+// A tenant being deleted is listed with nothing, so its apps and positions
+// leave the store with it.
+func (r *AuthzProjectionReconciler) declared(ctx context.Context) (map[string][]authz.InstalledApp, map[string][]authz.PositionSpec, error) {
 	list := &gentianov1alpha1.TenantList{}
 	if err := r.List(ctx, list); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := map[string][]authz.InstalledApp{}
+	apps := map[string][]authz.InstalledApp{}
+	positions := map[string][]authz.PositionSpec{}
 	for i := range list.Items {
 		tenant := &list.Items[i]
-		out[tenant.Name] = nil
+		apps[tenant.Name], positions[tenant.Name] = nil, nil
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		// A component the platform places has no object: it is not an app
-		// the tenant installed, and has no group (as above).
-		installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+		installed, err := installedAppsOf(ctx, r.Client, tenant)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		for _, app := range installed {
-			profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
-			if err != nil {
-				log.FromContext(ctx).Info("installed app not projected: its profile cannot be named",
-					"tenant", tenant.Name, "error", err.Error())
-				continue
-			}
-			out[tenant.Name] = append(out[tenant.Name], authz.InstalledApp{Profile: profile, Addons: app.Addons})
-		}
+		apps[tenant.Name] = installed
+		positions[tenant.Name] = positionsOf(tenant, installed)
 	}
-	return out, nil
+	return apps, positions, nil
 }
 
 // tenantRights is every tenant this cluster has, excluding those being

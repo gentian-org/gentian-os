@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // ClusterRoles are the cluster's role relations: admin and break_glass, held
@@ -175,21 +174,16 @@ func HolderUser(realm, sub string) (string, error) {
 	return "user:" + realm + "/" + id, nil
 }
 
-// TenantAdministrator says whether the account sub is a member of tenant's
-// admins group, as the store holds it from Keycloak's events: whether a
-// person of that tenant may hold a role by name (HolderScope's rule for a
-// tenant other than the platform's). A tenant or subject that cannot be
-// named is not one.
+// TenantAdministrator says whether the account sub holds admin on tenant,
+// through a position or by itself: whether a person of that tenant may hold
+// a role by name (HolderScope's rule for a tenant other than the
+// platform's). A tenant or subject that cannot be named is not one.
 func TenantAdministrator(ctx context.Context, c Checker, requestID, tenant, sub string) (bool, error) {
 	user, err := User(sub)
-	if err != nil {
+	if err != nil || !ValidName(tenant) {
 		return false, nil
 	}
-	group, err := Group(keycloak.TenantAdminsGroup(tenant))
-	if err != nil || strings.ContainsAny(tenant, ":/") {
-		return false, nil
-	}
-	return c.Check(ctx, requestID, user, "member", group)
+	return c.Check(ctx, requestID, user, RoleAdmin, Tenant(tenant))
 }
 
 // CheckAs asks for a verified caller: as user, and, when that is refused and

@@ -15,55 +15,74 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // App is the object an installed app is in the store: app:<tenant>/<profile>.
 func App(tenant, profile string) string { return "app:" + tenant + "/" + profile }
 
-// InstalledApp is one app of a tenant and the addons activated inside it, by
-// profile name.
+// DeclaredRole is a role an app's profile declares beside user and admin.
+type DeclaredRole struct {
+	Name string
+	// Includes are roles of the same app whose holders this role's holders
+	// are too: manager includes salesman.
+	Includes []string
+}
+
+// InstalledApp is one app of a tenant and the add-ons activated inside it,
+// by profile name.
 type InstalledApp struct {
 	Profile string
-	Addons  []string
+	// ForEveryone says the tenant gave the app to every person of the
+	// tenant: the position User holds its role user (ShippedPositions).
+	ForEveryone bool
+	// Roles are the further roles the app's profile declares.
+	Roles []DeclaredRole
+	// Addons are the add-ons activated inside the app. An add-on is an app
+	// of its own, with roles of its own; an add-on's Addons are not read.
+	Addons []InstalledApp
 }
 
-// appGroup is the Keycloak group whose members may use an app:
-// gentian:tenant:<t>:app:<profile>. The operator creates one per installed
-// app and per activated addon, and a person is put in it or not.
-func appGroup(tenant, profile string) (string, error) {
-	return Group(keycloak.TenantAppGroup(tenant, profile))
-}
+// appRelations are the relations on an app's object that say what the app
+// is, and roleRelations the same for a declared role's: the projection's
+// alone, so an entry under one that it would not write is removed. Who holds
+// a role is none of them.
+var (
+	appRelations  = map[string]bool{"tenant": true, "base": true, "addon": true, "declared": true}
+	roleRelations = map[string]bool{"app": true, "included_in": true}
+)
 
-// appTuples is what one tenant's installed apps are in the store.
+// appTuples is what one tenant's installed apps are in the store: each app
+// and each add-on attached to the tenant, an add-on tied to its base both
+// ways, and every declared role tied to its app.
 //
-// The rule is not new. Entitlement is membership of the app's own group and
-// nothing else; it was computed by the portal from the groups in a person's
-// token, and is stored here so that the tiles and, later, the route ask the
-// same question. Two things are kept exactly as they were:
-//
-//   - An addon is an app of its own: its own object, entitled by its own
-//     group.
-//   - A base with activated addons is entitled by the ADDONS' groups and not
-//     by its own. A base is entered for what is inside it, so somebody
-//     entitled to none of its addons has nothing to do there.
-//
-// That an administrator's account sees administration tiles only is the
-// model's (can_use: entitled but not admin from tenant), not a tuple.
+// Nothing here says who may use an app. That is a role somebody holds on it,
+// through a position or directly.
 func appTuples(tenant string, apps []InstalledApp) (map[string]Tuple, error) {
 	want := map[string]Tuple{}
-	add := func(profile string, entitledBy []string) error {
-		object := App(tenant, profile)
-		t := Tuple{User: Tenant(tenant), Relation: "tenant", Object: object}
-		want[key(t)] = t
-		for _, by := range entitledBy {
-			group, err := appGroup(tenant, by)
-			if err != nil {
-				return fmt.Errorf("tenant %s app %s: %w", tenant, by, err)
+	add := func(t Tuple) { want[key(t)] = t }
+	one := func(app InstalledApp) error {
+		if !ValidName(app.Profile) {
+			return fmt.Errorf("tenant %s: %q is not an app's name", tenant, app.Profile)
+		}
+		object := App(tenant, app.Profile)
+		add(Tuple{User: Tenant(tenant), Relation: "tenant", Object: object})
+		declared := map[string]bool{}
+		for _, role := range app.Roles {
+			if !ValidName(role.Name) || role.Name == RoleUser || role.Name == RoleAdmin {
+				return fmt.Errorf("tenant %s app %s: %q is not a role an app can declare", tenant, app.Profile, role.Name)
 			}
-			e := Tuple{User: group + "#member", Relation: "entitled", Object: object}
-			want[key(e)] = e
+			declared[role.Name] = true
+		}
+		for _, role := range app.Roles {
+			r := Role(tenant, app.Profile, role.Name)
+			add(Tuple{User: object, Relation: "app", Object: r})
+			add(Tuple{User: r, Relation: "declared", Object: object})
+			for _, included := range role.Includes {
+				if !declared[included] || included == role.Name {
+					return fmt.Errorf("tenant %s app %s: role %s includes %q, which is not another role of the app", tenant, app.Profile, role.Name, included)
+				}
+				add(Tuple{User: r, Relation: "included_in", Object: Role(tenant, app.Profile, included)})
+			}
 		}
 		return nil
 	}
@@ -71,36 +90,32 @@ func appTuples(tenant string, apps []InstalledApp) (map[string]Tuple, error) {
 		if app.Profile == "" {
 			continue
 		}
-		var addons []string
-		for _, a := range app.Addons {
-			if a != "" {
-				addons = append(addons, a)
-			}
-		}
-		base := []string{app.Profile}
-		if len(addons) > 0 {
-			base = addons
-		}
-		if err := add(app.Profile, base); err != nil {
+		if err := one(app); err != nil {
 			return nil, err
 		}
-		for _, a := range addons {
-			if err := add(a, []string{a}); err != nil {
+		for _, addon := range app.Addons {
+			if addon.Profile == "" {
+				continue
+			}
+			if err := one(addon); err != nil {
 				return nil, err
 			}
+			add(Tuple{User: App(tenant, app.Profile), Relation: "base", Object: App(tenant, addon.Profile)})
+			add(Tuple{User: App(tenant, addon.Profile), Relation: "addon", Object: App(tenant, app.Profile)})
 		}
 	}
 	return want, nil
 }
 
 // ReconcileApps makes the store hold exactly the installed apps of each
-// tenant given: every app attached to its tenant and entitled by its groups,
-// and nothing left of an app that is no longer installed.
+// tenant given: every app and add-on attached to its tenant, with the roles
+// its profile declares, and nothing left of what an app that is no longer
+// installed was.
 //
 // A tenant not in the map is not touched; a tenant in it with no apps has
-// every app tuple removed. Only the `tenant` and `entitled` relations are
-// this function's: anything else stored on an app object is somebody else's
-// act and stays.
+// every such entry removed. Who holds a role on an app is not this
+// function's and stays, with one exception: a declared role that is no
+// longer declared takes its holders with it, since nothing is left to hold.
 func (c *OpenFGA) ReconcileApps(ctx context.Context, installed map[string][]InstalledApp) error {
 	tenants := make([]string, 0, len(installed))
 	for t := range installed {
@@ -114,37 +129,72 @@ func (c *OpenFGA) ReconcileApps(ctx context.Context, installed map[string][]Inst
 		if err != nil {
 			return err
 		}
+		wantedRoles := map[string]bool{}
+		for _, t := range want {
+			if t.Relation == "app" {
+				wantedRoles[t.Object] = true
+			}
+		}
 		// Every app the store attaches to this tenant, installed or not.
 		attached, err := c.Read(ctx, Tuple{User: Tenant(tenant), Relation: "tenant", Object: "app:"})
 		if err != nil {
 			return fmt.Errorf("read apps of tenant %s: %w", tenant, err)
 		}
-		objects := map[string]bool{}
+		apps := map[string]bool{}
 		for _, t := range attached {
 			// An object under another tenant's name attached to this tenant
 			// is not one this function wrote, and is not its to remove.
-			if strings.HasPrefix(t.Object, "app:"+tenant+"/") {
-				objects[t.Object] = true
+			if ofTenant(t.Object, "app:", tenant) {
+				apps[t.Object] = true
 			}
 		}
 		for _, t := range want {
-			objects[t.Object] = true
+			if strings.HasPrefix(t.Object, "app:") {
+				apps[t.Object] = true
+			}
 		}
-		for object := range objects {
+		roles := map[string]bool{}
+		for object := range wantedRoles {
+			roles[object] = true
+		}
+		for object := range apps {
 			have, err := c.Read(ctx, Tuple{Object: object})
 			if err != nil {
 				return fmt.Errorf("read %s: %w", object, err)
 			}
 			for _, t := range have {
-				if t.Relation != "tenant" && t.Relation != "entitled" {
+				p := plain(t)
+				if p.Relation == "declared" && ofTenant(p.User, "role:", tenant) {
+					roles[p.User] = true
+				}
+				if !appRelations[p.Relation] {
 					continue
 				}
-				plain := Tuple{User: t.User, Relation: t.Relation, Object: t.Object}
-				if _, keep := want[key(plain)]; keep {
-					delete(want, key(plain))
+				if _, keep := want[key(p)]; keep {
+					delete(want, key(p))
 					continue
 				}
-				deletes = append(deletes, plain)
+				deletes = append(deletes, p)
+			}
+		}
+		for object := range roles {
+			have, err := c.Read(ctx, Tuple{Object: object})
+			if err != nil {
+				return fmt.Errorf("read %s: %w", object, err)
+			}
+			for _, t := range have {
+				p := plain(t)
+				if !roleRelations[p.Relation] {
+					if !wantedRoles[object] {
+						deletes = append(deletes, p)
+					}
+					continue
+				}
+				if _, keep := want[key(p)]; keep {
+					delete(want, key(p))
+					continue
+				}
+				deletes = append(deletes, p)
 			}
 		}
 		for _, t := range want {

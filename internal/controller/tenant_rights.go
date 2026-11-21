@@ -15,14 +15,11 @@ import (
 	"fmt"
 	"strings"
 
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
-	"github.com/gentian-org/gentian-os/internal/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
-	"github.com/gentian-org/gentian-os/internal/placement"
 )
 
 // A tenant's rights in a backup.
@@ -51,23 +48,10 @@ func (r *TenantExportReconciler) storeOnlyRights(ctx context.Context, tenant *ge
 	if tr == nil || tr.Rights == nil || tr.ClusterID == "" {
 		return nil, nil
 	}
-	var installed []authz.InstalledApp
-	// As the projection lists them: without the components the platform
-	// places, which have no object in the store.
-	apps, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
+	// As the projection reads them.
+	installed, err := installedAppsOf(ctx, r.Client, tenant)
 	if err != nil {
 		return nil, err
-	}
-	for _, app := range apps {
-		profile, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
-		if err != nil {
-			// As the projection does: an install whose profile cannot be
-			// named has no object in the store.
-			log.FromContext(ctx).Info("installed app not read from the rights store: its profile cannot be named",
-				"tenant", tenant.Name, "error", err.Error())
-			continue
-		}
-		installed = append(installed, authz.InstalledApp{Profile: profile, Addons: app.Addons})
 	}
 	retained, err := r.retainedApps(ctx, tenant)
 	if err != nil {
@@ -77,7 +61,7 @@ func (r *TenantExportReconciler) storeOnlyRights(ctx context.Context, tenant *ge
 	for _, app := range retained {
 		held = append(held, app.name)
 	}
-	only, err := authz.StoreOnlyOf(ctx, tr.Rights, tr.ClusterID, tenant.Name, installed, held)
+	only, err := authz.StoreOnlyOf(ctx, tr.Rights, tr.ClusterID, tenant.Name, installed, positionsOf(tenant, installed), held)
 	if err != nil {
 		return nil, fmt.Errorf("read the rights store for tenant %s: %w", tenant.Name, err)
 	}

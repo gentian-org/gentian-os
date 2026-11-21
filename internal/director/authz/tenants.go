@@ -23,13 +23,6 @@ import (
 // tenant's to withdraw.
 const PlatformTenant = "platform"
 
-// tenantRoleGroups are the relations on type tenant that a Keycloak group
-// holds, and the group's suffix under gentian:tenant:<t>:.
-var tenantRoleGroups = []struct{ relation, suffix string }{
-	{"admin", "admins"},
-	{"member", "members"},
-}
-
 // TenantRights is one tenant as the projection is given it: its name, and
 // who the Cluster claim names its perimeter approvers and its auditors (role
 // holders of scope tenant:<t>), each as HolderUser.
@@ -67,14 +60,14 @@ func TenantsNamed(names ...string) []TenantRights {
 }
 
 // ReconcileTenants makes each named tenant known to the store: attached to
-// its cluster, and its two role relations held by the tenant's groups.
+// its cluster.
 //
 // Written by the operator from the Tenant objects of the cluster
 // (AuthzProjectionReconciler), which are what git lists under
 // clusters/<c>/tenants/, so a cluster rebuilt from git arrives at the same
 // place. `cluster` is what audit
-// and approval derive through and is written whenever it is missing. The
-// role tuples are the same. `operated_by` is consent (model v1): written when
+// and approval derive through and is written whenever it is missing.
+// `operated_by` is consent (model v1): written when
 // a tenant is first attached, so a fresh deploy is operated by its cluster,
 // and always for the platform tenant; a tenant that later withdraws it is not
 // second-guessed here, because the missing tuple is then the tenant's answer.
@@ -86,7 +79,8 @@ func TenantsNamed(names ...string) []TenantRights {
 // cluster's perimeter approver and auditor hold theirs through the cluster
 // and are not written here.
 //
-// Membership is not touched: it is a projection of Keycloak.
+// Who is the tenant's user or admin is not written here: those are roles a
+// position holds (ReconcilePositions) or a person was given.
 func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants []TenantRights) error {
 	clusterObj := Cluster(cluster)
 	var writes, deletes []Tuple
@@ -107,21 +101,6 @@ func (c *OpenFGA) ReconcileTenants(ctx context.Context, cluster string, tenants 
 			}
 			if len(operated) == 0 {
 				writes = append(writes, Tuple{User: clusterObj, Relation: "operated_by", Object: obj})
-			}
-		}
-		// The role tuples, by the list a backup tells the store's own
-		// entries from the derived ones by (tenantDefaults).
-		standing, _, err := tenantDefaults(cluster, tenant)
-		if err != nil {
-			return err
-		}
-		for _, t := range standing[1:] {
-			have, err := c.Read(ctx, t)
-			if err != nil {
-				return fmt.Errorf("read %s on %s: %w", t.Relation, obj, err)
-			}
-			if len(have) == 0 {
-				writes = append(writes, t)
 			}
 		}
 		for i, users := range rights.heldBy() {

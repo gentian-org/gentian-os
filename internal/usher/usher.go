@@ -136,7 +136,7 @@ func New(cfg Config) *Server {
 	// which group.
 	if cfg.Viewer != nil && cfg.Access != nil {
 		s.guarded("GET /v1/tenants/{t}/access/people/{id}", "can_manage_users", tenantObject, s.personAccess)
-		s.guarded("GET /v1/tenants/{t}/access/groups", "can_manage_users", tenantObject, s.groupAccess)
+		s.guarded("GET /v1/tenants/{t}/access/positions/{name}", "can_manage_users", tenantObject, s.positionAccess)
 		s.guarded("GET /v1/tenants/{t}/access/apps/{p}", "can_manage_users", tenantObject, s.appAccess)
 	}
 	if cfg.Lifecycle != nil {
