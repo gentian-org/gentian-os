@@ -518,6 +518,37 @@ fresh
 gentian apps decline aluvian-commerce hostNetwork/x --tenant team --reason "because it must not"
 refused "a decline of no known kind is a usage error"
 
+# A tenant's own trusted domains: read, add, remove, and the cluster
+# administrator's switch for whether the tenant keeps a list.
+fresh; reply GET /v1/tenants/team/trusted-domains 200 '{"tenant":"team","delegated":true,"domains":["example.org","github.com"]}'
+gentian trusted-domains list --tenant team
+has "trusted-domains list names each domain" "${OUT}" "  github.com"
+fresh; reply GET /v1/tenants/team/trusted-domains 200 '{"tenant":"team","delegated":false,"domains":[]}'
+gentian trusted-domains list --tenant team
+has "trusted-domains list says when the list is not delegated" "${OUT}" "Trusted domains are not delegated to team"
+has "... and when it is empty" "${OUT}" "team has no trusted domains of its own."
+fresh; reply PUT /v1/tenants/team/trusted-domains/example.org 202 '{"status":"added","commit":"0f1e2d3c4b5a"}'
+gentian trusted-domains add example.org --tenant team
+is "trusted-domains add sends one PUT" "$(writes | tr -d '\n' | tr -s ' ')" 'PUT /v1/tenants/team/trusted-domains/example.org '
+has "... and says it is trusted" "${OUT}" "example.org is now trusted for team: committed"
+fresh; reply DELETE /v1/tenants/team/trusted-domains/example.org 202 '{"status":"removed","commit":"0f1e2d3c4b5a"}'
+gentian trusted-domains remove example.org --tenant team
+is "trusted-domains remove sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" 'DELETE /v1/tenants/team/trusted-domains/example.org '
+fresh
+gentian trusted-domains add 'Example.org' --tenant team
+refused "what is no domain is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian trusted-domains add example.org
+refused "a trusted domain needs its tenant"
+fresh; reply PUT /v1/clusters/c1/tenants/globex/trusted-domains-delegation 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian tenants delegate-trusted-domains globex on
+is "delegate-trusted-domains on sends one PUT" "$(writes | tr -d '\n' | tr -s ' ')" 'PUT /v1/clusters/c1/tenants/globex/trusted-domains-delegation '
+fresh; reply DELETE /v1/clusters/c1/tenants/globex/trusted-domains-delegation 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian tenants delegate-trusted-domains globex off
+is "delegate-trusted-domains off sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" 'DELETE /v1/clusters/c1/tenants/globex/trusted-domains-delegation '
+has "... and says the list stays" "${OUT}" "Its list stays"
+
 # Withdrawing takes an approval back: one DELETE, no body.
 fresh; reply DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
 gentian apps withdraw aluvian-commerce egress/intake --tenant team
