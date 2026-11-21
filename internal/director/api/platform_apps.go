@@ -273,7 +273,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 				if !ours[g.App] || !ours[g.Provider] {
 					continue
 				}
-				res, err := s.cfg.Repo.PreApproveConsume(ctx, t.Name, g.App, g.Contract, g.Capabilities, c.meta)
+				res, err := s.cfg.Repo.PreApproveConsume(ctx, t.Name, g.App, g.Contract, g.Capabilities, gitops.PreApprovedReason, c.meta)
 				if err != nil {
 					log.WarnContext(ctx, "the platform could not pre-approve a contract", "tenant", t.Name, "app", g.App,
 						"contract", g.Contract, "error", err.Error())

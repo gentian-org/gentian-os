@@ -1020,6 +1020,8 @@ What an app needs from the platform and from other apps is declared in its **`Co
 
 
 A contract between two components the platform places itself, both of trust tier `platform`, is granted by the platform: where the consumer names the provider and the capabilities it asks for, and the provider provides the contract, the director's placement worker writes the grant into every tenant that has both, as `platform:placement` (`internal/placement`, `preApproved`). That is how the App Store app reaches the desktop's API (`desktop-api`). The desktop still decides each call on the person's own token. A profile may name `valueMapping.platform.desktopUrlKey` instead, which opens the same path without a binding (`internal/controller/desktop_access.go`); the schema refuses the key below trust tier `platform`.
+
+A contract among an app and the apps that came with it (`spec.comesWith`) is granted by the platform too: the tenant's administrator accepted all of them by installing the one. Where one of them names another as the provider of a contract, the director writes the grant as `platform:comes-with`, at the install, at a move to another build and in its pass over every tenant (`approveAmong`), so a contract a later build adds among the same apps is granted as well. A contract with any other app of the tenant — one the tenant installed itself, one the platform places — waits for the administrator, and a contract the grant already names is left as it stands.
 Field reference and deployment flow: [app-catalog.md](../concepts/app-catalog.md).
 
 #### Terminology — manifest language vs CRD fields
@@ -1172,7 +1174,7 @@ What it does not do:
 
 - **Capabilities are not enforced.** Any granted capability opens the whole path: to the endpoint's port, or without an endpoint to the provider's pods. The list is written on the policy as a label and nowhere else.
 - **Nothing reaches the rights store.** The model has a `contract` type; nothing writes it and no enforcement point asks about a call between two apps.
-- **Nothing is granted at install.** The operator writes no grant and changes none; its role in the cluster can neither create nor patch one. A declared integration stays closed until the tenant's administrator grants it, and a grant narrower than the declaration is what takes effect. The binding says how much of what it asks for was granted: its `Granted` condition is `True` when all of it was, and `False` with the reason `NotGranted` or `PartlyGranted` otherwise, naming the capabilities that are missing. The *Integrations* screen of the administration console shows the same.
+- **The operator grants nothing.** It writes no grant and changes none; its role in the cluster can neither create nor patch one. A declared integration stays closed until the tenant's administrator grants it, or the director does for the two cases above, and a grant narrower than the declaration is what takes effect. The binding says how much of what it asks for was granted: its `Granted` condition is `True` when all of it was, and `False` with the reason `NotGranted` or `PartlyGranted` otherwise, naming the capabilities that are missing. The *Integrations* screen of the administration console shows the same.
 
 Revoking a grant removes the network path and both key Secrets in one reconcile. It does not change the shared password at `vaultPath`, which stays in the consumer's values until the app is rolled.
 

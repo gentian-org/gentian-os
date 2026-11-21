@@ -325,3 +325,80 @@ func TestAnAppBringsAProfileThePlatformShips(t *testing.T) {
 		t.Errorf("the porter was installed by an app:\n%s", entry)
 	}
 }
+
+// asking is a profile on the cluster that asks contracts of other apps and
+// may name the apps it comes with.
+func asking(name string, with []string, asks ...[3]string) string {
+	out := dt.ProfileYAML(name)
+	if len(with) > 0 {
+		out += "  comesWith: [" + strings.Join(with, ", ") + "]\n"
+	}
+	if len(asks) > 0 {
+		out += "  integrations:\n"
+		for _, a := range asks {
+			out += "    - contract: " + a[0] + "\n      provider: " + a[1] + "\n      capabilities: [" + a[2] + "]\n"
+		}
+	}
+	return out
+}
+
+// The contracts among an app and the apps that came with it are pre-approved
+// when it is installed: what the app asks of one of them, and what one of
+// them asks of another. A contract with an app the tenant installed itself
+// waits for the administrator, though the app names it in comesWith too.
+func TestContractsAmongAppsThatCameTogetherArePreApproved(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("engine.yaml"): asking("engine", []string{"wiki", "board", "nextcloud"},
+				[3]string{"pages", "wiki", "read, write"}, [3]string{"files", "nextcloud", "read"}),
+			dt.CataloguePath("board.yaml"): asking("board", nil, [3]string{"pages", "wiki", "read"}, [3]string{"files", "nextcloud", "read"}),
+		})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/engine", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	for _, want := range []string{"app: engine", "app: board", "contract: pages", "platform:comes-with", "installed together"} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("the grants do not say %q:\n%s", want, grants)
+		}
+	}
+	if strings.Contains(grants, "contract: files") {
+		t.Errorf("a contract with the tenant's own Nextcloud was pre-approved:\n%s", grants)
+	}
+
+	// Nothing more is written by a pass over a tenant that has it all.
+	before := h.tip(t)
+	if n := h.server().RunComesWith(context.Background()); n != 0 || h.tip(t) != before {
+		t.Fatalf("a pass installed %d apps, and the repository moved: %v", n, h.tip(t) != before)
+	}
+}
+
+// A contract a later build adds among apps that came together is
+// pre-approved by the pass; more of a contract the grant already names is
+// not, so what an administrator narrowed is not widened back.
+func TestAContractALaterBuildAddsAmongThemIsPreApproved(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("engine.yaml"): asking("engine", []string{"wiki", "board"}, [3]string{"pages", "wiki", "read"}),
+		})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/engine", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	dt.Commit(t, h.remote, map[string]string{
+		dt.CataloguePath("engine.yaml"): asking("engine", []string{"wiki", "board"},
+			[3]string{"pages", "wiki", "read, write"}, [3]string{"cards", "board", "move"}),
+	})
+	h.server().RunComesWith(context.Background())
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	if !strings.Contains(grants, "contract: cards") {
+		t.Errorf("the contract the later build adds is not pre-approved:\n%s", grants)
+	}
+	if strings.Contains(grants, "write") {
+		t.Errorf("a contract the grant already names was widened:\n%s", grants)
+	}
+}

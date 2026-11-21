@@ -245,7 +245,67 @@ func (s *Server) bringToTenant(ctx context.Context, c call, tenant string) (inst
 			log.InfoContext(ctx, "installed what an app comes with", "app", a.Profile, "with", came)
 		}
 	}
+	s.approveAmong(ctx, tenant)
 	return installed
+}
+
+// approveAmong pre-approves, in one tenant, the contracts among an app and
+// the apps that came with it: what one of them asks of another, at the build
+// each is at. The tenant's administrator said yes to all of them by
+// installing the one, and it does nothing without the others. A contract
+// with any other app of the tenant -- one the tenant installed itself, one
+// the platform places -- still waits for the administrator; so does more of
+// a contract the grant already names. It is asked after an install, after a
+// move and by the pass, so a contract a later build adds among the same apps
+// is pre-approved as the first ones were.
+func (s *Server) approveAmong(ctx context.Context, tenant string) (approved int) {
+	log := s.cfg.Log.With("worker", "comes-with", "tenant", tenant)
+	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	if err != nil {
+		if !errors.Is(err, gitops.ErrTenantNotFound) {
+			log.WarnContext(ctx, "the tenant's apps could not be read; no contract is pre-approved", "error", err.Error())
+		}
+		return 0
+	}
+	// together[app] is the app a came-with app came with, and an app that
+	// brought others is its own.
+	together := map[string]string{}
+	for _, a := range apps {
+		if a.CameWith != "" && !a.Placed {
+			together[a.Profile] = a.CameWith
+			together[a.CameWith] = a.CameWith
+		}
+	}
+	if len(together) == 0 {
+		return 0
+	}
+	meta := gitops.Meta{Principal: comesWithPrincipal, Decision: "the apps were installed together"}
+	for _, a := range apps {
+		if a.Placed || together[a.Profile] == "" {
+			continue
+		}
+		definition := s.definitionAt(ctx, a)
+		if definition == nil {
+			continue
+		}
+		for _, in := range definition.Spec.Integrations {
+			if in.Provider == "" || in.Provider == a.Profile || len(in.Capabilities) == 0 || together[in.Provider] != together[a.Profile] {
+				continue
+			}
+			res, err := s.cfg.Repo.PreApproveConsume(ctx, tenant, a.Profile, in.Contract, in.Capabilities, gitops.CameTogetherReason, meta)
+			if err != nil {
+				log.WarnContext(ctx, "a contract among apps that came together could not be pre-approved",
+					"app", a.Profile, "contract", in.Contract, "error", err.Error())
+				continue
+			}
+			if res.Changed {
+				approved++
+				log.InfoContext(ctx, "pre-approved a contract among apps that came together",
+					"app", a.Profile, "contract", in.Contract, "provider", in.Provider, "commit", res.Commit)
+			}
+		}
+	}
+	return approved
 }
 
 // definitionAt reads the profile of the build a tenant's app is at: the
