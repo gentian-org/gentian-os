@@ -63,6 +63,10 @@ type Home struct {
 	// Open is the address that opens a file by its id in a browser, with
 	// "{id}" where the id goes.
 	Open string `json:"open"`
+	// Scope is what the porter asks the realm for, for a token valid at the
+	// home: the scope the realm keeps for this home's tokens, which it
+	// grants the porter's client.
+	Scope string `json:"scope"`
 }
 
 // App is one app that may ask.
@@ -93,8 +97,8 @@ func ReadPlan(path string) (*Plan, error) {
 
 func (p *Plan) validate() error {
 	if h := p.Home; h != nil {
-		if h.Profile == "" || h.URL == "" || h.Root == "" || h.IDProperty == "" {
-			return fmt.Errorf("the home of the plan names no profile, address, root or id property")
+		if h.Profile == "" || h.URL == "" || h.Root == "" || h.IDProperty == "" || h.Scope == "" {
+			return fmt.Errorf("the home of the plan names no profile, address, root, id property or scope")
 		}
 		if _, _, err := splitProperty(h.IDProperty); err != nil {
 			return err

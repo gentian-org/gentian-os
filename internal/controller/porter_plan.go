@@ -138,6 +138,11 @@ func fileHomeOf(name string, p *gentianov1alpha1.ComponentProfile, namespace str
 				Root:       c.Files.Root,
 				IDProperty: c.Files.IDProperty,
 				Open:       "https://" + host + c.Files.Open.Path,
+				// What the realm grants the porter's client for this home
+				// (its vouching line names the home). In the plan, which the
+				// operator writes, and not in the vouching Secret, which the
+				// secrets operator writes back to its template.
+				Scope: HomeTokenScope(name),
 			}
 		}
 	}

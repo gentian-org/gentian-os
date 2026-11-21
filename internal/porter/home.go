@@ -49,7 +49,6 @@ const (
 	toldClientID     = "VOUCHING_CLIENT_ID"
 	toldClientSecret = "VOUCHING_CLIENT_SECRET" //nolint:gosec // Secret key name, not a credential.
 	toldTokenURL     = "VOUCHING_TOKEN_URL"     //nolint:gosec // Secret key name, not a credential.
-	toldHomeScope    = "VOUCHING_HOME_FILE_STORE"
 )
 
 // Entry is one file or folder of a listing.
@@ -131,7 +130,7 @@ func (h *Homes) sessionFor(ctx context.Context, home *Home, edgeToken string) (*
 	if s != nil {
 		return s, nil
 	}
-	token, lifetime, err := h.exchange(ctx, edgeToken)
+	token, lifetime, err := h.exchange(ctx, home.Scope, edgeToken)
 	if err != nil {
 		return nil, err
 	}
@@ -150,9 +149,9 @@ func (h *Homes) sessionFor(ctx context.Context, home *Home, edgeToken string) (*
 }
 
 // exchange is the realm's standard token exchange (RFC 8693): the person's
-// token for the porter, for one of the home.
-func (h *Homes) exchange(ctx context.Context, edgeToken string) (string, time.Duration, error) {
-	scope, tokenURL := h.told(toldHomeScope), h.told(toldTokenURL)
+// token for the porter, for one of the home, by the home's scope.
+func (h *Homes) exchange(ctx context.Context, scope, edgeToken string) (string, time.Duration, error) {
+	tokenURL := h.told(toldTokenURL)
 	if scope == "" || tokenURL == "" {
 		return "", 0, refuse(http.StatusServiceUnavailable, "This workspace has no place for files.")
 	}
