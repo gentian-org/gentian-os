@@ -772,7 +772,9 @@ spec:
                       comes with them too. An app the tenant installed itself is left as it
                       is, on install and on uninstall. An install is refused as a whole
                       when one of them cannot be found or may not be installed in the
-                      tenant.
+                      tenant. A move to a build installs what that build comes with and
+                      the tenant does not have, and is refused the same way; a tenant
+                      already at a build is brought what the build comes with.
 
                       Each of them is an app of its own for everything else: its own
                       requirements, entries, privileges and approvals, its own builds and
