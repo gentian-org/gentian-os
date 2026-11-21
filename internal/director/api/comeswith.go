@@ -117,9 +117,14 @@ func (s *Server) bringComesWith(
 
 // findCompanion answers where the build of an app that comes with another
 // is: the catalog the other app is from first, then the others the tenant
-// sees, then the profile the cluster already holds for this tenant. why says
-// in words that it was found nowhere.
+// sees, then the profile the cluster already holds for this tenant. A
+// profile the platform ships for the apps that come with it is in no catalog
+// and not in the repository: the cluster holds it, for every tenant. why
+// says in words that it was found nowhere.
 func (s *Server) findCompanion(ctx context.Context, tenant, name, preferred string) (companion, string, error) {
+	if gitops.BroughtPlatformProfile(name) {
+		return companion{name: name}, "", nil
+	}
 	sources, _, err := s.visibleSources(ctx, tenant)
 	if err != nil {
 		return companion{}, "", err

@@ -287,3 +287,41 @@ func TestATenantAtABuildIsBroughtWhatTheBuildComesWith(t *testing.T) {
 		t.Fatalf("a second pass installed %d apps, and the repository moved: %v", n, h.tip(t) != before)
 	}
 }
+
+// A profile the platform ships for the apps that come with it is in no
+// catalog and not in the repository. An app that names it is installed with
+// it all the same, the entry naming no catalog and no build: the cluster
+// holds the profile, at the build the platform is at.
+func TestAnAppBringsAProfileThePlatformShips(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("agents.yaml"): comingWith("agents", "liaison"),
+			// A placed component of the platform is not an app's to bring.
+			dt.CataloguePath("grabby.yaml"): comingWith("grabby", "porter"),
+		})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/agents", tom, "")
+	if code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if got := fmt.Sprint(out["installedWith"]); got != "[liaison]" {
+		t.Errorf("installedWith = %s; want the liaison", got)
+	}
+	entry := appEntryOf(t, h, "demo", "liaison")
+	if !strings.Contains(entry, "cameWith: agents") {
+		t.Errorf("the liaison's entry does not say what it came with:\n%s", entry)
+	}
+	if strings.Contains(entry, "catalogue:") || strings.Contains(entry, "digest:") {
+		t.Errorf("the liaison is in no catalog and has no build of its own:\n%s", entry)
+	}
+
+	code, out = h.do(t, "POST", "/v1/tenants/demo/apps/grabby", tom, "")
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("an app that comes with a placed component = %d %v; want it refused", code, out)
+	}
+	if entry := appEntryOf(t, h, "demo", "porter"); entry != "" {
+		t.Errorf("the porter was installed by an app:\n%s", entry)
+	}
+}
