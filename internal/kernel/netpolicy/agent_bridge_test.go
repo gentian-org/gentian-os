@@ -327,3 +327,33 @@ func TestTheHomeSyncReachesTheAppsItKeepsEqual(t *testing.T) {
 		}
 	}
 }
+
+// The porter reaches the file homes that say where a person's files are,
+// and those admit it; a tenant with no porter placed, or no such home, has
+// none of these policies.
+func TestThePorterReachesTheFileHomes(t *testing.T) {
+	home := &gentianov1alpha1.ComponentProfile{}
+	home.Spec.Provides = []gentianov1alpha1.ContractRef{{Name: "file-store", Files: &gentianov1alpha1.FileHomeFacts{Root: "/"}}}
+	plain := &gentianov1alpha1.ComponentProfile{}
+	plain.Spec.Provides = []gentianov1alpha1.ContractRef{{Name: "file-store"}}
+	in := netpolicy.BuildInput{
+		TenantName: "acme", Namespace: "tenant-acme",
+		Apps:     []gentianov1alpha1.TenantApp{{Profile: "nextcloud"}, {Profile: "plain"}},
+		Placed:   []string{gentianov1alpha1.PorterProfile},
+		Profiles: map[string]*gentianov1alpha1.ComponentProfile{"nextcloud": home, "plain": plain},
+	}
+	got := netpolicy.PorterNetworkPolicies(in)
+	if len(got) != 2 || got[0].Name != "porter-target-nextcloud" || got[1].Name != "porter" {
+		t.Fatalf("policies: %v", len(got))
+	}
+	if from := got[0].Spec.Ingress[0].From[0].PodSelector.MatchLabels[meta.AppLabel]; from != gentianov1alpha1.PorterProfile {
+		t.Fatalf("the home admits %q", from)
+	}
+	if to := got[1].Spec.Egress[0].To; len(to) != 1 || to[0].PodSelector.MatchLabels[meta.AppLabel] != "nextcloud" {
+		t.Fatalf("the porter reaches %v", to)
+	}
+	in.Placed = nil
+	if len(netpolicy.PorterNetworkPolicies(in)) != 0 {
+		t.Fatal("a tenant with no porter has its policies")
+	}
+}

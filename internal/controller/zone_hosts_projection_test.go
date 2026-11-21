@@ -656,3 +656,71 @@ func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
 		t.Fatalf("a Secret not made yet was made: %v", err)
 	}
 }
+
+// The porter, which the platform places in every tenant, calls the tenant's
+// file home as the person at its address with nobody asked: no binding is
+// granted to it, and it is projected as a certified app that is present-only
+// is -- no keys, exchanging, narrow, with the home -- and told the scope.
+// Without a file home it is given none.
+func TestThePlacedPorterIsGivenTheTenantsFileHome(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := acmeTenantFixture()
+	ns := tenant.NamespaceName()
+	porter := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PorterProfile}}
+	porter.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+	porter.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: "every"}
+	porter.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "file-store", AsPerson: true}}
+	porter.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Exchange: true},
+	}}
+	porter.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: "oidc", SubDomain: "files", ExchangeToken: true,
+	}}
+	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
+	home.Spec.Provides = []gentianov1alpha1.ContractRef{{Name: "file-store"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	told := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName(porter.Name), Namespace: ns}}
+	told.Data = map[string][]byte{VouchingClientIDKey: []byte("vouch-porter")}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), porter, home, comp(porter.Name), comp("nextcloud"), told,
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "porter - 0 - exchange,narrow,home=nextcloud" {
+		t.Fatalf("vouching profiles = %q", got)
+	}
+	key := types.NamespacedName{Name: told.Name, Namespace: ns}
+	if err := c.Get(context.Background(), key, told); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(told.Data["VOUCHING_HOME_FILE_STORE"]); got != "home-nextcloud" {
+		t.Fatalf("VOUCHING_HOME_FILE_STORE = %q", got)
+	}
+
+	// The file home is removed: the porter keeps its client and no scope.
+	if err := c.Delete(context.Background(), comp("nextcloud")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "porter - 0 - exchange,narrow" {
+		t.Fatalf("without a file home: %q", got)
+	}
+	if err := c.Get(context.Background(), key, told); err != nil {
+		t.Fatal(err)
+	}
+	if len(told.Data) != 1 {
+		t.Fatalf("without a file home the Secret holds %v", told.Data)
+	}
+}

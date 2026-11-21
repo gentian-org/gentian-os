@@ -676,7 +676,8 @@ func TestHomesAsPersonRules(t *testing.T) {
 		{"one that is handed no token to exchange", consumer("certified", asPerson) + present, "requires.services.vouching requires trustTier platform"},
 		{"one with no home", consumer("certified", "") + present + handed, "requires.services.vouching requires trustTier platform"},
 		{"a community app that does", consumer("community", asPerson) + present + handed, "requires.services.vouching requires trustTier platform"},
-		{"a platform component that calls a home as the person with no keys", consumer("platform", asPerson) + present + handed, "asPerson needs requires.services.vouching"},
+		{"a platform component that acts only while the person is present", consumer("platform", asPerson) + present + handed, ""},
+		{"a platform component with no keys that is handed no token to exchange", consumer("platform", asPerson) + present, "asPerson needs requires.services.vouching"},
 		{"a certified app that asks for the director", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {director: [plans-read], keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
 		{"asPerson on a contract that is no home's", consumer("certified", "  integrations:\n  - {contract: project-management, asPerson: true}\n") + keys, "asPerson is for a home's contract"},
 	} {
@@ -687,6 +688,36 @@ func TestHomesAsPersonRules(t *testing.T) {
 	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  homes: %s\n"
 	expect(t, "a tenant that names its homes", tv.check(t, strings.Replace(tenant, "%s", "{calendar-store: nextcloud-base-ce, contacts-store: nextcloud-base-ce}", 1), ""), "")
 	expect(t, "a home for a contract that is no home's", tv.check(t, strings.Replace(tenant, "%s", "{project-management: openproject}", 1), ""), "homes names file-store, calendar-store or contacts-store")
+}
+
+// A file home says where a person's files are, which property holds a file's
+// id and the address that opens a file by it; an app says what it asks the
+// platform's file dialog for. Both are the file store's alone.
+func TestFileDialogRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	app := "  classes: [app]\n  launch: none\n  trustTier: certified\n"
+	facts := "{root: \"/files/{principal}/\", idProperty: \"{http://owncloud.org/ns}fileid\", open: {entry: web, path: \"/f/{id}\"}}"
+	home := func(contract, files string) string {
+		return app + "  provides:\n  - name: " + contract + "\n    endpoint: {service: cloud, port: 8080, path: /dav/}\n    files: " + files + "\n"
+	}
+	asks := func(contract, uses string) string {
+		return app + "  integrations:\n  - {contract: " + contract + ", dialog: " + uses + "}\n"
+	}
+	for _, c := range []struct{ name, spec, want string }{
+		{"a file home that says where a person's files are", home("file-store", facts), ""},
+		{"a root with no principal in it", home("file-store", strings.Replace(facts, "/files/{principal}/", "/", 1)), ""},
+		{"files on a contract that is not the file store", home("calendar-store", facts), "files is for the contract file-store"},
+		{"an id property not written {namespace}name", home("file-store", strings.Replace(facts, "{http://owncloud.org/ns}fileid", "fileid", 1)), "idProperty"},
+		{"an open address with no id in it", home("file-store", strings.Replace(facts, "/f/{id}", "/f/", 1)), "path"},
+		{"an open address that is not a path", home("file-store", strings.Replace(facts, "/f/{id}", "https://elsewhere.example/{id}", 1)), "path"},
+
+		{"an app that picks files", asks("file-store", "[pick]"), ""},
+		{"an editor that opens and saves", asks("file-store", "[open, save]"), ""},
+		{"a use the dialog does not know", asks("file-store", "[delete]"), "Unsupported value"},
+		{"the dialog asked for another contract", asks("calendar-store", "[pick]"), "dialog is for the contract file-store"},
+	} {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
 }
 
 // An app declares homeSync with its API's address and at least one kind, each

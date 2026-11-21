@@ -132,6 +132,10 @@ spec:
         # The chart follows image.tag, which Image Updater moves.
         homesync:
           enabled: true
+        # The porter, the platform's file dialog: every tenant's, published
+        # and followed as the home sync is.
+        porter:
+          enabled: true
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

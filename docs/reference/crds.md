@@ -607,6 +607,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there… |
 | `spec.integrations[].capabilities` | []string |  | `Capabilities` lists the specific capabilities required from the contract. |
 | `spec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
+| `spec.integrations[].dialog` | []string |  | `Dialog` says the app's pages ask the platform's file dialog (the porter) for files, and what for: pick, open, save. |
 | `spec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
 | `spec.launch` | string | yes | `Launch` is how a person reaches this component. |
 | `spec.package` | object | yes | `Package` is how the component is deployed. |
@@ -714,6 +715,12 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.provides[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
 | `spec.provides[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
 | `spec.provides[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
+| `spec.provides[].files` | object |  | `Files` is what a provider of file-store says about itself beyond WebDAV, so that the platform's file dialog (the porter) can show a person their files and name… |
+| `spec.provides[].files.idProperty` | string | yes | `IDProperty` is the WebDAV property that holds a file's id: one that stays the same when the file is moved or renamed, and is the same for everybody who may see… |
+| `spec.provides[].files.open` | object | yes | `Open` is the address that opens a file by its id in a browser. |
+| `spec.provides[].files.open.entry` | string | yes | `Entry` is the name of the provider's gateway entry (expose[].name). |
+| `spec.provides[].files.open.path` | string | yes | `Path` is the path on that entry, with "{id}" where the id goes. |
+| `spec.provides[].files.root` | string | yes | `Root` is where a person's files start, as a path below the contract's endpoint. |
 | `spec.provides[].name` | string | yes | `Name` is the contract name (e.g., "file-store", "project-management"). |
 | `spec.provides[].protocol` | string |  | `Protocol` is the technical protocol used (e.g., "http-json", "webdav"). |
 | `spec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
@@ -1500,6 +1507,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there… |
 | `status.profileSpec.integrations[].capabilities` | []string |  | `Capabilities` lists the specific capabilities required from the contract. |
 | `status.profileSpec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
+| `status.profileSpec.integrations[].dialog` | []string |  | `Dialog` says the app's pages ask the platform's file dialog (the porter) for files, and what for: pick, open, save. |
 | `status.profileSpec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
 | `status.profileSpec.launch` | string | yes | `Launch` is how a person reaches this component. |
 | `status.profileSpec.package` | object | yes | `Package` is how the component is deployed. |
@@ -1607,6 +1615,12 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.provides[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
 | `status.profileSpec.provides[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
 | `status.profileSpec.provides[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
+| `status.profileSpec.provides[].files` | object |  | `Files` is what a provider of file-store says about itself beyond WebDAV, so that the platform's file dialog (the porter) can show a person their files and name… |
+| `status.profileSpec.provides[].files.idProperty` | string | yes | `IDProperty` is the WebDAV property that holds a file's id: one that stays the same when the file is moved or renamed, and is the same for everybody who may see… |
+| `status.profileSpec.provides[].files.open` | object | yes | `Open` is the address that opens a file by its id in a browser. |
+| `status.profileSpec.provides[].files.open.entry` | string | yes | `Entry` is the name of the provider's gateway entry (expose[].name). |
+| `status.profileSpec.provides[].files.open.path` | string | yes | `Path` is the path on that entry, with "{id}" where the id goes. |
+| `status.profileSpec.provides[].files.root` | string | yes | `Root` is where a person's files start, as a path below the contract's endpoint. |
 | `status.profileSpec.provides[].name` | string | yes | `Name` is the contract name (e.g., "file-store", "project-management"). |
 | `status.profileSpec.provides[].protocol` | string |  | `Protocol` is the technical protocol used (e.g., "http-json", "webdav"). |
 | `status.profileSpec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |

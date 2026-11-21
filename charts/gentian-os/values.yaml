@@ -361,6 +361,16 @@ homesync:
     # Empty: the chart published with image.tag (componentprofile-homesync.yaml).
     version: ""
 
+# The porter: the platform's file dialog, one per tenant (internal/porter).
+# Published and pinned as the home sync is.
+porter:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: porter
+    # Empty: the chart published with image.tag (componentprofile-porter.yaml).
+    version: ""
+
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
 # turns it on. Like the consoles it comes from gentian-ui as a moving chart
