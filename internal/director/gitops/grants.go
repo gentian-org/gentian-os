@@ -118,15 +118,21 @@ func (g *GitOps) writeGrants(ctx context.Context, tenant, app string, entry *gen
 	})
 }
 
-// PreApprovedReason is what a grant the platform pre-approved says.
+// PreApprovedReason is what a grant the platform pre-approved between two
+// components it places says.
 const PreApprovedReason = "pre-approved by the platform: both components are placed by it"
+
+// CameTogetherReason is what a grant the platform pre-approved between an
+// app and the apps that came with it says.
+const CameTogetherReason = "pre-approved by the platform: the apps were installed together, one coming with the other"
 
 // PreApproveConsume adds one contract an app may consume, with what of it,
 // to the app's grant, and leaves everything else the grant says as it is.
 // It is the platform's pre-approval of a contract between two components it
-// places itself; a contract the grant already names is left as it stands,
-// so an administrator's narrower grant is not widened back.
-func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, meta Meta) (Result, error) {
+// places itself, or between apps that were installed together; reason says
+// which. A contract the grant already names is left as it stands, so an
+// administrator's narrower grant is not widened back.
+func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta Meta) (Result, error) {
 	if !gentianov1alpha1.ValidTenantName(tenant) || !ValidName(app) || !ValidName(contract) || len(granted) == 0 {
 		return Result{}, fmt.Errorf("%w: tenant %q app %q contract %q", ErrInvalidName, tenant, app, contract)
 	}
@@ -144,7 +150,7 @@ func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract st
 		// commit says what the platform added.
 		if !had {
 			now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
-			entry.GrantedBy, entry.GrantedAt, entry.Reason = meta.actor(), &now, PreApprovedReason
+			entry.GrantedBy, entry.GrantedAt, entry.Reason = meta.actor(), &now, reason
 		}
 		byApp[app] = entry
 		return true

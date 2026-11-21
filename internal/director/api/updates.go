@@ -565,6 +565,9 @@ func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueN
 	if err != nil {
 		return gitops.Result{}, err.Error(), err
 	}
+	// What the new build asks of the apps it came with, or that came with
+	// it, is pre-approved as what the first build asked was.
+	s.approveAmong(ctx, tenant)
 	return res, "", nil
 }
 
