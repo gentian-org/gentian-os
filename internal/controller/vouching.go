@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -126,6 +127,14 @@ func (r *TileProjectionReconciler) keepVouchingHomes(ctx context.Context, namesp
 			return nil
 		}
 		return err
+	}
+	// Not where External Secrets owns the Secret, which the tenant's
+	// Composition makes it: it writes the Secret back to its template on
+	// every change, and its password generator makes a new client secret
+	// each time, which the realm learns only on its next poll. Writing the
+	// scopes here turned the component's credential over every few minutes.
+	if owner := metav1.GetControllerOf(secret); owner != nil && owner.Kind == "ExternalSecret" {
+		return nil
 	}
 	want := map[string]string{}
 	for contract, home := range homes {
