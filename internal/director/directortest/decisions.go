@@ -150,7 +150,7 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	}
 	// An administrator of demo by subject, whom the cluster's administrator
 	// may name from demo.
-	tuples = append(tuples, map[string]any{"user": "user:7d0f3c2e", "relation": "member", "object": "group:gentian/tenant/demo/admins"})
+	tuples = append(tuples, map[string]any{"user": "user:7d0f3c2e", "relation": "holder", "object": "position:demo/tenant-administrator"})
 	post("/stores/"+store.ID+"/write", map[string]any{
 		"authorization_model_id": written.ID,
 		"writes":                 map[string]any{"tuple_keys": tuples},
