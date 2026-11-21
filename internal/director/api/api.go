@@ -136,6 +136,10 @@ type Repository interface {
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
+	TenantTrustedDomains(ctx context.Context, tenant string) (gitops.TenantTrustedDomains, error)
+	AddTenantTrustedDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantTrustedDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	SetTenantTrustedDomainsDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	RoleHolders(ctx context.Context) ([]gitops.RoleHolder, error)
 	SetRoleHolder(ctx context.Context, h gitops.RoleHolder, meta gitops.Meta) (gitops.Result, error)
 	LastAccessReview(ctx context.Context) (*gitops.AccessReview, error)
@@ -670,6 +674,10 @@ func (s *Server) routes() {
 		s.action("POST /v1/clusters/{c}/tenants/{t}/catalogues/{s}/actions/rename", "can_configure", s.clusterObject, s.renameTenantCatalogue)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
+		// Whether a tenant may keep its own trusted domains
+		// (trusted_domains.go): the cluster administrator's to say.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/trusted-domains-delegation", "can_configure", s.clusterObject, s.delegateTrustedDomains)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/trusted-domains-delegation", "can_configure", s.clusterObject, s.undelegateTrustedDomains)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (data-lifecycle.md §4).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -789,6 +797,13 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/privileges", "can_view", tenantObject, s.tenantPrivileges)
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
 	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)
+
+	// The tenant's own trusted domains (trusted_domains.go). A domain on the
+	// list answers egress requests, so adding one is whose answer such a
+	// request is: can_approve_privilege, the perimeter approver's.
+	s.guarded("GET /v1/tenants/{t}/trusted-domains", "can_view", tenantObject, s.tenantTrustedDomains)
+	s.guarded("PUT /v1/tenants/{t}/trusted-domains/{domain}", "can_approve_privilege", tenantObject, s.addTrustedDomain)
+	s.guarded("DELETE /v1/tenants/{t}/trusted-domains/{domain}", "can_approve_privilege", tenantObject, s.removeTrustedDomain)
 
 	// No reads of live state here. What the cluster made of a tenant -- the
 	// state of its apps, its ceiling and usage, the plans it may move to, its

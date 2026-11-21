@@ -678,6 +678,24 @@ again, and the platform takes away what the approval gave.
 kubectl gentian apps withdraw aluvian-commerce egress/intake --tenant team
 ```
 
+A tenant can keep **trusted domains** of its own, beside those the cluster
+trusts (`PlatformSecurityPolicy` `spec.trustedDomains`): an `egress` request
+that names hosts is granted without a further answer when every host is in a
+trusted domain, or under one. The list is the tenant's
+`spec.trustedDomains.domains`. The cluster's administrator says whether the
+tenant keeps one (`spec.trustedDomains.delegated`), and the tenant's
+perimeter approver then adds and removes domains; a list that is not
+delegated answers nothing. The Admin Console's Perimeter page offers the same
+to the perimeter approver.
+
+```bash
+kubectl gentian tenants delegate-trusted-domains team on    # the cluster's administrator: team may keep a list
+kubectl gentian trusted-domains list --tenant team
+kubectl gentian trusted-domains add example.org --tenant team      # covers example.org and every name under it
+kubectl gentian trusted-domains remove example.org --tenant team   # a request it answered waits for an answer again
+kubectl gentian tenants delegate-trusted-domains team off   # the list stays and answers nothing
+```
+
 What was approved, for every tenant at once, is read with `cluster#can_audit`
 from the director's `GET /v1/clusters/{c}/privileges` -- `200 {"cluster",
 "privileges": [{"tenant","install","privilege","approver","approvedAt",
