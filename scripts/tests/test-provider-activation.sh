@@ -306,7 +306,7 @@ if [[ "${out}" == *"rc=1"* ]]; then
 else
     bad "B-05 check: the vault token Secret of an earlier install still there is not" "${out}"
 fi
-sed -i '/^secret\/openbao-crossplane-token$/d' "${STATE}/objects"
+grep -vxF "secret/openbao-crossplane-token" "${STATE}/objects" > "${STATE}/objects.kept"; mv "${STATE}/objects.kept" "${STATE}/objects"
 printf 'Secret' > "${STATE}/vault-source"
 out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
 if [[ "${out}" == *"rc=1"* ]]; then
