@@ -12,25 +12,96 @@ GENTIAN_BOOTSTRAP_LOADED=1
 
 # =============================================================================
 # =============================================================================
+# The vault provider's sign-in
+# =============================================================================
+# Crossplane's provider-vault holds no token of its own. Its pod runs as the
+# ServiceAccount below and signs in at the vault's Kubernetes auth with the
+# role of the same purpose (ProviderConfig openbao, credentials.source:
+# Kubernetes), which answers with a token that lives an hour.
+#
+# The ServiceAccount is made here and not by Crossplane, which names a
+# provider's account after its package revision: a role bound to that name
+# stops matching at the next provider upgrade. The provider's runtime config
+# (providers.yaml, vault-config) names this one, and Crossplane leaves an
+# account it did not make alone.
+#
+# The names are also in crossplane/providers/ and in the Cluster composition
+# (vault-auth-role-crossplane); scripts/tests/test-vault-provider-signin.sh
+# holds them together.
+VAULT_PROVIDER_SA="crossplane-provider-vault"
+VAULT_PROVIDER_ROLE="crossplane-provider"
+VAULT_PROVIDER_AUTH_MOUNT="kubernetes"
+
+# vault_provider_in_sync — is the provider signing in, by its own account?
+#
+# Read off the cluster alone, for a step's check(): the account is there, and
+# a role the provider keeps in the vault is in sync, which it is only while
+# the provider can sign in. No such role yet, on a cluster the composition
+# has not reached, is "not known" and answers no.
+vault_provider_in_sync() {
+    local ns synced
+    ns="${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}"
+    kubectl get serviceaccount "${VAULT_PROVIDER_SA}" -n "${ns}" >/dev/null 2>&1 || return 1
+    synced="$(kubectl get authbackendroles.kubernetes.vault.upbound.io \
+        -o jsonpath='{.items[*].status.conditions[?(@.type=="Synced")].status}' 2>/dev/null)" || return 1
+    [[ " ${synced} " == *" True "* ]]
+}
+
+# vault_provider_signs_in — does the vault accept the provider's account?
+#
+# Asked the way the provider asks: a token of the ServiceAccount, presented at
+# the Kubernetes auth. Needs no vault token, so it answers on a cluster whose
+# root token is long gone. It has the API server issue a token that lives ten
+# minutes and signs in with it, so it is for apply(), not for a check().
+vault_provider_signs_in() {
+    local ns addr jwt body
+    ns="${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}"
+    kubectl get serviceaccount "${VAULT_PROVIDER_SA}" -n "${ns}" >/dev/null 2>&1 || return 1
+    jwt="$(kubectl create token "${VAULT_PROVIDER_SA}" -n "${ns}" --duration=10m 2>/dev/null)" || return 1
+    [[ -n "${jwt}" ]] || return 1
+    addr="$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https 2>/dev/null)" || return 1
+    body="$(jq -cn --arg role "${VAULT_PROVIDER_ROLE}" --arg jwt "${jwt}" '{role: $role, jwt: $jwt}')"
+    [[ "$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
+        -d @<(printf '%s' "${body}") \
+        "${addr}/v1/auth/${VAULT_PROVIDER_AUTH_MOUNT}/login")" == "200" ]]
+}
+
+# =============================================================================
 # bootstrap_openbao_for_crossplane — the minimum that must precede Crossplane
 # =============================================================================
 # Everything this writes is something Crossplane needs in order to manage
-# OpenBao at all, and therefore something Crossplane must NOT manage:
+# OpenBao at all:
 #
-#   the KV mount      — where its SecretV2 resources write
-#   crossplane-write  — the policy its token carries
-#   the token Secret  — how provider-vault authenticates
+#   the KV mount          — where its SecretV2 resources write
+#   crossplane-write      — the policy its sign-in carries
+#   the Kubernetes auth   — the backend, its config and the provider's own
+#                           role, which is how provider-vault signs in
 #
-# A composition that managed its own authorization could lock itself out: drift
-# or a delete on any of the three leaves provider-vault unable to reconcile the
-# resource that would restore it.
+# The Cluster composition declares the backend, its config and that role too,
+# and adopts what is here; this only has to come first, because a provider that
+# cannot sign in composes nothing. Every other policy and role is the
+# composition's alone and deliberately absent here.
 #
-# Everything else — the Kubernetes auth backend and its config, the eso-read
-# policy, both auth roles, and the OIDC write path — is declared by the Cluster
-# composition and is deliberately absent here.
+# On a cluster where the provider's account already signs in, nothing needs a
+# vault token and none is asked for: that is every re-run after handover.
 # =============================================================================
 bootstrap_openbao_for_crossplane() {
-    banner "OpenBao bootstrap for Crossplane (mount, policy, token)"
+    banner "OpenBao bootstrap for Crossplane (mount, policy, sign-in)"
+
+    local _sa_ns="${CROSSPLANE_NAMESPACE:-$(ns_kernel provisioning)}"
+    printf '%s\n' \
+        "apiVersion: v1" \
+        "kind: ServiceAccount" \
+        "metadata:" \
+        "  name: ${VAULT_PROVIDER_SA}" \
+        "  namespace: ${_sa_ns}" \
+        | _kubectl_retry apply -f - >/dev/null
+    success "ServiceAccount ${VAULT_PROVIDER_SA} present in ${_sa_ns}."
+
+    if vault_provider_signs_in; then
+        success "The vault accepts ${VAULT_PROVIDER_SA} as ${VAULT_PROVIDER_ROLE} — nothing to write."
+        return 0
+    fi
 
     if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
@@ -67,9 +138,7 @@ bootstrap_openbao_for_crossplane() {
         success "KV v2 mount at '${_kv_mount}/' enabled."
     fi
 
-    # ── 2. Kubernetes auth backend ────────────────────────────────────────────
-
-    # ── 3. crossplane-write policy (broad — provider-vault needs sys/* access) ─
+    # ── 2. crossplane-write policy (broad — provider-vault needs sys/* access) ─
     # vault-migrator keeps this policy in sync from here on: a Job of the
     # kernel chart, because no root token survives handover.
     #
@@ -81,71 +150,41 @@ bootstrap_openbao_for_crossplane() {
     _crossplane_write_policy=$(sed "s/__KV_MOUNT__/${_kv_mount}/g" "${SCRIPT_DIR}/internal/vaultmigrate/crossplane-write.hcl")
     _BAO_RETRY_STDIN="${_crossplane_write_policy}" _bao_retry policy write crossplane-write -
     success "crossplane-write policy written."
-    # The Kubernetes auth backend, its config, the eso-read policy and both auth
-    # roles are NOT written here. The Cluster composition declares all of them,
-    # and doing it twice puts two writers on one OpenBao object with no way to
-    # see them disagree.
-    #
-    # None of them is needed to reach the composition: provider-vault
-    # authenticates with the static token Secret created below
-    # (credentials.source: Secret, provider-configs.yaml), not through the
-    # Kubernetes backend. Only ESO needs that, and ESO's ClusterSecretStore is
-    # itself composed.
 
-    # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
-    # provider-vault v3.x (upjet/Terraform-based) does not support
-    # InjectedIdentity. It reads credentials from a k8s Secret whose 'credentials'
-    # key must contain a JSON object with a 'token' field.
-    # Validate existing Secret before re-minting to stay idempotent.
-    local need_new_token=1
-    if kubectl get secret openbao-crossplane-token -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
-        local existing_token
-        existing_token=$(kubectl get secret openbao-crossplane-token -n "${CROSSPLANE_NAMESPACE}" \
-            -o jsonpath='{.data.credentials}' 2>/dev/null \
-            | base64 -d 2>/dev/null \
-            | jq -r '.token // empty' 2>/dev/null || true)
-        if [[ -n "${existing_token}" ]]; then
-            local http_code
-            http_code=$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-                -H @<(printf 'X-Vault-Token: %s\n' "${existing_token}") \
-                "${VAULT_ADDR}/v1/auth/token/lookup-self" 2>/dev/null || echo 000)
-            if [[ "${http_code}" == "200" ]]; then
-                success "openbao-crossplane-token Secret already valid — skipping."
-                need_new_token=0
-            else
-                info "Existing openbao-crossplane-token is stale (HTTP ${http_code}); recreating."
-                kubectl delete secret openbao-crossplane-token \
-                    -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1 || true
-            fi
-        fi
+    # ── 3. Kubernetes auth: the backend, its config, the provider's role ─────
+    # With kubernetes_host alone the vault reviews a presented token with its
+    # own pod's account and the cluster's CA, which is what the composition's
+    # AuthBackendConfig says too.
+    if bao auth list -format=json 2>/dev/null | jq -e --arg m "${VAULT_PROVIDER_AUTH_MOUNT}/" '.[($m)]' >/dev/null 2>&1; then
+        success "Kubernetes auth at '${VAULT_PROVIDER_AUTH_MOUNT}/' already present."
+    else
+        _bao_retry auth enable -path="${VAULT_PROVIDER_AUTH_MOUNT}" kubernetes
+        _bao_retry write "auth/${VAULT_PROVIDER_AUTH_MOUNT}/config" \
+            kubernetes_host="https://kubernetes.default.svc"
+        success "Kubernetes auth at '${VAULT_PROVIDER_AUTH_MOUNT}/' enabled."
     fi
-
-    if [[ "${need_new_token}" == "1" ]]; then
-        info "Minting periodic crossplane-provider token (period=8760h)..."
-        local cp_token
-        cp_token=$(_bao_retry token create \
-            -policy=crossplane-write \
-            -period=8760h \
-            -orphan \
-            -display-name=crossplane-provider \
-            -format=json \
-            | jq -r '.auth.client_token')
-        if [[ -z "${cp_token}" || "${cp_token}" == "null" ]]; then
-            error "Failed to mint crossplane-provider token."
-            exit 1
-        fi
-        kubectl create secret generic openbao-crossplane-token \
-            -n "${CROSSPLANE_NAMESPACE}" \
-            --from-file=credentials=<(printf '{"token":"%s"}' "${cp_token}")
-        success "openbao-crossplane-token Secret created in ${CROSSPLANE_NAMESPACE}."
-    fi
-
-    info "provider-vault ProviderConfig will authenticate via openbao-crossplane-token Secret."
+    _bao_retry write "auth/${VAULT_PROVIDER_AUTH_MOUNT}/role/${VAULT_PROVIDER_ROLE}" \
+        bound_service_account_names="${VAULT_PROVIDER_SA}" \
+        bound_service_account_namespaces="${_sa_ns}" \
+        token_policies=crossplane-write \
+        token_ttl=3600
+    success "Role ${VAULT_PROVIDER_ROLE} written for ${_sa_ns}/${VAULT_PROVIDER_SA}."
 
     # Scrub the root token from the process environment so it does not remain
     # visible in /proc/<pid>/environ or child-process env for the rest of
     # the install run.  VAULT_ADDR is kept (harmless; it is a plain URL).
     unset VAULT_TOKEN
+
+    local _waited=0
+    until vault_provider_signs_in; do
+        if (( _waited >= 60 )); then
+            error "The vault does not accept ${_sa_ns}/${VAULT_PROVIDER_SA} as ${VAULT_PROVIDER_ROLE}."
+            error "  bao read auth/${VAULT_PROVIDER_AUTH_MOUNT}/role/${VAULT_PROVIDER_ROLE}   shows what the role binds."
+            exit 1
+        fi
+        sleep 5; _waited=$((_waited + 5))
+    done
+    success "The vault accepts ${VAULT_PROVIDER_SA} as ${VAULT_PROVIDER_ROLE}."
 }
 
 # =============================================================================
