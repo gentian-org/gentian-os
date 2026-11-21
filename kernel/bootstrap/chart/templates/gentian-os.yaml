@@ -136,6 +136,11 @@ spec:
         # and followed as the home sync is.
         porter:
           enabled: true
+        # The liaison, a person's sign-ins at services outside the cluster:
+        # shipped for the app that comes with it, published and followed as
+        # the home sync is.
+        liaison:
+          enabled: true
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

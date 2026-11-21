@@ -334,7 +334,7 @@ func TestThePlatformProfilesAreTheOnesTheChartShips(t *testing.T) {
 		t.Fatalf("no profile templates under %s (%v)", templates, err)
 	}
 	name := regexp.MustCompile(`(?m)^kind: ComponentProfile\nmetadata:\n  name: ([a-z0-9-]+)$`)
-	var shipped []string
+	var shipped, unplaced []string
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		if err != nil {
@@ -345,6 +345,20 @@ func TestThePlatformProfilesAreTheOnesTheChartShips(t *testing.T) {
 			t.Fatalf("%s names no ComponentProfile this test can read", file)
 		}
 		shipped = append(shipped, string(m[1]))
+		if !strings.Contains(string(raw), "\n  placement:\n") {
+			unplaced = append(unplaced, string(m[1]))
+		}
+	}
+	// The ones the chart places nowhere are the ones an app may bring, and
+	// no other: a placed component is the platform's to put in a tenant.
+	var brought []string
+	for n := range broughtPlatformProfiles {
+		brought = append(brought, n)
+	}
+	sort.Strings(unplaced)
+	sort.Strings(brought)
+	if strings.Join(unplaced, ",") != strings.Join(brought, ",") {
+		t.Fatalf("the chart places %v nowhere and broughtPlatformProfiles lists %v", unplaced, brought)
 	}
 	var listed []string
 	for n := range platformProfiles {

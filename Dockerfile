@@ -69,6 +69,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o homesync ./cmd/hom
 # porter: the platform's file dialog. One per tenant, placed in its namespace.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o porter ./cmd/porter
 
+# liaison: keeps a person's sign-ins at services outside the cluster. One in
+# a tenant that has an app which comes with it.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o liaison ./cmd/liaison
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
@@ -91,6 +95,7 @@ COPY --from=builder /workspace/confidant /confidant
 COPY --from=builder /workspace/registrar /registrar
 COPY --from=builder /workspace/homesync /homesync
 COPY --from=builder /workspace/porter /porter
+COPY --from=builder /workspace/liaison /liaison
 COPY --from=builder /workspace/arbiter /arbiter
 COPY --from=builder /workspace/vault-migrator /vault-migrator
 
