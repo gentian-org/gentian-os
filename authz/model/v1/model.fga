@@ -5,19 +5,22 @@ model
 # against — see docs/concepts/authorization.md for the rules behind it.
 #
 # Conventions
-#   type            one per CRD kind; object id = the CR's name, namespaced
-#                   kinds as <tenant>/<name>
-#   ids             OpenFGA ids may contain neither ':' nor '#'. A Keycloak group
-#                   gentian:tenant:demo:admins is therefore the object
-#                   group:gentian/tenant/demo/admins — ':' becomes '/', nothing
-#                   else changes, and the mapping is reversible because tenant
-#                   and profile names are DNS labels and contain no '/'.
-#   role            a noun, assigned through group#member — one Keycloak
-#                   group per role. The exception is a role the Cluster claim
-#                   gives a person by name (spec.platformAccess.roleHolders):
-#                   security_officer, auditor, service_admin,
-#                   shared_apps_admin, perimeter_approver and a
-#                   tenant's auditor take
+#   type            one per kind of thing rights are held on; object id = its
+#                   name, things of a tenant as <tenant>/<name>
+#   ids             OpenFGA ids may contain neither ':' nor '#'.
+#   role            a noun: a privilege on ONE thing. Every tenant and app
+#                   has two, user (the lowest) and admin (the highest); admin
+#                   holds every other role on the same thing. An app's profile
+#                   may declare more (type role), each between the two. A role
+#                   does not travel: a tenant's admin is not an app's.
+#   position        a named set of roles a kind of person holds ("Sales
+#                   intern"). It belongs to a tenant, is given to a person by
+#                   plain assignment (position#holder) and may include other
+#                   positions. A role may also be given to a person directly.
+#   named duties    the roles the Cluster claim gives a person by name
+#                   (spec.platformAccess.roleHolders): security_officer,
+#                   auditor, service_admin, shared_apps_admin,
+#                   perimeter_approver and a tenant's auditor take
 #                   user:<realm>/<sub>, the account qualified by the realm
 #                   that holds it, which a token from any other realm can
 #                   never name
@@ -25,23 +28,29 @@ model
 #                   PEPs check permissions, never roles
 #   hierarchy       one parent relation per type (cluster, tenant), derived
 #                   with "<relation> from <parent>"
-#   exclusion       "but not" only for least-privilege invariants
-#   membership      STORED, like everything else. group:<g>#member@user:<sub>
-#                   is written by the operator from Keycloak's event stream and
-#                   reconciled with a read-only client (AD-12, R7). It is never
-#                   taken from a token's groups and never edited in place: the
-#                   store is a projection of Keycloak, so an access review is
-#                   a ListUsers against stored tuples rather than a guess about
-#                   who might present which claim.
+#   additive        grants only add: no relation excludes another
+#   stored          everything is stored, nothing is taken from a token. The
+#                   operator writes structure and what a tenant declares; who
+#                   holds a position or a role is written when it is given.
 #   contextual      runtime facts only — task TTL, acting_for, device posture.
-#                   Never identity, never membership.
-#   structure       everything else is stored, written only by the operator
+#                   Never identity, never who holds what.
 
 type user
 
+# A group of the cluster's own realm that the Cluster claim names for a
+# cluster role, or a group that arrives from a tenant's own directory.
 type group
   relations
     define member: [user]
+
+# A named set of roles. position:<tenant>/<name>.
+type position
+  relations
+    define tenant: [tenant]
+    # sales-manager included_in executive: whoever holds executive holds
+    # sales-manager. The writer refuses a circle.
+    define included_in: [position]
+    define holder: [user, group#member] or holder from included_in
 
 type cluster
   relations
@@ -82,7 +91,7 @@ type tenant
     define cluster: [cluster]
 
     # roles. A platform administrator acts inside a tenant through the
-    # derivation, never by holding the tenant's group: authority comes down the
+    # derivation, never by holding the tenant's role: authority comes down the
     # chain (R4, principle 5), so there is no tuple to forget to remove.
     #
     # operated_by is CONSENT, not structure: this tenant lets the cluster's
@@ -92,7 +101,8 @@ type tenant
     # installs — goes with it. `cluster` above stays: it is what audit and
     # approval derive through, and it is not removable.
     define operated_by: [cluster]
-    define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
+    define admin: [user, position#holder] or admin from operated_by
+    define user: [user, position#holder] or admin
     # A role holder of scope tenant:<t> (an administrator of this tenant), or
     # the cluster's perimeter approver.
     define perimeter_approver: [user] or perimeter_approver from cluster
@@ -101,17 +111,19 @@ type tenant
     # own administrator, given an account of the platform's realm for it. It
     # grants no entry to the tenant (can_enter).
     define auditor: [user]
-    define member: [group#member]              # gentian:tenant:<t>:members
 
-    # reach — the desktop host at L2. An admin account must get in to
-    # administer, and in tenant-platform the console's own users are the
-    # security officer and the auditor, who are members of no tenant.
-    define can_enter: member or admin or perimeter_approver or can_audit from cluster or can_approve from cluster
+    # reach — the desktop host at L2. In tenant-platform the console's own
+    # users are the security officer and the auditor, who hold no role on any
+    # tenant.
+    define can_enter: user or perimeter_approver or can_audit from cluster or can_approve from cluster
 
     # permissions — the director's tenant-level verbs
     define can_install_app: admin
     define can_set_policy: admin          # backup, grants, export schedules, tenant network intent
     define can_grant: admin               # AppGrant: integration consent
+    # People, and who holds which position and role in the tenant. An admin
+    # may give any of them, to themselves too: it is an assignment like any
+    # other, and it is what keeps an app from having nobody to configure it.
     define can_manage_users: admin
     # The perimeter, both directions, is its own grant, asked as its own
     # relation and never as admin: publishing to the internet (can_expose)
@@ -126,15 +138,13 @@ type tenant
     #     by the cluster. It grants nothing else in the tenant.
     define can_expose: perimeter_approver or admin from cluster
     define can_approve_privilege: can_expose
-    define can_view: member or admin or perimeter_approver or can_audit from cluster
+    define can_view: user or perimeter_approver or can_audit from cluster
     # The tenant's audit records in the evidence store, read from the platform
     # tenant's console: the tenant's auditor, and the cluster's, whose
     # can_audit reads every tenant's.
     define can_read_evidence: auditor or can_audit from cluster
 
-    # Admin tiles on the desktop. Not an app permission: app#can_use excludes
-    # admin accounts by design, so an admin account can reach no app object —
-    # which in tenant-platform would be every tile the console has.
+    # Admin tiles on the desktop.
     define can_administer: admin
 
     # The tenant's own credentials, asked by the custodian. A platform
@@ -150,35 +160,25 @@ type tenant
 # the app then arrives is decided where its artefacts are pulled, by the
 # credential the tenant holds for their repository. The platform does no
 # license gating.
+# An installed app, app:<tenant>/<profile>. An add-on is an app of its own.
 type app
   relations
     define tenant: [tenant]
-    # Administration INSIDE one app, and only for profiles that declare a
-    # privilegedRole to map onto — no role, no group. Per app, not per tenant:
-    # a cross-app group made a Nextcloud administrator an Odoo administrator,
-    # which is not what a tenant delegating one app intends.
-    define admin: [group#member]                  # gentian:tenant:<t>:app:<p>:admins
+    # On an add-on: the app it extends. On a base: its installed add-ons.
+    define base: [app]
+    define addon: [app]
+    # The further roles the app's profile declares.
+    define declared: [role]
 
-    # Per-app entitlement. This is NOT new behaviour — it is the rule
-    # gentian-ui already enforces in shell_apps.py ("entitlement is membership
-    # of the app's own group, and nothing else"), expressed where a second
-    # enforcement point can read it. Today the tile list is the only thing
-    # applying it, so knowing an app's hostname bypasses it (G3).
-    #
-    # Which groups entitle is the director's to compute, exactly as the portal
-    # computes it from the catalogue:
-    #   base with no activated addons → its own group
-    #   base with activated addons    → the activated addons' groups, and NOT
-    #                                   the base's own: a base is entered for
-    #                                   the addons inside it, so someone
-    #                                   entitled to none of them has nothing to
-    #                                   do there
-    # Writing the base group in the second case would widen access past what
-    # the portal grants today.
-    define entitled: [group#member]               # gentian:tenant:<t>:app:<profile>
+    # Administration inside the app. Per app: the admin of one is nothing in
+    # another, and the tenant's admin is not an app's. The admin of a base
+    # administers its add-ons.
+    define admin: [user, position#holder] or admin from base
+    # Whoever holds any role on the app may use it, and whoever holds a role
+    # on an add-on may enter its base: an add-on is used inside it.
+    define user: [user, position#holder] or admin or holder from declared or user from addon
 
-    # least privilege per account: an admin account launches nothing
-    define can_use: entitled but not admin from tenant
+    define can_use: user
     define can_launch: can_use                    # app tiles; also L2 on the app's own route
                                                   # admin tiles are tenant#can_administer
     define can_administer: admin
@@ -189,6 +189,16 @@ type app
     # a credential's state, never its value.
     define can_write_credential: admin from tenant
     define can_read_credential: can_read_credential from tenant
+
+# A role an app's profile declares beside user and admin,
+# role:<tenant>/<profile>/<name>. It sits between the two: holding it is
+# holding user (app#user), and the app's admin holds it. A profile may say
+# that one of its roles includes another.
+type role
+  relations
+    define app: [app]
+    define included_in: [role]
+    define holder: [user, position#holder] or admin from app or holder from included_in
 
 type contract
   relations
