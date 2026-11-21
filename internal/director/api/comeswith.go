@@ -29,6 +29,10 @@ import (
 // digest, held to the floor and committed with its profile. Uninstalling the
 // app removes the ones that came with it. One level: what an app that came
 // along comes with itself is not followed.
+//
+// A move to another build does the same for what that build comes with, and
+// a pass beside the platform's mover does it for every installed app, so
+// that a tenant already at a build has what the build comes with.
 
 // comesWithWait bounds the writes of an install that brings other apps: the
 // profile of each, their entries and the app's own. They are made whether or
@@ -41,6 +45,10 @@ type companion struct {
 	name, catalogue, digest string
 }
 
+// errComesWithRefused is a move held back by an app the build comes with
+// that cannot be had.
+var errComesWithRefused = errors.New("an app it comes with cannot be installed")
+
 // installComesWith installs what definition comes with and the tenant does
 // not have, each marked as having come with profile, and returns their
 // names. preferred is the catalog the app itself is installed from, asked
@@ -51,14 +59,31 @@ func (s *Server) installComesWith(
 	w http.ResponseWriter, r *http.Request, c call, tenant, profile string,
 	definition *gentianov1alpha1.ComponentProfile, preferred string, defaultGrant *bool,
 ) ([]string, bool) {
-	if definition == nil || len(definition.Spec.ComesWith) == 0 {
-		return nil, true
-	}
-	ctx := r.Context()
-	apps, err := s.cfg.Repo.Apps(ctx, tenant)
-	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+	came, refusal, err := s.bringComesWith(r.Context(), c, tenant, profile, definition, preferred, defaultGrant)
+	if err != nil {
 		s.repoError(w, r, err)
 		return nil, false
+	}
+	if refusal != "" {
+		s.fail(w, r, http.StatusUnprocessableEntity, refusal)
+		return nil, false
+	}
+	return came, true
+}
+
+// bringComesWith is installComesWith without a response writer, for an
+// install and for a move alike: the names it installed, or in refusal why
+// nothing was.
+func (s *Server) bringComesWith(
+	ctx context.Context, c call, tenant, profile string,
+	definition *gentianov1alpha1.ComponentProfile, preferred string, defaultGrant *bool,
+) (came []string, refusal string, err error) {
+	if definition == nil || len(definition.Spec.ComesWith) == 0 {
+		return nil, "", nil
+	}
+	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+		return nil, "", err
 	}
 	var plan []companion
 	for _, name := range definition.Spec.ComesWith {
@@ -67,36 +92,27 @@ func (s *Server) installComesWith(
 		}
 		found, why, err := s.findCompanion(ctx, tenant, name, preferred)
 		if err != nil {
-			s.repoError(w, r, err)
-			return nil, false
+			return nil, "", err
 		}
 		if why != "" {
-			s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
-				"%s comes with %s, and %s. Nothing was installed.", profile, name, why))
-			return nil, false
+			return nil, fmt.Sprintf("%s comes with %s, and %s. Nothing was installed.", profile, name, why), nil
 		}
 		plan = append(plan, found)
 	}
 	var with []gitops.CameWith
 	for _, p := range plan {
 		if p.catalogue != "" {
-			if _, detail, err := s.materialise(ctx, c, "app", tenant, p.name, p.catalogue, p.digest); err != nil {
-				s.fail(w, r, http.StatusUnprocessableEntity, fmt.Sprintf(
-					"%s comes with %s, which cannot be installed here: %s", profile, p.name, detail))
-				return nil, false
+			if _, _, detail, err := s.materialise(ctx, c, "app", tenant, p.name, p.catalogue, p.digest); err != nil {
+				return nil, fmt.Sprintf("%s comes with %s, which cannot be installed here: %s", profile, p.name, detail), nil
 			}
 		}
 		with = append(with, gitops.CameWith{Profile: p.name, Digest: p.digest, Catalogue: p.catalogue})
 	}
 	if len(with) == 0 {
-		return nil, true
+		return nil, "", nil
 	}
-	_, came, err := s.cfg.Repo.InstallWith(ctx, tenant, profile, with, defaultGrant, c.meta)
-	if err != nil {
-		s.repoError(w, r, err)
-		return nil, false
-	}
-	return came, true
+	_, came, err = s.cfg.Repo.InstallWith(ctx, tenant, profile, with, defaultGrant, c.meta)
+	return came, "", err
 }
 
 // findCompanion answers where the build of an app that comes with another
@@ -162,4 +178,89 @@ func (s *Server) heirsOf(ctx context.Context, tenant, profile string) (map[strin
 		}
 	}
 	return heirs, nil
+}
+
+// comesWithPrincipal is who the pass's commits name.
+const comesWithPrincipal = "platform:comes-with"
+
+// RunComesWith is one pass over every tenant's apps, for a test or a tool
+// that does not want to wait for the ticker: how many apps it installed.
+func (s *Server) RunComesWith(ctx context.Context) int { return s.runComesWith(ctx) }
+
+// runComesWith installs, for every app a tenant has, what the build the
+// tenant is at comes with and the tenant does not have. The build is read
+// from what the cluster holds of it; an app at a build the cluster does not
+// hold is left to its next move.
+func (s *Server) runComesWith(ctx context.Context) (installed int) {
+	log := s.cfg.Log.With("worker", "comes-with")
+	tenants, err := s.cfg.Repo.Tenants(ctx)
+	if err != nil {
+		log.WarnContext(ctx, "the tenants could not be listed; nothing is installed", "error", err.Error())
+		return 0
+	}
+	c := call{meta: gitops.Meta{Principal: comesWithPrincipal, Decision: "the build an app is at comes with it"}}
+	for _, tenant := range tenants {
+		installed += s.bringToTenant(ctx, c, tenant)
+	}
+	return installed
+}
+
+// bringToTenant is runComesWith for one tenant.
+func (s *Server) bringToTenant(ctx context.Context, c call, tenant string) (installed int) {
+	log := s.cfg.Log.With("worker", "comes-with", "tenant", tenant)
+	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	if err != nil {
+		log.WarnContext(ctx, "the tenant's apps could not be read", "error", err.Error())
+		return 0
+	}
+	has := map[string]bool{}
+	for _, a := range apps {
+		has[a.Profile] = true
+	}
+	for _, a := range apps {
+		if a.Placed || a.CameWith != "" {
+			continue
+		}
+		definition := s.definitionAt(ctx, a)
+		if definition == nil || !slices.ContainsFunc(definition.Spec.ComesWith, func(name string) bool { return !has[name] }) {
+			continue
+		}
+		grant := a.DefaultGrant
+		came, refusal, err := s.bringComesWith(ctx, c, tenant, a.Profile, definition, a.Catalogue, &grant)
+		switch {
+		case err != nil:
+			log.WarnContext(ctx, "what an app comes with could not be installed", "app", a.Profile, "error", err.Error())
+		case refusal != "":
+			log.WarnContext(ctx, "what an app comes with could not be installed", "app", a.Profile, "detail", refusal)
+		default:
+			for _, name := range came {
+				has[name] = true
+			}
+			installed += len(came)
+			log.InfoContext(ctx, "installed what an app comes with", "app", a.Profile, "with", came)
+		}
+	}
+	return installed
+}
+
+// definitionAt reads the profile of the build a tenant's app is at: the
+// build the cluster stored for its pin, or the profile the cluster holds
+// where the app has no pin. Nil where neither can be read.
+func (s *Server) definitionAt(ctx context.Context, a gitops.App) *gentianov1alpha1.ComponentProfile {
+	if a.Digest == "" {
+		definition, err := s.cfg.Repo.ProfileDefinition(ctx, a.Profile)
+		if err != nil {
+			return nil
+		}
+		return definition
+	}
+	stored, found, err := s.cfg.Repo.BuildOnCluster(ctx, a.Profile, a.Digest)
+	if err != nil || !found {
+		return nil
+	}
+	definition, err := profilebundle.ReadProfile(stored.Body)
+	if err != nil {
+		return nil
+	}
+	return definition
 }

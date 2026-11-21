@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -204,5 +205,85 @@ func TestWhatAnotherAppComesWithTooStays(t *testing.T) {
 	code, out = h.do(t, "DELETE", "/v1/tenants/demo/apps/reader", tom, "")
 	if code != http.StatusAccepted || fmt.Sprint(out["removedWith"]) != "[wiki]" {
 		t.Fatalf("uninstalling the reader = %d %v; want the wiki removed with it", code, out)
+	}
+}
+
+// A build that comes with an app the build before it did not: the tenant
+// moved to it gets that app, marked as having come with the moved one, and
+// before the pin moves. A build that comes with an app nobody offers is not
+// moved to.
+func TestAMoveBringsWhatTheNewBuildComesWith(t *testing.T) {
+	one := profileNamed("notes", "one")
+	two := strings.ReplaceAll(one, `version: "1.0.0"`, `version: "2.0.0"`) + "  comesWith: [pad]\n"
+	three := strings.ReplaceAll(one, `version: "1.0.0"`, `version: "3.0.0"`) + "  comesWith: [pad, nowhere-to-be-found]\n"
+	content := served{"gentian": {"notes": one, "pad": profileNamed("pad", "one")}}
+	src := catalogues(t, content)
+	op := &rolloutsOperator{}
+	h := startCatalogues(t, src, withOperator(op))
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/notes", tom, fmt.Sprintf(`{"coordinate":"gentian/notes","digest":%q}`, sha(one))); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if entry := appEntryOf(t, h, "demo", "pad"); entry != "" {
+		t.Fatalf("the first build brought the pad:\n%q", entry)
+	}
+	running := func(digest string) []map[string]any {
+		return []map[string]any{{"tenant": "demo", "profile": "notes", "pinned": digest, "running": digest, "target": digest, "phase": "Done", "ready": true}}
+	}
+	op.set(running(sha(one)))
+	content["gentian"]["notes"] = two
+	srv := h.server()
+
+	if moved := srv.RunLatestMoves(context.Background()); moved != 1 {
+		t.Fatalf("the mover moved %d, want the one app", moved)
+	}
+	if entry := appEntryOf(t, h, "demo", "notes"); !strings.Contains(entry, sha(two)) {
+		t.Fatalf("the app was not moved:\n%q", entry)
+	}
+	if entry := appEntryOf(t, h, "demo", "pad"); !strings.Contains(entry, "cameWith: notes") {
+		t.Fatalf("the pad did not come with the moved app:\n%q", entry)
+	}
+
+	op.set(running(sha(two)))
+	content["gentian"]["notes"] = three
+	if moved := srv.RunLatestMoves(context.Background()); moved != 0 {
+		t.Fatalf("the mover moved %d to a build whose companion nobody offers", moved)
+	}
+	if entry := appEntryOf(t, h, "demo", "notes"); !strings.Contains(entry, sha(two)) {
+		t.Fatalf("the app left the build it was at:\n%q", entry)
+	}
+}
+
+// A tenant already at a build that comes with an app it does not have is
+// brought that app by the pass beside the mover; an app that came with
+// another, and a tenant that has everything, are left as they are.
+func TestATenantAtABuildIsBroughtWhatTheBuildComesWith(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("suite.yaml"): comingWith("suite", "wiki", "board", "nextcloud"),
+		})
+		tenant := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+		dt.Commit(t, remote, map[string]string{dt.TenantPath("demo"): strings.TrimRight(tenant, "\n") + "\n  - profile: suite\n"})
+	})
+	nextcloud := appEntryOf(t, h, "demo", "nextcloud")
+	srv := h.server()
+
+	if n := srv.RunComesWith(context.Background()); n != 2 {
+		t.Fatalf("the pass installed %d apps, want the wiki and the board", n)
+	}
+	for _, name := range []string{"wiki", "board"} {
+		if entry := appEntryOf(t, h, "demo", name); !strings.Contains(entry, "cameWith: suite") {
+			t.Errorf("%s is not marked as having come with the suite:\n%q", name, entry)
+		}
+	}
+	if got := appEntryOf(t, h, "demo", "nextcloud"); got != nextcloud {
+		t.Errorf("the tenant's own Nextcloud was changed:\n%q\nwas\n%q", got, nextcloud)
+	}
+	if by := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%b", "main"); !strings.Contains(by, "platform:comes-with") {
+		t.Errorf("the pass's commit does not name it:\n%s", by)
+	}
+	before := h.tip(t)
+	if n := srv.RunComesWith(context.Background()); n != 0 || h.tip(t) != before {
+		t.Fatalf("a second pass installed %d apps, and the repository moved: %v", n, h.tip(t) != before)
 	}
 }
