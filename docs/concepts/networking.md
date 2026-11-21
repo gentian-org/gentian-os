@@ -69,6 +69,7 @@ writes one by hand.
 | the export Job's policy | the tenant's backup and export Jobs | what a backup of the tenant's stores needs |
 | `agent-bridge-*` | the pods of a bridge with a way from the agents, which the edge, the identity provider and the operator must not reach | a floor of the bridge's own, admitting the components that vouch for people, and its way to the app it connects ([bridges.md §4.4](bridges.md#44-ways-from-the-agents)) |
 | `homesync`, `homesync-target-*` | the tenant's home sync's pods, and the pods of the apps it keeps equal and of the homes' providers | the home sync's way to those apps, and their way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
+| `porter`, `porter-target-*` | the tenant's porter's pods, and the pods of the file homes | the file dialog's way to the tenant's file home, and the home's way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
 | `kernel-access-<app>` | the app's pods | Egress to each store the profile declares, on that store's port, and to the model gateway for `requires.services.llm` ([security/design.md §2.6](../security/design.md)) |
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
 | `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |

@@ -121,6 +121,7 @@ type Repository interface {
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	TakeOutRefused(ctx context.Context, refused gitops.Refuser, meta gitops.Meta) (gitops.Result, map[string][]string, error)
+	TakeOutUndeclared(ctx context.Context, undeclared gitops.Undeclared, meta gitops.Meta) (res gitops.Result, taken, left map[string][]string, err error)
 	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
@@ -2292,7 +2293,13 @@ func (s *Server) started(w http.ResponseWriter, r *http.Request, status int, bod
 
 func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 	var refusal *schemacheck.Refusal
+	var refused *gitops.TenantRefused
 	switch {
+	case errors.As(err, &refused):
+		// 422: the cluster's own reason, which holds nothing of git's.
+		s.cfg.Log.InfoContext(r.Context(), "write refused: the cluster would not take the tenant",
+			"request_id", guard.ID(r.Context()), "tenant", refused.Tenant, "reason", refused.Reason)
+		s.fail(w, r, http.StatusUnprocessableEntity, refused.Error())
 	case errors.As(err, &refusal):
 		// 503: the request was fine and nothing was written. The cluster's
 		// resource definitions are older than this software and would drop

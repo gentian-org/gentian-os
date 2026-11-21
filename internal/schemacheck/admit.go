@@ -61,6 +61,20 @@ func (s *Set) Removed(obj map[string]any) ([]string, error) {
 	return pruned, nil
 }
 
+// Undeclared names the fields of an object the schema does not declare, each
+// by its path ("spec.quotas.storage", "spec.apps[2].profile"). They are what
+// a server-side apply of the object is refused for.
+func (s *Set) Undeclared(obj map[string]any) ([]string, error) {
+	pruned, _, err := s.judge(obj)
+	if err != nil {
+		return nil, err
+	}
+	for i, p := range pruned {
+		pruned[i] = strings.TrimSuffix(p, undeclared)
+	}
+	return pruned, nil
+}
+
 // Invalid says what the API server would refuse of an object it is asked to
 // store: what the object holds once the fields the schema does not declare
 // are pruned and its defaults are filled in, measured against its types,
@@ -70,6 +84,9 @@ func (s *Set) Invalid(obj map[string]any) ([]string, error) {
 	_, invalid, err := s.judge(obj)
 	return invalid, err
 }
+
+// undeclared is what a field the schema does not declare is reported with.
+const undeclared = ": field not declared in schema"
 
 // admitter is what one kind at one version is judged with, compiled once.
 type admitter struct {
@@ -142,7 +159,7 @@ func (s *Set) judge(obj map[string]any) (pruned, invalid []string, err error) {
 	pruned = structuralpruning.PruneWithOptions(copied, a.ss, true, structuralschema.UnknownFieldPathOptions{TrackUnknownFieldPaths: true})
 	sort.Strings(pruned)
 	for i, path := range pruned {
-		pruned[i] = path + ": field not declared in schema"
+		pruned[i] = path + undeclared
 	}
 	structuraldefaulting.Default(copied, a.ss)
 

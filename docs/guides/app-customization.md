@@ -598,6 +598,56 @@ spec:
 - **Paths.** The component never assumes the home's paths. For files the contract gives the root;
   for calendars and address books it asks the home (`current-user-principal`, the home sets).
 
+**A file, asked of the person.** An app that needs a file of a person's and not their files asks
+the platform's file dialog, the porter, which every tenant has at `files.<tenant's domain>`. The
+person chooses in a window of the porter's own, and the app's page is handed what they chose and
+nothing else. The app gets no token for the home, and its server reaches no file.
+
+```yaml
+spec:
+  integrations:
+    - contract: file-store
+      dialog: [pick]        # pick, open, save
+```
+
+The app's page opens the window and the two speak by messages:
+
+```js
+const dialog = window.open("https://files.<tenant's domain>/dialog", "gentian-files", "popup,width=720,height=560");
+window.addEventListener("message", (ev) => {
+  if (ev.origin !== "https://files.<tenant's domain>" || ev.source !== dialog) return;
+  if (ev.data.gentianFiles === "ready") dialog.postMessage({gentianFiles: "ask", use: "pick"}, ev.origin);
+  if (ev.data.gentianFiles === "picked") attach(ev.data.file);   // {name, id, url}
+  // "cancelled": the person closed the window
+});
+```
+
+- **Which app asks** is the origin of the page that asks, as the browser states it: one of the
+  app's gateway entries. The dialog answers that origin and no other, and only while the tenant's
+  administrator grants the app the file store.
+- **A picked file** is its name, its id at the home and the address that opens it by that id.
+  Whoever follows the address is asked by the home, signed in as themselves; the address carries
+  the id and nothing of the file's path.
+- **A home is offered** when its profile says the three things WebDAV leaves open, with the
+  contract it provides:
+
+  ```yaml
+  spec:
+    provides:
+      - name: file-store
+        protocol: webdav
+        endpoint: {service: nextcloud, port: 8080, path: /remote.php/dav/}
+        files:
+          root: /files/{principal}/                        # where a person's files start
+          idProperty: "{http://owncloud.org/ns}fileid"     # the property that holds a file's id
+          open: {entry: web, path: "/f/{id}"}              # opens a file by its id
+  ```
+
+  `{principal}` is the last part of the address the home names as the person's principal
+  (`DAV:current-user-principal`).
+- **The porter** reaches the home as the person at its window and as nobody else, by the exchange
+  above. It is the platform's own and is given the tenant's file home with nobody asked.
+
 **An app that keeps a copy of its own.** An app whose pages read its own calendar or contacts
 tables (Odoo, ERPNext, a CRM) declares `homeSync`, and the tenant's home sync keeps those records
 equal to the home, per person who signs in to the app. The app writes no sync code: a driver for

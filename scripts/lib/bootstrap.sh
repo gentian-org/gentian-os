@@ -2773,7 +2773,6 @@ spec:
     cpu: "16"
     memory: 32Gi
     storage: 50Gi
-    maxApps: 20
   # No apps: the platform desktop's tiles are the kernel consoles the
   # director answers from this account's relations, not catalogue apps.
   apps: []
@@ -3173,7 +3172,6 @@ spec:
     cpu: "16"
     memory: 32Gi
     storage: 50Gi
-    maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
 EOF

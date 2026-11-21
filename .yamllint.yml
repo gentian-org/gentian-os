@@ -23,6 +23,7 @@ ignore: |
   internal/schemacheck/definitions/crds/
   charts/gentian-os/templates/
   charts/homesync/templates/
+  charts/porter/templates/
   # Every chart under kernel/manifests/, by pattern rather than by name, for the
   # reason spelled out below: a chart added here must not be able to break CI by
   # being forgotten in this list.

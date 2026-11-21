@@ -516,26 +516,31 @@ jobs:
           done <<< "${TAGS}"
           docker buildx imagetools create "${args[@]}" "ghcr.io/gentian-org/gentian-os@${DIGEST}"
 
-  # The home sync's chart (charts/homesync), published with the image it runs:
+  # The charts of the components the platform places in every tenant from its
+  # own image (charts/${{ matrix.chart }}, charts/porter), published with that image:
   # once the image has its tags, a moving chart per branch and an immutable
   # one per commit, each naming this build's image. A placed component has no
-  # image updater, so the chart itself names the image; and a Helm release
+  # image updater, so each chart itself names the image; and a Helm release
   # under an unchanged version is never upgraded, so the moving chart's
   # appVersion names the immutable one a cluster installs.
-  homesync-chart:
-    name: Home sync chart
+  placed-charts:
+    name: Chart — ${{ matrix.chart }}
     runs-on: ubuntu-latest
     needs: [publish]
     if: ${{ needs.publish.result == 'success' }}
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        chart: [homesync, porter]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Versions
         id: v
         run: |
-          base="$(sed -n 's/^version: *//p' charts/homesync/Chart.yaml)"
+          base="$(sed -n 's/^version: *//p' charts/${{ matrix.chart }}/Chart.yaml)"
           short="${GITHUB_SHA::7}"
           # A prerelease part of digits alone is a number in semver, and
           # "0710412" is refused for its leading zero: such a commit is named
@@ -556,13 +561,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Name this build's image
         run: |
-          sed -i 's/^\(\s*tag:\) "0\.1\.0"$/\1 "${{ steps.v.outputs.image }}"/' charts/homesync/values.yaml
-          test "$(grep -c 'tag: "${{ steps.v.outputs.image }}"' charts/homesync/values.yaml)" = 1
+          sed -i 's/^\(\s*tag:\) "0\.1\.0"$/\1 "${{ steps.v.outputs.image }}"/' charts/${{ matrix.chart }}/values.yaml
+          test "$(grep -c 'tag: "${{ steps.v.outputs.image }}"' charts/${{ matrix.chart }}/values.yaml)" = 1
       - name: Lint and package
         run: |
-          helm lint charts/homesync
-          helm package charts/homesync --version "${{ steps.v.outputs.immutable }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-immutable
-          helm package charts/homesync --version "${{ steps.v.outputs.moving }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-moving
+          chart="charts/${{ matrix.chart }}"
+          helm lint "${chart}"
+          helm package "${chart}" --version "${{ steps.v.outputs.immutable }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-immutable
+          helm package "${chart}" --version "${{ steps.v.outputs.moving }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-moving
       - name: Push
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin

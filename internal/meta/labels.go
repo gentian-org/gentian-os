@@ -43,6 +43,9 @@ const (
 	// NetPolicyHomeSync marks the policies that open the tenant's home sync's
 	// way to the apps it keeps equal and to the homes, and theirs for it.
 	NetPolicyHomeSync = "homesync"
+	// NetPolicyPorter marks the policies that open the tenant's porter's way
+	// to the tenant's file home, and the home's for it.
+	NetPolicyPorter = "porter"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"

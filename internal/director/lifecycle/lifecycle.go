@@ -296,6 +296,40 @@ func (c *Client) Definitions(ctx context.Context) (schemacheck.Report, error) {
 	return report, nil
 }
 
+// tenantAdmissionTimeout bounds asking the operator whether the cluster
+// would take a Tenant: one dry run against the API server.
+const tenantAdmissionTimeout = 15 * time.Second
+
+// AdmitTenant asks the operator whether the cluster would take the manifest
+// of the Tenant named (the operator's /v1/tenants/{tenant}/actions/admit).
+// refusal is the cluster's reason where it would not. An operator that
+// cannot be asked, or that has no such route, is an error: nothing is known.
+func (c *Client) AdmitTenant(ctx context.Context, tenant string, manifest []byte) (refusal string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, tenantAdmissionTimeout)
+	defer cancel()
+	status, body, err := c.Do(ctx, "/v1/tenants/"+url.PathEscape(tenant)+"/actions/admit", "", map[string]string{"manifest": string(manifest)})
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", &UpstreamError{Status: status, Message: ErrorMessage(body)}
+	}
+	var answer struct {
+		Admitted bool   `json:"admitted"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return "", fmt.Errorf("app-lifecycle API: tenant admission: %w", err)
+	}
+	if answer.Admitted {
+		return "", nil
+	}
+	if answer.Reason == "" {
+		answer.Reason = "the cluster gave no reason"
+	}
+	return answer.Reason, nil
+}
+
 // RefreshDeploymentsPath is the operator's command that Argo CD read the
 // deployments repository now.
 const RefreshDeploymentsPath = "/v1/actions/refresh-deployments"

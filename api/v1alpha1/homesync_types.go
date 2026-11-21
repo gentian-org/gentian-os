@@ -26,6 +26,10 @@ import (
 // tenant is given: the realm knows it as vouch-homesync.
 const HomeSyncProfile = "homesync"
 
+// PorterProfile is the profile of the platform's file dialog, which every
+// tenant is given: the realm knows it as vouch-porter.
+const PorterProfile = "porter"
+
 // +kubebuilder:validation:XValidation:rule="has(self.calendar) || has(self.contacts)",message="homeSync keeps calendar, contacts or both"
 // HomeSyncSpec is what an app that keeps calendars and contacts of its own
 // declares so that the platform's home sync keeps them equal to the tenant's

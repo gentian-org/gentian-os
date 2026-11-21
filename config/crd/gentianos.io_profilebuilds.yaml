@@ -2969,6 +2969,28 @@ spec:
                           description: Contract is the name of the contract to consume.
                           minLength: 1
                           type: string
+                        dialog:
+                          description: |-
+                            Dialog says the app's pages ask the platform's file dialog (the
+                            porter) for files, and what for: pick, open, save. The person chooses
+                            in a window of the platform's, and the page is handed what they chose
+                            and nothing else: a picked file's name, id and address, or a handle
+                            for the one file to read or write. The app is given no token for the
+                            home and its server reaches no file. It holds while the tenant's
+                            administrator grants the contract.
+
+                            For file-store only.
+                          items:
+                            description: FileDialogUse is one thing an app asks the
+                              platform's file dialog for.
+                            enum:
+                            - pick
+                            - open
+                            - save
+                            type: string
+                          maxItems: 3
+                          type: array
+                          x-kubernetes-list-type: set
                         provider:
                           description: Provider is the expected provider app by profile
                             name.
@@ -2981,6 +3003,9 @@ spec:
                           calendar-store or contacts-store'
                         rule: '!has(self.asPerson) || !self.asPerson || self.contract
                           in [''file-store'', ''calendar-store'', ''contacts-store'']'
+                      - message: dialog is for the contract file-store
+                        rule: '!has(self.dialog) || self.dialog.size() == 0 || self.contract
+                          == ''file-store'''
                     type: array
                   launch:
                     description: |-
@@ -3777,6 +3802,57 @@ spec:
                           - port
                           - service
                           type: object
+                        files:
+                          description: |-
+                            Files is what a provider of file-store says about itself beyond
+                            WebDAV, so that the platform's file dialog (the porter) can show a
+                            person their files and name one of them. Without it the dialog does
+                            not offer this provider.
+                          properties:
+                            idProperty:
+                              description: |-
+                                IDProperty is the WebDAV property that holds a file's id: one that
+                                stays the same when the file is moved or renamed, and is the same for
+                                everybody who may see the file. Written "{namespace}name".
+                              maxLength: 253
+                              minLength: 3
+                              pattern: ^\{[^{}\s]+\}[A-Za-z_][A-Za-z0-9._-]*$
+                              type: string
+                            open:
+                              description: Open is the address that opens a file by
+                                its id in a browser.
+                              properties:
+                                entry:
+                                  description: Entry is the name of the provider's
+                                    gateway entry (expose[].name).
+                                  maxLength: 63
+                                  minLength: 1
+                                  type: string
+                                path:
+                                  description: |-
+                                    Path is the path on that entry, with "{id}" where the id goes. It
+                                    carries the id and nothing else of the file.
+                                  maxLength: 253
+                                  pattern: ^/[A-Za-z0-9._~/?=&-]*\{id\}[A-Za-z0-9._~/?=&-]*$
+                                  type: string
+                              required:
+                              - entry
+                              - path
+                              type: object
+                            root:
+                              description: |-
+                                Root is where a person's files start, as a path below the contract's
+                                endpoint. "{principal}" stands for the last part of the address the
+                                home names as the person's principal (DAV:current-user-principal).
+                              maxLength: 253
+                              minLength: 1
+                              pattern: ^[A-Za-z0-9._~/-]*(\{principal\}[A-Za-z0-9._~/-]*)?$
+                              type: string
+                          required:
+                          - idProperty
+                          - open
+                          - root
+                          type: object
                         name:
                           description: Name is the contract name (e.g., "file-store",
                             "project-management").
@@ -3790,6 +3866,9 @@ spec:
                       required:
                       - name
                       type: object
+                      x-kubernetes-validations:
+                      - message: files is for the contract file-store
+                        rule: '!has(self.files) || self.name == ''file-store'''
                     type: array
                   requires:
                     description: |-
@@ -5425,13 +5504,14 @@ spec:
                     || self.trustTier == ''platform'''
                 - message: 'integrations[].asPerson needs requires.services.vouching:
                     keys, for a component that signs the statements a person''s token
-                    is asked with, or at trustTier certified exchange without keys,
-                    for one that acts only while the person is present'
+                    is asked with, or exchange without keys and an entry that says
+                    exchangeToken, for one that acts only while the person is present'
                   rule: '!has(self.integrations) || !self.integrations.exists(i, has(i.asPerson)
                     && i.asPerson) || (has(self.requires) && has(self.requires.services)
                     && has(self.requires.services.vouching) && (has(self.requires.services.vouching.keys)
-                    || (self.trustTier == ''certified'' && has(self.requires.services.vouching.exchange)
-                    && self.requires.services.vouching.exchange)))'
+                    || (has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange
+                    && has(self.expose) && self.expose.exists(e, has(e.exchangeToken)
+                    && e.exchangeToken))))'
                 - message: 'a service exposes on the gateway only: the perimeter has
                     no session'
                   rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)

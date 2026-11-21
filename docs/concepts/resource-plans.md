@@ -98,11 +98,9 @@ pairs, and only the reserved pair is priced:
 | `storage` | `requests.storage` | Already request-shaped; PVCs reserve what they ask for |
 
 The rule deciding what belongs in a plan is that a plan is a quantity of
-capacity, so its fields are the ones that become ResourceQuota keys. `maxApps`
-becomes none — the Tenant admission webhook enforces it against `spec.apps` —
-so it is a policy limit set per cluster or per tenant, and no plan touches it in
-either direction. Writing it would sell a policy as capacity; nulling it would
-have a plan change quietly delete a cluster's app cap.
+capacity, so its fields are the ones that become ResourceQuota keys. How many
+apps a tenant installs is no such quantity and is not limited: what the apps
+reserve and use is.
 
 The catalog's limits multiples — 4× CPU, 2× memory — come from that table
 rather than from a round number. A tighter ceiling would refuse pods on a plan

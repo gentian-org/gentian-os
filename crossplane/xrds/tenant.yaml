@@ -315,9 +315,6 @@ spec:
                   type: object
                   description: Resource consumption limits for this tenant.
                   properties:
-                    maxApps:
-                      type: integer
-                      description: Maximum number of apps this tenant may install.
                     storage:
                       type: string
                       description: Total storage quota (e.g. "200Gi").

@@ -27,7 +27,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/handover"
-	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
@@ -35,7 +34,6 @@ import (
 //
 // Checks performed:
 //  1. Every app in spec.apps references a ComponentProfile that exists.
-//  2. The number of apps does not exceed spec.quotas.maxApps (when set).
 //
 // +kubebuilder:webhook:path=/validate-gentianos-io-v1alpha1-tenant,mutating=false,failurePolicy=fail,sideEffects=None,groups=gentianos.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=vtenant.gentianos.io,admissionReviewVersions=v1
 type TenantValidator struct {
@@ -193,21 +191,6 @@ func (v *TenantValidator) validateHandover(ctx context.Context, tenant *gentiano
 // Validate runs all validation checks and returns a human-readable error if any fail.
 // Exported so tests can exercise the same code path the webhook does.
 func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	// Check maxApps quota. It counts the apps the tenant installed: a
-	// component the platform places takes no place of the tenant's.
-	if tenant.Spec.Quotas != nil && tenant.Spec.Quotas.MaxApps > 0 {
-		installed, err := placement.Installed(ctx, v.Client, tenant.Spec.Apps)
-		if err != nil {
-			return fmt.Errorf("tenant %q: reading which apps are installed: %w", tenant.Name, err)
-		}
-		if int32(len(installed)) > tenant.Spec.Quotas.MaxApps {
-			return fmt.Errorf(
-				"tenant %q: app count %d exceeds maxApps quota %d",
-				tenant.Name, len(installed), tenant.Spec.Quotas.MaxApps,
-			)
-		}
-	}
-
 	// Check each referenced ComponentProfile exists, the components the
 	// platform places among them. A profile that is not there is reported
 	// last, after every other check: a caller that admits a dry run for a

@@ -46,7 +46,6 @@ spec:
   # Retain, so retiring the tenant does not take its data with it.
   deletionPolicy: Retain
   quotas:
-    maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
 `

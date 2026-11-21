@@ -43,7 +43,7 @@ import (
 // struct must break a test that a human then has to look at.
 func fullyPopulatedQuotas(t *testing.T) *gentianov1alpha1.TenantQuotas {
 	t.Helper()
-	q := &gentianov1alpha1.TenantQuotas{MaxApps: 10, MaxPods: 100, RunsMaxPods: 10}
+	q := &gentianov1alpha1.TenantQuotas{MaxPods: 100, RunsMaxPods: 10}
 	for target, value := range map[**resource.Quantity]string{
 		&q.Storage:        "100Gi",
 		&q.CPU:            "16",
