@@ -105,6 +105,8 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                                             podSecurity or clusterRoles (the cluster's security officer),
                                                             apiExtensions or a role that writes (break-glass)
   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
+  kubectl gentian apps withdraw <app> <kind>/<name> --tenant <tenant>
+                                                            take back one approval; the request waits for an answer again
                                                             decline one, with the same right; the app keeps waiting
   kubectl gentian approvals list                             what awaits the security officer and the perimeter
                                                             approver, across all tenants: who answers, who asked,
