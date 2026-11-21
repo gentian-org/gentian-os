@@ -154,27 +154,6 @@ func TestCheckFitAllowsAPlanThatExactlyFits(t *testing.T) {
 	}
 }
 
-// An app cap is the Tenant webhook's policy limit, not capacity anyone buys, so
-// a plan carrying one must not turn a move between plans into a refusal.
-func TestCheckFitIgnoresAnAppCap(t *testing.T) {
-	p := plan("small", 0, "64", "64Gi")
-	p.Spec.Quotas.MaxApps = 3
-
-	if err := CheckFit(&p, nil); err != nil {
-		t.Fatalf("an app cap must not block a plan change: %v", err)
-	}
-}
-
-// Two tenants differing only in their app cap are on the same plan. Comparing
-// it would make every tenant whose cluster defaults set a cap match no plan.
-func TestQuotasEqualIgnoresTheAppCap(t *testing.T) {
-	a := gentianov1alpha1.TenantQuotas{CPU: qty("8"), MaxApps: 5}
-	b := gentianov1alpha1.TenantQuotas{CPU: qty("8"), MaxApps: 40}
-	if !gentianov1alpha1.QuotasEqual(&a, &b) {
-		t.Fatal("the app cap must not be part of plan identity")
-	}
-}
-
 func TestDescribePairsUsedAndHardWithARatio(t *testing.T) {
 	quota := &corev1.ResourceQuota{
 		Status: corev1.ResourceQuotaStatus{

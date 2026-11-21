@@ -121,6 +121,7 @@ type Repository interface {
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
 	TakeOutRefused(ctx context.Context, refused gitops.Refuser, meta gitops.Meta) (gitops.Result, map[string][]string, error)
+	TakeOutUndeclared(ctx context.Context, undeclared gitops.Undeclared, meta gitops.Meta) (res gitops.Result, taken, left map[string][]string, err error)
 	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)

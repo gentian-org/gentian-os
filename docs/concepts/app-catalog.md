@@ -256,7 +256,6 @@ spec:
     mode: selfhosted
 
   quotas:
-    maxApps: 20
     storage: 100Gi
     cpu: "8"
     memory: 16Gi
@@ -994,7 +993,7 @@ immutable.
   namespace, and the director writes `spec.apps` only for a caller holding
   `can_install_app` on that tenant. The Tenant webhook
   (`internal/webhook/tenant_validator.go`) refuses an entry whose profile is
-  not on the cluster and more apps than `spec.quotas.maxApps`.
+  not on the cluster.
 - At reconcile the operator refuses a class it does not run
   (`ClassUnsupported`: only `app`, `action` and `bridge` are reconciled) and an
   instance whose class its profile does not list (`ClassMismatch`); nothing is

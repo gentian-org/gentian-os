@@ -1793,7 +1793,6 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.productSku` | string |  | `ProductSku` identifies this plan to the commerce backend. |
 | `spec.quotas` | object | yes | `Quotas` are the limits a tenant on this plan receives. |
 | `spec.quotas.cpu` | int-or-string |  | `CPU` caps the sum of container CPU **limits** in the namespace. |
-| `spec.quotas.maxApps` | integer (int32) |  | `MaxApps` is the maximum number of apps this tenant may install. |
 | `spec.quotas.maxPods` | integer (int32) |  | `MaxPods` caps the number of pods in the tenant namespace (init Jobs + app workloads). |
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
@@ -1958,7 +1957,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
 | `spec.quotas` | object |  | `Quotas` sets resource limits for this tenant. |
 | `spec.quotas.cpu` | int-or-string |  | `CPU` caps the sum of container CPU **limits** in the namespace. |
-| `spec.quotas.maxApps` | integer (int32) |  | `MaxApps` is the maximum number of apps this tenant may install. |
 | `spec.quotas.maxPods` | integer (int32) |  | `MaxPods` caps the number of pods in the tenant namespace (init Jobs + app workloads). |
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |

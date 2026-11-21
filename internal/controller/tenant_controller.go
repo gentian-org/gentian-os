@@ -1146,9 +1146,6 @@ func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q.RequestsMemory != nil {
 		quotas["requestsMemory"] = q.RequestsMemory.String()
 	}
-	if q.MaxApps > 0 {
-		quotas["maxApps"] = int64(q.MaxApps)
-	}
 	if q.MaxPods > 0 {
 		quotas["maxPods"] = int64(q.MaxPods)
 	}
