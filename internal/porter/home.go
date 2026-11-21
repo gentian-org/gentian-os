@@ -327,12 +327,23 @@ func (s *session) target(p string) (string, error) {
 			return "", refuse(http.StatusBadRequest, "That is no place in your files.")
 		}
 	}
-	parts := strings.Split(strings.Trim(clean, "/"), "/")
-	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
+	root, err := url.Parse(s.root)
+	if err != nil {
+		return "", err
 	}
-	rel := strings.Join(parts, "/")
-	return s.root + rel, nil
+	// Only the path is the page's: the scheme and the host are the root's,
+	// copied from it, and the result is held to the root once more.
+	u := &url.URL{Scheme: root.Scheme, Host: root.Host, Path: root.Path}
+	if rel := strings.Trim(clean, "/"); rel != "" {
+		u = u.JoinPath(strings.Split(rel, "/")...)
+		if strings.HasSuffix(root.Path, "/") && strings.HasSuffix(clean, "/") {
+			u.Path += "/"
+		}
+	}
+	if u.Host != root.Host || u.Scheme != root.Scheme || !strings.HasPrefix(u.Path, root.Path) {
+		return "", refuse(http.StatusBadRequest, "That is no place in your files.")
+	}
+	return u.String(), nil
 }
 
 func idProps(home *Home) (xml.Name, string) {

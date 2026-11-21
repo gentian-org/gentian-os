@@ -565,9 +565,10 @@ jobs:
           test "$(grep -c 'tag: "${{ steps.v.outputs.image }}"' charts/${{ matrix.chart }}/values.yaml)" = 1
       - name: Lint and package
         run: |
-          helm lint charts/${{ matrix.chart }}
-          helm package charts/${{ matrix.chart }} --version "${{ steps.v.outputs.immutable }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-immutable
-          helm package charts/${{ matrix.chart }} --version "${{ steps.v.outputs.moving }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-moving
+          chart="charts/${{ matrix.chart }}"
+          helm lint "${chart}"
+          helm package "${chart}" --version "${{ steps.v.outputs.immutable }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-immutable
+          helm package "${chart}" --version "${{ steps.v.outputs.moving }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-moving
       - name: Push
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
