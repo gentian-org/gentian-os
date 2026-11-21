@@ -22,17 +22,18 @@ func (c *recordingChecker) Check(_ context.Context, _, user, relation, object st
 	return false, nil
 }
 
-// TestGroupNamesTranscript holds the groups the store is asked about: an
-// app's, and a tenant's administrators'.
-func TestGroupNamesTranscript(t *testing.T) {
-	if got, err := appGroup("acme", "wiki"); err != nil || got != "group:gentian/tenant/acme/app/wiki" {
-		t.Fatalf("appGroup: %q %v", got, err)
-	}
+// TestTenantAdministratorQuestion holds what the store is asked to learn
+// whether a person administers a tenant: the role, on the tenant.
+func TestTenantAdministratorQuestion(t *testing.T) {
 	c := &recordingChecker{}
 	if _, err := TenantAdministrator(context.Background(), c, "", "acme", "s-1"); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.asked) != 1 || c.asked[0] != "user:s-1 member group:gentian/tenant/acme/admins" {
+	if len(c.asked) != 1 || c.asked[0] != "user:s-1 admin tenant:acme" {
 		t.Fatalf("asked %q", c.asked)
+	}
+	// A tenant that is no name is asked about nothing.
+	if ok, err := TenantAdministrator(context.Background(), c, "", "ac:me", "s-1"); ok || err != nil || len(c.asked) != 1 {
+		t.Fatalf("a tenant that cannot be named: %v %v %q", ok, err, c.asked)
 	}
 }
