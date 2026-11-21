@@ -670,6 +670,14 @@ waiting, but the tenant's console and the App Store's install step show who
 declined, when and why, and offer to ask again. Asking again clears the
 decline, as does an approval made after it.
 
+An approval is taken back with `apps withdraw`, by whoever may approve a
+request of the kind. It is one commit: the request waits for an answer
+again, and the platform takes away what the approval gave.
+
+```bash
+kubectl gentian apps withdraw aluvian-commerce egress/intake --tenant team
+```
+
 What was approved, for every tenant at once, is read with `cluster#can_audit`
 from the director's `GET /v1/clusters/{c}/privileges` -- `200 {"cluster",
 "privileges": [{"tenant","install","privilege","approver","approvedAt",

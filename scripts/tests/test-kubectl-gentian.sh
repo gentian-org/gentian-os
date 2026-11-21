@@ -518,6 +518,23 @@ fresh
 gentian apps decline aluvian-commerce hostNetwork/x --tenant team --reason "because it must not"
 refused "a decline of no known kind is a usage error"
 
+# Withdrawing takes an approval back: one DELETE, no body.
+fresh; reply DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian apps withdraw aluvian-commerce egress/intake --tenant team
+is "apps withdraw sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake '
+has "... and says the request waits again" "${OUT}" "Withdrew egress/intake from aluvian-commerce in team: committed"
+fresh; reply DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake 200 '{"status":"unchanged"}'
+gentian apps withdraw aluvian-commerce egress/intake --tenant team
+has "apps withdraw of what is not approved says so" "${OUT}" "is not approved; nothing was committed"
+fresh
+gentian apps withdraw aluvian-commerce --tenant team
+refused "a withdrawal must name the request"
+fresh
+gentian apps withdraw aluvian-commerce hostNetwork/x --tenant team
+refused "a withdrawal of no known kind is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+
 # What awaits an approver, across the cluster: the usher's list, read as a
 # table with who answers, who asked and why, and the command that answers it.
 fresh; reply GET /v1/clusters/c1/approvals 200 '{"approvals":[{"tenant":"team","profile":"aluvian-commerce","install":"aluvian-commerce","privilege":"podSecurity/run-as-root","approvedBy":"security-officer","reason":"the vendor image writes its cache as root","requestedBy":"tom@example.com","requestedAt":"2026-10-21T09:12:00Z","note":"needed for the pilot"},{"tenant":"other","profile":"wiki","install":"wiki","privilege":"clusterRoles/node-reader","approvedBy":"security-officer","declinedBy":"sam@example.com","declinedAt":"2026-10-21T10:00:00Z","declineReason":"node access is not for a wiki"}]}'

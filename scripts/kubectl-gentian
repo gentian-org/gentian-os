@@ -104,6 +104,8 @@
 #                                                             podSecurity or clusterRoles (the cluster's security officer),
 #                                                             apiExtensions or a role that writes (break-glass)
 #   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
+#   kubectl gentian apps withdraw <app> <kind>/<name> --tenant <tenant>
+#                                                             take back one approval; the request waits for an answer again
 #                                                             decline one, with the same right; the app keeps waiting
 #   kubectl gentian approvals list                             what awaits the security officer and the perimeter
 #                                                             approver, across all tenants: who answers, who asked,
@@ -2831,7 +2833,8 @@ cmd_apps() {
             ;;
         approve) cmd_apps_approve "$@" ;;
         decline) cmd_apps_decline "$@" ;;
-        *) die "usage: kubectl gentian apps list|install|uninstall|approve|decline ..." ;;
+        withdraw) cmd_apps_withdraw "$@" ;;
+        *) die "usage: kubectl gentian apps list|install|uninstall|approve|decline|withdraw ..." ;;
     esac
 }
 
@@ -2909,6 +2912,40 @@ cmd_apps_approve() {
         return 0
     fi
     echo "Approved ${privilege} for ${app} in ${t}: committed ($(_committed "${answer}")). The app goes on once the platform has it."
+}
+
+# kubectl gentian apps withdraw <app> <kind>/<name> --tenant <t>
+#
+# Takes back one approval: one commit through the director. The app's request
+# waits for an answer again and the platform takes away what the approval
+# gave. Whoever may approve a request of the kind may withdraw it.
+cmd_apps_withdraw() {
+    local usage_text app="" privilege="" t answer
+    usage_text='usage: kubectl gentian apps withdraw <app> <kind>/<name> --tenant <tenant>'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${app}" ]]; then app="$1"
+                elif [[ -z "${privilege}" ]]; then privilege="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${app}" && -n "${privilege}" && -n "${t:-}" ]] || die "${usage_text}"
+    _label "an app" "${app}"
+    _tenant "a tenant" "${t}"
+    need curl jq
+    _privilege_ref "${privilege}"
+
+    answer="$(_call DELETE "/v1/tenants/${t}/privileges/${app}/${PRIV_KIND}/${PRIV_NAME}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "${privilege} of ${app} in ${t} is not approved; nothing was committed."
+        return 0
+    fi
+    echo "Withdrew ${privilege} from ${app} in ${t}: committed ($(_committed "${answer}")). The request waits for an answer again."
 }
 
 # _privilege_ref <kind>/<name> -- checks the request's shape and names the
