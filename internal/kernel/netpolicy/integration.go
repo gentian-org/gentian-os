@@ -71,7 +71,9 @@ func ContractNetworkPolicies(
 	if consumer == "" || provider == "" || consumer == provider {
 		return nil
 	}
-	effective := EffectiveContractCapabilities(binding, grant)
+	// The file dialog's capabilities open nothing between the two: the
+	// porter, not the consumer, reaches the home.
+	effective := ReachCapabilities(binding, grant)
 	if len(effective) == 0 {
 		return nil
 	}

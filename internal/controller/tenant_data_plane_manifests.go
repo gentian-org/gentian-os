@@ -194,7 +194,9 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 		return nil, err
 	}
 	for _, ib := range bindings {
-		if r.Seeder != nil {
+		// A binding that asks only the file dialog has no credential to
+		// be seeded for it.
+		if r.Seeder != nil && netpolicy.AsksReach(ib) {
 			if _, err := r.Seeder.SeedContract(ctx, tenant.Name, ib.Spec.Contract); err != nil {
 				return nil, fmt.Errorf("seed contract %s: %w", ib.Spec.Contract, err)
 			}
@@ -254,7 +256,7 @@ func (r *TenantReconciler) clearUngrantedContractEndpoints(
 	granted := map[string]struct{}{}
 	for _, ib := range bindings {
 		seeded[ib.Spec.Contract] = struct{}{}
-		if len(netpolicy.EffectiveContractCapabilities(ib, grantOf[ib.Spec.Consumer.App])) > 0 {
+		if len(netpolicy.ReachCapabilities(ib, grantOf[ib.Spec.Consumer.App])) > 0 {
 			granted[ib.Spec.Contract] = struct{}{}
 		}
 	}

@@ -43,6 +43,44 @@ func EffectiveContractCapabilities(
 	return nil
 }
 
+// DialogCapabilityPrefix starts the capabilities that say an app's pages
+// may ask the platform's file dialog (integrations[].dialog): dialog:pick,
+// dialog:open, dialog:save. They are granted like every other capability,
+// and give the app nothing of the provider: the person picks in the dialog,
+// and the app is handed what was picked.
+const DialogCapabilityPrefix = "dialog:"
+
+// DialogCapability is the capability of one use of the file dialog.
+func DialogCapability(use string) string { return DialogCapabilityPrefix + use }
+
+// ReachCapabilities are the granted capabilities that reach the provider:
+// what was granted of the contract less the file dialog's. Nil where only
+// the dialog was granted, so that such a grant opens no way to the provider
+// and hands the consumer no key and no credential of it.
+func ReachCapabilities(
+	binding *gentianov1alpha1.IntegrationBinding,
+	grant *gentianov1alpha1.AppGrant,
+) []string {
+	var out []string
+	for _, c := range EffectiveContractCapabilities(binding, grant) {
+		if !strings.HasPrefix(c, DialogCapabilityPrefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// AsksReach reports whether a binding asks for anything of the provider
+// beyond the file dialog.
+func AsksReach(binding *gentianov1alpha1.IntegrationBinding) bool {
+	for _, c := range binding.Spec.Capabilities {
+		if !strings.HasPrefix(c, DialogCapabilityPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // FormatCapabilityLabel joins capabilities for NetworkPolicy labels (max 63 chars).
 // Capability names use colons (e.g. webdav:read); Kubernetes label values allow
 // only alphanumerics plus '-', '_', and '.' — no colons or commas.

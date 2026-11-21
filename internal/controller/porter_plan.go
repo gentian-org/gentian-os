@@ -18,7 +18,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -33,9 +32,9 @@ import (
 // written where it reads it. The tenant's file home -- the provider every
 // consumer of file-store is bound to, where its profile says where a
 // person's files are -- and every installed app that asks the dialog
-// (integrations[].dialog) and is granted the file store, with the origins
-// of its pages. An app is in the plan exactly while the tenant's
-// administrator grants it the contract.
+// (integrations[].dialog), with the origins of its pages and the uses it was
+// granted. An app is in the plan exactly while the tenant's administrator
+// grants it a use of the dialog (dialog:<use>, netpolicy.DialogCapability).
 const (
 	// PorterPlanName is the ConfigMap the plan is in, in the tenant's
 	// namespace.
@@ -75,16 +74,25 @@ func porterPlan(tenant *gentianov1alpha1.Tenant, in netpolicy.BuildInput, zone a
 		plan.Home = fileHomeOf(home, in.Profiles[home], in.Namespace, zone)
 	}
 
-	granted := map[string]bool{}
+	// What of the dialog each app was granted: the dialog:<use>
+	// capabilities of its file-store binding the tenant's administrator
+	// granted.
+	granted := map[string]map[string]bool{}
 	for _, ib := range in.Bindings {
-		if ib.Spec.Contract == fileStoreContract && ib.DeletionTimestamp == nil &&
-			apimeta.IsStatusConditionTrue(ib.Status.Conditions, conditionBindingGranted) {
-			granted[ib.Spec.Consumer.App] = true
+		if ib.Spec.Contract != fileStoreContract || ib.DeletionTimestamp != nil {
+			continue
+		}
+		app := ib.Spec.Consumer.App
+		for _, c := range netpolicy.EffectiveContractCapabilities(ib, in.Grants[app]) {
+			if granted[app] == nil {
+				granted[app] = map[string]bool{}
+			}
+			granted[app][c] = true
 		}
 	}
 	for _, name := range installed {
 		p := in.Profiles[name]
-		if p == nil || !granted[name] {
+		if p == nil || granted[name] == nil {
 			continue
 		}
 		var uses []porter.Use
@@ -93,7 +101,9 @@ func porterPlan(tenant *gentianov1alpha1.Tenant, in netpolicy.BuildInput, zone a
 				continue
 			}
 			for _, u := range i.Dialog {
-				uses = append(uses, porter.Use(u))
+				if granted[name][netpolicy.DialogCapability(string(u))] {
+					uses = append(uses, porter.Use(u))
+				}
 			}
 		}
 		origins := pageOrigins(name, p, zone)

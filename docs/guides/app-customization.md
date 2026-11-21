@@ -610,6 +610,8 @@ spec:
       dialog: [pick]        # pick, open, save
 ```
 
+No `provider` and no `capabilities`: the tenant's file home answers, and the app reaches none of it.
+
 The app's page opens the window and the two speak by messages:
 
 ```js
@@ -623,8 +625,10 @@ window.addEventListener("message", (ev) => {
 ```
 
 - **Which app asks** is the origin of the page that asks, as the browser states it: one of the
-  app's gateway entries. The dialog answers that origin and no other, and only while the tenant's
-  administrator grants the app the file store.
+  app's gateway entries. The dialog answers that origin and no other, and only for the uses the
+  tenant's administrator granted the app: each use is a capability of its file-store binding,
+  `dialog:pick`, `dialog:open`, `dialog:save`. A grant of these alone opens no network path to the
+  home and hands the app no key and no credential of it.
 - **A picked file** is its name, its id at the home and the address that opens it by that id.
   Whoever follows the address is asked by the home, signed in as themselves; the address carries
   the id and nothing of the file's path.

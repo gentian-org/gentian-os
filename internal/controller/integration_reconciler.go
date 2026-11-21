@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
@@ -215,13 +216,24 @@ func buildIntegrationBinding(
 				App:       consumerApp,
 				Namespace: nsName,
 			},
-			Capabilities: integration.Capabilities,
+			Capabilities: bindingCapabilities(integration),
 			Auth: &gentianov1alpha1.BindingAuth{
 				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
 			},
 			Endpoint: endpoint,
 		},
 	}
+}
+
+// bindingCapabilities are what a binding asks for: the integration's
+// capabilities, and one dialog:<use> for each use of the file dialog it
+// declares, which the tenant's administrator grants like the others.
+func bindingCapabilities(integration gentianov1alpha1.IntegrationRef) []string {
+	out := append([]string(nil), integration.Capabilities...)
+	for _, use := range integration.Dialog {
+		out = append(out, netpolicy.DialogCapability(string(use)))
+	}
+	return out
 }
 
 // --- Name helpers -----------------------------------------------------------
