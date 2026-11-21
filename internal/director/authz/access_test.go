@@ -13,7 +13,6 @@ package authz
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -72,184 +71,337 @@ func permission(t *testing.T, access ObjectAccess, name string) Permission {
 }
 
 var demo = []Tuple{
-	{User: "user:anna", Relation: "member", Object: "group:gentian/tenant/demo/members"},
-	{User: "user:anna", Relation: "member", Object: "group:gentian/tenant/demo/app/notes"},
-	{User: "user:anna", Relation: "member", Object: "group:gentian/tenant/demo/sales"},
-	{User: "user:ben", Relation: "member", Object: "group:gentian/tenant/demo/admins"},
-	{User: "user:ben", Relation: "member", Object: "group:gentian/tenant/demo/app/notes"},
+	// who holds what
+	{User: "user:anna", Relation: "holder", Object: "position:demo/user"},
+	{User: "user:anna", Relation: "user", Object: "app:demo/notes"},
+	{User: "user:ben", Relation: "holder", Object: "position:demo/tenant-administrator"},
+	{User: "user:eve", Relation: "holder", Object: "position:demo/executive"},
+	{User: "user:marc", Relation: "holder", Object: "role:demo/shop-sales/configurator"},
+	{User: "user:odin", Relation: "holder", Object: "position:demo/app-administrator"},
+	{User: "user:olga", Relation: "holder", Object: "position:other/user"},
+	// the tenant and its positions
 	{User: "cluster:c1", Relation: "cluster", Object: "tenant:demo"},
-	{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "tenant:demo"},
-	{User: "group:gentian/tenant/demo/members#member", Relation: "member", Object: "tenant:demo"},
+	{User: "tenant:demo", Relation: "tenant", Object: "position:demo/user"},
+	{User: "tenant:demo", Relation: "tenant", Object: "position:demo/tenant-administrator"},
+	{User: "tenant:demo", Relation: "tenant", Object: "position:demo/app-administrator"},
+	{User: "tenant:demo", Relation: "tenant", Object: "position:demo/sales-manager"},
+	{User: "tenant:demo", Relation: "tenant", Object: "position:demo/executive"},
+	{User: "position:demo/executive", Relation: "included_in", Object: "position:demo/sales-manager"},
+	{User: "position:demo/user#holder", Relation: "user", Object: "tenant:demo"},
+	{User: "position:demo/tenant-administrator#holder", Relation: "admin", Object: "tenant:demo"},
+	{User: "position:demo/sales-manager#holder", Relation: "user", Object: "tenant:demo"},
+	{User: "position:demo/sales-manager#holder", Relation: "holder", Object: "role:demo/shop-sales/manager"},
+	{User: "position:demo/app-administrator#holder", Relation: "admin", Object: "app:demo/shop"},
+	{User: "position:other/user#holder", Relation: "user", Object: "tenant:other"},
 	{User: "user:demo/cara", Relation: "auditor", Object: "tenant:demo"},
+	// its apps: notes, and shop with its add-on shop-sales and the roles it declares
 	{User: "tenant:demo", Relation: "tenant", Object: "app:demo/notes"},
-	{User: "tenant:demo", Relation: "tenant", Object: "app:demo/wiki"},
+	{User: "tenant:demo", Relation: "tenant", Object: "app:demo/shop"},
+	{User: "tenant:demo", Relation: "tenant", Object: "app:demo/shop-sales"},
+	{User: "app:demo/shop", Relation: "base", Object: "app:demo/shop-sales"},
+	{User: "app:demo/shop-sales", Relation: "addon", Object: "app:demo/shop"},
+	{User: "app:demo/shop-sales", Relation: "app", Object: "role:demo/shop-sales/manager"},
+	{User: "app:demo/shop-sales", Relation: "app", Object: "role:demo/shop-sales/configurator"},
+	{User: "role:demo/shop-sales/manager", Relation: "declared", Object: "app:demo/shop-sales"},
+	{User: "role:demo/shop-sales/configurator", Relation: "declared", Object: "app:demo/shop-sales"},
 	{User: "tenant:other", Relation: "tenant", Object: "app:other/notes"},
-	{User: "group:gentian/tenant/demo/app/notes#member", Relation: "entitled", Object: "app:demo/notes"},
-	{User: "group:gentian/tenant/other/app/notes#member", Relation: "entitled", Object: "app:other/notes"},
 	{User: "user:platform/dora", Relation: "auditor", Object: "cluster:c1"},
 }
 
-// A member's rights are traced to the groups they are held through, and every
-// app of the tenant is listed, also the one they hold nothing on.
-func TestAPersonsAccessNamesTheGroupEachRoleIsHeldThrough(t *testing.T) {
+func appOf(t *testing.T, access PersonAccess, profile string) ObjectAccess {
+	t.Helper()
+	for _, a := range access.Apps {
+		if a.App == profile {
+			return a
+		}
+	}
+	t.Fatalf("no app %s in %+v", profile, access.Apps)
+	return ObjectAccess{}
+}
+
+// A person's rights are traced to the position they are held through, a role
+// given directly is told apart, and every app of the tenant is listed, also
+// the ones they hold nothing on.
+func TestAPersonsAccessNamesThePositionEachRoleIsHeldThrough(t *testing.T) {
 	var asked []Question
 	got, err := personAccess(context.Background(), store(demo...), answering(&asked,
-		"user:anna member tenant:demo", "user:anna can_enter tenant:demo", "user:anna can_view tenant:demo",
-		"user:anna can_use app:demo/notes", "user:anna can_launch app:demo/notes",
+		"user:anna user tenant:demo", "user:anna can_enter tenant:demo", "user:anna can_view tenant:demo",
+		"user:anna user app:demo/notes", "user:anna can_use app:demo/notes", "user:anna can_launch app:demo/notes",
 	), "c1", "demo", "anna")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"gentian:tenant:demo:app:notes", "gentian:tenant:demo:members", "gentian:tenant:demo:sales"}
-	if !reflect.DeepEqual(got.Groups, want) {
-		t.Fatalf("groups = %v", got.Groups)
+	if len(got.Positions) != 1 || got.Positions[0] != (PositionHeld{Name: "user"}) {
+		t.Fatalf("positions = %+v", got.Positions)
 	}
-	if len(got.OnTenant.Held) != 1 || got.OnTenant.Held[0].Role != "member" ||
-		got.OnTenant.Held[0].Group != "gentian:tenant:demo:members" || got.OnTenant.Held[0].ByName {
+	if len(got.OnTenant.Held) != 1 || got.OnTenant.Held[0].Role != "user" || got.OnTenant.Held[0].Position != "user" || got.OnTenant.Held[0].Direct {
 		t.Fatalf("held on the tenant = %+v", got.OnTenant.Held)
 	}
-	if strings.Join(got.OnTenant.Held[0].Carries, ",") != "can_enter,can_view" {
-		t.Fatalf("member carries %v", got.OnTenant.Held[0].Carries)
+	if strings.Join(got.OnTenant.Roles, ",") != "user" {
+		t.Errorf("roles in effect on the tenant = %v", got.OnTenant.Roles)
 	}
-	if p := permission(t, got.OnTenant, "can_enter"); !p.InEffect || p.From != FromRole {
-		t.Fatalf("can_enter = %+v", p)
+	if len(got.Apps) != 3 {
+		t.Fatalf("apps = %+v, want all three of the tenant and none of another's", got.Apps)
 	}
-	if p := permission(t, got.OnTenant, "can_manage_users"); p.InEffect || p.From != "" {
-		t.Fatalf("can_manage_users = %+v", p)
-	}
-	if len(got.Apps) != 2 || got.Apps[0].App != "notes" || got.Apps[1].App != "wiki" {
-		t.Fatalf("apps = %+v", got.Apps)
-	}
-	notes := got.Apps[0]
-	if len(notes.Held) != 1 || notes.Held[0].Role != "entitled" || notes.Held[0].Group != "gentian:tenant:demo:app:notes" {
-		t.Fatalf("held on notes = %+v", notes.Held)
+	notes := appOf(t, got, "notes")
+	if len(notes.Held) != 1 || notes.Held[0].Role != "user" || !notes.Held[0].Direct || notes.Held[0].Position != "" {
+		t.Errorf("held on notes = %+v, want user, given directly", notes.Held)
 	}
 	if p := permission(t, notes, "can_use"); !p.InEffect || p.From != FromRole {
-		t.Fatalf("can_use on notes = %+v", p)
+		t.Errorf("can_use on notes = %+v", p)
 	}
-	if len(got.Apps[1].Held) != 0 {
-		t.Fatalf("held on wiki = %+v", got.Apps[1].Held)
+	shop := appOf(t, got, "shop")
+	if len(shop.Held) != 0 || len(shop.Roles) != 0 {
+		t.Errorf("held on shop = %+v, roles %v, want nothing", shop.Held, shop.Roles)
 	}
-	// Nothing is asked about another tenant's objects.
+	if p := permission(t, shop, "can_use"); p.InEffect || p.From != "" {
+		t.Errorf("can_use on shop = %+v, want not in effect and from nothing", p)
+	}
 	for _, q := range asked {
-		if strings.Contains(q.Object, "other") {
-			t.Fatalf("asked about %s", q.Object)
+		if !strings.HasSuffix(q.Object, "demo") && !strings.Contains(q.Object, ":demo/") {
+			t.Errorf("asked about %s, which is not the tenant's", q.Object)
 		}
 	}
 }
 
-// The two ways the roles and the store's answer disagree are both said: an
-// app's use is carried by entitled and withheld from an administrator, and an
-// app's credentials follow from being the tenant's administrator.
-func TestWhatIsWithheldAndWhatFollowsFromTheTenantIsSaid(t *testing.T) {
+// Whoever holds Executive holds what Sales manager holds, and is told so:
+// the position they were given, and the one it includes.
+func TestAPositionThatIncludesAnotherBringsItsRoles(t *testing.T) {
 	var asked []Question
 	got, err := personAccess(context.Background(), store(demo...), answering(&asked,
-		"user:ben admin tenant:demo", "user:ben can_administer tenant:demo", "user:ben can_read_credential tenant:demo",
-		"user:ben can_write_credential app:demo/notes", "user:ben can_read_credential app:demo/notes",
-	), "c1", "demo", "ben")
+		"user:eve user tenant:demo", "user:eve can_enter tenant:demo",
+		"user:eve holder role:demo/shop-sales/manager", "user:eve user app:demo/shop-sales", "user:eve can_use app:demo/shop-sales",
+		"user:eve user app:demo/shop", "user:eve can_use app:demo/shop",
+	), "c1", "demo", "eve")
 	if err != nil {
 		t.Fatal(err)
 	}
-	notes := got.Apps[0]
-	if p := permission(t, notes, "can_use"); p.InEffect || p.From != FromRole {
-		t.Fatalf("can_use, carried and withheld = %+v", p)
+	want := []PositionHeld{{Name: "executive"}, {Name: "sales-manager", Through: "executive"}}
+	if len(got.Positions) != 2 || got.Positions[0] != want[0] || got.Positions[1] != want[1] {
+		t.Fatalf("positions = %+v, want %+v", got.Positions, want)
 	}
-	if p := permission(t, notes, "can_write_credential"); !p.InEffect || p.From != FromTenant {
-		t.Fatalf("can_write_credential = %+v", p)
+	sales := appOf(t, got, "shop-sales")
+	if len(sales.Held) != 1 || sales.Held[0].Role != "manager" || !sales.Held[0].Declared || sales.Held[0].Position != "sales-manager" {
+		t.Fatalf("held on the add-on = %+v, want the declared role manager through sales-manager", sales.Held)
 	}
-	if p := permission(t, notes, "can_read_credential"); !p.InEffect || p.From != FromTenant {
-		t.Fatalf("can_read_credential = %+v", p)
+	if strings.Join(sales.Roles, ",") != "manager,user" {
+		t.Errorf("roles in effect on the add-on = %v", sales.Roles)
 	}
-	if p := permission(t, notes, "can_administer"); p.InEffect || p.From != "" {
-		t.Fatalf("can_administer = %+v", p)
+	if p := permission(t, sales, "can_use"); !p.InEffect || p.From != FromRole {
+		t.Errorf("can_use on the add-on = %+v, want carried by the declared role", p)
+	}
+	// On the base nothing is held; its use follows from the add-on.
+	shop := appOf(t, got, "shop")
+	if len(shop.Held) != 0 {
+		t.Errorf("held on the base = %+v, want nothing", shop.Held)
+	}
+	if p := permission(t, shop, "can_use"); !p.InEffect || p.From != FromApp {
+		t.Errorf("can_use on the base = %+v, want from the add-on", p)
 	}
 }
 
-// A role held by name is stored under the realm, and asked as that user too.
-func TestARoleHeldByNameIsFoundAndAskedAsItsHolder(t *testing.T) {
+// A role given beside a position is shown as given directly, on the app
+// that declares it.
+func TestARoleGivenDirectlyIsToldApart(t *testing.T) {
 	var asked []Question
 	got, err := personAccess(context.Background(), store(demo...), answering(&asked,
-		"user:demo/cara can_read_evidence tenant:demo",
+		"user:marc holder role:demo/shop-sales/configurator", "user:marc user app:demo/shop-sales",
+	), "", "demo", "marc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Positions) != 0 {
+		t.Errorf("positions = %+v, want none", got.Positions)
+	}
+	sales := appOf(t, got, "shop-sales")
+	if len(sales.Held) != 1 || sales.Held[0].Role != "configurator" || !sales.Held[0].Direct || !sales.Held[0].Declared {
+		t.Fatalf("held = %+v", sales.Held)
+	}
+	if strings.Join(sales.Roles, ",") != "configurator,user" {
+		t.Errorf("roles in effect = %v", sales.Roles)
+	}
+}
+
+// The admin of a base app administers its add-on: nothing is held there,
+// and the page says the permission follows from the other app.
+func TestWhatFollowsFromTheBaseOrTheTenantIsSaid(t *testing.T) {
+	var asked []Question
+	got, err := personAccess(context.Background(), store(demo...), answering(&asked,
+		"user:odin admin app:demo/shop", "user:odin user app:demo/shop", "user:odin can_administer app:demo/shop", "user:odin can_use app:demo/shop",
+		"user:odin admin app:demo/shop-sales", "user:odin user app:demo/shop-sales", "user:odin can_administer app:demo/shop-sales",
+		"user:odin holder role:demo/shop-sales/manager",
+	), "", "demo", "odin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shop := appOf(t, got, "shop")
+	if len(shop.Held) != 1 || shop.Held[0].Role != "admin" || shop.Held[0].Position != "app-administrator" {
+		t.Fatalf("held on the base = %+v", shop.Held)
+	}
+	sales := appOf(t, got, "shop-sales")
+	if len(sales.Held) != 0 {
+		t.Errorf("held on the add-on = %+v, want nothing", sales.Held)
+	}
+	if p := permission(t, sales, "can_administer"); !p.InEffect || p.From != FromApp {
+		t.Errorf("can_administer on the add-on = %+v, want from the base", p)
+	}
+	if strings.Join(sales.Roles, ",") != "admin,manager,user" {
+		t.Errorf("roles in effect on the add-on = %v", sales.Roles)
+	}
+
+	// A tenant's admin writes an app's credentials, and holds nothing on it.
+	asked = nil
+	got, err = personAccess(context.Background(), store(demo...), answering(&asked,
+		"user:ben admin tenant:demo", "user:ben user tenant:demo", "user:ben can_manage_users tenant:demo",
+		"user:ben can_write_credential app:demo/notes",
+	), "", "demo", "ben")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := appOf(t, got, "notes")
+	if p := permission(t, notes, "can_write_credential"); !p.InEffect || p.From != FromTenant {
+		t.Errorf("can_write_credential on notes = %+v, want from the tenant", p)
+	}
+	if p := permission(t, notes, "can_use"); p.InEffect {
+		t.Errorf("can_use on notes = %+v: a tenant's admin holds no role on its apps", p)
+	}
+}
+
+// A role the claim gives by name is stored for the account of its realm, and
+// is found and asked about as that account.
+func TestARoleHeldByNameIsFound(t *testing.T) {
+	var asked []Question
+	got, err := personAccess(context.Background(), store(demo...), answering(&asked,
+		"user:demo/cara auditor tenant:demo", "user:demo/cara can_read_evidence tenant:demo",
 	), "c1", "demo", "cara")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.OnTenant.Held) != 1 || got.OnTenant.Held[0].Role != "auditor" || !got.OnTenant.Held[0].ByName {
+	if len(got.OnTenant.Held) != 1 || got.OnTenant.Held[0].Role != "auditor" || !got.OnTenant.Held[0].Direct {
 		t.Fatalf("held = %+v", got.OnTenant.Held)
 	}
 	if p := permission(t, got.OnTenant, "can_read_evidence"); !p.InEffect || p.From != FromRole {
-		t.Fatalf("can_read_evidence = %+v", p)
+		t.Errorf("can_read_evidence = %+v", p)
 	}
-}
 
-// What follows from the cluster is in effect and not traced: it is said to
-// come from elsewhere, and the cluster's own role is not listed as the
-// tenant's.
-func TestWhatFollowsFromTheClusterIsSaidToComeFromElsewhere(t *testing.T) {
-	var asked []Question
-	got, err := personAccess(context.Background(), store(demo...), answering(&asked,
+	// On the cluster only: nothing is held in the tenant, and what is in
+	// effect there is said to come from elsewhere.
+	asked = nil
+	got, err = personAccess(context.Background(), store(demo...), answering(&asked,
 		"user:platform/dora can_view tenant:demo",
 	), "c1", "demo", "dora")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got.OnTenant.Held) != 0 {
-		t.Fatalf("held = %+v", got.OnTenant.Held)
+		t.Errorf("held = %+v, want nothing: the role is the cluster's", got.OnTenant.Held)
 	}
 	if p := permission(t, got.OnTenant, "can_view"); !p.InEffect || p.From != FromElsewhere {
-		t.Fatalf("can_view = %+v", p)
-	}
-	// Without the cluster's id the name is not found, and nothing is asked
-	// as it.
-	asked = nil
-	if _, err := personAccess(context.Background(), store(demo...), answering(&asked), "", "demo", "dora"); err != nil {
-		t.Fatal(err)
-	}
-	for _, q := range asked {
-		if q.User != "user:dora" {
-			t.Fatalf("asked as %s", q.User)
-		}
+		t.Errorf("can_view = %+v, want in effect from elsewhere", p)
 	}
 }
 
-func TestAPersonsAccessFailsWhenTheStoreDoes(t *testing.T) {
-	down := errors.New("down")
-	if _, err := personAccess(context.Background(),
-		func(context.Context, Tuple) ([]Tuple, error) { return nil, down },
-		answering(new([]Question)), "c1", "demo", "anna"); !errors.Is(err, down) {
-		t.Fatalf("err = %v", err)
-	}
-	if _, err := personAccess(context.Background(), store(demo...),
-		func(context.Context, []Question) ([]bool, error) { return nil, down }, "c1", "demo", "anna"); !errors.Is(err, down) {
-		t.Fatalf("err = %v", err)
-	}
-	if _, err := personAccess(context.Background(), store(demo...), answering(new([]Question)), "c1", "demo", "a/b"); !errors.Is(err, ErrInvalidID) {
-		t.Fatalf("err = %v", err)
+func TestAPersonWhoCannotBeNamedIsRefused(t *testing.T) {
+	var asked []Question
+	if _, err := personAccess(context.Background(), store(demo...), answering(&asked), "", "demo", "a b"); !errors.Is(err, ErrInvalidID) {
+		t.Fatalf("err = %v, want ErrInvalidID", err)
 	}
 }
 
-func TestAGroupsAccessIsWhatItHoldsInTheTenant(t *testing.T) {
-	got, err := groupAccess(context.Background(), store(demo...), "demo", "gentian:tenant:demo:app:notes")
+// A position is what it holds, what it includes, and who was given it.
+func TestAPositionIsWhatItHoldsAndWhoHoldsIt(t *testing.T) {
+	got, err := positionAccess(context.Background(), store(demo...), "demo", "sales-manager")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []GroupHold{{Object: "app:demo/notes", App: "notes", Role: "entitled", Carries: []string{"can_launch", "can_use"}}}
-	if !reflect.DeepEqual(got.Holds, want) {
+	if len(got.Holds) != 2 {
 		t.Fatalf("holds = %+v", got.Holds)
 	}
-	admins, err := groupAccess(context.Background(), store(demo...), "demo", "gentian:tenant:demo:admins")
+	if h := got.Holds[0]; h.Object != "app:demo/shop-sales" || h.App != "shop-sales" || h.Role != "manager" || !h.Declared {
+		t.Errorf("first hold = %+v, want the declared role on the add-on", h)
+	}
+	if h := got.Holds[1]; h.Object != "tenant:demo" || h.Role != "user" || !contains(h.Carries, "can_enter") {
+		t.Errorf("second hold = %+v, want user on the tenant", h)
+	}
+	if strings.Join(got.IncludedIn, ",") != "executive" || len(got.Includes) != 0 {
+		t.Errorf("includes %v, included in %v", got.Includes, got.IncludedIn)
+	}
+
+	got, err = positionAccess(context.Background(), store(demo...), "demo", "executive")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(admins.Holds) != 1 || admins.Holds[0].Object != "tenant:demo" || admins.Holds[0].Role != "admin" {
-		t.Fatalf("holds = %+v", admins.Holds)
+	if strings.Join(got.Includes, ",") != "sales-manager" || strings.Join(got.Holders, ",") != "eve" {
+		t.Errorf("executive includes %v, held by %v", got.Includes, got.Holders)
 	}
-	// A group that holds nothing gives nothing, and another tenant's objects
-	// are not this tenant's to show.
-	for _, group := range []string{"gentian:tenant:demo:sales", "gentian:tenant:other:app:notes"} {
-		got, err := groupAccess(context.Background(), store(demo...), "demo", group)
-		if err != nil || len(got.Holds) != 0 {
-			t.Fatalf("%s: holds = %+v, err = %v", group, got.Holds, err)
+
+	// Another tenant's position of the same name is not read.
+	got, err = positionAccess(context.Background(), store(demo...), "other", "sales-manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Holds) != 0 || len(got.Holders) != 0 {
+		t.Errorf("other tenant's position = %+v, want nothing", got)
+	}
+	if _, err := positionAccess(context.Background(), store(demo...), "demo", "Sales/Manager"); !errors.Is(err, ErrInvalidID) {
+		t.Errorf("err = %v, want ErrInvalidID for a name that is not one", err)
+	}
+}
+
+// What an app is told a person is: the roles the store answers for them, the
+// declared ones among them.
+func TestAppRolesAreWhatTheStoreAnswers(t *testing.T) {
+	var asked []Question
+	got, err := appRoles(context.Background(), store(demo...), answering(&asked,
+		"user:eve user app:demo/shop-sales", "user:eve holder role:demo/shop-sales/manager",
+	), "demo", "shop-sales", "eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "manager,user" {
+		t.Errorf("roles = %v", got)
+	}
+	if len(asked) != 4 {
+		t.Errorf("asked %d questions, want admin, user and the two declared roles: %+v", len(asked), asked)
+	}
+	asked = nil
+	got, err = appRoles(context.Background(), store(demo...), answering(&asked), "demo", "shop-sales", "anna")
+	if err != nil || len(got) != 0 || got == nil {
+		t.Errorf("roles = %v, err = %v, want an empty list", got, err)
+	}
+	if _, err := appRoles(context.Background(), store(demo...), answering(&asked), "demo", "no/such", "anna"); !errors.Is(err, ErrInvalidID) {
+		t.Errorf("err = %v, want ErrInvalidID", err)
+	}
+}
+
+// An app's view lists who was given each role, the declared ones too.
+func TestAnAppsViewListsItsDeclaredRoles(t *testing.T) {
+	view, err := appView(context.Background(), store(demo...), "demo", "shop-sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]Binding{}
+	for _, b := range view.Bindings {
+		by[b.Relation] = b
+	}
+	manager, ok := by["manager"]
+	if !ok || !manager.Declared || len(manager.Holders) != 1 || manager.Holders[0] != (Holder{Kind: HolderPosition, Name: "sales-manager"}) {
+		t.Fatalf("manager = %+v", manager)
+	}
+	configurator := by["configurator"]
+	if len(configurator.Holders) != 1 || configurator.Holders[0] != (Holder{Kind: HolderPerson, Name: "marc"}) {
+		t.Errorf("configurator = %+v", configurator)
+	}
+	if _, ok := by["admin"]; !ok {
+		t.Errorf("bindings = %+v, want the model's roles too", view.Bindings)
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
 		}
 	}
+	return false
 }

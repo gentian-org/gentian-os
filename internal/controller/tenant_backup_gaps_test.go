@@ -101,14 +101,22 @@ func projected(cluster, tenant string, apps ...string) []authz.Tuple {
 	out := []authz.Tuple{
 		{User: "cluster:" + cluster, Relation: "cluster", Object: "tenant:" + tenant},
 		{User: "cluster:" + cluster, Relation: "operated_by", Object: "tenant:" + tenant},
-		{User: "group:gentian/tenant/" + tenant + "/admins#member", Relation: "admin", Object: "tenant:" + tenant},
-		{User: "group:gentian/tenant/" + tenant + "/members#member", Relation: "member", Object: "tenant:" + tenant},
-		{User: "group:gentian/tenant/" + tenant + "/perimeter#member", Relation: "perimeter_approver", Object: "tenant:" + tenant},
+		{User: "user:" + tenant + "/pat", Relation: "perimeter_approver", Object: "tenant:" + tenant},
 	}
+	// The three positions every tenant has, and what each holds.
+	admins := authz.Holders(authz.Position(tenant, authz.PositionTenantAdministrator))
+	users := authz.Holders(authz.Position(tenant, authz.PositionUser))
+	appAdmins := authz.Holders(authz.Position(tenant, authz.PositionAppAdministrator))
+	for _, name := range []string{authz.PositionUser, authz.PositionAppAdministrator, authz.PositionTenantAdministrator} {
+		out = append(out, authz.Tuple{User: "tenant:" + tenant, Relation: "tenant", Object: authz.Position(tenant, name)})
+	}
+	out = append(out,
+		authz.Tuple{User: admins, Relation: "admin", Object: "tenant:" + tenant},
+		authz.Tuple{User: users, Relation: "user", Object: "tenant:" + tenant})
 	for _, app := range apps {
 		out = append(out,
 			authz.Tuple{User: "tenant:" + tenant, Relation: "tenant", Object: "app:" + tenant + "/" + app},
-			authz.Tuple{User: "group:gentian/tenant/" + tenant + "/app/" + app + "#member", Relation: "entitled", Object: "app:" + tenant + "/" + app})
+			authz.Tuple{User: appAdmins, Relation: "admin", Object: "app:" + tenant + "/" + app})
 	}
 	return out
 }
@@ -1117,7 +1125,7 @@ func TestMailboxesAreDestroyedAfterTheMailRoutingIsGone(t *testing.T) {
 
 // An export carries exactly the entries of the rights store the projection
 // would not write, and the defaults the store no longer holds; nothing that
-// is derived again, and nobody's membership.
+// is derived again, and nothing a position holds.
 func TestAnExportCarriesTheRightsThatFollowFromNothingElse(t *testing.T) {
 	w := newGapsWorld(t)
 	ctx := context.Background()
@@ -1135,20 +1143,20 @@ func TestAnExportCarriesTheRightsThatFollowFromNothingElse(t *testing.T) {
 	// A right granted beyond the defaults, on the tenant and on two of its
 	// apps -- one installed, one uninstalled with its data kept; the consent
 	// to being operated withdrawn; and what is not the tenant's backup's to
-	// carry: a membership, another tenant's entry, a stale entitlement.
+	// carry: another tenant's entries, and a role held by a position that is gone.
 	grants := []authz.Tuple{
-		{User: "group:gentian/platform/support#member", Relation: "admin", Object: "tenant:demo"},
-		{User: "group:gentian/tenant/demo/leads#member", Relation: "admin", Object: "app:demo/wiki"},
-		{User: "group:gentian/tenant/demo/leads#member", Relation: "admin", Object: "app:demo/notes"},
+		{User: "user:u-support", Relation: "admin", Object: "tenant:demo"},
+		{User: "user:u-lead", Relation: "admin", Object: "app:demo/wiki"},
+		{User: "user:u-lead", Relation: "admin", Object: "app:demo/notes"},
 	}
 	for _, t := range grants {
 		w.rights.tuples[t] = true
 	}
 	delete(w.rights.tuples, authz.Tuple{User: "cluster:c1", Relation: "operated_by", Object: "tenant:demo"})
 	for _, t := range []authz.Tuple{
-		{User: "user:1234", Relation: "member", Object: "group:gentian/tenant/demo/admins"},
-		{User: "group:gentian/platform/support#member", Relation: "admin", Object: "tenant:other"},
-		{User: "group:gentian/tenant/demo/app/gone#member", Relation: "entitled", Object: "app:demo/notes"},
+		{User: "user:1234", Relation: "holder", Object: "position:other/user"},
+		{User: "user:u-support", Relation: "admin", Object: "tenant:other"},
+		{User: "position:demo/gone#holder", Relation: "user", Object: "app:demo/notes"},
 	} {
 		w.rights.tuples[t] = true
 	}
@@ -1161,9 +1169,9 @@ func TestAnExportCarriesTheRightsThatFollowFromNothingElse(t *testing.T) {
 		granted = append(granted, g.User+" "+g.Relation+" "+g.Object)
 	}
 	want := []string{
-		"group:gentian/platform/support#member admin tenant:demo",
-		"group:gentian/tenant/demo/leads#member admin app:demo/notes",
-		"group:gentian/tenant/demo/leads#member admin app:demo/wiki",
+		"user:u-lead admin app:demo/notes",
+		"user:u-lead admin app:demo/wiki",
+		"user:u-support admin tenant:demo",
 	}
 	if !reflect.DeepEqual(granted, want) {
 		t.Errorf("granted = %v\nwant %v", granted, want)
@@ -1213,8 +1221,10 @@ func rightsManifest(tenant, cluster string) *backup.Manifest {
 		Rights: &bundle.ManifestRights{
 			Cluster: cluster,
 			Granted: []bundle.RightsTuple{
-				{User: "group:gentian/platform/support#member", Relation: "admin", Object: "tenant:" + tenant},
-				{User: "group:gentian/tenant/" + tenant + "/leads#member", Relation: "admin", Object: "app:" + tenant + "/wiki"},
+				// A group of the tenant's own directory given a position: a
+				// grant that names no person.
+				{User: "group:corp/sales#member", Relation: "holder", Object: "position:" + tenant + "/user"},
+				{User: "user:u-lead", Relation: "admin", Object: "app:" + tenant + "/wiki"},
 			},
 			Withdrawn: []bundle.RightsTuple{{User: "cluster:" + cluster, Relation: "operated_by", Object: "tenant:" + tenant}},
 		},
@@ -1264,7 +1274,7 @@ func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 		if r == nil || len(r.Grant) != 3 || len(r.Withdraw) != 1 || len(r.NotBrought) != 0 || r.Provenance != backup.ProvenanceProven {
 			t.Fatalf("intoNew=%v: this cluster's bundle of this tenant: %+v", intoNew, r)
 		}
-		if r.Withdraw[0] != "cluster:c1 operated_by tenant:demo" || r.Grant[1] != "group:gentian/tenant/demo/leads#member admin app:demo/wiki" ||
+		if r.Withdraw[0] != "cluster:c1 operated_by tenant:demo" || r.Grant[1] != "user:u-lead admin app:demo/wiki" ||
 			r.Grant[2] != "user:5f1c admin app:demo/wiki" {
 			t.Errorf("intoNew=%v: rights = %+v", intoNew, r)
 		}
@@ -1284,7 +1294,7 @@ func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 				continue
 			}
 			left := strings.Join(r.NotBrought, "\n")
-			if !strings.Contains(left, "group:gentian/platform/support#member admin tenant:demo: it was granted in the tenant the bundle was taken of") ||
+			if !strings.Contains(left, "group:corp/sales#member holder position:demo/user: it was granted in the tenant the bundle was taken of") ||
 				!strings.Contains(left, "user:5f1c admin app:demo/wiki: it names a person") || !strings.Contains(left, p.Message) {
 				t.Errorf("%s: not brought:\n%s", reason, left)
 			}
@@ -1327,11 +1337,11 @@ func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 	// store at all.
 	m = rightsManifest("demo", "c1")
 	m.Rights.Granted = []bundle.RightsTuple{
-		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "tenant:other"},
-		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "cluster:c1"},
+		{User: "position:demo/tenant-administrator#holder", Relation: "admin", Object: "tenant:other"},
+		{User: "position:demo/tenant-administrator#holder", Relation: "admin", Object: "cluster:c1"},
 		{User: "user:*", Relation: "admin", Object: "tenant:demo"},
 		{User: "group:x#member extra", Relation: "admin", Object: "tenant:demo"},
-		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "app:demo/"},
+		{User: "position:demo/tenant-administrator#holder", Relation: "admin", Object: "app:demo/"},
 	}
 	m.Rights.Withdrawn = []bundle.RightsTuple{{User: "cluster:c1", Relation: "cluster", Object: "tenant:other"}}
 	plan, err = planRestore(m, demo, nil, true, target(demo, "c1", false, proven), installed)
@@ -1360,7 +1370,7 @@ func TestRightsComeBackOnlyFromThisClustersBundleOfThisTenant(t *testing.T) {
 func TestRightsArePutBackAfterTheProjectionHasRun(t *testing.T) {
 	ctx := context.Background()
 	plan := &gentianov1alpha1.RestoreRights{
-		Grant:    []string{"group:gentian/platform/support#member admin tenant:demo"},
+		Grant:    []string{"user:u-support admin tenant:demo"},
 		Withdraw: []string{"cluster:c1 operated_by tenant:demo"},
 	}
 	// Not attached yet: nothing is written.
@@ -1375,10 +1385,10 @@ func TestRightsArePutBackAfterTheProjectionHasRun(t *testing.T) {
 	if err != nil || !done || !plan.Applied {
 		t.Fatalf("after the projection: done %v, %v", done, err)
 	}
-	if !store.has("group:gentian/platform/support#member", "admin", "tenant:demo") || store.has("cluster:c1", "operated_by", "tenant:demo") {
+	if !store.has("user:u-support", "admin", "tenant:demo") || store.has("cluster:c1", "operated_by", "tenant:demo") {
 		t.Errorf("the store after the restore: %v", store.tuples)
 	}
-	if !store.has("cluster:c1", "cluster", "tenant:demo") || !store.has("group:gentian/tenant/demo/admins#member", "admin", "tenant:demo") {
+	if !store.has("cluster:c1", "cluster", "tenant:demo") || !store.has("position:demo/tenant-administrator#holder", "admin", "tenant:demo") {
 		t.Error("the restore removed what the projection wrote")
 	}
 	// Run again it finds its own work: the store refuses to write what it
@@ -1446,7 +1456,7 @@ func TestARestoreWritesTheRightsLast(t *testing.T) {
 	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || got.Status.Rights == nil || !got.Status.Rights.Applied {
 		t.Fatalf("phase %s, rights %+v", got.Status.Phase, got.Status.Rights)
 	}
-	if !store.has("group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki") || store.has("cluster:c1", "operated_by", "tenant:demo") {
+	if !store.has("user:u-lead", "admin", "app:demo/wiki") || store.has("cluster:c1", "operated_by", "tenant:demo") {
 		t.Errorf("the store after the restore: %v", store.tuples)
 	}
 }
@@ -1493,7 +1503,7 @@ func TestARestoreOfAnUnsignedBundleGrantsNothing(t *testing.T) {
 	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseReady || got.Status.Rights == nil || !got.Status.Rights.Applied {
 		t.Fatalf("phase %s, rights %+v", got.Status.Phase, got.Status.Rights)
 	}
-	if store.has("group:gentian/tenant/demo/leads#member", "admin", "app:demo/wiki") || store.has("cluster:c1", "operated_by", "tenant:demo") {
+	if store.has("user:u-lead", "admin", "app:demo/wiki") || store.has("cluster:c1", "operated_by", "tenant:demo") {
 		t.Errorf("the store after the restore: %v", store.tuples)
 	}
 	if got.Status.Rights.Provenance != backup.ProvenanceUnsigned || !strings.Contains(strings.Join(got.Status.Notes, "\n"), "the bundle is not signed") {
@@ -1576,7 +1586,7 @@ func TestEveryTenantArtefactIsCapturedPlannedRestoredAndDestroyed(t *testing.T) 
 	ctx := context.Background()
 	w := newGapsWorld(t, mailCluster()...)
 	w.tr.MailServiceMode = mailServiceModeSystem
-	w.rights.tuples[authz.Tuple{User: "group:gentian/platform/support#member", Relation: "admin", Object: "tenant:demo"}] = true
+	w.rights.tuples[authz.Tuple{User: "user:u-support", Relation: "admin", Object: "tenant:demo"}] = true
 
 	// Captured.
 	units, err := w.er.tenantWideUnits(ctx, w.tenant, w.export, gapsEncryption)
@@ -1631,9 +1641,9 @@ func TestEveryTenantArtefactIsCapturedPlannedRestoredAndDestroyed(t *testing.T) 
 		restored[u.Kind] = true
 	}
 	// The rights are no unit: the operator writes them.
-	delete(w.rights.tuples, authz.Tuple{User: "group:gentian/platform/support#member", Relation: "admin", Object: "tenant:demo"})
+	delete(w.rights.tuples, authz.Tuple{User: "user:u-support", Relation: "admin", Object: "tenant:demo"})
 	if done, err := applyRights(ctx, w.rights, "c1", "demo", restore.Status.Rights); err == nil && done {
-		restored[bundle.ArtefactRights] = w.rights.has("group:gentian/platform/support#member", "admin", "tenant:demo")
+		restored[bundle.ArtefactRights] = w.rights.has("user:u-support", "admin", "tenant:demo")
 	}
 	captured[bundle.ArtefactRights] = inManifest[bundle.ArtefactRights]
 

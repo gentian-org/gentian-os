@@ -178,6 +178,67 @@ type TenantGroup struct {
 	Name string `json:"name"`
 }
 
+// TenantPosition is a position of the tenant: a named set of roles a kind of
+// person holds, "Sales intern" or "Engineering manager". What it is, is
+// declared here; who holds it is not, and lives in the rights store.
+//
+// Every tenant has three positions it does not declare: user, a person of
+// the tenant, with the apps installed for everyone; app-administrator, who
+// administers every installed app; and tenant-administrator, who administers
+// the tenant and holds no role on any app.
+type TenantPosition struct {
+	// Name is the position's name in the tenant. Not one of the three every
+	// tenant has.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'app-administrator', 'tenant-administrator'])",message="user, app-administrator and tenant-administrator are positions every tenant has"
+	Name string `json:"name"`
+
+	// Title is the position as people read it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Title string `json:"title,omitempty"`
+
+	// Description says who the position is for.
+	// +optional
+	// +kubebuilder:validation:MaxLength=400
+	Description string `json:"description,omitempty"`
+
+	// Includes are other positions of the tenant whose roles the holders of
+	// this one hold too: executive includes sales-manager. A circle of
+	// positions including each other is refused.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	Includes []string `json:"includes,omitempty"`
+
+	// Roles are the roles the position holds itself.
+	// +optional
+	// +kubebuilder:validation:MaxItems=200
+	Roles []TenantPositionRole `json:"roles,omitempty"`
+}
+
+// TenantPositionRole is one role a position holds: on an app of the tenant,
+// or on the tenant itself.
+type TenantPositionRole struct {
+	// App is the profile name of the app, or of the add-on, the role is
+	// held on. Empty for a role on the tenant itself.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	App string `json:"app,omitempty"`
+
+	// Role is user, admin, or a role the app's profile declares. On the
+	// tenant itself: user or admin.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Role string `json:"role"`
+}
+
 // TenantSignInFrom is another tenant of this cluster whose people sign in to
 // this one with their account there, and the groups of this tenant they are
 // in for it. It takes both tenants: this one names the other here, and the
@@ -295,6 +356,14 @@ type TenantSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	Groups []TenantGroup `json:"groups,omitempty"`
+
+	// Positions are the tenant's own positions, beside the three every
+	// tenant has; see TenantPosition.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=map
+	// +listMapKey=name
+	Positions []TenantPosition `json:"positions,omitempty"`
 
 	// SignInTo are other tenants of this cluster this tenant's people may
 	// sign in to with their account here: this tenant's half of the other's

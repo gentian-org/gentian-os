@@ -38,12 +38,30 @@ func (f *fakeAccess) PersonAccess(_ context.Context, _, cluster, tenant, sub str
 	return authz.PersonAccess{Tenant: tenant, Subject: sub}, nil
 }
 
-func (f *fakeAccess) GroupAccess(_ context.Context, tenant, group string) (authz.GroupAccess, error) {
-	f.asked = append(f.asked, fmt.Sprintf("group %s %s", tenant, group))
+func (f *fakeAccess) PositionAccess(_ context.Context, tenant, position string) (authz.PositionAccess, error) {
+	f.asked = append(f.asked, fmt.Sprintf("position %s %s", tenant, position))
 	if f.err != nil {
-		return authz.GroupAccess{}, f.err
+		return authz.PositionAccess{}, f.err
 	}
-	return authz.GroupAccess{Tenant: tenant, Group: group}, nil
+	if !authz.ValidName(position) {
+		return authz.PositionAccess{}, fmt.Errorf("%w: %q", authz.ErrInvalidID, position)
+	}
+	return authz.PositionAccess{Tenant: tenant, Position: position}, nil
+}
+
+func (f *fakeAccess) AppAccess(_ context.Context, tenant, profile string) (authz.View, error) {
+	f.asked = append(f.asked, fmt.Sprintf("app %s %s", tenant, profile))
+	if f.err != nil {
+		return authz.View{}, f.err
+	}
+	if !authz.ValidName(profile) {
+		return authz.View{}, fmt.Errorf("%w: %q", authz.ErrInvalidID, profile)
+	}
+	return authz.View{Object: authz.App(tenant, profile)}, nil
+}
+
+func (f *fakeAccess) AppRoles(context.Context, string, string, string, string) ([]string, error) {
+	return nil, f.err
 }
 
 func TestAccessIsReadByWhoeverManagesTheTenantsPeople(t *testing.T) {
@@ -65,14 +83,12 @@ func TestAccessIsReadByWhoeverManagesTheTenantsPeople(t *testing.T) {
 		{"/v1/tenants/acme/access/people/u1", "mel", http.StatusForbidden},
 		{"/v1/tenants/acme/access/people/u1", "", http.StatusUnauthorized},
 		{"/v1/tenants/acme/access/people/bad", "ada", http.StatusNotFound},
-		{"/v1/tenants/acme/access/groups?group=gentian:tenant:acme:sales", "ada", http.StatusOK},
-		{"/v1/tenants/acme/access/groups?group=/gentian:tenant:acme:admins", "ada", http.StatusOK},
-		{"/v1/tenants/acme/access/groups?group=gentian:tenant:acme:sales", "mel", http.StatusForbidden},
-		// Another tenant's group, the platform's, and no group at all.
-		{"/v1/tenants/acme/access/groups?group=gentian:tenant:other:admins", "ada", http.StatusNotFound},
-		{"/v1/tenants/acme/access/groups?group=gentian:tenant:acmeco:admins", "ada", http.StatusNotFound},
-		{"/v1/tenants/acme/access/groups?group=gentian:platform:admin", "ada", http.StatusNotFound},
-		{"/v1/tenants/acme/access/groups", "ada", http.StatusNotFound},
+		{"/v1/tenants/acme/access/positions/sales-manager", "ada", http.StatusOK},
+		{"/v1/tenants/acme/access/positions/sales-manager", "mel", http.StatusForbidden},
+		// A name that is none, and no name at all. Another tenant's position
+		// cannot be asked for: a position is named within the path's tenant.
+		{"/v1/tenants/acme/access/positions/Sales_Manager", "ada", http.StatusNotFound},
+		{"/v1/tenants/acme/access/positions/", "ada", http.StatusNotFound},
 		{"/v1/tenants/acme/access/apps/notes", "ada", http.StatusOK},
 		{"/v1/tenants/acme/access/apps/notes", "mel", http.StatusForbidden},
 		{"/v1/tenants/acme/access/apps/No_App", "ada", http.StatusNotFound},
@@ -81,18 +97,18 @@ func TestAccessIsReadByWhoeverManagesTheTenantsPeople(t *testing.T) {
 			t.Errorf("%s as %q: %d, want %d", c.path, c.token, code, c.code)
 		}
 	}
-	want := "person demo acme u1|person demo acme bad|group acme gentian:tenant:acme:sales|group acme gentian:tenant:acme:admins"
+	want := "person demo acme u1|person demo acme bad|position acme sales-manager|position acme Sales_Manager|app acme notes|app acme No_App"
 	if got := strings.Join(access.asked, "|"); got != want {
 		t.Errorf("the store was read for\n %s\nwant\n %s", got, want)
 	}
-	if strings.Join(viewer.asked, " ") != "app:acme/notes" {
-		t.Errorf("the view was read for %v", viewer.asked)
+	if len(viewer.asked) != 0 {
+		t.Errorf("the view was read for %v: an app's access is the reader's to answer", viewer.asked)
 	}
 
 	access.err, viewer.err = errors.New("store down"), errors.New("store down")
 	for _, path := range []string{
 		"/v1/tenants/acme/access/people/u1",
-		"/v1/tenants/acme/access/groups?group=gentian:tenant:acme:sales",
+		"/v1/tenants/acme/access/positions/sales-manager",
 		"/v1/tenants/acme/access/apps/notes",
 	} {
 		if code, _ := ask(t, s, path, "ada"); code != http.StatusBadGateway {

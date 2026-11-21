@@ -1962,6 +1962,14 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.partners[].name` | string | yes | `Name` is the partner's name here: the realm's scope and identity provider for it are partner-\<name>. |
 | `spec.platformAccess` | object |  | `PlatformAccess` is what the tenant opens to the platform's own people beyond the director: whether the platform's administrators may sign in to the tenant. |
 | `spec.platformAccess.adminsEnter` | boolean |  | `AdminsEnter` says the members of the platform's administrators' group may sign in to this tenant, through the kernel realm, and hold its admins group for as… |
+| `spec.positions` | []object |  | `Positions` are the tenant's own positions, beside the three every tenant has; see TenantPosition. |
+| `spec.positions[].description` | string |  | `Description` says who the position is for. |
+| `spec.positions[].includes` | []string |  | `Includes` are other positions of the tenant whose roles the holders of this one hold too: executive includes sales-manager. |
+| `spec.positions[].name` | string | yes | `Name` is the position's name in the tenant. |
+| `spec.positions[].roles` | []object |  | `Roles` are the roles the position holds itself. |
+| `spec.positions[].roles[].app` | string |  | `App` is the profile name of the app, or of the add-on, the role is held on. |
+| `spec.positions[].roles[].role` | string | yes | `Role` is user, admin, or a role the app's profile declares. |
+| `spec.positions[].title` | string |  | `Title` is the position as people read it. |
 | `spec.privileges` | []object |  | `Privileges` are the privilege requests a person granted for this tenant's components (AD-5). |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |

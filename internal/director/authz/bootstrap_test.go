@@ -87,8 +87,8 @@ func TestTheBootstrappedModelAnswersAsV1(t *testing.T) {
 		t.Fatal(err)
 	}
 	writes := []Tuple{
-		{User: "user:tom", Relation: "member", Object: "group:gentian/tenant/demo/admins"},
-		{User: "group:gentian/tenant/demo/admins#member", Relation: "admin", Object: "tenant:demo"},
+		{User: "user:tom", Relation: "holder", Object: "position:demo/tenant-administrator"},
+		{User: "position:demo/tenant-administrator#holder", Relation: "admin", Object: "tenant:demo"},
 	}
 	if err := c.Write(ctx, writes, nil); err != nil {
 		t.Fatal(err)
