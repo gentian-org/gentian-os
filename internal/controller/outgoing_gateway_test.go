@@ -341,3 +341,42 @@ func TestAnActionsHostsAreForItsRuns(t *testing.T) {
 		t.Fatalf("the policy of the action's runs: %+v", found)
 	}
 }
+
+// What policy answers for an install: its catalog, or hosts that are all in
+// a domain the cluster trusts or the tenant was delegated to trust.
+func TestTrustedDomainsOfTheClusterAndTheTenantAnswerARequestByHost(t *testing.T) {
+	ctx := context.Background()
+	profile := profileRequestingEgress("nextcloud")
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected",
+		Hosts: []string{"graph.microsoft.com", "api.example.org"},
+	})
+	policy := &gentianov1alpha1.PlatformSecurityPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PlatformSecurityPolicyName},
+		Spec:       gentianov1alpha1.PlatformSecurityPolicySpec{TrustedDomains: []string{"microsoft.com"}},
+	}
+	c := fake.NewClientBuilder().WithScheme(outgoingScheme()).WithObjects(policy).Build()
+	tenant := rightsTenant("acme")
+
+	got, err := answeredEgress(ctx, c, profile, tenant)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("one host outside the cluster's domains: %v, %v", got, err)
+	}
+	tenant.Spec.TrustedDomains = &gentianov1alpha1.TenantTrustedDomains{Domains: []string{"example.org"}}
+	if got, _ := answeredEgress(ctx, c, profile, tenant); len(got) != 0 {
+		t.Fatalf("a tenant's list that was not delegated answered: %v", got)
+	}
+	tenant.Spec.TrustedDomains.Delegated = true
+	got, err = answeredEgress(ctx, c, profile, tenant)
+	if _, ok := got["egress/outside"]; err != nil || !ok || len(got) != 1 {
+		t.Fatalf("the cluster's and the tenant's domains together: %v, %v", got, err)
+	}
+	// Another tenant has no such list, and the request waits there.
+	if got, _ := answeredEgress(ctx, c, profile, rightsTenant("beta")); len(got) != 0 {
+		t.Fatalf("one tenant's domains answered for another: %v", got)
+	}
+	// And the hosts are then the component's, as with a grant.
+	if hosts, _ := grantedOutgoingHosts(profile, &gentianov1alpha1.Component{}, got); strings.Join(hosts, " ") != "api.example.org graph.microsoft.com" {
+		t.Fatalf("hosts answered by trusted domains: %v", hosts)
+	}
+}

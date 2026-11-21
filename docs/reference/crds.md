@@ -1161,6 +1161,7 @@ PlatformSecurityPolicy is the cluster singleton where platform administrators ap
 | `spec.allowedMacWaivers[].profile` | string | yes | `Profile` is the ComponentProfile metadata.name that may use this waiver. |
 | `spec.allowedMacWaivers[].scope` | string | yes | `Scope` matches MacWaiverRequest.scope on the profile. |
 | `spec.preApprovedEgressCatalogs` | []string |  | `PreApprovedEgressCatalogs` lists catalogs, by the origin a materialized profile records ("cluster/\<source>" or "tenant/\<tenant>/\<source>"), whose apps' egress… |
+| `spec.trustedDomains` | []string |  | `TrustedDomains` are the domains outside the cluster this cluster trusts, whatever travels. |
 | `status` | object |  | PlatformSecurityPolicyStatus reports observed policy state. |
 | `status.allowedMacWaiverCount` | integer |  | `AllowedMacWaiverCount` is len(spec.allowedMacWaivers) last written to the gentian-platform-security ConfigMap. |
 | `status.conditions` | []object |  | `Conditions` provide reconciliation detail. |
@@ -1997,6 +1998,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.tokenEntries` | object |  | `TokenEntries` is how this tenant's token entries come to be served: a component's address that takes a token of the tenant's realm in place of a session. |
 | `spec.tokenEntries.approval` | string |  | `Approval` says whether a token entry needs the perimeter approver's approval before it is served. |
 | `spec.tokenEntries.sessionMaxHours` | integer (int32) |  | `SessionMaxHours` is how long a sign-in through one of this tenant's token entries lasts before the person signs in again. |
+| `spec.trustedDomains` | object |  | `TrustedDomains` are domains outside the cluster trusted for this tenant alone, beside those the cluster trusts (PlatformSecurityPolicy spec.trustedDomains). |
+| `spec.trustedDomains.delegated` | boolean |  | `Delegated` says the tenant's perimeter approver may add and remove domains for this tenant. |
+| `spec.trustedDomains.domains` | []string |  | `Domains` are trusted for this tenant: an egress request of one of its installs that names hosts is granted without a further answer when every host is in a… |
 | `status` | object |  | TenantStatus holds the observed state of a Tenant. |
 | `status.adminEmail` | string |  | `AdminEmail` is the resolved contact address for this tenant, and the administrator's login: admin@\<effectiveDomain>. |
 | `status.appCount` | integer |  | `AppCount` is the total number of apps requested in spec. |

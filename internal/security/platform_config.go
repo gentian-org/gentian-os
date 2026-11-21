@@ -70,6 +70,20 @@ func LoadPreApprovedEgressCatalogs(ctx context.Context, c client.Client) ([]stri
 	return psp.Spec.PreApprovedEgressCatalogs, nil
 }
 
+// LoadTrustedDomains reads the domains outside the cluster this cluster
+// trusts. No policy lists none.
+func LoadTrustedDomains(ctx context.Context, c client.Client) ([]string, error) {
+	psp := &gentianov1alpha1.PlatformSecurityPolicy{}
+	err := c.Get(ctx, types.NamespacedName{Name: gentianov1alpha1.PlatformSecurityPolicyName}, psp)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get PlatformSecurityPolicy: %w", err)
+	}
+	return psp.Spec.TrustedDomains, nil
+}
+
 // SyncPlatformSecurityConfigMap writes the cluster allowlist for compositions.
 func SyncPlatformSecurityConfigMap(
 	ctx context.Context,

@@ -489,7 +489,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	// Egress the cluster's policy answers for the profile's catalog counts as
 	// granted (PlatformSecurityPolicy spec.preApprovedEgressCatalogs).
-	preApproved, err := r.preApprovedEgress(ctx, profile)
+	preApproved, err := r.preApprovedEgress(ctx, profile, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

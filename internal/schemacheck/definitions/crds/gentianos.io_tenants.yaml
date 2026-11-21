@@ -1566,6 +1566,33 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              trustedDomains:
+                description: |-
+                  TrustedDomains are domains outside the cluster trusted for this
+                  tenant alone, beside those the cluster trusts
+                  (PlatformSecurityPolicy spec.trustedDomains).
+                properties:
+                  delegated:
+                    description: |-
+                      Delegated says the tenant's perimeter approver may add and remove
+                      domains for this tenant. Off unless the cluster's administrator turns
+                      it on; a tenant's administrator cannot. While it is off, Domains
+                      answers nothing.
+                    type: boolean
+                  domains:
+                    description: |-
+                      Domains are trusted for this tenant: an egress request of one of its
+                      installs that names hosts is granted without a further answer when
+                      every host is in a domain listed here or in the cluster's list, or
+                      under one.
+                    items:
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
             required:
             - displayName
             type: object

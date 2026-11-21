@@ -216,7 +216,7 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 		}
 		outside = append(outside, keys...)
 	}
-	preApproved, err := r.preApprovedEgress(ctx, profile)
+	preApproved, err := r.preApprovedEgress(ctx, profile, tenant)
 	if err != nil {
 		return err
 	}
