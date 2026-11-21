@@ -722,34 +722,46 @@ func TestTheClusterCountsItsPeoplePerRealm(t *testing.T) {
 	}
 }
 
-// Entering a tenant takes membership of it, so an invitation always makes
-// the person a member, whatever groups it names: somebody invited with only
-// an app's group would hold the app and be refused on every page.
-func TestAnInvitationAlwaysMakesAMember(t *testing.T) {
-	const members = "gentian:tenant:demo:members"
-	for name, groups := range map[string]string{
-		"no groups":      `[]`,
-		"an app only":    `["gentian:tenant:demo:app:open-webui-ce","gentian:tenant:demo:app-admins"]`,
-		"members named":  `["gentian:tenant:demo:members"]`,
-		"members, slash": `["/gentian:tenant:demo:members"]`,
+// Entering a tenant takes the role user on it, which the position user
+// holds: an invitation always gives it, whatever else it names, and once.
+// The platform tenant's people are given nothing unasked.
+func TestAnInvitationAlwaysGivesThePositionUser(t *testing.T) {
+	for name, c := range map[string]struct{ tenant, realm, who, positions, want string }{
+		"nothing asked":    {"demo", "tenant-demo", "tom", `[]`, "user"},
+		"a position asked": {"demo", "tenant-demo", "tom", `["sales-manager"]`, "user,sales-manager"},
+		"user named":       {"demo", "tenant-demo", "tom", `["user","sales-manager","sales-manager"]`, "user,sales-manager"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFakeIdentity("demo")
 			h := startWithIdentity(t, f)
-			status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person",
-				h.token(t, "tenant-demo", "tom"), `{"email":"ada@example.com","groups":`+groups+`}`)
+			status, body := h.do(t, http.MethodPost, "/v1/tenants/"+c.tenant+"/actions/invite-person",
+				h.token(t, c.realm, c.who), `{"email":"ada@example.com","positions":`+c.positions+`}`)
 			if status != http.StatusAccepted {
 				t.Fatalf("invite: %d %v", status, body)
 			}
-			n := 0
-			for _, g := range f.lastInvite.Groups {
-				if strings.TrimPrefix(g, "/") == members {
-					n++
-				}
+			if got := strings.Join(h.rights.positionsOf(c.tenant, "new"), ","); got != c.want {
+				t.Fatalf("the invited person holds %q, want %q", got, c.want)
 			}
-			if n != 1 {
-				t.Fatalf("groups = %v, want %s exactly once", f.lastInvite.Groups, members)
+			if body["positionsNotGiven"] != nil || body["warning"] != nil {
+				t.Errorf("an invitation that gave everything warns: %v", body)
 			}
 		})
+	}
+
+	// A name that cannot be a position's invites nobody.
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+	tom := h.token(t, "tenant-demo", "tom")
+	status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person", tom, `{"email":"ada@example.com","positions":["Sales/Manager"]}`)
+	if status != http.StatusBadRequest || f.lastInvite.Email != "" {
+		t.Fatalf("a position that is no name: %d, invited %q", status, f.lastInvite.Email)
+	}
+	// A position that could not be given is said, and the person is invited.
+	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person", tom, `{"email":"ada@example.com","positions":["ghost"]}`)
+	if status != http.StatusAccepted || fmt.Sprint(body["positionsNotGiven"]) != "[ghost]" || body["warning"] == nil {
+		t.Fatalf("a position the tenant has not: %d %v", status, body)
+	}
+	if got := strings.Join(h.rights.positionsOf("demo", "new"), ","); got != "user" {
+		t.Errorf("the invited person holds %q, want user", got)
 	}
 }

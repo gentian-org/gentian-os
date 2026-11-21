@@ -150,6 +150,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		Invitations:      invitations,
 		InvitationExpiry: invitationExpiry(log),
 		PlatformRoles:    ClaimPlatformRoles(reader),
+		Rights:           operatorRightsFromEnv(log),
 	})
 	if err != nil {
 		closer()
@@ -218,4 +219,16 @@ func pruneRecord(ctx context.Context, store *record.Store, log *slog.Logger) {
 		case <-time.After(24 * time.Hour):
 		}
 	}
+}
+
+// operatorRightsFromEnv is the way to the operator's listener, which gives
+// and takes what a person holds, or nil where none is configured: a
+// registrar that then says so on the routes that need it.
+func operatorRightsFromEnv(log *slog.Logger) Rights {
+	base := os.Getenv("REGISTRAR_LIFECYCLE_URL")
+	if base == "" {
+		log.Warn("no way to the operator: positions and roles cannot be given here", "setting", "REGISTRAR_LIFECYCLE_URL")
+		return nil
+	}
+	return NewOperatorRights(base, envvar.Or("REGISTRAR_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token"))
 }

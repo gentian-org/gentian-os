@@ -802,6 +802,12 @@ func main() {
 			setupLog.Error(err, "unable to add app lifecycle server")
 			os.Exit(1)
 		}
+		// Who holds what in a tenant is given and taken through this
+		// listener, with the store client the projection writes with: the
+		// operator stays the store's one writer.
+		if tenantReconciler.Rights != nil {
+			lifecycle.Server.Rights = tenantReconciler.Rights
+		}
 		// An app installed for everyone is granted by the tenant reconciler
 		// with what this service already holds: the same function behind
 		// provision-app, and the same Keycloak credential.
