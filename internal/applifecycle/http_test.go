@@ -100,6 +100,7 @@ func cluster() (*apiServer, *CallerAuth) {
 	api := &apiServer{tokens: map[string]issued{
 		"director":  {directorUser, []string{testAudience}},
 		"usher":     {usherUser, []string{testAudience}},
+		"registrar": {registrarUser, []string{testAudience}},
 		"custodian": {custodianUser, []string{testAudience}},
 		// The director's name in another namespace is not the director.
 		"impostor": {otherNamespace, []string{testAudience}},
@@ -108,11 +109,14 @@ func cluster() (*apiServer, *CallerAuth) {
 		"director-for-the-api-server": {directorUser, []string{"https://kubernetes.default.svc"}},
 	}}
 	return api, NewCallerAuth(api, Callers{
-		Audience: testAudience,
-		Director: ServiceAccountUsername(testNamespace, "gentian-os-director"),
-		Reader:   ServiceAccountUsername(testNamespace, "gentian-os-usher"),
+		Audience:  testAudience,
+		Director:  ServiceAccountUsername(testNamespace, "gentian-os-director"),
+		Reader:    ServiceAccountUsername(testNamespace, "gentian-os-usher"),
+		Registrar: ServiceAccountUsername(testNamespace, "gentian-os-registrar"),
 	})
 }
+
+var registrarUser = ServiceAccountUsername(testNamespace, "gentian-os-registrar")
 
 // What a tenant is meant to have is declared in git by the director. The
 // routes that once changed it here -- install, uninstall, the addon selection

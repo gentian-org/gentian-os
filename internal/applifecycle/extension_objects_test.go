@@ -135,7 +135,7 @@ func TestAnAddOnsObjectsAreReadFromTheTenantsNamespace(t *testing.T) {
 func TestTheClustersAddOnObjectsAreThePlatformTenants(t *testing.T) {
 	h := &HTTPServer{Service: extensionService(t, true)}
 	mux := http.NewServeMux()
-	h.registerExtensionObjectRoutes(&guardedMux{mux: mux, auth: func(next http.HandlerFunc, _ bool) http.HandlerFunc { return next }})
+	h.registerExtensionObjectRoutes(&guardedMux{mux: mux, auth: func(next http.HandlerFunc, _ admits) http.HandlerFunc { return next }})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/extensions/"+testExtensionGroup+"/schedules", nil))
 	var out ExtensionObjects
@@ -168,7 +168,7 @@ func TestOnlyAGrantedAddOnTypeIsRead(t *testing.T) {
 	}
 	h := &HTTPServer{Service: extensionService(t, false)}
 	mux := http.NewServeMux()
-	h.registerExtensionObjectRoutes(&guardedMux{mux: mux, auth: func(next http.HandlerFunc, _ bool) http.HandlerFunc { return next }})
+	h.registerExtensionObjectRoutes(&guardedMux{mux: mux, auth: func(next http.HandlerFunc, _ admits) http.HandlerFunc { return next }})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tenants/acme/extensions/"+testExtensionGroup+"/schedules", nil))
 	if rec.Code != http.StatusNotFound {

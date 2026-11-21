@@ -158,6 +158,11 @@ type Config struct {
 	// role (ClaimPlatformRoles). Optional: without it the cluster's
 	// platform-role members are not offered.
 	PlatformRoles func(ctx context.Context) ([]RoleGroup, error)
+	// Rights is the way to the operator, which gives and takes what a
+	// person holds in a tenant (assignments.go). Optional: without it
+	// positions and roles cannot be given here, an invitation makes a
+	// person who holds nothing, and a removal leaves what they held.
+	Rights Rights
 	// Now is the clock, for the tests. Nil means the real one.
 	Now func() time.Time
 }
@@ -368,6 +373,13 @@ func (s *Server) routes() {
 	s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
 	s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
 	s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
+
+	// What a person holds in the tenant: their positions, and the roles
+	// beside (assignments.go). Read and changed by whoever manages the
+	// tenant's people; the operator writes it.
+	s.guarded("GET /v1/tenants/{t}/people/{id}/assignments", "can_manage_users", tenantObject, s.listAssignments)
+	s.action("POST /v1/tenants/{t}/actions/give", "can_manage_users", tenantObject, s.give)
+	s.action("POST /v1/tenants/{t}/actions/take", "can_manage_users", tenantObject, s.take)
 
 	// Editing somebody, and the groups they are put in. can_manage_users
 	// throughout, like the invitation they extend.

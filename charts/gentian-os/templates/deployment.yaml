@@ -369,6 +369,12 @@ spec:
             - name: APP_LIFECYCLE_USHER_SERVICE_ACCOUNT
               value: {{ include "gentian-os.usherServiceAccountName" . | quote }}
             {{- end }}
+            {{- /* Admitted to who holds what in a tenant, and to nothing
+                   else: the registrar asks, the operator writes. */}}
+            {{- if .Values.registrar.enabled }}
+            - name: APP_LIFECYCLE_REGISTRAR_SERVICE_ACCOUNT
+              value: {{ include "gentian-os.registrarServiceAccountName" . | quote }}
+            {{- end }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             # The build this operator is, for the Cluster claim's status: the

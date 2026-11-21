@@ -20,6 +20,7 @@ import (
 
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
 	"github.com/gentian-org/gentian-os/internal/tokenreview"
@@ -29,25 +30,43 @@ import (
 // by registering against the bare mux: the only implementation here wraps
 // every handler.
 //
-// It has two ways to register and a route says which it is. HandleFunc is the
-// director's alone: every command, and the reads only the director's own
+// It has three ways to register and a route says which it is. HandleFunc is
+// the director's alone: every command, and the reads only the director's own
 // commands need. Read is a read of state the usher answers a person with; the
-// director's identity admits it and so does the usher's.
+// director's identity admits it and so does the usher's. People is who holds
+// what in a tenant, given and taken by the registrar for whoever manages the
+// tenant's people; the registrar's identity admits it, and it admits the
+// registrar to nothing else.
 type router interface {
 	HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request))
 	Read(pattern string, h func(http.ResponseWriter, *http.Request))
+	People(pattern string, h func(http.ResponseWriter, *http.Request))
 }
+
+// Whom a route admits besides the director, who is admitted to all of them.
+type admits int
+
+const (
+	admitsDirector admits = iota
+	admitsReader
+	admitsRegistrar
+)
 
 // guardedMux registers every handler behind the caller check.
 type guardedMux struct {
 	mux *http.ServeMux
-	// auth wraps a handler; reader says whether the reader's identity admits
-	// it.
-	auth func(next http.HandlerFunc, reader bool) http.HandlerFunc
+	// auth wraps a handler; who says which identity besides the director's
+	// admits it.
+	auth func(next http.HandlerFunc, who admits) http.HandlerFunc
 }
 
 func (g *guardedMux) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
-	g.mux.HandleFunc(pattern, g.auth(h, false))
+	g.mux.HandleFunc(pattern, g.auth(h, admitsDirector))
+}
+
+// People registers a route the registrar's identity admits.
+func (g *guardedMux) People(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	g.mux.HandleFunc(pattern, g.auth(h, admitsRegistrar))
 }
 
 // Read registers a route the reader's identity admits. Only a GET can be one,
@@ -57,7 +76,7 @@ func (g *guardedMux) Read(pattern string, h func(http.ResponseWriter, *http.Requ
 	if !strings.HasPrefix(pattern, "GET ") {
 		panic("applifecycle: only a GET can be open to the reader: " + pattern)
 	}
-	g.mux.HandleFunc(pattern, g.auth(h, true))
+	g.mux.HandleFunc(pattern, g.auth(h, admitsReader))
 }
 
 // HTTPServer exposes app lifecycle operations over HTTP.
@@ -69,7 +88,8 @@ type HTTPServer struct {
 	// admitted by the identity the API server reports for it (auth.go): the
 	// director's for every route, the usher's for the routes registered with
 	// Read and for nothing else -- no command, no bundle, and not the reads
-	// the director's own commands make.
+	// the director's own commands make -- and the registrar's for the routes
+	// registered with People and for nothing else.
 	//
 	// This API takes and deletes backups and purges an app's data, and each
 	// command records the actor named in an X-Gentian-Actor header. That
@@ -90,6 +110,11 @@ type HTTPServer struct {
 	// which tenants (internal/placement). Nil on an operator that does not
 	// reconcile tenants, which the route then answers as unavailable.
 	Placements func(ctx context.Context) (placement.Answer, error)
+	// Rights is the rights store, for who holds what in a tenant: the
+	// operator is its one writer, and this is where a position or a role is
+	// given and taken. Nil on a cluster that runs no rights store, which the
+	// routes then say.
+	Rights authz.Store
 }
 
 // bearer returns the token a request presents, or "".
@@ -103,8 +128,9 @@ func bearer(r *http.Request) string {
 
 // authenticated wraps a handler so it is reached only by a caller whose
 // identity admits it: the director's for every route, the reader's for a
-// route registered with Read.
-func (h *HTTPServer) authenticated(next http.HandlerFunc, reader bool) http.HandlerFunc {
+// route registered with Read, the registrar's for one registered with
+// People.
+func (h *HTTPServer) authenticated(next http.HandlerFunc, who admits) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !h.Auth.configured() {
 			writeErr(w, http.StatusServiceUnavailable, errors.New(
@@ -129,10 +155,18 @@ func (h *HTTPServer) authenticated(next http.HandlerFunc, reader bool) http.Hand
 			ctrllog.FromContext(r.Context()).WithName("app-lifecycle").Error(err, "a caller could not be identified and was refused")
 			writeErr(w, http.StatusServiceUnavailable, errors.New("the caller could not be identified: the API server did not answer"))
 			return
+		case username == "":
+			// No identity admits a caller the API server gave no name.
+			writeErr(w, http.StatusForbidden, errors.New("this API is the director's, the usher's and the registrar's; this identity is none of them"))
+			return
 		case username == callers.Director:
-		case username == callers.Reader && reader && r.Method == http.MethodGet:
+		case username == callers.Reader && who == admitsReader && r.Method == http.MethodGet:
 		case username == callers.Reader:
 			writeErr(w, http.StatusForbidden, errors.New("this identity reads state; this route is the director's"))
+			return
+		case username == callers.Registrar && who == admitsRegistrar:
+		case username == callers.Registrar:
+			writeErr(w, http.StatusForbidden, errors.New("this identity gives and takes what people hold; this route is the director's"))
 			return
 		default:
 			writeErr(w, http.StatusForbidden, errors.New("this API is the director's and the usher's; this identity is neither"))
@@ -178,6 +212,7 @@ func (h *HTTPServer) routes() *http.ServeMux {
 	h.registerResidueRoutes(guarded)
 	h.registerApprovalRoutes(guarded)
 	h.registerRefreshRoutes(guarded)
+	h.registerAssignmentRoutes(guarded)
 	return mux
 }
 

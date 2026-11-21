@@ -289,6 +289,9 @@ registrar:
   # templates an invitation may apply live there. Empty derives it from the
   # desktop component's Service in the tenant's namespace.
   desktopAPI: ""
+  # Where the operator's listener answers, which gives and takes what a
+  # person holds in a tenant. Empty is the listener of this release.
+  appLifecycleURL: ""
   # Where the registrar records WHO WAS ALLOWED to ask for a change to a person
   # (S7A.17). Keycloak's own admin event says what changed; it sees only the
   # registrar's service account, so it cannot say who asked or what permitted
