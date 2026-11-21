@@ -659,6 +659,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.package.valueMapping.imap.portKey` | string |  | `PortKey` is the Helm value key for the IMAP port. |
 | `spec.package.valueMapping.integrations` | map[string]object |  | `Integrations` maps optional integration credentials to Helm keys, keyed by the contract name. |
 | `spec.package.valueMapping.integrations{}.endpointKey` | string |  | `EndpointKey` is the Helm value key for the integration's service endpoint URL. |
+| `spec.package.valueMapping.integrations{}.homeScopeKey` | string |  | `HomeScopeKey` is the Helm value key for the scope the component asks the tenant's realm a person's token for the home with, for a contract it calls as the… |
 | `spec.package.valueMapping.integrations{}.passwordKey` | string |  | `PasswordKey` is the Helm value key for the integration password. |
 | `spec.package.valueMapping.integrations{}.userKey` | string |  | `UserKey` is the Helm value key for the integration username. |
 | `spec.package.valueMapping.llm` | object |  | `LLM` maps the model gateway's address and the component's key to Helm keys, for a component that declares requires.services.llm. |
@@ -1559,6 +1560,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.package.valueMapping.imap.portKey` | string |  | `PortKey` is the Helm value key for the IMAP port. |
 | `status.profileSpec.package.valueMapping.integrations` | map[string]object |  | `Integrations` maps optional integration credentials to Helm keys, keyed by the contract name. |
 | `status.profileSpec.package.valueMapping.integrations{}.endpointKey` | string |  | `EndpointKey` is the Helm value key for the integration's service endpoint URL. |
+| `status.profileSpec.package.valueMapping.integrations{}.homeScopeKey` | string |  | `HomeScopeKey` is the Helm value key for the scope the component asks the tenant's realm a person's token for the home with, for a contract it calls as the… |
 | `status.profileSpec.package.valueMapping.integrations{}.passwordKey` | string |  | `PasswordKey` is the Helm value key for the integration password. |
 | `status.profileSpec.package.valueMapping.integrations{}.userKey` | string |  | `UserKey` is the Helm value key for the integration username. |
 | `status.profileSpec.package.valueMapping.llm` | object |  | `LLM` maps the model gateway's address and the component's key to Helm keys, for a component that declares requires.services.llm. |

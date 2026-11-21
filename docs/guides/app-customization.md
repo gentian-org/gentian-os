@@ -584,17 +584,21 @@ spec:
   client_secret=$VOUCHING_CLIENT_SECRET
   subject_token=<the token in the request's Authorization header>
   subject_token_type=urn:ietf:params:oauth:token-type:access_token
-  scope=$VOUCHING_HOME_FILE_STORE
+  scope=<the home's scope, from homeScopeKey>
   ```
 
   Nobody is linked, and the realm believes nothing the app says about a person: it obtains a token
   for whoever is signed in at its address at that moment and for nobody else, and that ends with
   the person's session.
-- **What the component is told.** The home's address, under
-  `valueMapping.integrations.<contract>.endpointKey`, and in the Secret `vouching-<profile>` the
-  scope to ask for per granted contract: `VOUCHING_HOME_FILE_STORE`, `VOUCHING_HOME_CALENDAR_STORE`,
-  `VOUCHING_HOME_CONTACTS_STORE`. An entry is there while the contract is granted. The component
-  mounts the Secret as files and reads them when it asks.
+- **What the component is told.** Per contract, under `valueMapping.integrations.<contract>`:
+  the home's address at `endpointKey`, and the scope to ask for at `homeScopeKey`. Both are values
+  of the chart, set while the contract is granted and left out otherwise:
+
+  ```yaml
+  valueMapping:
+    integrations:
+      file-store: {endpointKey: home.url, homeScopeKey: home.scope}
+  ```
 - **Paths.** The component never assumes the home's paths. For files the contract gives the root;
   for calendars and address books it asks the home (`current-user-principal`, the home sets).
 

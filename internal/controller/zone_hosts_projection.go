@@ -308,13 +308,6 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 				homeApps[tenant][p] = true
 			}
 		}
-		// Every component that calls a home as the person, with or without
-		// one granted now: a grant taken back takes the scope's name away.
-		for consumer := range asPerson[tenant] {
-			if err := r.keepVouchingHomes(ctx, ns, consumer, homes[consumer]); err != nil {
-				return err
-			}
-		}
 	}
 
 	for i := range tenants.Items {
