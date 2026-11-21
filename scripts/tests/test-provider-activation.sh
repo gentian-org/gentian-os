@@ -98,17 +98,27 @@ case "${verb}" in
             clusterrole)
                 [[ "${jsonpath}" == *source-sha* ]] && cat "${STATE}/rbac-sha" 2>/dev/null
                 exit 0 ;;
-            providerconfig.*) exit 0 ;;
+            # The vault provider's sign-in: at the Kubernetes auth, unless
+            # ${STATE}/vault-source says what an earlier install left.
+            providerconfig.*)
+                if [[ "${jsonpath}" == *credentials.source* ]]; then
+                    if [[ -f "${STATE}/vault-source" ]]; then cat "${STATE}/vault-source"; else printf 'Kubernetes'; fi
+                fi
+                exit 0 ;;
             managed) exit 0 ;;
             # Crossplane's own Deployments, available when ${STATE}/objects
             # names them as deployment/<name>.
             deployment)
+                [[ "${jsonpath}" == *serviceAccountName* ]] && { printf 'crossplane-provider-vault'; exit 0; }
                 grep -qxF "deployment/${name}" "${STATE}/objects" 2>/dev/null && printf '1'
                 exit 0 ;;
             # The cluster's CA, and the tenant-apps kubeconfig as last
             # written (${STATE}/kubeconfig, base64).
             configmap) [[ "${name}" == kube-root-ca.crt ]] && printf 'CA' ; exit 0 ;;
+            # The provider's token Secret of an earlier install is there only
+            # when ${STATE}/objects names it.
             secret)
+                [[ "${name}" == openbao-crossplane-token ]] && { grep -qxF "secret/${name}" "${STATE}/objects" 2>/dev/null; exit $?; }
                 [[ "${jsonpath}" == *kubeconfig* ]] && cat "${STATE}/kubeconfig" 2>/dev/null
                 exit 0 ;;
         esac
@@ -289,6 +299,22 @@ if [[ "${out}" == *"rc=0"* ]]; then
 else
     bad "B-05 check: policy from this checkout, every type established: satisfied" "${out}"
 fi
+echo "secret/openbao-crossplane-token" >> "${STATE}/objects"
+out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
+if [[ "${out}" == *"rc=1"* ]]; then
+    ok "B-05 check: the vault token Secret of an earlier install still there is not"
+else
+    bad "B-05 check: the vault token Secret of an earlier install still there is not" "${out}"
+fi
+grep -vxF "secret/openbao-crossplane-token" "${STATE}/objects" > "${STATE}/objects.kept"; mv "${STATE}/objects.kept" "${STATE}/objects"
+printf 'Secret' > "${STATE}/vault-source"
+out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
+if [[ "${out}" == *"rc=1"* ]]; then
+    ok "B-05 check: a vault ProviderConfig that reads a token from a Secret is not"
+else
+    bad "B-05 check: a vault ProviderConfig that reads a token from a Secret is not" "${out}"
+fi
+rm -f "${STATE}/vault-source"
 echo "0000000000000000" > "${STATE}/rbac-sha"
 out="$(run B-05-crossplane-providers 'check; echo "rc=$?"')"
 if [[ "${out}" == *"rc=1"* ]]; then

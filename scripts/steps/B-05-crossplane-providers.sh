@@ -188,6 +188,38 @@ _b05_packages_current() {
     return 0
 }
 
+# The vault provider signs in as its own account (B-04) and holds no token.
+# A cluster installed before that has a ProviderConfig reading a token from a
+# Secret, a provider running as the account Crossplane named, and the Secret;
+# all three are here so that such a cluster is not reported satisfied.
+_B05_VAULT_TOKEN_SECRET="openbao-crossplane-token"
+
+_b05_vault_signin_current() {
+    local ns
+    ns="$(ns_kernel provisioning)"
+    [[ "$(kubectl get providerconfig.vault.upbound.io/openbao -o jsonpath='{.spec.credentials.source}' 2>/dev/null)" == "Kubernetes" ]] || return 1
+    [[ "$(kubectl get deployment -n "${ns}" -l pkg.crossplane.io/provider=provider-vault \
+        -o jsonpath='{.items[0].spec.template.spec.serviceAccountName}' 2>/dev/null)" == "${VAULT_PROVIDER_SA}" ]] || return 1
+    ! kubectl get secret "${_B05_VAULT_TOKEN_SECRET}" -n "${ns}" >/dev/null 2>&1
+}
+
+# The token an earlier install left for the provider. Nothing reads it once
+# the ProviderConfig is applied. It is revoked with itself where the vault
+# still accepts it, then the Secret goes.
+_b05_drop_vault_token() {
+    local ns token addr
+    ns="$(ns_kernel provisioning)"
+    kubectl get secret "${_B05_VAULT_TOKEN_SECRET}" -n "${ns}" >/dev/null 2>&1 || return 0
+    token="$(kubectl get secret "${_B05_VAULT_TOKEN_SECRET}" -n "${ns}" -o jsonpath='{.data.credentials}' 2>/dev/null \
+        | base64 -d 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)"
+    if [[ -n "${token}" ]] && addr="$(gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https 2>/dev/null)"; then
+        bao_curl -s -o /dev/null --max-time 10 -X POST -H @<(printf 'X-Vault-Token: %s\n' "${token}") \
+            "${addr}/v1/auth/token/revoke-self" || true
+    fi
+    kubectl delete secret "${_B05_VAULT_TOKEN_SECRET}" -n "${ns}" --ignore-not-found >/dev/null
+    success "The provider's earlier vault token Secret is removed."
+}
+
 check() {
     local p pc fn crd
     _b05_activation_current || return 1
@@ -216,6 +248,7 @@ check() {
     kubectl get serviceaccount "${_B05_TENANT_APPS}" -n "$(ns_kernel provisioning)" >/dev/null 2>&1 || return 1
     _b05_tenant_apps_current || return 1
     _b05_rbac_current || return 1
+    _b05_vault_signin_current || return 1
     return 0
 }
 
@@ -253,6 +286,7 @@ apply() {
     kubectl annotate clusterrole "${_B05_RBAC_ROLE}" --overwrite "gentianos.io/source-sha=$(_b05_rbac_sha)" >/dev/null
     _b05_tenant_apps_apply || return 1
     _v5_providers_apply provider-configs.yaml
+    _b05_drop_vault_token
     # The functions the Compositions call, before B-06 applies any of them.
     # A Composition whose function is not installed yet renders nothing, and
     # nothing downstream says so.
