@@ -61,7 +61,7 @@ type PrivilegeGrant struct {
 	// caller may supply.
 	Approver   string `json:"approver"`
 	ApprovedAt string `json:"approvedAt"`
-	Reason     string `json:"reason"`
+	Reason     string `json:"reason,omitempty"`
 	ExpiresAt  string `json:"expiresAt,omitempty"`
 	// Digest pins an apiExtensions grant to the definitions approved.
 	Digest string `json:"digest,omitempty"`
@@ -122,8 +122,11 @@ func (g *GitOps) GrantPrivilege(ctx context.Context, tenant string, grant Privil
 	if !ValidName(grant.Install) {
 		return Result{}, fmt.Errorf("%w: install %q", ErrInvalidName, grant.Install)
 	}
-	if grant.Privilege == "" || grant.Approver == "" || strings.TrimSpace(grant.Reason) == "" {
-		return Result{}, fmt.Errorf("a grant needs a privilege, an approver and a reason")
+	if grant.Privilege == "" || grant.Approver == "" {
+		return Result{}, fmt.Errorf("a grant needs a privilege and an approver")
+	}
+	if strings.TrimSpace(grant.Reason) == "" {
+		grant.Reason = ""
 	}
 	if grant.ApprovedAt == "" {
 		grant.ApprovedAt = time.Now().UTC().Format(time.RFC3339)
@@ -216,7 +219,9 @@ func renderPrivileges(tenant string, grants []PrivilegeGrant) string {
 		b.WriteString("      privilege: " + g.Privilege + "\n")
 		b.WriteString("      approver: " + g.Approver + "\n")
 		b.WriteString("      approvedAt: " + g.ApprovedAt + "\n")
-		b.WriteString("      reason: " + yamlScalar(g.Reason) + "\n")
+		if g.Reason != "" {
+			b.WriteString("      reason: " + yamlScalar(g.Reason) + "\n")
+		}
 		if g.ExpiresAt != "" {
 			b.WriteString("      expiresAt: " + g.ExpiresAt + "\n")
 		}

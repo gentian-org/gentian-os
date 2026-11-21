@@ -344,15 +344,14 @@ spec:
                       pattern: ^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     reason:
-                      description: Reason in the approver's words, not the profile's.
+                      description: Reason is a comment the approver may leave, in
+                        their own words.
                       maxLength: 2000
-                      minLength: 10
                       type: string
                   required:
                   - approvedAt
                   - approver
                   - privilege
-                  - reason
                   type: object
                   x-kubernetes-validations:
                   - message: 'approver and approvedAt are immutable: a new approval

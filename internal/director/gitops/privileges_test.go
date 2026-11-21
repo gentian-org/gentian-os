@@ -228,9 +228,24 @@ func TestGrantRefusesNamesThatAreNotNames(t *testing.T) {
 	if _, err := g.GrantPrivilege(ctx, "demo", bad, grantMeta()); err == nil {
 		t.Fatal("an install named ../../elsewhere was accepted")
 	}
-	short := egressGrant()
-	short.Reason = "  "
-	if _, err := g.GrantPrivilege(ctx, "demo", short, grantMeta()); err == nil {
-		t.Fatal("a grant with no reason was accepted")
+}
+
+// A grant's reason is a comment the approver may leave: one without it is
+// taken, and its entry carries no reason line.
+func TestGrantWithoutAReasonIsTaken(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	bare := egressGrant()
+	bare.Reason = "  "
+	if _, err := g.GrantPrivilege(ctx, "demo", bare, grantMeta()); err != nil {
+		t.Fatalf("a grant with no reason was refused: %v", err)
+	}
+	grants, err := g.TenantPrivileges(ctx, "demo")
+	if err != nil || len(grants) != 1 {
+		t.Fatalf("grants = %v, %v; want the one grant", grants, err)
+	}
+	if grants[0].Reason != "" {
+		t.Errorf("reason = %q, want none", grants[0].Reason)
 	}
 }

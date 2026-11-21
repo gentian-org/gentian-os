@@ -675,11 +675,11 @@ type TenantPrivilegeGrant struct {
 
 	ApprovedAt metav1.Time `json:"approvedAt"`
 
-	// Reason in the approver's words, not the profile's. The profile already
-	// said why it wants the privilege; this is why somebody agreed.
-	// +kubebuilder:validation:MinLength=10
+	// Reason is a comment the approver may leave, in their own words. The
+	// profile already said why it wants the privilege.
+	// +optional
 	// +kubebuilder:validation:MaxLength=2000
-	Reason string `json:"reason"`
+	Reason string `json:"reason,omitempty"`
 
 	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
 	// reviews.

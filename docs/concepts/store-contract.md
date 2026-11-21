@@ -725,7 +725,8 @@ token:
    and the page carries on by itself once none is left. Each entry is shown
    with what it is, the profile's `reason`, and who answers it: one with
    `approvedBy: perimeter-approver` is approved there and then by a person
-   who holds `can_approve_privilege` on the tenant, with their reason,
+   who holds `can_approve_privilege` on the tenant, with a comment if they
+   leave one,
    through the director's approval route, and otherwise waits for the
    tenant's perimeter approver; one with
    `approvedBy: security-officer` is **requested** — `POST

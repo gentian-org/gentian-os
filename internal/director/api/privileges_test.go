@@ -198,19 +198,37 @@ func TestConfiguringTheClusterIsNotApprovingForIt(t *testing.T) {
 	}
 }
 
-// A grant needs a reason in the approver's own words. The profile already said
-// why it wants the privilege; this is the record of why somebody agreed, and
-// it is the only part of the entry a caller supplies.
-func TestAGrantNeedsAReason(t *testing.T) {
+// A grant's reason is a comment the approver may leave. The profile already
+// said why it wants the privilege, and the approver and the time are recorded
+// from the call, so an approval with no comment, or a short one, is taken.
+func TestAGrantNeedsNoReason(t *testing.T) {
+	for name, body := range map[string]string{
+		"no body":    ``,
+		"none":       `{}`,
+		"short":      reason("ok"),
+		"whitespace": `{"reason":"           "}`,
+	} {
+		h := start(t)
+		tom := h.token(t, "tenant-demo", "tom")
+		before := h.tip(t)
+		if code, answer := h.do(t, "PUT", egressPath, tom, body); code != http.StatusAccepted && code != http.StatusOK {
+			t.Errorf("%s: PUT = %d %v, want the grant taken", name, code, answer)
+		}
+		if h.tip(t) == before {
+			t.Errorf("%s: nothing was committed", name)
+		}
+	}
+}
+
+// What is not a grant's body, or is a comment too long to keep, is refused.
+func TestAGrantRefusesWhatIsNoBody(t *testing.T) {
 	h := start(t)
 	before := h.tip(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	for name, body := range map[string]string{
-		"none":       `{}`,
-		"too short":  reason("ok"),
-		"whitespace": `{"reason":"           "}`,
-		"not json":   `nonsense`,
+		"not json": `nonsense`,
+		"too long": reason(strings.Repeat("x", 2001)),
 	} {
 		if code, _ := h.do(t, "PUT", egressPath, tom, body); code != http.StatusBadRequest {
 			t.Errorf("%s: PUT = %d, want 400", name, code)

@@ -12,6 +12,7 @@ package api
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -35,10 +36,10 @@ var grantDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // when: an approval that could name its own approver would record nothing, so
 // both come from the call.
 type grantPrivilegeRequest struct {
-	// Reason in the approver's own words. The profile already said why it
-	// wants the privilege; this says why somebody agreed, which is what a
-	// reviewer reads later.
-	Reason string `json:"reason"`
+	// Reason is a comment the approver may leave. Optional: the profile
+	// already said why it wants the privilege, and the approver and the time
+	// are recorded whatever is written here.
+	Reason string `json:"reason,omitempty"`
 	// ExpiresAt bounds the grant, RFC 3339. Optional, and for a pod-security
 	// waiver it is close to obligatory in practice -- a waiver with no expiry
 	// is a waiver nobody reviews.
@@ -205,14 +206,14 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 		return
 	}
 	var body grantPrivilegeRequest
-	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"reason": "...", "expiresAt": "<RFC 3339>"}`)
+	if err := decode(r, &body); err != nil && !errors.Is(err, io.EOF) {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"reason": "...", "expiresAt": "<RFC 3339>"}; both optional`)
 		return
 	}
-	// The minimum the CRD enforces anyway, refused here so the answer says
+	// The length the CRD enforces anyway, refused here so the answer says
 	// what is wrong rather than surfacing later as a rejected commit.
-	if len(strings.TrimSpace(body.Reason)) < 10 {
-		s.fail(w, r, http.StatusBadRequest, "a grant needs a reason of at least ten characters, in your own words")
+	if len(strings.TrimSpace(body.Reason)) > 2000 {
+		s.fail(w, r, http.StatusBadRequest, "a grant's comment is at most 2000 characters")
 		return
 	}
 	if body.ExpiresAt != "" {

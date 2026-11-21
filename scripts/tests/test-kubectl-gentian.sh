@@ -478,9 +478,10 @@ is "apps approve sends one PUT with the reason" "$(writes | tr -d '\n' | tr -s '
     'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake { "reason": "reads the website'"'"'s order requests"}'
 has "... and says it is committed" "${OUT}" "Approved egress/intake for aluvian-commerce in team: committed (01234567)"
 fresh
-gentian apps approve aluvian-commerce egress/intake --tenant team --reason "ok"
-refused "an approval without a reason of ten characters is a usage error"
-is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh; reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve aluvian-commerce egress/intake --tenant team
+is "apps approve without a reason sends one PUT with no reason" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake {}'
 fresh
 gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
 refused "a request of no known kind is a usage error"

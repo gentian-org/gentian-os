@@ -264,7 +264,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
-| `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
+| `spec.privileges[].reason` | string |  | `Reason` is a comment the approver may leave, in their own words. |
 | `spec.profileRef` | object | yes | `ProfileRef` names the catalog entry this is an instance of. |
 | `spec.profileRef.digest` | string |  | `Digest` pins the profile bundle this instance was installed from. |
 | `spec.profileRef.name` | string | yes |  |
@@ -1969,7 +1969,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
 | `spec.privileges[].install` | string | yes | `Install` names the Component this grant is for, which is the component's object name in the tenant's namespace. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>. |
-| `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
+| `spec.privileges[].reason` | string |  | `Reason` is a comment the approver may leave, in their own words. |
 | `spec.quotas` | object |  | `Quotas` sets resource limits for this tenant. |
 | `spec.quotas.cpu` | int-or-string |  | `CPU` caps the sum of container CPU **limits** in the namespace. |
 | `spec.quotas.maxPods` | integer (int32) |  | `MaxPods` caps the number of pods in the tenant namespace (init Jobs + app workloads). |

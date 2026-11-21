@@ -611,7 +611,8 @@ way out to an address (`egress`), a relaxed pod security (`podSecurity`),
 cluster roles (`clusterRoles`), types of its own (`apiExtensions`) -- waits
 until a person answers each request;
 its component reads `waiting for approval of <kind>/<name>`. The answer is a
-commit through the director, with you as the approver and your reason in it.
+commit through the director, with you as the approver. `--reason` adds a
+comment of yours to it and may be left out.
 An `egress` request is the tenant's perimeter approver's to answer (and the
 cluster's administrator's, in a tenant the cluster operates); a `podSecurity`
 request and a cluster role that reads are the cluster's security officer's;
@@ -620,8 +621,9 @@ the same as a button, to whoever holds the right the request needs.
 
 ```bash
 kubectl gentian apps approve aluvian-commerce --tenant team     # what it waits for
+kubectl gentian apps approve aluvian-commerce egress/intake --tenant team
 kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
-  --reason "reads the website's and the store's order requests over https"
+  --reason "reads the website's and the store's order requests over https"   # with a comment
 ```
 
 An `apiExtensions` approval names the definitions it approves: the command
