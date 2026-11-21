@@ -226,10 +226,10 @@ type PrivilegeGrant struct {
 
 	ApprovedAt metav1.Time `json:"approvedAt"`
 
-	// Reason in the approver's words, not the profile's.
-	// +kubebuilder:validation:MinLength=10
+	// Reason is a comment the approver may leave, in their own words.
+	// +optional
 	// +kubebuilder:validation:MaxLength=2000
-	Reason string `json:"reason"`
+	Reason string `json:"reason,omitempty"`
 
 	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
 	// reviews.

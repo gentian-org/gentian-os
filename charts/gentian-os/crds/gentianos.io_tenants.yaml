@@ -1213,17 +1213,15 @@ spec:
                       type: string
                     reason:
                       description: |-
-                        Reason in the approver's words, not the profile's. The profile already
-                        said why it wants the privilege; this is why somebody agreed.
+                        Reason is a comment the approver may leave, in their own words. The
+                        profile already said why it wants the privilege.
                       maxLength: 2000
-                      minLength: 10
                       type: string
                   required:
                   - approvedAt
                   - approver
                   - install
                   - privilege
-                  - reason
                   type: object
                 maxItems: 256
                 type: array

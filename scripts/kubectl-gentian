@@ -99,7 +99,7 @@
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
-#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
+#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]
 #                                                             approve one request: egress (the tenant's perimeter approver),
 #                                                             podSecurity or clusterRoles (the cluster's security officer),
 #                                                             apiExtensions or a role that writes (break-glass)
@@ -2835,12 +2835,12 @@ cmd_apps() {
     esac
 }
 
-# kubectl gentian apps approve <app> [<kind>/<name>] --tenant <t> --reason "<why>" [--expires <RFC 3339>]
+# kubectl gentian apps approve <app> [<kind>/<name>] --tenant <t> [--reason "<comment>"] [--expires <RFC 3339>]
 #
 # An app whose profile asks for more than the default posture waits until a
 # person answers each request (the Component reads "waiting for approval of
 # <kind>/<name>"). This is the answer: one commit through the director, with
-# the approver taken from the session and the reason in their words. Who may
+# the approver taken from the session and, if they leave one, a comment. Who may
 # answer is the director's to decide by the request: an egress request is the
 # tenant administrator's, a podSecurity or clusterRoles one the cluster's
 # security officer's, an apiExtensions one or a cluster role that writes
@@ -2849,7 +2849,7 @@ cmd_apps() {
 cmd_apps_approve() {
     local usage_text app="" privilege="" reason="" expires="" t answer kind name
     usage_text='usage: kubectl gentian apps approve <app> --tenant <tenant>
-       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]'
+       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]'
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
@@ -2881,7 +2881,7 @@ cmd_apps_approve() {
         local p
         while IFS= read -r p; do printf '  %s\n' "${p}"; done <<<"${pending}"
         echo "Approve one with:"
-        echo "  kubectl gentian apps approve ${app} <kind>/<name> --tenant ${t} --reason \"<why, in your words>\""
+        echo "  kubectl gentian apps approve ${app} <kind>/<name> --tenant ${t}"
         return 0
     fi
 
@@ -2889,7 +2889,6 @@ cmd_apps_approve() {
     kind="${PRIV_KIND}"
     name="${PRIV_NAME}"
     reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what a reviewer reads in the commit."
 
     # An API extension's approval names the definitions it approves: the
     # digest the cluster reports for the request as the profile has it now.
@@ -2904,7 +2903,7 @@ cmd_apps_approve() {
     fi
 
     answer="$(_call PUT "/v1/tenants/${t}/privileges/${app}/${kind}/${name}" \
-        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" '{reason: $r} + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end)')")" || exit 1
+        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" '(if $r == "" then {} else {reason: $r} end) + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end)')")" || exit 1
     if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
         echo "${privilege} of ${app} in ${t} is approved already; nothing was committed."
         return 0
