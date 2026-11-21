@@ -70,16 +70,31 @@ type modelGraph struct {
 	// role[type][relation] is true when the relation is assigned to a group's
 	// members or to a user -- that is, when somebody can hold it.
 	role map[string]map[string]bool
+	// parent[type][relation] are the relations on another object it follows
+	// from: "admin from tenant" is {Edge: "tenant", Relation: "admin"}.
+	parent map[string]map[string][]parentRef
+}
+
+// parentRef is one "relation from edge" a relation is derived from.
+type parentRef struct {
+	// Edge is the relation that names the other object: tenant, cluster.
+	Edge string
+	// Relation is what has to be held there.
+	Relation string
 }
 
 // parseModel reads the embedded model into a graph of derivations.
 //
 // Only the shapes this model actually uses are handled: a direct assignment,
-// a computedUserset, and a union of those. A tupleToUserset -- "can_audit
-// from cluster" -- crosses to another object and is deliberately NOT followed:
-// this view describes one object, and a permission somebody holds because of
-// their relation to the cluster is the cluster's row to show, not the
-// tenant's. Saying so is better than implying the tenant granted it.
+// a computedUserset, a union of those, and a difference, whose base is what
+// the relation is computed from ("entitled but not ..." is carried by
+// entitled; whether it is in effect for one person is the store's to say). A
+// tupleToUserset -- "can_audit from cluster" -- crosses to another object and
+// is deliberately NOT followed into what a role carries: a view describes one
+// object, and a permission somebody holds because of their relation to the
+// cluster is the cluster's row to show, not the tenant's. Saying so is better
+// than implying the tenant granted it. Such a derivation is kept apart
+// (parent), for the reader that can look at the other object too.
 func parseModel(raw []byte) (*modelGraph, error) {
 	var m struct {
 		TypeDefinitions []struct {
@@ -96,13 +111,22 @@ func parseModel(raw []byte) (*modelGraph, error) {
 				ComputedUserset *struct {
 					Relation string `json:"relation"`
 				} `json:"computedUserset"`
-				Union *struct {
+				TupleToUserset *modelTupleToUserset `json:"tupleToUserset"`
+				Union          *struct {
 					Child []struct {
 						ComputedUserset *struct {
 							Relation string `json:"relation"`
 						} `json:"computedUserset"`
+						TupleToUserset *modelTupleToUserset `json:"tupleToUserset"`
 					} `json:"child"`
 				} `json:"union"`
+				Difference *struct {
+					Base struct {
+						ComputedUserset *struct {
+							Relation string `json:"relation"`
+						} `json:"computedUserset"`
+					} `json:"base"`
+				} `json:"difference"`
 			} `json:"relations"`
 		} `json:"type_definitions"`
 	}
@@ -112,6 +136,7 @@ func parseModel(raw []byte) (*modelGraph, error) {
 	g := &modelGraph{
 		byType: map[string]map[string][]string{},
 		role:   map[string]map[string]bool{},
+		parent: map[string]map[string][]parentRef{},
 	}
 	for _, td := range m.TypeDefinitions {
 		rels := map[string][]string{}
@@ -138,24 +163,65 @@ func parseModel(raw []byte) (*modelGraph, error) {
 				}
 			}
 		}
+		parents := map[string][]parentRef{}
 		for name, def := range td.Relations {
 			var from []string
 			if def.ComputedUserset != nil && def.ComputedUserset.Relation != "" {
 				from = append(from, def.ComputedUserset.Relation)
+			}
+			if ref, ok := def.TupleToUserset.ref(); ok {
+				parents[name] = append(parents[name], ref)
 			}
 			if def.Union != nil {
 				for _, c := range def.Union.Child {
 					if c.ComputedUserset != nil && c.ComputedUserset.Relation != "" {
 						from = append(from, c.ComputedUserset.Relation)
 					}
+					if ref, ok := c.TupleToUserset.ref(); ok {
+						parents[name] = append(parents[name], ref)
+					}
 				}
+			}
+			if def.Difference != nil && def.Difference.Base.ComputedUserset != nil &&
+				def.Difference.Base.ComputedUserset.Relation != "" {
+				from = append(from, def.Difference.Base.ComputedUserset.Relation)
 			}
 			rels[name] = from
 		}
 		g.byType[td.Type] = rels
 		g.role[td.Type] = roles
+		g.parent[td.Type] = parents
 	}
 	return g, nil
+}
+
+// modelTupleToUserset is "relation from edge" as the model's JSON has it.
+type modelTupleToUserset struct {
+	Tupleset struct {
+		Relation string `json:"relation"`
+	} `json:"tupleset"`
+	ComputedUserset struct {
+		Relation string `json:"relation"`
+	} `json:"computedUserset"`
+}
+
+func (t *modelTupleToUserset) ref() (parentRef, bool) {
+	if t == nil || t.Tupleset.Relation == "" || t.ComputedUserset.Relation == "" {
+		return parentRef{}, false
+	}
+	return parentRef{Edge: t.Tupleset.Relation, Relation: t.ComputedUserset.Relation}, true
+}
+
+// permissions lists the can_* relations of a type. Sorted.
+func (g *modelGraph) permissions(typ string) []string {
+	var out []string
+	for name := range g.byType[typ] {
+		if strings.HasPrefix(name, "can_") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // grantsOf resolves which can_* permissions a role carries on a type.
@@ -164,12 +230,25 @@ func parseModel(raw []byte) (*modelGraph, error) {
 // inverts that and follows the chain, since a permission may be computed from
 // another permission rather than straight from a role.
 func (g *modelGraph) grantsOf(typ, role string) []string {
+	var out []string
+	for name := range g.reach(typ, role) {
+		if strings.HasPrefix(name, "can_") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// reach is every relation of a type that holding one of them implies, the
+// relation itself included. Nil for a type the model does not have.
+func (g *modelGraph) reach(typ, relation string) map[string]bool {
 	rels, ok := g.byType[typ]
 	if !ok {
 		return nil
 	}
-	// reach[r] means "holding role implies r".
-	reach := map[string]bool{role: true}
+	// reach[r] means "holding relation implies r".
+	reach := map[string]bool{relation: true}
 	// The model is small and shallow; iterate to a fixed point rather than
 	// recursing, which also makes a cycle terminate instead of overflowing.
 	for changed := true; changed; {
@@ -187,14 +266,7 @@ func (g *modelGraph) grantsOf(typ, role string) []string {
 			}
 		}
 	}
-	var out []string
-	for name := range reach {
-		if strings.HasPrefix(name, "can_") {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return reach
 }
 
 // roles lists the relations of a type that somebody can hold. Sorted, so the

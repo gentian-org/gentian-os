@@ -19,6 +19,11 @@ import (
 // the attributes of the profile's app group, as a JSON object.
 const GroupAttributesAnnotation = "gentianos.io/keycloak-group-attributes"
 
+// AdminRolesAttribute is the group attribute in which a profile declares the
+// roles someone administering the app should hold. They are given to the
+// tenant's app administrators' group, not to the app's own.
+const AdminRolesAttribute = "gentianOdooAdminRoles"
+
 // ParseGroupAttributes reads a GroupAttributesAnnotation value as Keycloak's
 // attribute lists: a list item by item, a string as itself, and any other
 // value, null included, as its fmt.Sprint form. The caller decides what a
