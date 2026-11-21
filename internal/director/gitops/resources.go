@@ -210,11 +210,6 @@ func withoutSetBy(text string) string {
 // as null, which is how a strategic merge removes a key. Omitting them would
 // leave whatever the manifest had, and the tenant would run on a ceiling that
 // is neither the manifest's nor the plan's but a mixture priced as the plan.
-//
-// maxApps is not among them, deliberately. A plan is a quantity of capacity,
-// the fields that become ResourceQuota keys, and maxApps becomes none: the
-// Tenant webhook enforces it against spec.apps. A plan change nulling it
-// would quietly delete a cluster's app cap, which no purchase should do.
 func renderResourcePlan(tenant string, plan Plan, meta Meta) string {
 	var b strings.Builder
 	b.WriteString("# Managed by the director: this tenant's resource plan, chosen in the\n")

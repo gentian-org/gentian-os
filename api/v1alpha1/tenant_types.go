@@ -827,11 +827,6 @@ type TenantLLMBudget struct {
 
 // TenantQuotas defines resource consumption limits for this tenant.
 type TenantQuotas struct {
-	// MaxApps is the maximum number of apps this tenant may install.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxApps int32 `json:"maxApps,omitempty"`
-
 	// Storage is the total storage quota (PVCs + S3 buckets).
 	// +optional
 	Storage *resource.Quantity `json:"storage,omitempty"`

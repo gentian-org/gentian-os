@@ -108,9 +108,6 @@ func TestReChoosingTheRecordedPlanIsNotACommit(t *testing.T) {
 			t.Errorf("patch is missing %q:\n%s", want, patch)
 		}
 	}
-	if strings.Contains(patch, "maxApps") {
-		t.Error("a plan must not touch the app cap")
-	}
 }
 
 func TestAPlanForAnUnknownTenantOrWithoutANameIsRefused(t *testing.T) {

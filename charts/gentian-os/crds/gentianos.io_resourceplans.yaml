@@ -130,12 +130,6 @@ spec:
                       a runaway container. Sell RequestsCPU.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
-                  maxApps:
-                    description: MaxApps is the maximum number of apps this tenant
-                      may install.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   maxPods:
                     description: MaxPods caps the number of pods in the tenant namespace
                       (init Jobs + app workloads).

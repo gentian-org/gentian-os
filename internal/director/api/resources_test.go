@@ -159,9 +159,6 @@ func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {
 			t.Errorf("patch is missing %q:\n%s", want, patch)
 		}
 	}
-	if strings.Contains(patch, "maxApps") {
-		t.Error("a plan must not touch the app cap")
-	}
 	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
 	if !strings.Contains(kustomization, "- tenant.yaml") || !strings.Contains(kustomization, "- path: resource-plan.yaml") {
 		t.Fatalf("kustomization:\n%s", kustomization)
