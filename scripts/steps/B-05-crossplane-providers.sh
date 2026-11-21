@@ -198,8 +198,10 @@ _b05_vault_signin_current() {
     local ns
     ns="$(ns_kernel provisioning)"
     [[ "$(kubectl get providerconfig.vault.upbound.io/openbao -o jsonpath='{.spec.credentials.source}' 2>/dev/null)" == "Kubernetes" ]] || return 1
-    [[ "$(kubectl get deployment -n "${ns}" -l pkg.crossplane.io/provider=provider-vault \
-        -o jsonpath='{.items[0].spec.template.spec.serviceAccountName}' 2>/dev/null)" == "${VAULT_PROVIDER_SA}" ]] || return 1
+    # The pod, not the Deployment: Crossplane labels the pods it runs for a
+    # provider and leaves the Deployment itself without a label to find it by.
+    [[ "$(kubectl get pods -n "${ns}" -l pkg.crossplane.io/provider=provider-vault \
+        -o jsonpath='{.items[0].spec.serviceAccountName}' 2>/dev/null)" == "${VAULT_PROVIDER_SA}" ]] || return 1
     ! kubectl get secret "${_B05_VAULT_TOKEN_SECRET}" -n "${ns}" >/dev/null 2>&1
 }
 

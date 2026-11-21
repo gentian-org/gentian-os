@@ -108,8 +108,11 @@ case "${verb}" in
             managed) exit 0 ;;
             # Crossplane's own Deployments, available when ${STATE}/objects
             # names them as deployment/<name>.
+            # The vault provider's pod runs as the account the vault knows.
+            pods)
+                [[ "${jsonpath}" == *serviceAccountName* ]] && printf 'crossplane-provider-vault'
+                exit 0 ;;
             deployment)
-                [[ "${jsonpath}" == *serviceAccountName* ]] && { printf 'crossplane-provider-vault'; exit 0; }
                 grep -qxF "deployment/${name}" "${STATE}/objects" 2>/dev/null && printf '1'
                 exit 0 ;;
             # The cluster's CA, and the tenant-apps kubeconfig as last
