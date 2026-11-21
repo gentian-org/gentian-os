@@ -66,6 +66,11 @@ type GitOps struct {
 	// definitions refuses a commit the cluster would drop part of, set by
 	// GuardDefinitions. Nil checks nothing.
 	definitions *definitionsGuard
+	// admitTenant refuses a commit that leaves a tenant's manifest as the
+	// cluster would not take it, set by GuardTenants; tenantUnasked is told
+	// where the cluster could not be asked. Nil checks nothing.
+	admitTenant   TenantAdmitter
+	tenantUnasked func(tenant string, err error)
 	// afterPush is told of every commit that reached the remote, set by
 	// AfterPush. Nil tells nobody.
 	afterPush func(actor string)
@@ -865,6 +870,9 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 
 	// Before anything is committed: what is staged is what would be pruned.
 	if err := g.checkDefinitions(ctx); err != nil {
+		return err
+	}
+	if err := g.checkTenants(ctx); err != nil {
 		return err
 	}
 

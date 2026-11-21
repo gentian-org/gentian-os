@@ -476,6 +476,11 @@ How to read it:
 - Before a commit, asks the operator whether the cluster's resource
   definitions know every field the commit sets, and refuses the commit if a
   field would be silently dropped.
+- Before a commit that adds or changes a tenant's manifest, asks the operator
+  whether the cluster would take that manifest, and refuses the change with
+  the cluster's reason if it would not. A manifest the cluster refuses is one
+  Argo CD applies nothing of, so every later change to that tenant would wait
+  behind it. An operator that cannot be asked holds nothing back.
 - Passes one-off commands to the operator (§4.2), after the same token and
   permission check.
 - After each push, tells the operator that the deployment repository has a
@@ -734,7 +739,9 @@ every request. A positive answer is remembered for thirty seconds.
   ([schemacheck](../../internal/schemacheck/)).
 - *Admission.* It refuses a Tenant object that breaks the rules (for example
   a second user tenant on a single-tenancy cluster) when the object is
-  applied.
+  applied. For the director it applies a tenant's manifest as a dry run and
+  answers what the cluster said (`/v1/tenants/{tenant}/actions/admit`):
+  nothing is stored, and the answer is the one Argo CD would get.
 - *The address check.* It installs nothing for a component whose profile
   asks for an address name the platform keeps, and says so on the component.
 - *The store's address.* A store address whose host is the one this cluster
