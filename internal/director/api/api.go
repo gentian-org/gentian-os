@@ -83,6 +83,9 @@ type Repository interface {
 	SetTenantStoreTerms(ctx context.Context, tenant, version string, now time.Time, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantPartners(ctx context.Context, tenant string) ([]gitops.Partner, error)
+	TenantPositions(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantPosition, error)
+	SetTenantPosition(ctx context.Context, tenant string, position gentianov1alpha1.TenantPosition, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantPosition(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	TenantGroups(ctx context.Context, tenant string) ([]string, error)
 	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
 	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
@@ -517,6 +520,11 @@ func (s *Server) routes() {
 	// may see a tenant may see what it has installed, whether or not they may
 	// change it.
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
+	// A tenant's own positions, declared by whoever manages its people
+	// (positions.go).
+	s.guarded("GET /v1/tenants/{t}/positions", "can_manage_users", tenantObject, s.tenantPositions)
+	s.guarded("PUT /v1/tenants/{t}/positions/{name}", "can_manage_users", tenantObject, s.setTenantPosition)
+	s.guarded("DELETE /v1/tenants/{t}/positions/{name}", "can_manage_users", tenantObject, s.removeTenantPosition)
 	// The same report for one tenant: what of its apps is behind, and why.
 	s.guarded("GET /v1/tenants/{t}/updates", "can_view", tenantObject, s.updatesForTenant)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)

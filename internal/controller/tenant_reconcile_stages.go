@@ -122,6 +122,9 @@ type tenantReconcileState struct {
 	mailResult      ctrl.Result
 	appsResult      ctrl.Result
 	privilegeResult ctrl.Result
+	// firstAdministratorResult asks to be run again while the tenant's
+	// first administrator does not hold the position yet.
+	firstAdministratorResult ctrl.Result
 
 	// defaultGrantRetry is set when an app declaring defaultGrant has not
 	// been granted yet, so the reconcile is run again even when nothing else
@@ -436,6 +439,15 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.privilegeResult = privilegeResult
 
+	// The first administrator's position. Not a condition of the tenant: a
+	// tenant whose administrator cannot be given it yet is otherwise as
+	// ready as it is, and is asked again.
+	firstAdministrator, err := r.ensureFirstAdministrator(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("first administrator: %w", err)
+	}
+	state.firstAdministratorResult = firstAdministrator
+
 	// The model gateway, for the apps and the placed components that
 	// declared it -- and its removal from the ones that did not. After both
 	// kinds of Component exist: each holds its release, or runs without the
@@ -591,6 +603,10 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	if state.appsResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
 		return state.appsResult, nil
+	}
+	if state.firstAdministratorResult.RequeueAfter > 0 {
+		logger.Info("tenant ready; its first administrator does not hold the position yet", "tenant", tenant.Name)
+		return state.firstAdministratorResult, nil
 	}
 	if state.privilegeResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; app privilege sync scheduled", "tenant", tenant.Name)

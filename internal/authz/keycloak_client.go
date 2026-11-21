@@ -812,3 +812,25 @@ func (c *KeycloakAdminClient) AddUserToGroup(ctx context.Context, realm, userID,
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, nil, http.StatusNoContent, http.StatusOK)
 	return err
 }
+
+// UserIDByUsername answers the id of the realm's account of exactly that
+// username, enabled or not, or "" when the realm has none.
+func (c *KeycloakAdminClient) UserIDByUsername(ctx context.Context, realm, username string) (string, error) {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/users?username=%s&exact=true", url.PathEscape(realm), url.QueryEscape(username))
+	var found []keycloakUserRecord
+	if err := c.getAdminJSON(ctx, token, path, &found); err != nil {
+		return "", fmt.Errorf("keycloak find user: %w", err)
+	}
+	for _, u := range found {
+		// exact=true is Keycloak's to honor; the name is compared here too,
+		// since the id found is given a role.
+		if u.ID != "" && strings.EqualFold(u.Username, username) {
+			return u.ID, nil
+		}
+	}
+	return "", nil
+}
