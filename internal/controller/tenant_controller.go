@@ -228,6 +228,10 @@ type TenantReconciler struct {
 	// repository, which a bundle records as the cluster it was taken on.
 	Rights    RightsStore
 	ClusterID string
+	// FirstAdministratorID answers the id of a realm's account by its
+	// username, for giving a tenant's first administrator the position
+	// (first_administrator.go). Nil asks the identity provider.
+	FirstAdministratorID accountID
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
