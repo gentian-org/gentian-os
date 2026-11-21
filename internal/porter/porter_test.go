@@ -143,6 +143,11 @@ func TestAPersonsFilesAreListedAndOneIsPicked(t *testing.T) {
 	if _, err := homes.List(ctx, s.home(), "edge-ada", "../bob"); !asRefusal(err, &refusal) || refusal.Status != http.StatusNotFound {
 		t.Fatalf("a path above the person's files: %v", err)
 	}
+	for _, odd := range []string{"a\\b", "a\nb", "a\x00"} {
+		if _, err := homes.List(ctx, s.home(), "edge-ada", odd); !asRefusal(err, &refusal) || refusal.Status != http.StatusBadRequest {
+			t.Fatalf("a path with %q: %v", odd, err)
+		}
+	}
 	if _, err := homes.List(ctx, s.home(), "edge-mallory", ""); !asRefusal(err, &refusal) || refusal.Status != http.StatusForbidden ||
 		strings.Contains(refusal.Message, "not exchanged") {
 		t.Fatalf("a token the realm does not exchange: %v", err)

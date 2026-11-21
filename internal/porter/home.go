@@ -24,6 +24,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -317,10 +318,18 @@ func decoded(href string) string {
 	return href
 }
 
+// placeName is what a path the page names may hold: anything a file's name
+// may, and no control character and no backslash, which a home could read as
+// a separator.
+var placeName = regexp.MustCompile(`^[^\x00-\x1f\x7f\\]*$`)
+
 // target is the address of a path below the person's files. The path is the
 // page's and is trusted for nothing: it is cleaned, and may not leave the
 // root.
 func (s *session) target(p string) (string, error) {
+	if !placeName.MatchString(p) {
+		return "", refuse(http.StatusBadRequest, "That is no place in your files.")
+	}
 	clean := path.Clean("/" + p)
 	for _, part := range strings.Split(clean, "/") {
 		if part == ".." {
