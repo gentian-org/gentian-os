@@ -110,6 +110,11 @@ type AppState struct {
 	// cluster no longer has.
 	TrustTier string `json:"trustTier,omitempty"`
 	Holds     []Hold `json:"holds,omitempty"`
+	// Administrators is how the tenant's app administrators come to
+	// administer inside this app (administrators.go). Absent for an app whose
+	// profile maps them to nothing: who administers inside it is then set in
+	// the app itself.
+	Administrators *Administrators `json:"administrators,omitempty"`
 }
 
 // AddonState is one add-on of an app, as its own Component has it.
@@ -121,9 +126,11 @@ type AddonState struct {
 	Message                   string             `json:"message,omitempty"`
 	PendingPrivileges         []string           `json:"pendingPrivileges,omitempty"`
 	PendingPrivilegeApprovals []PendingPrivilege `json:"pendingPrivilegeApprovals,omitempty"`
-	// TrustTier and Holds are the add-on's own, as on AppState.
-	TrustTier string `json:"trustTier,omitempty"`
-	Holds     []Hold `json:"holds,omitempty"`
+	// TrustTier, Holds and Administrators are the add-on's own, as on
+	// AppState.
+	TrustTier      string          `json:"trustTier,omitempty"`
+	Holds          []Hold          `json:"holds,omitempty"`
+	Administrators *Administrators `json:"administrators,omitempty"`
 }
 
 // PendingPrivilege is one request nobody has granted yet, and who may.
@@ -318,7 +325,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err == nil {
 			found = true
 			if cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
-				addons[comp.Name] = addonState(comp, cp, allowed)
+				addons[comp.Name] = addonState(tenantName, comp, cp, allowed)
 				continue
 			}
 		} else if !apierrors.IsNotFound(err) {
@@ -332,6 +339,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		if found {
 			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, allowed, time.Now())
 			state.TrustTier, state.Holds = string(cp.Spec.TrustTier), holdsOf(cp)
+			state.Administrators = administratorsOf(tenantName, cp)
 		}
 		pods, err := s.componentPods(ctx, comp)
 		if err != nil {
@@ -366,7 +374,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 
 // addonState is an add-on Component's account of itself, with its pending
 // privileges and who answers each.
-func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile, allowed []gentianov1alpha1.AllowedMacWaiver) AddonState {
+func addonState(tenant string, comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile, allowed []gentianov1alpha1.AllowedMacWaiver) AddonState {
 	state := componentState(comp)
 	return AddonState{
 		Profile: state.Profile, Name: state.Name, Ready: state.Ready, Phase: state.Phase, Message: state.Message,
@@ -374,6 +382,7 @@ func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.Component
 		PendingPrivilegeApprovals: pendingApprovals(comp, cp, allowed, time.Now()),
 		TrustTier:                 string(cp.Spec.TrustTier),
 		Holds:                     holdsOf(cp),
+		Administrators:            administratorsOf(tenant, cp),
 	}
 }
 

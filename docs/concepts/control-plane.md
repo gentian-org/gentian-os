@@ -949,7 +949,10 @@ the group each is held through, and the store's own answer to every
 permission, so that a permission a held role carries and the model withholds,
 and one in effect that follows from the cluster, are both said. The state of a
 tenant's apps carries, for each app, its profile's trust tier and what the
-profile has the component hold on people's behalf (`holds`). All other answers are the
+profile has the component hold on people's behalf (`holds`), and how the
+tenant's app administrators come to administer inside it (`administrators`):
+that role is a Keycloak group and not in OpenFGA
+([authorization.md §5](authorization.md)), so it is read from the profile. All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
 itself: each answer is worked out inside the operator, and reading the
 objects behind it would mean giving the usher access to every tenant's

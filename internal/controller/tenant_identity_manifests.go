@@ -339,7 +339,7 @@ const adminRolesAttribute = "gentianOdooGroupRoles"
 // profileAdminRolesAttribute is what a profile declares as "the roles someone
 // administering this app should hold" — distinct from the member roles beside
 // it, because they are granted to a different group.
-const profileAdminRolesAttribute = "gentianOdooAdminRoles"
+const profileAdminRolesAttribute = keycloak.AdminRolesAttribute
 
 // takeAdminRoles moves a profile's declared admin roles out of its own app
 // group's attributes and into the collected set for the tenant's app-admins
