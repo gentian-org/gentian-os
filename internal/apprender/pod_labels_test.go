@@ -115,6 +115,25 @@ func TestEveryReleaseCarriesTheKeepRuleAndTheLabelRule(t *testing.T) {
 	}
 }
 
+// The provider reads the patch from a ConfigMap it does not watch, so the
+// Release names a digest of it: a host granted or withdrawn changes the
+// Release, and the provider upgrades at once instead of at its next poll.
+func TestAReleaseChangesWhenItsPatchDoes(t *testing.T) {
+	digest := func(aliases []HostAlias) string {
+		return releasePatchDigest((&valuesRender{in: &Input{App: "wiki", HostAliases: aliases}, tenant: "acme"}).releasePatch())
+	}
+	none, one := digest(nil), digest([]HostAlias{{IP: "10.152.183.32", Hostname: "example.org"}})
+	if none == one {
+		t.Fatal("a granted host leaves the release's patch digest as it was")
+	}
+	if one != digest([]HostAlias{{IP: "10.152.183.32", Hostname: "example.org"}}) {
+		t.Fatal("the same patch gives two digests")
+	}
+	if moved := digest([]HostAlias{{IP: "10.152.183.40", Hostname: "example.org"}}); moved == one {
+		t.Fatal("a host at another address leaves the digest as it was")
+	}
+}
+
 // podTemplateKinds are the resources that carry a pod template, or are a
 // pod, by the name a role gives them.
 var podTemplateKinds = map[string]string{

@@ -142,6 +142,6 @@ func readOutgoingWays(ctx context.Context, c client.Reader, hosts []string) (out
 // granted host to be carried.
 func outgoingGatewayPending(waiting []string) string {
 	return fmt.Sprintf("waiting for the gateway for outgoing connections to carry %s; "+
-		"it does once the cluster's GatewayClass %s exists, which the installer's step A-05 applies",
+		"a cluster without the GatewayClass %s carries none, and the installer's step A-05 applies it",
 		strings.Join(waiting, ", "), netpolicy.OutgoingGatewayClassName)
 }
