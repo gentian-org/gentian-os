@@ -2226,6 +2226,7 @@ type VolumeValueMapping struct {
 }
 
 // ContractRef identifies an integration contract this app provides.
+// +kubebuilder:validation:XValidation:rule="!has(self.files) || self.name == 'file-store'",message="files is for the contract file-store"
 type ContractRef struct {
 	// Name is the contract name (e.g., "file-store", "project-management").
 	// +kubebuilder:validation:Required
@@ -2244,7 +2245,70 @@ type ContractRef struct {
 	// to the provider's pods as a whole.
 	// +optional
 	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+
+	// Files is what a provider of file-store says about itself beyond
+	// WebDAV, so that the platform's file dialog (the porter) can show a
+	// person their files and name one of them. Without it the dialog does
+	// not offer this provider.
+	// +optional
+	Files *FileHomeFacts `json:"files,omitempty"`
 }
+
+// FileHomeFacts are the three things WebDAV leaves open and a file home
+// declares: where a person's files start, which property holds a file's id,
+// and the address that opens a file by that id.
+type FileHomeFacts struct {
+	// Root is where a person's files start, as a path below the contract's
+	// endpoint. "{principal}" stands for the last part of the address the
+	// home names as the person's principal (DAV:current-user-principal).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._~/-]*(\{principal\}[A-Za-z0-9._~/-]*)?$`
+	Root string `json:"root"`
+
+	// IDProperty is the WebDAV property that holds a file's id: one that
+	// stays the same when the file is moved or renamed, and is the same for
+	// everybody who may see the file. Written "{namespace}name".
+	// +kubebuilder:validation:MinLength=3
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\{[^{}\s]+\}[A-Za-z_][A-Za-z0-9._-]*$`
+	IDProperty string `json:"idProperty"`
+
+	// Open is the address that opens a file by its id in a browser.
+	Open FileOpenAddress `json:"open"`
+}
+
+// FileOpenAddress is where a file home opens a file by its id: one of the
+// provider's own gateway entries and a path on it. Whoever follows it is
+// asked by the home, signed in as themselves.
+type FileOpenAddress struct {
+	// Entry is the name of the provider's gateway entry (expose[].name).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Entry string `json:"entry"`
+
+	// Path is the path on that entry, with "{id}" where the id goes. It
+	// carries the id and nothing else of the file.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/?=&-]*\{id\}[A-Za-z0-9._~/?=&-]*$`
+	Path string `json:"path"`
+}
+
+// FileDialogUse is one thing an app asks the platform's file dialog for.
+// +kubebuilder:validation:Enum=pick;open;save
+type FileDialogUse string
+
+const (
+	// FileDialogPick has the person choose a file; the app is told its
+	// name, its id and the address that opens it.
+	FileDialogPick FileDialogUse = "pick"
+	// FileDialogOpen has the person choose a file the app's page then reads,
+	// and writes back to.
+	FileDialogOpen FileDialogUse = "open"
+	// FileDialogSave has the person choose where the app's page writes a
+	// file.
+	FileDialogSave FileDialogUse = "save"
+)
 
 // ContractEndpoint is the Service and port a provider answers a contract on.
 type ContractEndpoint struct {
@@ -2271,6 +2335,7 @@ type ContractEndpoint struct {
 
 // IntegrationRef identifies an optional integration contract this app can consume.
 // +kubebuilder:validation:XValidation:rule="!has(self.asPerson) || !self.asPerson || self.contract in ['file-store', 'calendar-store', 'contacts-store']",message="asPerson is for a home's contract: file-store, calendar-store or contacts-store"
+// +kubebuilder:validation:XValidation:rule="!has(self.dialog) || self.dialog.size() == 0 || self.contract == 'file-store'",message="dialog is for the contract file-store"
 type IntegrationRef struct {
 	// Contract is the name of the contract to consume.
 	// +kubebuilder:validation:Required
@@ -2304,4 +2369,18 @@ type IntegrationRef struct {
 	// For file-store, calendar-store and contacts-store only.
 	// +optional
 	AsPerson bool `json:"asPerson,omitempty"`
+
+	// Dialog says the app's pages ask the platform's file dialog (the
+	// porter) for files, and what for: pick, open, save. The person chooses
+	// in a window of the platform's, and the page is handed what they chose
+	// and nothing else: a picked file's name, id and address, or a handle
+	// for the one file to read or write. The app is given no token for the
+	// home and its server reaches no file. It holds while the tenant's
+	// administrator grants the contract.
+	//
+	// For file-store only.
+	// +optional
+	// +kubebuilder:validation:MaxItems=3
+	// +listType=set
+	Dialog []FileDialogUse `json:"dialog,omitempty"`
 }

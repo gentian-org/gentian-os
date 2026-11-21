@@ -235,4 +235,14 @@ check "homesync: a commit's image pins that commit's chart" \
 check "homesync: a release's image pins that release's chart" \
     "$(has "$(hs --set-string image.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
 
+# The porter is placed and published as the home sync is.
+check "porter: on, with no pinned chart" \
+    "$(r="$(render false true false)"; has "$r" 'porter:' && echo 1 || echo 0)"
+po() { helm template x charts/gentian-os --set porter.enabled=true "$@" \
+    --show-only templates/componentprofile-porter.yaml 2>&1; }
+check "porter: a commit's image pins that commit's chart" \
+    "$(has "$(po --set-string image.tag=develop-abc1234)" 'version: "0.1.0-develop.abc1234"' && echo 1 || echo 0)"
+check "porter: a release's image pins that release's chart" \
+    "$(has "$(po --set-string image.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
+
 finish

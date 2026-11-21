@@ -1,0 +1,6 @@
+apiVersion: v2
+name: porter
+description: The tenant's porter — the platform's file dialog, which hands an app's page the file a person chose at the tenant's file home.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -121,6 +121,7 @@ var uiComponents = []struct{ key, chart, base string }{
 // taken out whenever the image moves.
 var derivedFromImage = [][]string{
 	{"homesync", "chart", "version"},
+	{"porter", "chart", "version"},
 }
 
 // NeedLeaderElection keeps one replica applying.

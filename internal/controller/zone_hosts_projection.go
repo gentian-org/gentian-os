@@ -163,8 +163,10 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	}
 
 	byNamespace := map[string]string{}
+	byName := map[string]*gentianov1alpha1.Tenant{}
 	for i := range tenants.Items {
 		byNamespace[tenants.Items[i].NamespaceName()] = tenants.Items[i].Name
+		byName[tenants.Items[i].Name] = &tenants.Items[i]
 	}
 
 	// Every tenant gets an entry, including one whose components declare no
@@ -293,6 +295,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		homes = withPlacedHomes(homes, asPerson[tenant], byName[tenant], providers[tenant])
 		homeApps[tenant] = map[string]bool{}
 		for consumer, byContract := range homes {
 			set := map[string]bool{}
@@ -431,7 +434,11 @@ func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string, hom
 	// A certified component vouches only towards its homes: its client is
 	// given their scopes and no app scope. Admission lets no other tier
 	// below the platform's vouch at all.
-	if profile.Spec.TrustTier == gentianov1alpha1.TrustTierCertified {
+	//
+	// Nor is a component that names no keys and calls a home as the person
+	// given more, whatever its trust: it exchanges the token of a person at
+	// its address for a home's, and that is all its client is for.
+	if profile.Spec.TrustTier == gentianov1alpha1.TrustTierCertified || (vouching.Keys == nil && callsHomesAsPerson(profile)) {
 		extra = append(extra, vouchingNarrowWord)
 	}
 	for _, home := range homes {
@@ -557,6 +564,64 @@ func (r *TileProjectionReconciler) grantedHomes(
 	return found, nil
 }
 
+// withPlacedHomes adds, to the homes granted to a tenant's components, the
+// homes of the components the platform places in every tenant and that call
+// a home as the person: the tenant's home for each such contract, with
+// nobody asked. A placed component is the platform's own (the porter, its
+// file dialog), and what it may hand on is decided where an app is granted
+// the contract, not here.
+func withPlacedHomes(
+	homes map[string]map[string]string, consumers map[string]*gentianov1alpha1.ComponentProfile,
+	tenant *gentianov1alpha1.Tenant, providers map[string][]string,
+) map[string]map[string]string {
+	if tenant == nil {
+		return homes
+	}
+	for name, profile := range consumers {
+		if profile.Spec.Placement == nil || profile.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform {
+			continue
+		}
+		for _, in := range profile.Spec.Integrations {
+			if !in.AsPerson {
+				continue
+			}
+			home := homeOf(tenant, providers, in.Contract)
+			if home == "" {
+				continue
+			}
+			if homes == nil {
+				homes = map[string]map[string]string{}
+			}
+			if homes[name] == nil {
+				homes[name] = map[string]string{}
+			}
+			homes[name][in.Contract] = home
+		}
+	}
+	return homes
+}
+
+// homeOf is the tenant's home for one contract: the provider the tenant
+// names (spec.homes), or the first installed one by name; empty where none
+// is installed, or the one named is not.
+func homeOf(tenant *gentianov1alpha1.Tenant, providers map[string][]string, contract string) string {
+	installed := providers[contract]
+	if len(installed) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), installed...)
+	sort.Strings(sorted)
+	if named := tenant.Spec.Homes[contract]; named != "" {
+		for _, p := range sorted {
+			if p == named {
+				return named
+			}
+		}
+		return ""
+	}
+	return sorted[0]
+}
+
 // homeContracts are the contracts a home provides.
 var homeContracts = []string{"calendar-store", "contacts-store", "file-store"}
 
@@ -576,21 +641,9 @@ func isHomeContract(name string) bool {
 func dataHomes(tenant *gentianov1alpha1.Tenant, providers map[string][]string) []string {
 	set := map[string]bool{}
 	for _, contract := range homeContracts {
-		installed := providers[contract]
-		if len(installed) == 0 {
-			continue
+		if home := homeOf(tenant, providers, contract); home != "" {
+			set[home] = true
 		}
-		sorted := append([]string(nil), installed...)
-		sort.Strings(sorted)
-		if named := tenant.Spec.Homes[contract]; named != "" {
-			for _, p := range sorted {
-				if p == named {
-					set[named] = true
-				}
-			}
-			continue
-		}
-		set[sorted[0]] = true
 	}
 	return sortedKeys(set)
 }
