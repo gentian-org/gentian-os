@@ -65,6 +65,9 @@ type PrivilegeGrant struct {
 	ExpiresAt  string `json:"expiresAt,omitempty"`
 	// Digest pins an apiExtensions grant to the definitions approved.
 	Digest string `json:"digest,omitempty"`
+	// Hosts are what an egress grant opens for a request whose hosts are
+	// named at approval, as the approver named them.
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // Key is what makes a grant unique: one answer per privilege per install.
@@ -227,6 +230,12 @@ func renderPrivileges(tenant string, grants []PrivilegeGrant) string {
 		}
 		if g.Digest != "" {
 			b.WriteString("      digest: " + g.Digest + "\n")
+		}
+		if len(g.Hosts) > 0 {
+			b.WriteString("      hosts:\n")
+			for _, h := range g.Hosts {
+				b.WriteString("        - " + yamlScalar(h) + "\n")
+			}
 		}
 	}
 	return b.String()

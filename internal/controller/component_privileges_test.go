@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -301,5 +302,17 @@ func TestThePlatformAnswersTheRequestsOfAProfileItShips(t *testing.T) {
 	}
 	if got, err := answeredEgress(ctx, c, profileRequestingEgress("mailer"), rightsTenant("acme")); err != nil || len(got) != 0 {
 		t.Fatalf("a catalog's profile was answered: %v, %v", got, err)
+	}
+	// Hosts named at approval are a person's to name, in a profile the
+	// platform ships too.
+	shipped.Spec.Requires.Privileges.Egress = append(shipped.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside-services", Reason: "reaches the services the tenant's bridges name", HostsAtApproval: true,
+	})
+	got, err = answeredEgress(ctx, c, shipped, rightsTenant("acme"))
+	if _, ok := got["egress/outside-services"]; err != nil || ok {
+		t.Fatalf("the platform answered hosts nobody named: %v, %v", got, err)
+	}
+	if pending := security.PendingPrivilegesUnder(shipped, &gentianov1alpha1.Component{}, time.Now(), got); !slices.Contains(pending, "egress/outside-services") {
+		t.Fatalf("hosts nobody named do not wait: %v", pending)
 	}
 }

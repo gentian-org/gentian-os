@@ -637,6 +637,16 @@ An `apiExtensions` approval names the definitions it approves: the command
 sends the digest the cluster reports for the pending request, and a later
 change to them waits for a new approval.
 
+An egress request marked `hostsAtApproval` names no hosts of its own: its
+installation chooses them, such as the operator's own ERP. Its approval names
+them, one `--host` each, with a port where it is not 443, and opens those
+hosts and no others. The command refuses such an approval without a host.
+
+```bash
+kubectl gentian apps approve operations-sync-ee egress/backends --tenant team \
+  --host erp.example.org --host files.example.org:8443
+```
+
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
 

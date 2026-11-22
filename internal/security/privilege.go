@@ -264,8 +264,9 @@ func EgressHostsFor(profile *gentianov1alpha1.ComponentProfile, granted map[stri
 
 // GrantedEgressHostsUnder are the hosts outside the cluster a component was
 // granted: those of its egress requests by host that a person granted or the
-// cluster's policy answers. The counterpart of GrantedEgressRulesUnder for
-// the requests that name hosts.
+// cluster's policy answers, and, for a request whose hosts are named at
+// approval, those its live grant names. The counterpart of
+// GrantedEgressRulesUnder for the requests that name hosts.
 func GrantedEgressHostsUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
 	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
 		return nil
@@ -277,7 +278,30 @@ func GrantedEgressHostsUnder(profile *gentianov1alpha1.ComponentProfile, comp *g
 	for ref := range policy {
 		granted[ref] = struct{}{}
 	}
-	return EgressHostsFor(profile, granted)
+	out := EgressHostsFor(profile, granted)
+	if comp == nil {
+		return out
+	}
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if e.HostsAtApproval {
+			out = append(out, ApprovalHosts(comp.Spec.Privileges, PrivilegeRef(PrivilegeEgress, e.Name), now)...)
+		}
+	}
+	return out
+}
+
+// ApprovalHosts are the hosts the live grant of ref names, for a request
+// whose hosts are named at approval.
+func ApprovalHosts(grants []gentianov1alpha1.PrivilegeGrant, ref string, now time.Time) []string {
+	for i := range grants {
+		g := &grants[i]
+		if g.Privilege != ref || (g.ExpiresAt != nil && !now.Before(g.ExpiresAt.Time)) {
+			continue
+		}
+		return g.Hosts
+	}
+	return nil
 }
 
 // TrustedEgress are the egress requests of profile that trusted domains
@@ -357,6 +381,11 @@ func PreApprovedEgress(profile *gentianov1alpha1.ComponentProfile, catalogues []
 	}
 	out := map[string]struct{}{}
 	for i := range profile.Privileges().Egress {
+		// A request whose hosts are named at approval has nothing to open
+		// until somebody names them.
+		if profile.Privileges().Egress[i].HostsAtApproval {
+			continue
+		}
 		out[PrivilegeRef(PrivilegeEgress, profile.Privileges().Egress[i].Name)] = struct{}{}
 	}
 	return out

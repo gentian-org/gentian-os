@@ -152,6 +152,11 @@ type PendingPrivilege struct {
 	// Digest is, for an API extension, what an approval names: the digest of
 	// the request as the profile has it now (security.APIExtensionDigest).
 	Digest string `json:"digest,omitempty"`
+	// Hosts are, for an egress request by host, the hosts it names.
+	Hosts []string `json:"hosts,omitempty"`
+	// HostsAtApproval says an approval of this egress request names the
+	// hosts it opens: the profile names none, its installation chooses them.
+	HostsAtApproval bool `json:"hostsAtApproval,omitempty"`
 	// DeclinedBy, DeclinedAt and DeclineReason are an approver's no
 	// (privilege_requests.go): who, when and why. The privilege is still
 	// pending -- a decline installs nothing and the app keeps waiting -- but
@@ -198,6 +203,9 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 			Digest:     apiExtensionDigest(profile, ref),
 			Waiver:     pendingWaiver(profile, ref, allowed),
 		}
+		if e := egressRequest(profile, ref); e != nil {
+			p.Hosts, p.HostsAtApproval = e.Hosts, e.HostsAtApproval
+		}
 		if req, ok := requests[ref]; ok {
 			if p.ApprovedBy != security.PrivilegeApproverPerimeter {
 				p.RequestedBy, p.RequestedAt, p.Note = req.RequestedBy, req.RequestedAt, req.Note
@@ -226,6 +234,22 @@ func pendingWaiver(profile *gentianov1alpha1.ComponentProfile, ref string, allow
 		return &PendingWaiver{
 			Profile: profile.Name, Policy: w.Policy, Scope: w.Scope,
 			Allowlisted: len(security.ApprovedMacWaivers(profile.Name, ask, allowed)) > 0,
+		}
+	}
+	return nil
+}
+
+// egressRequest is the profile's egress request ref names, or nil for
+// anything else.
+func egressRequest(profile *gentianov1alpha1.ComponentProfile, ref string) *gentianov1alpha1.EgressRequest {
+	kind, name := security.SplitPrivilegeRef(ref)
+	p := profile.Privileges()
+	if kind != security.PrivilegeEgress || p == nil {
+		return nil
+	}
+	for i := range p.Egress {
+		if p.Egress[i].Name == name {
+			return &p.Egress[i]
 		}
 	}
 	return nil

@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package security_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -265,6 +266,64 @@ func TestGrantedHostsAreThoseOfAGrantedRequest(t *testing.T) {
 	}
 	if got := security.GrantedEgressHostsUnder(nil, nil, now, answered); got != nil {
 		t.Errorf("hosts of no profile = %v", got)
+	}
+}
+
+// A request whose hosts are named at approval is answered only by a grant
+// that names hosts, opens those hosts and no others, and is answered by no
+// policy and no trusted domain: nothing is known to open before somebody
+// names it.
+func TestHostsNamedAtApprovalAreTheGrantsOwn(t *testing.T) {
+	profile := profileAsking()
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "backends", Reason: "sends the plans to the ERP its owner runs", HostsAtApproval: true,
+	})
+	now := time.Now()
+	named := componentGranting("egress/backends")
+	named.Spec.Privileges[0].Hosts = []string{"erp.example.org", "files.example.org:8443"}
+	if got := security.GrantedEgressHostsUnder(profile, named, now, nil); strings.Join(got, ",") != "erp.example.org,files.example.org:8443" {
+		t.Errorf("hosts named at approval = %v", got)
+	}
+	if pending := security.PendingPrivileges(profile, named, now); slices.Contains(pending, "egress/backends") {
+		t.Errorf("a grant naming hosts left the request pending: %v", pending)
+	}
+	if rules := security.GrantedEgressRulesUnder(profile, named, now, nil); len(rules) != 0 {
+		t.Errorf("hosts named at approval opened rules by address: %v", rules)
+	}
+
+	empty := componentGranting("egress/backends")
+	if got := security.GrantedEgressHostsUnder(profile, empty, now, nil); len(got) != 0 {
+		t.Errorf("a grant naming no host opened %v", got)
+	}
+	if pending := security.PendingPrivileges(profile, empty, now); !slices.Contains(pending, "egress/backends") {
+		t.Errorf("a grant naming no host answered the request: %v", pending)
+	}
+
+	expired := componentGranting("egress/backends")
+	expired.Spec.Privileges[0].Hosts = []string{"erp.example.org"}
+	past := metav1.NewTime(now.Add(-time.Hour))
+	expired.Spec.Privileges[0].ExpiresAt = &past
+	if got := security.GrantedEgressHostsUnder(profile, expired, now, nil); len(got) != 0 {
+		t.Errorf("an expired grant opened %v", got)
+	}
+
+	profile.Annotations = map[string]string{security.OriginAnnotation: "cluster/acme"}
+	if _, ok := security.PreApprovedEgress(profile, []string{"cluster/acme"})["egress/backends"]; ok {
+		t.Error("the catalog's pre-approval answered a request whose hosts are named at approval")
+	}
+	if _, ok := security.TrustedEgress(profile, []string{"org", "example.org"})["egress/backends"]; ok {
+		t.Error("a trusted domain answered a request whose hosts are named at approval")
+	}
+
+	// Hosts on the grant of a request that names its own are not opened.
+	fixed := profileAsking()
+	fixed.Spec.Requires.Privileges.Egress = append(fixed.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected", Hosts: []string{"graph.microsoft.com"},
+	})
+	extra := componentGranting("egress/outside")
+	extra.Spec.Privileges[0].Hosts = []string{"evil.example.net"}
+	if got := security.GrantedEgressHostsUnder(fixed, extra, now, nil); strings.Join(got, ",") != "graph.microsoft.com" {
+		t.Errorf("a grant's hosts widened a request that names its own: %v", got)
 	}
 }
 

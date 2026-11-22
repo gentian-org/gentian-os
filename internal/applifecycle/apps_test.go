@@ -14,8 +14,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -316,11 +318,30 @@ func TestEachPendingPrivilegeSaysWhoAnswersIt(t *testing.T) {
 		t.Fatalf("pendingPrivilegeApprovals = %+v, want %+v", approvals, want)
 	}
 	for i := range want {
-		if approvals[i] != want[i] {
+		if !reflect.DeepEqual(approvals[i], want[i]) {
 			t.Errorf("pendingPrivilegeApprovals[%d] = %+v, want %+v", i, approvals[i], want[i])
 		}
 	}
 	if got["wiki"].PendingPrivilegeApprovals != nil {
 		t.Errorf("an app waiting for nothing lists %+v", got["wiki"].PendingPrivilegeApprovals)
+	}
+}
+
+// A pending egress request tells the approver what it names: its hosts, or
+// that the approval names them.
+func TestAPendingEgressRequestSaysWhoNamesItsHosts(t *testing.T) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
+		Egress: []gentianov1alpha1.EgressRequest{
+			{Name: "calendars", Reason: "reads the calendars people connected", Hosts: []string{"graph.microsoft.com"}},
+			{Name: "backends", Reason: "sends the plans to the ERP its owner runs", HostsAtApproval: true},
+		},
+	}}
+	comp := &gentianov1alpha1.Component{}
+	comp.Status.PendingPrivileges = []string{"egress/backends", "egress/calendars"}
+	got := pendingApprovals(comp, profile, nil, time.Now())
+	if len(got) != 2 || !got[0].HostsAtApproval || len(got[0].Hosts) != 0 ||
+		got[1].HostsAtApproval || !reflect.DeepEqual(got[1].Hosts, []string{"graph.microsoft.com"}) {
+		t.Errorf("pending = %+v", got)
 	}
 }

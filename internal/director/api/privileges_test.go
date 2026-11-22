@@ -380,3 +380,46 @@ func TestAnAPIExtensionsApprovalNamesWhatItApproved(t *testing.T) {
 		t.Errorf("a digest on another kind = %d", code)
 	}
 }
+
+// An egress approval may name the hosts it opens, for a request whose hosts
+// are named at approval: each a name outside the cluster, recorded once and
+// sorted. What is not a host, a name inside the cluster, or hosts on another
+// kind is refused before anything is written.
+func TestAnEgressApprovalNamesTheHostsItOpens(t *testing.T) {
+	h := start(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	sam := h.token(t, "gentian", "sam")
+	before := h.tip(t)
+	for name, body := range map[string]string{
+		"a URL":                `{"hosts":["https://erp.example.org"]}`,
+		"a bare name":          `{"hosts":["erp"]}`,
+		"a Service's name":     `{"hosts":["erp.billing.svc"]}`,
+		"a private name":       `{"hosts":["erp.corp.internal"]}`,
+		"a port that is not":   `{"hosts":["erp.example.org:99999"]}`,
+		"more than the schema": `{"hosts":[` + strings.TrimSuffix(strings.Repeat(`"a.example.org",`, 65), ",") + `]}`,
+	} {
+		if code, answer := h.do(t, "PUT", egressPath, tom, body); code != http.StatusBadRequest {
+			t.Errorf("%s: PUT = %d %v, want 400", name, code, answer)
+		}
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/podSecurity/x", sam, `{"hosts":["erp.example.org"]}`); code != http.StatusBadRequest {
+		t.Errorf("hosts on a podSecurity approval = %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused approval committed anyway")
+	}
+	if code, answer := h.do(t, "PUT", egressPath, tom, `{"hosts":["files.example.org:8443"," ERP.example.org","erp.example.org"]}`); code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("an approval naming hosts = %d %v", code, answer)
+	}
+	if got := h.remoteFile(t, "demo", "privileges.yaml"); !strings.Contains(got, "      hosts:\n        - \"erp.example.org\"\n        - \"files.example.org:8443\"\n") {
+		t.Errorf("the approval does not record its hosts once and sorted:\n%s", got)
+	}
+	// The file is rewritten on every grant; a later one keeps these hosts.
+	other := strings.TrimSuffix(egressPath, "/"+egressPath[strings.LastIndex(egressPath, "/")+1:]) + "/other-way"
+	if code, answer := h.do(t, "PUT", other, tom, `{}`); code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("a later grant = %d %v", code, answer)
+	}
+	if got := h.remoteFile(t, "demo", "privileges.yaml"); !strings.Contains(got, "        - \"files.example.org:8443\"\n") {
+		t.Errorf("a later grant dropped the hosts:\n%s", got)
+	}
+}

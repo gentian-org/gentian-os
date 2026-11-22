@@ -100,7 +100,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
-  kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]
+  kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
                                                             approve one request: egress (the tenant's perimeter approver),
                                                             podSecurity or clusterRoles (the cluster's security officer),
                                                             apiExtensions or a role that writes (break-glass)
