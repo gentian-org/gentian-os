@@ -18,7 +18,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // appClient is the app's own OIDC client (requires.services.identity.oidc)
@@ -320,7 +319,8 @@ func (id *identityScope) packObjects(pack gentianov1alpha1.OIDCPackSpec, clientN
 		}
 	}
 
-	// The client role the entitlement group is granted. No external-name: a
+	// The pack's client role. Nobody is granted it through a group: who may
+	// use the app is the rights store's to say. No external-name: a
 	// role is identified by its UUID, and the provider finds the existing
 	// one from the client and name it is given.
 	if pack.ClientRole != "" {
@@ -331,20 +331,6 @@ func (id *identityScope) packObjects(pack gentianov1alpha1.OIDCPackSpec, clientN
 				"realmId":     id.realm,
 				"clientIdRef": identityRef(clientName),
 				"name":        pack.ClientRole,
-			},
-			"providerConfigRef": identityProvider,
-		}))
-		// exhaustive: false, matching the Job, which adds the mapping and
-		// leaves anything else on the group alone.
-		objs = append(objs, identityObject("group.keycloak.crossplane.io/v1alpha1", "Roles", id.name("group-roles"), map[string]interface{}{
-			"deletionPolicy": "Orphan",
-			"forProvider": map[string]interface{}{
-				"realmId":    id.realm,
-				"exhaustive": false,
-				"groupIdRef": map[string]interface{}{
-					"name": identityGroupName(keycloak.TenantAppGroup(id.tenant, id.in.App)),
-				},
-				"roleIdsRefs": []interface{}{map[string]interface{}{"name": roleName}},
 			},
 			"providerConfigRef": identityProvider,
 		}))

@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	rights "github.com/gentian-org/gentian-os/internal/director/authz"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,7 +41,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/composed"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -96,7 +97,8 @@ func (v *fakeVault) ListChildren(_ context.Context, path string) ([]string, erro
 	return out, nil
 }
 
-// fakeGroups is the identity provider's groups, each with its members.
+// fakeGroups is the identity provider and the rights store as a purge uses
+// them: members are who holds a role on an app, by the app's object.
 type fakeGroups struct {
 	mu      sync.Mutex
 	members map[string][]string
@@ -128,17 +130,47 @@ func (g *fakeGroups) DeleteClient(_ context.Context, realm string, clientID stri
 	return existed, nil
 }
 
-func (g *fakeGroups) DeleteGroup(_ context.Context, realm string, name string) (bool, error) {
+// accessOf is the object the rights store holds an app's roles on.
+func accessOf(tenant, key string) string { return rights.App(tenant, key) }
+
+// Read answers what is held on one object: a role user for each member.
+func (g *fakeGroups) Read(_ context.Context, filter rights.Tuple) ([]rights.Tuple, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.fail {
+		return nil, errors.New("the rights store: 503 Service Unavailable")
+	}
+	var out []rights.Tuple
+	for _, m := range g.members[filter.Object] {
+		out = append(out, rights.Tuple{User: "user:" + m, Relation: "user", Object: filter.Object})
+	}
+	return out, nil
+}
+
+// Write removes what it is asked to; nothing here writes.
+func (g *fakeGroups) Write(_ context.Context, _, deletes []rights.Tuple) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.fail || g.failDelete {
+		return errors.New("the rights store: 503 Service Unavailable")
+	}
+	for _, t := range deletes {
+		if _, there := g.members[t.Object]; there {
+			g.deletes++
+			delete(g.members, t.Object)
+		}
+	}
+	return nil
+}
+
+func (g *fakeGroups) CountRealmUsers(_ context.Context, realm string) (int, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.realms = append(g.realms, realm)
-	if g.fail || g.failDelete {
-		return false, errors.New("keycloak GET /admin/realms/demo/groups: 503 Service Unavailable")
+	if g.fail {
+		return 0, errors.New("keycloak GET /admin/realms/demo/users/count: 503 Service Unavailable")
 	}
-	g.deletes++
-	_, existed := g.members[name]
-	delete(g.members, name)
-	return existed, nil
+	return 0, nil
 }
 
 func (g *fakeGroups) DeleteClientScope(_ context.Context, realm string, name string) (bool, error) {
@@ -152,23 +184,6 @@ func (g *fakeGroups) DeleteClientScope(_ context.Context, realm string, name str
 	delete(g.scopes, name)
 	g.scopesDeleted = append(g.scopesDeleted, name)
 	return existed, nil
-}
-
-func (g *fakeGroups) GroupNames(_ context.Context, realm string, prefix string) ([]string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.realms = append(g.realms, realm)
-	if g.fail {
-		return nil, errors.New("keycloak GET /admin/realms/demo/groups: 503 Service Unavailable")
-	}
-	var out []string
-	for name := range g.members {
-		if strings.HasPrefix(name, prefix) {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 // purgeWorld is a cluster holding what an uninstalled app left behind, with
@@ -342,11 +357,11 @@ func newPurgeWorld(t *testing.T, tenant *gentianov1alpha1.Tenant, objects []clie
 			"gentian-os/tenants/demo/people/u-ada/drive/token": true,
 		}},
 		groups: &fakeGroups{members: map[string][]string{
-			keycloak.TenantAppGroup("demo", "wiki"): {"ada", "bob"},
+			accessOf("demo", "wiki"): {"ada", "bob"},
 			// An extension that signs people in has a group of its own.
-			keycloak.TenantAppGroup("demo", "wiki-mcp"): {"ada"},
-			keycloak.TenantAppGroup("demo", "drive"):    {"ada"},
-			"gentian:tenant:demo:admins":                {"ada"},
+			accessOf("demo", "wiki-mcp"): {"ada"},
+			accessOf("demo", "drive"):    {"ada"},
+			"gentian:tenant:demo:admins": {"ada"},
 		}},
 	}
 	w.kube.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -364,7 +379,7 @@ func newPurgeWorld(t *testing.T, tenant *gentianov1alpha1.Tenant, objects []clie
 		}
 		return false, nil, nil
 	})
-	w.svc = &Service{client: w.objs, clientset: w.kube, vault: w.vault, groups: w.groups}
+	w.svc = &Service{client: w.objs, clientset: w.kube, vault: w.vault, groups: w.groups, Rights: w.groups}
 	return w
 }
 
@@ -475,11 +490,11 @@ func TestAPurgeDestroysEveryKindTheAppOwnsAndNothingElse(t *testing.T) {
 
 	// The access group, and with it who was in it.
 	for _, key := range []string{"wiki", "wiki-mcp"} {
-		if _, there := w.groups.members[keycloak.TenantAppGroup("demo", key)]; there {
+		if _, there := w.groups.members[accessOf("demo", key)]; there {
 			t.Errorf("the access group of %s and its memberships outlived the purge", key)
 		}
 	}
-	if len(w.groups.members[keycloak.TenantAppGroup("demo", "drive")]) != 1 || len(w.groups.members["gentian:tenant:demo:admins"]) != 1 {
+	if len(w.groups.members[accessOf("demo", "drive")]) != 1 || len(w.groups.members["gentian:tenant:demo:admins"]) != 1 {
 		t.Errorf("another group was touched: %v", w.groups.members)
 	}
 
@@ -685,17 +700,8 @@ func TestTheAccessGroupIsRemovedFromTheTenantsOwnRealm(t *testing.T) {
 			t.Fatalf("the identity provider was asked about realm %q; the tenant's realm is gentian (asked: %v)", realm, w.groups.realms)
 		}
 	}
-	if _, there := w.groups.members[keycloak.TenantAppGroup("demo", "wiki")]; there {
+	if _, there := w.groups.members[accessOf("demo", "wiki")]; there {
 		t.Error("the group was not removed")
-	}
-
-	// The read of what is retained asks the same realm.
-	w.groups.realms = nil
-	if _, err := w.svc.RetainedApps(context.Background(), "demo"); err != nil {
-		t.Fatal(err)
-	}
-	if len(w.groups.realms) != 1 || w.groups.realms[0] != "gentian" {
-		t.Errorf("the retained read asked %v", w.groups.realms)
 	}
 }
 
@@ -801,7 +807,7 @@ func TestWhatAnInstalledAppHoldsIsNotDestroyedAsAnExtensions(t *testing.T) {
 	if _, err := w.svc.PurgeApp(context.Background(), "demo", "wiki", "tom"); err != nil {
 		t.Fatal(err)
 	}
-	if _, there := w.groups.members[keycloak.TenantAppGroup("demo", "wiki-mcp")]; !there {
+	if _, there := w.groups.members[accessOf("demo", "wiki-mcp")]; !there {
 		t.Error("the group of an installed app was deleted because its name spells another app's extension")
 	}
 	if !w.vault.paths["gentian-os/tenants/demo/apps/wiki-mcp/internal/key"] {
@@ -810,7 +816,7 @@ func TestWhatAnInstalledAppHoldsIsNotDestroyedAsAnExtensions(t *testing.T) {
 	if !w.claimExists(t, "wiki-mcp-release-cache") {
 		t.Error("the volume of an installed app was deleted because its name begins with the purged app's")
 	}
-	if _, there := w.groups.members[keycloak.TenantAppGroup("demo", "wiki")]; there {
+	if _, there := w.groups.members[accessOf("demo", "wiki")]; there {
 		t.Error("the purged app's own group is still there")
 	}
 	if w.claimExists(t, "wiki-release-data") {
@@ -828,7 +834,7 @@ func TestAnIncompletePurgeIsAnErrorTheCallerCanActOn(t *testing.T) {
 	if code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", code, body)
 	}
-	for _, want := range []string{"did not complete", "object storage", "Already destroyed: files, cache", "Not attempted: database, access group", "Retry the purge"} {
+	for _, want := range []string{"did not complete", "object storage", "Already destroyed: files, cache", "Not attempted: database, access", "Retry the purge"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the answer does not say %q: %s", want, body)
 		}

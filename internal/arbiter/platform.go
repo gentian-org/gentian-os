@@ -23,8 +23,8 @@ import (
 )
 
 // The platform's path to the arbiter: what the operator writes into stores
-// and reads out of them that no component's key may -- the realm's group
-// memberships, a store's export and its restore, a purge.
+// and reads out of them that no component's key may -- a store's export and
+// its restore, a purge.
 //
 // It is admitted by workload identity, as the operator's own listener admits
 // the director and the usher (internal/tokenreview): the
@@ -70,23 +70,6 @@ func (a *PlatformAuth) admit(ctx context.Context, header string) *refusal {
 	return nil
 }
 
-// MembershipsRequest states one person's complete set of groups in a realm,
-// as the realm's signed event did: state, not deltas. It reaches the stores
-// of the realm's tenant's components that mirror groups, and no other.
-type MembershipsRequest struct {
-	Tenant  string   `json:"tenant"`
-	Realm   string   `json:"realm"`
-	Subject string   `json:"subject"`
-	Groups  []string `json:"groups"`
-}
-
-// GroupDeletedRequest says a group of a realm no longer exists.
-type GroupDeletedRequest struct {
-	Tenant string `json:"tenant"`
-	Realm  string `json:"realm"`
-	Group  string `json:"group"`
-}
-
 // StoreExport is a store as a bundle carries it: its model and every tuple.
 type StoreExport struct {
 	Model  json.RawMessage `json:"model"`
@@ -116,106 +99,11 @@ func (s *Server) PlatformHandler(auth *PlatformAuth) http.Handler {
 			_ = json.NewEncoder(w).Encode(out)
 		})
 	}
-	route("PUT /v1/platform/memberships", s.platformMemberships)
-	route("POST /v1/platform/group-deleted", s.platformGroupDeleted)
 	route("GET /v1/platform/stores/{tenant}/{component}", s.platformExport)
 	route("PUT /v1/platform/stores/{tenant}/{component}", s.platformRestore)
 	route("DELETE /v1/platform/stores/{tenant}/{component}", s.platformPurge)
 	route("DELETE /v1/platform/tenants/{tenant}", s.platformPurgeTenant)
 	return mux
-}
-
-// mirrors are the entries a realm's memberships reach: the components of
-// that tenant, of that realm, that mirror groups.
-func (s *Server) mirrors(tenant, realm string) []Entry {
-	var out []Entry
-	for _, e := range s.table.Load().byHash {
-		if e.Tenant == tenant && e.Realm == realm && e.MirrorGroups {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-func (s *Server) platformMemberships(r *http.Request) (any, error) {
-	var req MembershipsRequest
-	if err := decode(r, &req); err != nil {
-		return nil, err
-	}
-	if !dnsLabel.MatchString(req.Tenant) || req.Subject == "" {
-		return nil, badRequest("tenant and subject are required")
-	}
-	user, err := UserObject(req.Realm, req.Subject)
-	if err != nil {
-		return nil, badRequest("%v", err)
-	}
-	want := map[string]bool{}
-	for _, g := range req.Groups {
-		obj, err := GroupObject(req.Realm, g)
-		if err != nil {
-			// A nested group, or a name OpenFGA cannot hold: not mirrored,
-			// as the kernel's store does not hold one either.
-			continue
-		}
-		want[obj] = true
-	}
-	prefix := groupType + ":" + req.Realm + "/"
-	for _, e := range s.mirrors(req.Tenant, req.Realm) {
-		ids, err := s.stores.Resolve(r.Context(), e)
-		if err != nil {
-			return nil, err
-		}
-		stored, err := s.fga.readAll(r.Context(), ids.Store, fgaTuple{User: user, Object: groupType + ":"})
-		if err != nil {
-			return nil, err
-		}
-		have := map[string]bool{}
-		var deletes []Tuple
-		for _, t := range stored {
-			if t.Relation != "member" || !strings.HasPrefix(t.Object, prefix) {
-				continue
-			}
-			have[t.Object] = true
-			if !want[t.Object] {
-				deletes = append(deletes, t)
-			}
-		}
-		var writes []Tuple
-		for obj := range want {
-			if !have[obj] {
-				writes = append(writes, Tuple{User: user, Relation: "member", Object: obj})
-			}
-		}
-		if err := s.fga.writeTuples(r.Context(), ids.Store, ids.Model, writes, deletes); err != nil {
-			return nil, err
-		}
-	}
-	return nil, nil
-}
-
-func (s *Server) platformGroupDeleted(r *http.Request) (any, error) {
-	var req GroupDeletedRequest
-	if err := decode(r, &req); err != nil {
-		return nil, err
-	}
-	obj, err := GroupObject(req.Realm, req.Group)
-	if err != nil {
-		return nil, nil // a group that was never mirrored has no members here
-	}
-	for _, e := range s.mirrors(req.Tenant, req.Realm) {
-		ids, err := s.stores.Resolve(r.Context(), e)
-		if err != nil {
-			return nil, err
-		}
-		members, err := s.fga.readAll(r.Context(), ids.Store, fgaTuple{Relation: "member", Object: obj})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.fga.writeTuples(r.Context(), ids.Store, ids.Model, nil, members); err != nil {
-			return nil, err
-		}
-	}
-	return nil, nil
 }
 
 func storeRef(r *http.Request) (string, string, error) {

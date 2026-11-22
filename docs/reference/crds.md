@@ -461,7 +461,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `spec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `spec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
@@ -774,7 +774,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `spec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `spec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.requires.services.authorization.tuples[].object` | string | yes |  |
@@ -1373,7 +1373,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `status.profileSpec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
@@ -1686,7 +1686,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `status.profileSpec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `status.profileSpec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.requires.services.authorization.tuples[].object` | string | yes |  |
@@ -2056,7 +2056,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `status.conditions[].reason` | string | yes | `reason` contains a programmatic identifier indicating the reason for the condition's last transition. |
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.defaultGrantedApps` | []string |  | `DefaultGrantedApps` lists the apps whose default grant (spec.apps[].defaultGrant) has been applied: the tenant's members at that moment were added to the app's… |
 | `status.domain` | string |  | `Domain` is the custom domain a TenantDomain binds this tenant to, copied here by the operator so every consumer of EffectiveDomain reads it from the tenant… |
 | `status.mail` | object |  | `Mail` holds the observed DNS record data produced by the mail reconciler. |
 | `status.mail.dkimPublicKey` | string |  | `DKIMPublicKey` is the RSA public key for DKIM signing, base64-encoded (PKIX DER). |

@@ -151,7 +151,7 @@ func TestTheClustersAddOnObjectsAreThePlatformTenants(t *testing.T) {
 // add-on brought, nor under a name that cannot be one.
 func TestOnlyAGrantedAddOnTypeIsRead(t *testing.T) {
 	for name, c := range map[string]struct {
-		granted                  bool
+		granted                 bool
 		tenant, group, resource string
 	}{
 		"not granted":          {false, "acme", testExtensionGroup, "schedules"},

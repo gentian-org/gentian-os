@@ -323,10 +323,10 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 // the client the secret the vault holds for the app. The pod reads it from
 // the Secret of the Job's name, which the Job owns (jobSecret); it is in no
 // Job spec, no ConfigMap and no composed Object.
-func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, withSecret bool, entitlementGroup string) *batchv1.Job {
+func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, withSecret bool) *batchv1.Job {
 	jobName := clientJobName(tenant.Name, cfg.profileName)
 	container := keycloakContainer("provision-oidc-pack",
-		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, withSecret, entitlementGroup))
+		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, withSecret))
 	if withSecret {
 		container.Env = append(container.Env, meta.SecretEnv("OIDC_CLIENT_SECRET", jobName, jobSecretClientSecretKey))
 	}
