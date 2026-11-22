@@ -1173,6 +1173,7 @@ OLD="sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
 apps_catalogue() {
     reply GET /v1/tenants/acme/catalogues 200 '{"catalogues":[{"name":"gentian"}]}'
     reply GET /v1/tenants/acme/catalogues/gentian/entries 200 '{"entries":[{"name":"notes","version":"2.0.0","digest":"'"${PINNED}"'"}]}'
+    reply GET "/v1/tenants/acme/catalogues/gentian/entries/notes/asks?digest=${PINNED}" 200 "${ASKS:-{\"egress\":[],\"mayApprove\":false\}}"
 }
 
 fresh; apps_catalogue
@@ -1185,6 +1186,32 @@ fresh; apps_catalogue
 reply POST /v1/tenants/acme/apps/notes 200 '{"status":"already_installed"}'
 gentian apps install notes --tenant acme
 has "a current app installed again commits nothing" "${OUT}" "notes is already installed in acme at this build; nothing was committed."
+
+# A build that asks for outbound access says so before it is installed, and
+# --approve-egress sends the approval with the install.
+ASKS_ONE='"egress":[{"install":"notes","privilege":"egress/sync","reason":"reads the calendars","hosts":["cal.example.org"]}]'
+ASKS="{${ASKS_ONE},\"mayApprove\":true}"
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef"}'
+gentian apps install notes --tenant acme
+has "an install says what the build asks for" "${OUT}" "notes egress/sync  to cal.example.org  -- reads the calendars"
+has "... and that it waits, with the way to approve" "${OUT}" "install with --approve-egress"
+has "... and installs" "$(writes)" "POST /v1/tenants/acme/apps/notes"
+lacks "... and approves nothing unasked" "$(writes)" "approve"
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef","approved":[{"install":"notes","privilege":"egress/sync"}]}'
+gentian apps install notes --tenant acme --approve-egress
+is "--approve-egress sends what was listed with the install" \
+    "$(writes | sed 's/^POST [^ ]* //' | jq -c '.approve')" '[{"install":"notes","privilege":"egress/sync"}]'
+has "... and says it is approved" "${OUT}" "Its outbound access is approved, by you."
+
+ASKS="{${ASKS_ONE},\"mayApprove\":false}"
+fresh; apps_catalogue
+gentian apps install notes --tenant acme --approve-egress
+refused "--approve-egress by somebody who is not the perimeter approver installs nothing"
+is "... and asks the director for no write" "$(writes)" ""
+unset ASKS
 
 # An entry the catalog leaves to the store (me or ee) is not in the
 # listing, only counted, so by name it is not installed from here: the store

@@ -373,6 +373,14 @@ func (g *GitOps) PlatformSecurity(ctx context.Context) ([]MacWaiver, error) {
 	return doc.Spec.AllowedMacWaivers, err
 }
 
+// EgressPolicy reads back what the cluster answers egress requests with:
+// the catalogs whose apps' requests it pre-approves and the domains it
+// trusts. Both are written by hand in the cluster's repository.
+func (g *GitOps) EgressPolicy(ctx context.Context) (catalogs, trustedDomains []string, err error) {
+	doc, err := g.platformSecurityDoc(ctx)
+	return doc.Spec.PreApprovedEgressCatalogs, doc.Spec.TrustedDomains, err
+}
+
 // PlatformClusterRoles reads back which cluster roles the cluster permits.
 func (g *GitOps) PlatformClusterRoles(ctx context.Context) ([]ClusterRoleAllowance, error) {
 	doc, err := g.platformSecurityDoc(ctx)

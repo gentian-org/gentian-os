@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/profilebundle"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -43,6 +44,9 @@ func componentReadyCondition(comp *gentianov1alpha1.Component) *metav1.Condition
 // not run.
 func profileRequestingEgress(name string) *gentianov1alpha1.ComponentProfile {
 	p := profileFixture(name, false, gentianov1alpha1.ComponentClassApp)
+	// A catalog brought it: a profile no catalog brought is the platform's
+	// own, and the platform answers that one's requests itself.
+	fromCatalogue(p)
 	p.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Privileges: &gentianov1alpha1.PrivilegeRequest{
 			Egress: []gentianov1alpha1.EgressRequest{{
@@ -269,5 +273,33 @@ func TestAnExpiredGrantHoldsTheInstallAgain(t *testing.T) {
 func TestAProfileAskingForNoPrivilegeLeavesTheFieldUnset(t *testing.T) {
 	if got := security.RequestedPrivileges(profileFixture("plain", false)); got != nil {
 		t.Fatalf("requested = %v", got)
+	}
+}
+
+// fromCatalogue marks a profile as brought by a catalog of the cluster.
+func fromCatalogue(p *gentianov1alpha1.ComponentProfile) {
+	if p.Annotations == nil {
+		p.Annotations = map[string]string{}
+	}
+	p.Annotations[profilebundle.OriginAnnotation] = profilebundle.ClusterOrigin("main")
+}
+
+// A profile the platform ships asks nobody in a tenant: no catalog brought
+// it, and its requests are answered with the release that ships it. The same
+// request from a catalog's profile waits.
+func TestThePlatformAnswersTheRequestsOfAProfileItShips(t *testing.T) {
+	ctx := context.Background()
+	shipped := profileRequestingEgress("liaison")
+	shipped.Annotations = nil
+	c := fake.NewClientBuilder().WithScheme(outgoingScheme()).Build()
+	got, err := answeredEgress(ctx, c, shipped, rightsTenant("acme"))
+	if _, ok := got["egress/smtp-relay"]; err != nil || !ok || len(got) != 1 {
+		t.Fatalf("the platform's own profile: %v, %v", got, err)
+	}
+	if pending := security.PendingPrivilegesUnder(shipped, &gentianov1alpha1.Component{}, time.Now(), got); len(pending) != 0 {
+		t.Fatalf("the platform's own profile waits for %v", pending)
+	}
+	if got, err := answeredEgress(ctx, c, profileRequestingEgress("mailer"), rightsTenant("acme")); err != nil || len(got) != 0 {
+		t.Fatalf("a catalog's profile was answered: %v, %v", got, err)
 	}
 }

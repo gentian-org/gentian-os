@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/hostnames"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -31,6 +32,11 @@ import (
 // (spec.trustedDomains) or the tenant's own while it was delegated one. Read
 // on every reconcile, so the hold and the network policy agree with the
 // policy as it is now.
+//
+// A profile the platform ships is answered by the platform: all of its
+// requests. No catalog brought it and no tenant chose it, so there is nobody
+// in a tenant whose question it is; what such a profile reaches is decided
+// with the release that ships it.
 func (r *ComponentReconciler) preApprovedEgress(ctx context.Context, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (map[string]struct{}, error) {
 	return answeredEgress(ctx, r.Client, profile, tenant)
 }
@@ -39,6 +45,13 @@ func (r *ComponentReconciler) preApprovedEgress(ctx context.Context, profile *ge
 func answeredEgress(ctx context.Context, c client.Client, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) (map[string]struct{}, error) {
 	if profile == nil || profile.Privileges() == nil || len(profile.Privileges().Egress) == 0 {
 		return nil, nil
+	}
+	if hostnames.PlatformShipped(profile) {
+		out := map[string]struct{}{}
+		for i := range profile.Privileges().Egress {
+			out[security.PrivilegeRef(security.PrivilegeEgress, profile.Privileges().Egress[i].Name)] = struct{}{}
+		}
+		return out, nil
 	}
 	catalogs, err := security.LoadPreApprovedEgressCatalogs(ctx, c)
 	if err != nil {

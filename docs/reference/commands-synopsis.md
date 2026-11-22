@@ -99,7 +99,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                                the internet has them: present, pending, missing, or held by another record
 
   kubectl gentian apps list --tenant <tenant> [--available]
-  kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
+  kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]
