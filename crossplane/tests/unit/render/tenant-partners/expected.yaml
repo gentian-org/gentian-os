@@ -2349,40 +2349,6 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
-apiVersion: client.keycloak.crossplane.io/v1alpha1
-kind: ProtocolMapper
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-partner-abc-roles
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-partner-abc-roles
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Delete
-  forProvider:
-    clientScopeId: 00000000-0000-4000-8000-0000000f0002
-    config:
-      access.token.claim: "true"
-      claim.name: gentian_roles
-      gentian.kernel-realm: kernel
-      gentian.tenant: render-fixture
-      id.token.claim: "false"
-      introspection.token.claim: "true"
-      userinfo.token.claim: "false"
-    name: gentian-roles
-    protocol: openid-connect
-    protocolMapper: gentian-partner-roles
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: ClientScope
 metadata:
@@ -2406,6 +2372,40 @@ spec:
       and nothing else
     includeInTokenScope: true
     name: partner-abc
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-abc-store-roles
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-abc-store-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0002
+    config:
+      access.token.claim: "true"
+      claim.name: gentian_roles
+      gentian.kernel-realm: kernel
+      gentian.tenant: render-fixture
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: partner-roles
+    protocol: openid-connect
+    protocolMapper: gentian-partner-roles
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -2545,40 +2545,6 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
-apiVersion: client.keycloak.crossplane.io/v1alpha1
-kind: ProtocolMapper
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-partner-aluvian-roles
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-partner-aluvian-roles
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Delete
-  forProvider:
-    clientScopeId: 00000000-0000-4000-8000-0000000f0001
-    config:
-      access.token.claim: "true"
-      claim.name: gentian_roles
-      gentian.kernel-realm: kernel
-      gentian.tenant: render-fixture
-      id.token.claim: "false"
-      introspection.token.claim: "true"
-      userinfo.token.claim: "false"
-    name: gentian-roles
-    protocol: openid-connect
-    protocolMapper: gentian-partner-roles
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: ClientScope
 metadata:
@@ -2602,6 +2568,40 @@ spec:
       and nothing else
     includeInTokenScope: true
     name: partner-aluvian
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-partner-aluvian-store-roles
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-partner-aluvian-store-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000f0001
+    config:
+      access.token.claim: "true"
+      claim.name: gentian_roles
+      gentian.kernel-realm: kernel
+      gentian.tenant: render-fixture
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: partner-roles
+    protocol: openid-connect
+    protocolMapper: gentian-partner-roles
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -3244,11 +3244,6 @@ spec:
         - admin
         view:
         - admin
-      validator:
-      - config:
-          options:
-          - "true"
-        name: options
     group:
     - displayDescription: Attributes, which refer to user metadata
       displayHeader: User metadata

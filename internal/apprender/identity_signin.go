@@ -111,12 +111,14 @@ func (id *identityScope) signInSidecar() []*unstructured.Unstructured {
 	}
 	rolesJSON, _ := json.Marshal(inApp)
 	objs = append(objs,
-		identityObject("client.keycloak.crossplane.io/v1alpha1", "ProtocolMapper", id.name("sign-in-admin-mapper"), map[string]interface{}{
+		// Named apart from the role-list mapper it took the place of: the
+		// provider does not change a mapper's kind in place.
+		identityObject("client.keycloak.crossplane.io/v1alpha1", "ProtocolMapper", id.name("sign-in-roles-mapper"), map[string]interface{}{
 			"deletionPolicy": "Orphan",
 			"forProvider": map[string]interface{}{
 				"realmId":         id.realm,
 				"samlClientIdRef": identityRef(clientName),
-				"name":            "app-admin",
+				"name":            "app-roles",
 				"protocol":        "saml",
 				"protocolMapper":  "gentian-saml-app-roles",
 				"config": map[string]interface{}{

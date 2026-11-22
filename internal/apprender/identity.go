@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
