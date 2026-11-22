@@ -1300,32 +1300,36 @@ gentian platform-roles holders remove auditor acme it@acme.example
 refused "removing a role the login does not hold is refused"
 is "... and nothing is committed" "$(writes)" ""
 
-# Who holds each role through its group: the registrar's answer, read only.
-fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]},{"role":"other","group":"gentian:platform:other","members":null,"unavailable":true}]}'
+# The platform tenant's role holders as the kernel realm knows them: the
+# registrar's answer, read only.
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"auditor","unavailable":true,"members":[{"id":"u2","username":"former@k.example","email":""}]}]}'
 gentian platform-roles members
 is "members asks the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/platform-role-members "
-has "... and lists a member with the group" "${OUT}" "ops@k.example"
-has "... and an empty group" "${OUT}" "(nobody)"
-has "... and a group that was not read" "${OUT}" "the list is incomplete"
-has "... and says where they are managed" "${OUT}" "managed in Keycloak"
+has "... and lists a holder with the role" "${OUT}" "ops@k.example"
+has "... and a holder the realm no longer knows, as the claim names them" "${OUT}" "former@k.example"
+has "... and says that one could not be read" "${OUT}" "could not be read from the kernel realm"
+has "... and says where they are named" "${OUT}" "written on the Cluster claim"
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":true,"roles":[]}'
+gentian platform-roles members
+has "... and a cluster with no holder of the platform tenant" "${OUT}" "names nobody"
 
 # The periodic review: both lists shown, typed confirmation, one POST that
 # carries the registrar's answer as it was shown.
-MEMBERS='{"cluster":"c1","complete":true,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]}]}'
+MEMBERS='{"cluster":"c1","complete":true,"roles":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]}]}'
 fresh; reply GET /v1/clusters/c1/platform-role-members 200 "${MEMBERS}"
 reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 reply POST /v1/clusters/c1/actions/review-access 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian_stdin reviewed platform-roles review --next 2027-02-01T00:00:00Z
-has "review shows the group members" "${OUT}" "ops@k.example"
+has "review shows the platform tenant's holders" "${OUT}" "ops@k.example"
 has "... and the holders" "${OUT}" "it@acme.example"
-is "... and records what was shown, with the next date" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/actions/review-access{"members":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]}],"nextReviewAt":"2027-02-01T00:00:00Z"}'
+is "... and records what was shown, with the next date" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/actions/review-access{"members":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]}],"nextReviewAt":"2027-02-01T00:00:00Z"}'
 has "... and says it is committed" "${OUT}" "Reviewed: committed"
 fresh; reply GET /v1/clusters/c1/platform-role-members 200 "${MEMBERS}"
 reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 gentian_stdin "yes" platform-roles review
 refused "a review not confirmed by typing reviewed is refused"
 is "... and nothing is recorded" "$(writes)" ""
-fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":null,"unavailable":true}]}'
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example"}],"unavailable":true}]}'
 reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 gentian_stdin reviewed platform-roles review
 refused "a review of a list that could not be read in full is refused"

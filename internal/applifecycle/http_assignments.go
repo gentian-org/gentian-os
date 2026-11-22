@@ -37,6 +37,7 @@ const (
 	TakeAssignmentPath  = "/v1/tenants/{tenant}/people/{subject}/actions/take"
 	RemovePersonPath    = "/v1/tenants/{tenant}/people/{subject}/actions/remove-rights"
 	AdministratorsPath  = "/v1/tenants/{tenant}/administrators"
+	PeopleSubjectsPath  = "/v1/tenants/{tenant}/people-subjects"
 	assignmentBodyLimit = 4 << 10
 	// actorHeader names the person the caller verified and acts for. A
 	// claim, recorded as one.
@@ -58,6 +59,13 @@ type AssignmentsAnswer struct {
 	Assignments []authz.Assignment `json:"assignments"`
 }
 
+// PeopleSubjectsAnswer is the accounts that are a tenant's people: the
+// holders of its position user.
+type PeopleSubjectsAnswer struct {
+	Tenant   string   `json:"tenant"`
+	Subjects []string `json:"subjects"`
+}
+
 // AdministratorsAnswer is the accounts that administer a tenant as its own.
 type AdministratorsAnswer struct {
 	Tenant   string   `json:"tenant"`
@@ -70,6 +78,7 @@ func (h *HTTPServer) registerAssignmentRoutes(mux router) {
 	mux.People("POST "+TakeAssignmentPath, h.handleTake)
 	mux.People("POST "+RemovePersonPath, h.handleRemovePersonRights)
 	mux.People("GET "+AdministratorsPath, h.handleAdministrators)
+	mux.People("GET "+PeopleSubjectsPath, h.handlePeopleSubjects)
 }
 
 // rights is the store, or the answer that there is none.
@@ -221,4 +230,25 @@ func (h *HTTPServer) rightsChanged(r *http.Request, changed, taken bool) {
 		ctrllog.FromContext(r.Context()).WithName("assignments").Error(err, "what follows from a change of rights was not done",
 			"tenant", r.PathValue("tenant"), "subject", r.PathValue("subject"), "taken", taken)
 	}
+}
+
+// handlePeopleSubjects answers who the tenant's people are, by subject: the
+// holders of its position user. It is what confines the registrar to a
+// tenant's own people in a realm several tenants share.
+func (h *HTTPServer) handlePeopleSubjects(w http.ResponseWriter, r *http.Request) {
+	store := h.rights(w)
+	if store == nil {
+		return
+	}
+	tenant := r.PathValue("tenant")
+	if !authz.ValidName(tenant) {
+		writeErr(w, http.StatusBadRequest, errors.New("the tenant is not a name"))
+		return
+	}
+	subjects, err := authz.PositionHolders(r.Context(), store, tenant, authz.PositionUser)
+	if err != nil {
+		assignmentFailed(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, PeopleSubjectsAnswer{Tenant: tenant, Subjects: subjects})
 }

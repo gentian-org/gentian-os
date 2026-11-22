@@ -75,11 +75,9 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		// In-cluster. The public issuer refuses /admin by design.
 		BaseURL: envvar.Or("REGISTRAR_IDENTITY_BASE_URL", issuer),
 		Source:  identity.NewDirectorySource(realmDir, identity.ClientID),
-		// The groups whose members hold a platform role, and the platform
-		// tenant's people who hold one by name, from the Cluster claim on
-		// every write. The registrar refuses to change any of them or
-		// anybody in one (identity/guard.go).
-		PlatformRoleGroups:  ClaimPlatformRoleGroups(reader),
+		// The platform tenant's people who hold a cluster role by name,
+		// from the Cluster claim on every write. The registrar refuses to
+		// change their accounts (identity/guard.go).
 		PlatformRoleHolders: ClaimPlatformRoleHolders(reader),
 		Logger:              log,
 	})
@@ -149,7 +147,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		VouchingKeys:     vouchingKeys,
 		Invitations:      invitations,
 		InvitationExpiry: invitationExpiry(log),
-		PlatformRoles:    ClaimPlatformRoles(reader),
+		RoleHolders:      ClaimRoleHolders(reader),
 		Rights:           operatorRightsFromEnv(log),
 	})
 	if err != nil {

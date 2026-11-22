@@ -1803,27 +1803,30 @@ cmd_platform_roles_candidates() {
     fi
 }
 
-# The members of the kernel-realm group admin and breakGlass are held through
-# (spec.platformRoles). Read only: they are managed in Keycloak.
+# The platform tenant's people who hold a cluster role, as the kernel realm
+# knows them. Read only: who holds a role is written on the Cluster claim.
 cmd_platform_roles_members() {
     [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles members"
     need jq
     _discover
     local answer
     answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/platform-role-members")" || exit 1
-    jq -r '(["ROLE","GROUP","LOGIN","EMAIL"] | @tsv),
-        (.roles[] | . as $r | if .unavailable then [$r.role, $r.group, "(could not be read)", ""] | @tsv
-            elif (.members | length) == 0 then [$r.role, $r.group, "(nobody)", ""] | @tsv
-            else .members[] | [$r.role, $r.group, .username, (.email // "")] | @tsv end)' <<<"${answer}" |
-        column -t -s $'\t'
-    if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
-        echo "A group could not be read; the list is incomplete."
+    if [[ "$(jq '.roles | length' <<<"${answer}")" == "0" ]]; then
+        echo "The claim names nobody of the platform tenant a role holder."
+    else
+        jq -r '(["ROLE","LOGIN","EMAIL"] | @tsv),
+            (.roles[] | . as $r | .members[] | [$r.role, .username, (.email // "")] | @tsv)' <<<"${answer}" |
+            column -t -s $'\t'
     fi
-    echo "These groups are managed in Keycloak, in the kernel realm."
+    if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
+        echo "A holder could not be read from the kernel realm; they are listed as the claim names them."
+    fi
+    echo "Who holds a role is written on the Cluster claim: platform-roles holders."
 }
 
 # review: the periodic review of who holds a role over the cluster. Shows the
-# group members and the holders, asks, and has the director record it: one
+# platform tenant's holders as the kernel realm knows them and the holders
+# as the claim names them, asks, and has the director record it: one
 # commit listing what was shown, with the next review a quarter on unless
 # --next names another date.
 cmd_platform_roles_review() {
@@ -1839,10 +1842,8 @@ cmd_platform_roles_review() {
     local members holders answer typed
     members="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/platform-role-members")" || exit 1
     holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
-    jq -r '(["ROLE","GROUP","LOGIN","EMAIL"] | @tsv),
-        (.roles[] | . as $r | if .unavailable then [$r.role, $r.group, "(could not be read)", ""] | @tsv
-            elif (.members | length) == 0 then [$r.role, $r.group, "(nobody)", ""] | @tsv
-            else .members[] | [$r.role, $r.group, .username, (.email // "")] | @tsv end)' <<<"${members}" |
+    jq -r '(["ROLE","LOGIN","EMAIL"] | @tsv),
+        (.roles[] | . as $r | .members[] | [$r.role, .username, (.email // "")] | @tsv)' <<<"${members}" |
         column -t -s $'\t'
     echo
     if [[ "$(jq '.roleHolders | length' <<<"${holders}")" == "0" ]]; then
@@ -1853,8 +1854,8 @@ cmd_platform_roles_review() {
             column -t -s $'\t'
     fi
     echo
-    [[ "$(jq -r '.complete' <<<"${members}")" == "true" ]] || die "a group could not be read; a review of an incomplete list is not recorded"
-    echo "Take away what nobody should hold first: Keycloak for the groups, platform-roles holders remove for the claim."
+    [[ "$(jq -r '.complete' <<<"${members}")" == "true" ]] || die "a holder could not be read from the kernel realm; a review of an incomplete list is not recorded"
+    echo "Take away what nobody should hold first: platform-roles holders remove."
     read -r -p "Type reviewed to record that this is who should hold these roles: " typed
     [[ "${typed}" == "reviewed" ]] || die "nothing was recorded"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/review-access" \

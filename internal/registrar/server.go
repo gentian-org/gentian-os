@@ -8,8 +8,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package registrar keeps the list of people: it invites them, puts them in
-// groups and removes them, at Keycloak, for the person entitled to ask
+// Package registrar keeps the list of people: it invites them, has the
+// operator give them positions and roles, and removes them, at Keycloak,
+// for the person entitled to ask
 // (control-plane.md §4.4).
 //
 // It is a process of its own for the reason the director and the custodian
@@ -67,21 +68,15 @@ type Identity interface {
 	Realm(name string) (identity.Realm, error)
 	People(ctx context.Context, r identity.Realm, search string, limit int) ([]identity.Person, error)
 	Person(ctx context.Context, r identity.Realm, id string) (identity.Person, error)
-	Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error)
 	Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error)
-	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
 	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
 	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
 	UpdatePerson(ctx context.Context, r identity.Realm, id string, u identity.PersonUpdate) (identity.Person, error)
 	RemovePerson(ctx context.Context, r identity.Realm, id string) error
 	RequireTOTP(ctx context.Context, r identity.Realm, id string, mail bool, clientID, redirectURI string) error
 	RemoveTOTP(ctx context.Context, r identity.Realm, id string) error
-	CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error)
-	DeleteGroup(ctx context.Context, r identity.Realm, path string) error
-	RenameGroup(ctx context.Context, r identity.Realm, path, newPath string) (identity.Group, error)
 	FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error)
 	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
-	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 	UserCount(ctx context.Context, r identity.Realm) (int, error)
 	VouchingLinked(ctx context.Context, r identity.Realm, id, profile string) (bool, error)
 	VouchingPeople(ctx context.Context, r identity.Realm, profile string) ([]string, error)
@@ -154,10 +149,10 @@ type Config struct {
 	// tried. Zero means the defaults.
 	InvitationExpiry   time.Duration
 	InvitationInterval time.Duration
-	// PlatformRoles answers which kernel-realm group holds each platform
-	// role (ClaimPlatformRoles). Optional: without it the cluster's
-	// platform-role members are not offered.
-	PlatformRoles func(ctx context.Context) ([]RoleGroup, error)
+	// RoleHolders answers who holds a cluster role by name
+	// (ClaimRoleHolders). Optional: without it the platform tenant's role
+	// holders are not offered.
+	RoleHolders func(ctx context.Context) ([]RoleHolder, error)
 	// Rights is the way to the operator, which gives and takes what a
 	// person holds in a tenant (assignments.go). Optional: without it
 	// positions and roles cannot be given here, an invitation makes a
@@ -352,8 +347,8 @@ func (s *Server) action(pattern, relation string, obj object, h func(http.Respon
 	s.guarded(pattern, relation, obj, h)
 }
 
-// routes registers what the registrar serves: people, groups and the realm's
-// settings.
+// routes registers what the registrar serves: people, what they hold and
+// the realm's settings.
 //
 // Every write is an ACTION and none is a PUT. A commit says what should be
 // true from now on and is reviewable in git for ever; inviting somebody
@@ -367,11 +362,9 @@ func (s *Server) routes() {
 
 	s.guarded("GET /v1/tenants/{t}/people", "can_manage_users", tenantObject, s.listPeople)
 	s.guarded("GET /v1/tenants/{t}/people/{id}", "can_manage_users", tenantObject, s.getPerson)
-	s.guarded("GET /v1/tenants/{t}/groups", "can_manage_users", tenantObject, s.listGroups)
 	s.guarded("GET /v1/tenants/{t}/identity", "can_manage_users", tenantObject, s.tenantIdentitySettings)
 
 	s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
-	s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
 	s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
 
 	// What a person holds in the tenant: their positions, and the roles
@@ -381,17 +374,13 @@ func (s *Server) routes() {
 	s.action("POST /v1/tenants/{t}/actions/give", "can_manage_users", tenantObject, s.give)
 	s.action("POST /v1/tenants/{t}/actions/take", "can_manage_users", tenantObject, s.take)
 
-	// Editing somebody, and the groups they are put in. can_manage_users
-	// throughout, like the invitation they extend.
-	s.guarded("GET /v1/tenants/{t}/group-members", "can_manage_users", tenantObject, s.listGroupMembers)
+	// Editing somebody. can_manage_users throughout, like the invitation
+	// they extend.
 	s.guarded("GET /v1/tenants/{t}/templates", "can_manage_users", tenantObject, s.listTemplates)
 	s.action("POST /v1/tenants/{t}/actions/update-person", "can_manage_users", tenantObject, s.updatePerson)
 	s.action("POST /v1/tenants/{t}/actions/remove-person", "can_manage_users", tenantObject, s.removePerson)
 	s.action("POST /v1/tenants/{t}/actions/require-totp", "can_manage_users", tenantObject, s.requireTOTP)
 	s.action("POST /v1/tenants/{t}/actions/remove-totp", "can_manage_users", tenantObject, s.removeTOTP)
-	s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
-	s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
-	s.action("POST /v1/tenants/{t}/actions/rename-group", "can_manage_users", tenantObject, s.renameGroup)
 
 	// What became of the mailboxes of the people removed from the tenant,
 	// and the deletion of one that was archived. The relation that guards
@@ -421,8 +410,8 @@ func (s *Server) routes() {
 	// (role_candidates.go).
 	s.guarded("GET /v1/clusters/{c}/role-candidates", "can_configure", s.clusterObject, s.listRoleCandidates)
 
-	// Who holds each platform role through its kernel-realm group, for
-	// whoever may audit the cluster (platform_role_members.go).
+	// Who of the platform tenant holds each cluster role, for whoever may
+	// audit the cluster (platform_role_members.go).
 	s.guarded("GET /v1/clusters/{c}/platform-role-members", "can_audit", s.clusterObject, s.listPlatformRoleMembers)
 
 	// A person's link to a component that vouches for people, which is that

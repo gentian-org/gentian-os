@@ -58,10 +58,10 @@ type Service struct {
 	// given no vault to talk to; a purge then fails at its credentials step
 	// rather than report them destroyed.
 	vault CredentialStore
-	// sendMail and listGroupMembers are how NotifyAdministrators reaches
-	// the relay and Keycloak; nil is the real thing, a test sets them.
-	sendMail         func(ctx context.Context, s mailer.Settings, m mailer.Message) error
-	listGroupMembers func(ctx context.Context, realm, group string) ([]authz.KeycloakUser, error)
+	// sendMail and listRealmUsers are how NotifyAdministrators reaches the
+	// relay and Keycloak; nil is the real thing, a test sets them.
+	sendMail       func(ctx context.Context, s mailer.Settings, m mailer.Message) error
+	listRealmUsers func(ctx context.Context, realm string) ([]authz.KeycloakUser, error)
 	// fetchReleaseIndex, when set, is the release index in place of the
 	// configured feed. Tests set it.
 	fetchReleaseIndex func(ctx context.Context) (releaseindex.Index, error)
