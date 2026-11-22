@@ -1359,7 +1359,7 @@ print_summary_cp() {
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
     # No password: Argo CD's local admin is off (D-03), and it is signed in
     # to through the kernel realm like every other kernel UI.
-    echo -e "${GREEN}    Sign in with Keycloak, as a member of gentian:platform:admin${NC}"
+    echo -e "${GREEN}    Sign in with Keycloak, as an administrator of the cluster${NC}"
     # Only while it exists. E-03 deletes it, so naming it afterwards sends the
     # operator to a path that is gone — and on a finished install the answer to
     # "where are the OpenBao tokens" is the recovery kit, not a file in /tmp.
@@ -1884,7 +1884,6 @@ _claim_cluster_fields() {
     printf '    discoveryUrl: https://id.%s/auth/realms/kernel\n' "${KERNEL_DOMAIN:-<kernel-domain>}"
     printf '    # clientId:          openbao\n'
     printf '    # clientSecretRef:   openbao-oidc-client   Secret in the OpenBao namespace\n'
-    printf '    # clusterAdminGroup: /gentian:platform:admin\n'
     printf '    # externalUrl:                             OpenBao UI callback, if exposed\n'
 
     # Where software may enter this cluster (AD-14).
@@ -2606,14 +2605,7 @@ spec:
   # back the rights granted in a tenant only from a bundle this cluster
   # signed and took; changing it makes every earlier bundle another cluster's.
   clusterUID: $(gentian_new_cluster_uid)
-  # Who administers this cluster, by the Keycloak group they are in. The
-  # director reads this file from git -- not the object in the cluster -- so
-  # the assignment is written here rather than left to the schema's default,
-  # which a file reader never sees. Without it the director grants nobody a
-  # cluster role and every console the person is entitled to disappears.
-  platformRoles:
-    admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
-  # Who holds every other cluster role, by name: people of the platform
+  # Who holds which cluster role, by name: people of the platform
   # tenant and administrators of this cluster's other tenants, each with its
   # role (securityOfficer, auditor, serviceAdmin, sharedAppsAdmin or
   # perimeterApprover), a reason and, if it ends, expiresAt; held only with a

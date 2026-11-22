@@ -315,7 +315,7 @@ name: Keycloak
 issuer: https://id.${kernel_domain}/auth/realms/${realm}
 clientID: gentian-argocd
 clientSecret: \$oidc.keycloak.clientSecret
-requestedScopes: ["openid", "profile", "email", "groups"]
+requestedScopes: ["openid", "profile", "email"]
 EOF
 )
     kubectl patch configmap argocd-cm -n "${ns}" --type merge -p "
@@ -331,28 +331,19 @@ EOF
     # the first sign-in, which is Keycloak's now.
     kubectl delete secret argocd-initial-admin-secret -n "${ns}" --ignore-not-found >/dev/null
 
-    # 3. Patch argocd-rbac-cm to map group to admin role
+    # 3. Patch argocd-rbac-cm to map the cluster's admin role to Argo CD's
     #
-    # Both spellings, because the claim carries the FULL path.
-    #
-    # The kernel realm's groups mapper is configured full.path=true, which
-    # OpenBao needs: its roles bind /group-name with a leading slash and the
-    # bare name matches nothing. So the token Argo CD receives says
-    # "/gentian:platform:admin", and a policy naming the bare form matches no
-    # subject at all -- which does not look like a permissions problem from
-    # the outside. It looks like an empty Argo CD: "No applications available
-    # to you just yet", for a platform administrator who holds everything.
-    #
-    # Naming both costs nothing and survives the mapper being changed back.
-    local platform_admin_group="${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}"
+    # Argo CD reads a person's "groups" from the claim named in scopes. The
+    # claim is gentian_cluster_roles: the cluster roles the person holds, as
+    # the rights store answers them to the platform's mapper on the client.
+    # A person without the admin role is signed in and sees nothing.
     local policy_csv
-    policy_csv="g, ${platform_admin_group}, role:admin
-g, /${platform_admin_group}, role:admin"
+    policy_csv="g, admin, role:admin"
     kubectl patch configmap argocd-rbac-cm -n "${ns}" --type merge -p "
 {
   \"data\": {
     \"policy.csv\": $(jq -R -s '.' <<<"${policy_csv}"),
-    \"scopes\": \"[groups]\"
+    \"scopes\": \"[gentian_cluster_roles]\"
   }
 }"
 

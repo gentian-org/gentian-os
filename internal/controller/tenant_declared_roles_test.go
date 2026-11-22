@@ -42,7 +42,7 @@ func TestAProfilesDeclaredRolesAreReadForTheStore(t *testing.T) {
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Errorf("in-app names = %v, want %v: a role with no name inside the app says nothing", names, wantNames)
 	}
-	if (*gentianov1alpha1.ProfileRoles)(nil).RolesClaim() != "gentian_roles" || roles.RolesClaim() != "gentian_roles" {
-		t.Error("the claim's default is gentian_roles")
+	if (*gentianov1alpha1.ProfileRoles)(nil).RolesClaim() != "gentian_app_roles" || roles.RolesClaim() != "gentian_app_roles" {
+		t.Error("the claim's default is gentian_app_roles")
 	}
 }

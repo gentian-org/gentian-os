@@ -1247,13 +1247,6 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	if kernelBroker {
 		spec["kernelBroker"] = true
 	}
-	if len(tenant.Spec.Groups) > 0 {
-		groups := make([]interface{}, 0, len(tenant.Spec.Groups))
-		for _, g := range tenant.Spec.Groups {
-			groups = append(groups, g.Name)
-		}
-		spec["groups"] = groups
-	}
 	// The tenant's partners (partners.go), within what the claim allows.
 	claimPartners, err := readClusterPartners(ctx, r.Client)
 	if err != nil {

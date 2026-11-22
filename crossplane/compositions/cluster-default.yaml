@@ -509,21 +509,6 @@ spec:
                  of Crossplane, and none appear below.
             */}}
             {{- $oidc := ($spec.oidc) | default dict }}
-            {{- /* Which Keycloak group OpenBao's cluster-admin role admits.
-                 One source, because two fields that must agree eventually do
-                 not: platformRoles.admin is the group the platform provisions
-                 the administrator into, so it is also the group that may hold
-                 the cluster-admin policy. oidc.clusterAdminGroup overrides it
-                 and is normally unset.
-
-                 It used to default to "/gentian:platform:superadmin" in the
-                 XRD, S1 renamed the role, and every composite created before
-                 that kept the old value -- a changed default does not reach an
-                 object that already has the field. The administrator then
-                 signed in holding gentian:platform:admin while the role wanted
-                 a group nobody was in, so no exchange granted cluster-admin
-                 and the install's last step waited for a proof that could
-                 never be written. */}}
             {{- /* The audiences OpenBao's roles accept: its own client's, which is
                  what a person signing in to OpenBao's UI is issued, plus
                  whatever the claim adds.
@@ -539,8 +524,6 @@ spec:
             {{- $requiredAudiences = append $requiredAudiences . }}
             {{- end }}
             {{- end }}
-            {{- $platformAdminGroup := default "gentian:platform:admin" (dig "platformRoles" "admin" "" $spec) }}
-            {{- $clusterAdminGroup := default (printf "/%s" $platformAdminGroup) (dig "clusterAdminGroup" "" $oidc) }}
             {{- if $oidc.discoveryUrl }}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
@@ -682,9 +665,11 @@ spec:
                 name: openbao
 
             ---
-            # Group claim → policy. A cluster operator in the platform admin
-            # group gets cluster-admin; everyone else authenticates and gets
-            # nothing, which is the correct default for a write path.
+            # Role claim → policy. Whoever holds the cluster's admin role, as
+            # the rights store answers it to the platform's mapper on the
+            # client (gentian_cluster_roles), gets cluster-admin; everyone
+            # else authenticates and gets nothing, which is the correct
+            # default for a write path.
             apiVersion: jwt.vault.upbound.io/v1alpha1
             kind: AuthBackendRole
             metadata:
@@ -712,7 +697,7 @@ spec:
                   {{- end }}
                 boundClaimsType: string
                 boundClaims:
-                  groups: {{ $clusterAdminGroup | quote }}
+                  gentian_cluster_roles: admin
                 allowedRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
@@ -726,59 +711,6 @@ spec:
               providerConfigRef:
                 name: openbao
 
-            {{- /* ── The tenant-admin OIDC role ─────────────────────────────────
-                 Without this a tenant administrator cannot authenticate at all:
-                 the cluster-admin role above is bound to the platform-admins
-                 group, so their token exchange is refused before any
-                 scope decision is reached.
-
-                 claimMappings is the load-bearing line. It copies the verified
-                 `tenant` claim into the alias metadata that the tenant-admin
-                 policy templates its path from, and that the custodian
-                 reads to decide which tenant's requirements to show. Both the
-                 write path and the read path therefore agree by construction,
-                 because they read the same value.
-
-                 boundClaims requires the group; a user without it falls through
-                 to no role rather than to a role with no tenant.
-              */}}
-            ---
-            apiVersion: jwt.vault.upbound.io/v1alpha1
-            kind: AuthBackendRole
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc-role-tenant-admin
-              name: {{ $name }}-auth-oidc-tenant-admin
-            spec:
-              forProvider:
-                backend: oidc
-                roleName: tenant-admin
-                roleType: oidc
-                userClaim: preferred_username
-                boundAudiences:
-                  {{- range $requiredAudiences }}
-                  - {{ . | quote }}
-                  {{- end }}
-                # glob, not string: the kernel realm imports each tenant's own
-                # admins group under its own name, so there is no one group to
-                # match exactly.
-                boundClaimsType: glob
-                boundClaims:
-                  groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
-                claimMappings:
-                  {{ $oidc.tenantClaim | default "tenant" }}: tenant
-                  # The caller's name, for the same reason as the cluster roles.
-                  preferred_username: username
-                allowedRedirectUris:
-                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
-                  - http://localhost:8250/oidc/callback
-                tokenPolicies:
-                  - tenant-admin
-                tokenTtl: 1800
-                tokenMaxTtl: 3600
-              providerConfigRef:
-                name: openbao
-
             {{- /* No JWT-typed role. There was one, cluster-admin-jwt, so that the
                  custodian could exchange a caller's token for a vault token
                  and write as that person. The custodian no longer shows the
@@ -787,7 +719,7 @@ spec:
                  Kubernetes role below. A role that turned anybody's zone
                  token into a cluster-admin vault token is then a door with
                  nothing left behind it but risk, and it is gone. The two
-                 roles above are role_type oidc and serve only a person
+                 role above is role_type oidc and serves only a person
                  signing in to OpenBao's own UI. */}}
 
             {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
@@ -799,7 +731,7 @@ spec:
 
                  Composed rather than provisioned by a Job because the objects
                  are declarative and have no ordering problem: the client, its
-                 two mappers and the two groups are all plain state, and
+                 mapper are all plain state, and
                  Crossplane retries until Keycloak is up.
               */}}
             {{- $realm := $oidc.realm | default "kernel" }}
@@ -879,47 +811,18 @@ spec:
               providerConfigRef:
                 name: keycloak
 
-            {{- /* The groups claim. Both OIDC roles bind on it, so without this
-                 mapper the token carries no groups and every login matches no
-                 role — which fails as "permission denied" rather than as
-                 "misconfigured", and is the hardest form of this to diagnose.
-                 fullPath emits the leading slash the roles bind on. */}}
-            ---
-            apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
-            kind: GroupMembershipProtocolMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: openbao-groups-mapper
-              name: {{ $name }}-openbao-groups-mapper
-            spec:
-              deletionPolicy: Delete
-              forProvider:
-                realmId: {{ $realm | quote }}
-                clientIdRef:
-                  name: {{ $name }}-openbao-keycloak-client
-                  policy:
-                    resolve: Always
-                name: groups
-                claimName: groups
-                fullPath: true
-                addToIdToken: true
-                addToAccessToken: true
-                addToUserinfo: true
-              providerConfigRef:
-                name: keycloak
-
-            {{- /* The tenant claim, from a user attribute. This is the value the
-                 tenant-admin role maps into alias metadata, which the policy
-                 templates its path from and the custodian filters by.
-                 A user without the attribute gets no claim, so they reach no
-                 tenant — absent means nothing, never everything. */}}
+            {{- /* The roles claim. The OIDC role binds on it, so without this
+                 mapper the token carries no role and every login matches no
+                 role -- which fails as "permission denied" rather than as
+                 "misconfigured". The platform's mapper asks the rights store
+                 which cluster roles the person holds. */}}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
             kind: ProtocolMapper
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: openbao-tenant-mapper
-              name: {{ $name }}-openbao-tenant-mapper
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-roles-mapper
+              name: {{ $name }}-openbao-roles-mapper
             spec:
               deletionPolicy: Delete
               forProvider:
@@ -928,21 +831,15 @@ spec:
                   name: {{ $name }}-openbao-keycloak-client
                   policy:
                     resolve: Always
-                name: tenant
+                name: cluster-roles
                 protocol: openid-connect
-                protocolMapper: oidc-usermodel-attribute-mapper
+                protocolMapper: gentian-cluster-roles
                 config:
-                  user.attribute: {{ $oidc.tenantClaim | default "tenant" | quote }}
-                  claim.name: {{ $oidc.tenantClaim | default "tenant" | quote }}
-                  jsonType.label: String
+                  claim.name: gentian_cluster_roles
                   id.token.claim: "true"
                   access.token.claim: "true"
                   userinfo.token.claim: "true"
-                  {{- /* Written back by Keycloak whether or not it is asked for,
-                       so leaving it out is a permanent diff rather than a
-                       smaller spec — and a permanent diff here is an update
-                       loop, since the provider re-applies on every pass. */}}
-                  introspection.token.claim: "true"
+                  introspection.token.claim: "false"
               providerConfigRef:
                 name: keycloak
 
@@ -2372,7 +2269,7 @@ spec:
                                 enabled: true
                                 name: {{ $monRealm | quote }}
                                 client_id: grafana
-                                scopes: openid profile email groups
+                                scopes: openid profile email
                                 auth_url: {{ printf "%s/auth" $monOidc | quote }}
                                 token_url: {{ printf "%s/token" $monOidc | quote }}
                                 api_url: {{ printf "%s/userinfo" $monOidc | quote }}
@@ -2381,9 +2278,10 @@ spec:
                                 allow_sign_up: true
                                 login_attribute_path: preferred_username
                                 # The platform administrator administers Grafana; everyone else
-                                # the edge lets through (can_audit) reads. The groups claim
-                                # carries full paths.
-                                role_attribute_path: "contains(groups[*], '/gentian:platform:admin') && 'Admin' || 'Viewer'"
+                                # the edge lets through (can_audit) reads. The role is the
+                                # rights store's answer, written by the platform's mapper
+                                # on the client.
+                                role_attribute_path: "contains(gentian_cluster_roles[*], 'admin') && 'Admin' || 'Viewer'"
                                 role_attribute_strict: false
                                 allow_assign_grafana_admin: false
                               users:

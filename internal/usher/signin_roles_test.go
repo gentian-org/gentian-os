@@ -127,3 +127,50 @@ func TestAnUnansweredSignInQuestionIsNotAnEmptyAnswer(t *testing.T) {
 		t.Error("a handler with no key would answer anybody")
 	}
 }
+
+// A cluster's own tools read the cluster roles a person holds from their
+// token, and a partner the roles on the tenant: both asked the same way.
+// Cluster roles are held by name, so they are asked as the account of the
+// realm the question names.
+func TestTheSignInQuestionAlsoAnswersClusterAndTenantRoles(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(nil)
+	now := time.Unix(1_800_000_000, 0)
+	store := &fakeStore{held: map[string]bool{
+		"user:kernel/p-1 admin cluster:demo":   true,
+		"user:kernel/p-1 auditor cluster:demo": true,
+		"user:p-2 admin tenant:acme":           true,
+		"user:p-2 user tenant:acme":            true,
+	}}
+	h, err := SignInRolesHandler(SignInRolesConfig{
+		Keys: map[string]ed25519.PublicKey{"listener": pub}, Roles: &fakeSignInRoles{},
+		Checker: store, Cluster: "demo", Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve := func(body string) (int, string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, signed(t, key, "listener", now, body))
+		return rec.Code, strings.TrimSpace(rec.Body.String())
+	}
+	if code, body := serve(`{"cluster":true,"realm":"kernel","person":"p-1"}`); code != http.StatusOK ||
+		body != `{"apps":[],"cluster":["admin","auditor"]}` {
+		t.Errorf("cluster roles = %d %s", code, body)
+	}
+	if code, body := serve(`{"cluster":true,"realm":"acme","person":"p-1"}`); code != http.StatusOK || body != `{"apps":[]}` {
+		t.Errorf("the same person asked as another realm's account = %d %s, want no role", code, body)
+	}
+	if code, body := serve(`{"tenant":"acme","person":"p-2"}`); code != http.StatusOK || body != `{"apps":[],"tenant":["admin","user"]}` {
+		t.Errorf("tenant roles = %d %s", code, body)
+	}
+	if code, _ := serve(`{"cluster":true,"person":"p-1"}`); code != http.StatusBadRequest {
+		t.Errorf("cluster roles without a realm = %d, want 400", code)
+	}
+	if code, _ := serve(`{"person":"p-1"}`); code != http.StatusBadRequest {
+		t.Errorf("a question about nothing = %d, want 400", code)
+	}
+	store.err = errors.New("store away")
+	if code, _ := serve(`{"cluster":true,"realm":"kernel","person":"p-1"}`); code != http.StatusServiceUnavailable {
+		t.Errorf("an unanswered cluster question = %d, want 503", code)
+	}
+}

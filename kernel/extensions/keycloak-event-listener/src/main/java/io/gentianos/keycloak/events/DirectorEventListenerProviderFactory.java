@@ -20,19 +20,17 @@ import org.jboss.logging.Logger;
 import org.keycloak.Config;
 import org.keycloak.events.EventListenerProvider;
 import org.keycloak.events.EventListenerProviderFactory;
-import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.UserModel;
 
 /**
- * Tells the director what Keycloak knows about group membership.
- *
- * Keycloak is the only place a membership changes; the authorization store
- * holds a copy. This listener is what keeps the copy current: whenever a user's
- * groups may have changed it states that user's complete group set, signed, to
- * the one receiver it is configured with. It holds a signing key and nothing
- * else — no token, no credential the director would accept for any other call.
+ * Tells the platform what only the realm sees happen to a person: that they
+ * came in through an identity provider, and that they were removed. Who holds
+ * what is the rights store's; these two statements are what it cannot learn
+ * any other way. Each is signed, to the one receiver this listener is
+ * configured with. It holds a signing key and nothing else -- no token, no
+ * credential the platform would accept for any other call.
  *
  * Configuration (spi-events-listener-gentian-director-*):
  *   director-url      where events are posted
@@ -67,7 +65,7 @@ public class DirectorEventListenerProviderFactory implements EventListenerProvid
         } catch (Exception e) {
             throw new IllegalStateException("gentian-director event listener: cannot read " + keyFile, e);
         }
-        LOG.infof("membership events go to %s, signed with key %s", url, keyId);
+        LOG.infof("events go to %s, signed with key %s", url, keyId);
     }
 
     public static PrivateKey readKey(Path file) throws Exception {
@@ -80,20 +78,13 @@ public class DirectorEventListenerProviderFactory implements EventListenerProvid
     }
 
     /**
-     * Deletions are not admin events with anything useful in them: by the time
-     * one fires, the group's name and the user's groups are gone. The model's
-     * own removal events fire first, while both can still be read.
+     * A removal is told from the model's own removal event, which fires
+     * while the account can still be read.
      */
     @Override
     public void postInit(KeycloakSessionFactory factory) {
         factory.register(event -> {
-            if (event instanceof GroupModel.GroupRemovedEvent) {
-                GroupModel.GroupRemovedEvent removed = (GroupModel.GroupRemovedEvent) event;
-                if (removed.getGroup().getParentId() == null) {
-                    afterCommit(removed.getKeycloakSession(),
-                        Payload.groupDeleted(removed.getRealm().getName(), removed.getGroup().getName()));
-                }
-            } else if (event instanceof UserModel.UserRemovedEvent) {
+            if (event instanceof UserModel.UserRemovedEvent) {
                 UserModel.UserRemovedEvent removed = (UserModel.UserRemovedEvent) event;
                 afterCommit(removed.getKeycloakSession(),
                     Payload.userDeleted(removed.getRealm().getName(), removed.getUser().getId()));

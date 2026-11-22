@@ -18,38 +18,10 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
-// A tenant's own groups, and the sign-ins between tenants of this cluster
-// (Tenant spec.groups, spec.signInFrom, spec.signInTo). Writing either is the
-// cluster's administrators' (can_configure): who signs in to a tenant from
-// another, and with which groups, is the cluster's trust, not one tenant's.
-
-func (s *Server) tenantGroups(w http.ResponseWriter, r *http.Request, _ call) {
-	groups, err := s.cfg.Repo.TenantGroups(r.Context(), r.PathValue("t"))
-	if err != nil {
-		s.repoError(w, r, err)
-		return
-	}
-	if groups == nil {
-		groups = []string{}
-	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "groups": groups})
-}
-
-func (s *Server) setTenantGroups(w http.ResponseWriter, r *http.Request, c call) {
-	var body struct {
-		Groups []string `json:"groups"`
-	}
-	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"groups": ["website-editors", ...]}; an empty list removes them`)
-		return
-	}
-	res, err := s.cfg.Repo.SetTenantGroups(r.Context(), r.PathValue("t"), body.Groups, c.meta)
-	if errors.Is(err, gitops.ErrInvalidSignIn) {
-		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	s.written(w, r, res, err)
-}
+// The sign-ins between tenants of this cluster (Tenant spec.signInFrom,
+// spec.signInTo). Writing one is the cluster's administrators'
+// (can_configure): who signs in to a tenant from another, and with which
+// positions, is the cluster's trust, not one tenant's.
 
 func (s *Server) tenantSignIn(w http.ResponseWriter, r *http.Request, _ call) {
 	from, to, err := s.cfg.Repo.TenantSignIn(r.Context(), r.PathValue("t"))
@@ -66,25 +38,25 @@ func (s *Server) tenantSignIn(w http.ResponseWriter, r *http.Request, _ call) {
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "signInFrom": from, "signInTo": to})
 }
 
-// setTenantSignIn lets the people of {source} sign in to {t} with the groups
+// setTenantSignIn lets the people of {source} sign in to {t} with the positions
 // given: both tenants' line, in one commit.
 func (s *Server) setTenantSignIn(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
-		Groups []string `json:"groups"`
+		Positions []string `json:"positions"`
 	}
 	if err := decode(r, &body); err != nil {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"groups": ["members", "website-editors"]}`)
+		s.fail(w, r, http.StatusBadRequest, `body must be {"positions": ["user", "website-editor"]}`)
 		return
 	}
-	s.writeTenantSignIn(w, r, c, body.Groups, false)
+	s.writeTenantSignIn(w, r, c, body.Positions, false)
 }
 
 func (s *Server) removeTenantSignIn(w http.ResponseWriter, r *http.Request, c call) {
 	s.writeTenantSignIn(w, r, c, nil, true)
 }
 
-func (s *Server) writeTenantSignIn(w http.ResponseWriter, r *http.Request, c call, groups []string, remove bool) {
-	res, err := s.cfg.Repo.SetTenantSignIn(r.Context(), r.PathValue("t"), r.PathValue("source"), groups, remove, c.meta)
+func (s *Server) writeTenantSignIn(w http.ResponseWriter, r *http.Request, c call, positions []string, remove bool) {
+	res, err := s.cfg.Repo.SetTenantSignIn(r.Context(), r.PathValue("t"), r.PathValue("source"), positions, remove, c.meta)
 	if errors.Is(err, gitops.ErrInvalidSignIn) {
 		s.fail(w, r, http.StatusUnprocessableEntity, err.Error())
 		return

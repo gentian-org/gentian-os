@@ -37,12 +37,6 @@ model
 
 type user
 
-# A group of the cluster's own realm that the Cluster claim names for a
-# cluster role, or a group that arrives from a tenant's own directory.
-type group
-  relations
-    define member: [user]
-
 # A named set of roles. position:<tenant>/<name>.
 type position
   relations
@@ -50,20 +44,19 @@ type position
     # sales-manager included_in executive: whoever holds executive holds
     # sales-manager. The writer refuses a circle.
     define included_in: [position]
-    define holder: [user, group#member] or holder from included_in
+    define holder: [user] or holder from included_in
 
 type cluster
   relations
-    # roles — admin and break_glass from the Cluster claim's role-to-group
-    # assignments (spec.platformRoles); the rest from its role holders
+    # roles — from the Cluster claim's role holders
     # (spec.platformAccess.roleHolders), each user:<realm>/<sub>
-    define admin: [group#member]              # gentian:platform:admin
+    define admin: [user]                      # a person of the platform tenant
     define security_officer: [user]
     define auditor: [user]
     define service_admin: [user]              # a person of the platform tenant
     define shared_apps_admin: [user]          # a person of the platform tenant
     define perimeter_approver: [user]         # a person of the platform tenant; approves for every tenant
-    define break_glass: [user, group#member]  # gentian:platform:break-glass, no standing membership; or a person, with a reason, until a time
+    define break_glass: [user]                # a person, with a reason, until a time
 
     # permissions — the director's cluster-level verbs
     define can_configure: admin               # Cluster claim, plans, ceilings, network intent

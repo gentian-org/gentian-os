@@ -40,7 +40,9 @@ import org.keycloak.util.JsonSerialization;
  * every token ({@link RolesClient}); nothing of it is kept in the realm. The
  * platform writes on the mapper which app it is ({@value #TENANT},
  * {@value #APP}) and what each role is called inside it ({@value #ROLES}).
- * Two claims are written: the claim named, with the in-app names of the
+ * A client the platform gives no names for carries the roles in the
+ * platform's own names instead. Otherwise
+ * two claims are written: the claim named, with the in-app names of the
  * roles held, and that name followed by {@value #MAPPED_SUFFIX}, with every
  * in-app name the platform decides -- so that the app takes away what is no
  * longer held and leaves alone what was never the platform's.
@@ -128,6 +130,12 @@ public final class AppRolesMapper extends AbstractOIDCProtocolMapper
             throw unavailable("the roles hook of this client cannot be read");
         }
         Map<String, List<String>> held = held(keycloakSession, userSession, tenant, app);
+        if (inApp.isEmpty()) {
+            // No names inside the app: the platform's own, and no list of
+            // what it decides, since nothing is the app's to set from it.
+            token.getOtherClaims().put(claim, RoleNames.platform(app, held));
+            return;
+        }
         token.getOtherClaims().put(claim, RoleNames.held(inApp, held));
         token.getOtherClaims().put(claim + MAPPED_SUFFIX, RoleNames.mapped(inApp));
     }

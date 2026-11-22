@@ -89,9 +89,12 @@ final class RolesClient {
         this.key = key;
     }
 
+    /** What the platform answered: roles on apps, on a tenant, on the cluster. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     static final class Answer {
         public List<AppRoles> apps;
+        public List<String> tenant;
+        public List<String> cluster;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -100,23 +103,41 @@ final class RolesClient {
         public List<String> roles;
     }
 
-    /** The question's body. */
-    static String question(String tenant, String app, String person) throws IOException {
-        Map<String, String> body = new LinkedHashMap<>();
-        body.put("tenant", tenant);
-        body.put("app", app);
+    /** The question's body: which of tenant, app and cluster roles are asked for. */
+    static String question(String tenant, String app, String clusterRealm, String person) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (tenant != null) {
+            body.put("tenant", tenant);
+        }
+        if (app != null) {
+            body.put("app", app);
+        }
+        if (clusterRealm != null) {
+            body.put("cluster", true);
+            body.put("realm", clusterRealm);
+        }
         body.put("person", person);
         return JsonSerialization.writeValueAsString(body);
     }
 
-    /** The answer, as roles by profile name. */
-    static Map<String, List<String>> parse(String body) throws IOException {
+    /** The question about one app. */
+    static String question(String tenant, String app, String person) throws IOException {
+        return question(tenant, app, null, person);
+    }
+
+    /** The whole answer; an answer that names no apps list is not one. */
+    static Answer parseAnswer(String body) throws IOException {
         Answer answer = JsonSerialization.readValue(body, Answer.class);
-        Map<String, List<String>> out = new LinkedHashMap<>();
         if (answer == null || answer.apps == null) {
             throw new IOException("the answer names no apps");
         }
-        for (AppRoles app : answer.apps) {
+        return answer;
+    }
+
+    /** The answer, as roles by profile name. */
+    static Map<String, List<String>> parse(String body) throws IOException {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (AppRoles app : parseAnswer(body).apps) {
             if (app != null && app.app != null && app.roles != null) {
                 out.put(app.app, app.roles);
             }
@@ -124,9 +145,25 @@ final class RolesClient {
         return out;
     }
 
-    /** The roles held, by profile name; throws when the question was not answered. */
+    /** The roles held on an app and its add-ons, by profile name. */
     Map<String, List<String>> ask(String tenant, String app, String person) throws Exception {
-        String payload = question(tenant, app, person);
+        return parse(send(question(tenant, app, person)));
+    }
+
+    /** The cluster roles the account of a realm holds, by the model's names. */
+    List<String> askCluster(String realm, String person) throws Exception {
+        List<String> roles = parseAnswer(send(question(null, null, realm, person))).cluster;
+        return roles == null ? List.of() : roles;
+    }
+
+    /** The roles a person holds on a tenant itself: admin, user. */
+    List<String> askTenant(String tenant, String person) throws Exception {
+        List<String> roles = parseAnswer(send(question(tenant, null, null, person))).tenant;
+        return roles == null ? List.of() : roles;
+    }
+
+    /** Sends a question, signed; throws when it was not answered. */
+    private String send(String payload) throws Exception {
         String timestamp = Long.toString(System.currentTimeMillis() / 1000);
         Signature signer = Signature.getInstance("Ed25519");
         signer.initSign(key);
@@ -143,6 +180,6 @@ final class RolesClient {
         if (response.statusCode() != 200) {
             throw new IOException("answered " + response.statusCode());
         }
-        return parse(response.body());
+        return response.body();
     }
 }

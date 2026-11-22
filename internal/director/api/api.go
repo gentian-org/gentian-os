@@ -87,10 +87,8 @@ type Repository interface {
 	TenantPositions(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantPosition, error)
 	SetTenantPosition(ctx context.Context, tenant string, position gentianov1alpha1.TenantPosition, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantPosition(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
-	TenantGroups(ctx context.Context, tenant string) ([]string, error)
-	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
 	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
-	SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta gitops.Meta) (gitops.Result, error)
+	SetTenantSignIn(ctx context.Context, target, source string, positions []string, remove bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantPartner(ctx context.Context, tenant string, entry gitops.Partner, commissioned bool, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantPartner(ctx context.Context, tenant, name string, commissioned bool, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
@@ -633,8 +631,6 @@ func (s *Server) routes() {
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
 		// A tenant's own groups, and who signs in to it from another tenant
 		// (tenant_sign_in.go).
-		s.guarded("GET /v1/clusters/{c}/tenants/{t}/groups", "can_audit", s.clusterObject, s.tenantGroups)
-		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/groups", "can_configure", s.clusterObject, s.setTenantGroups)
 		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
@@ -815,7 +811,6 @@ func (s *Server) routes() {
 		// whoever may install's to do, as uninstalling is; provisioning hands
 		// an app to people, which is can_grant's.
 		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
-		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
 		// Removing one piece a newer build of an app left on the cluster,
 		// for the administrator of a tenant that has the app. Whoever may
 		// install's, as uninstalling and purging are -- and not that alone:

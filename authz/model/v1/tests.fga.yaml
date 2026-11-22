@@ -5,9 +5,6 @@ model_file: model.fga
 # One fixture for every test. Ids follow the model's rule: a thing of a tenant
 # is <tenant>/<name>, a declared role <tenant>/<profile>/<name>.
 tuples:
-  # --- the cluster's own groups, as the Cluster claim names them
-  - {user: user:alice,  relation: member, object: group:gentian/platform/admin}
-  - {user: user:bea,    relation: member, object: group:gentian/platform/break-glass}
 
   # --- who holds which position
   - {user: user:tom,    relation: holder, object: position:demo/tenant-administrator}
@@ -31,9 +28,9 @@ tuples:
   - {user: user:marc,   relation: holder, object: role:demo/odoo-sales/configurator}  # an engineer with one role in sales
   - {user: user:odin,   relation: admin,  object: app:demo/odoo}
 
-  # --- cluster roles, from the Cluster claim: admin and break_glass by group (spec.platformRoles)
-  - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
-  - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
+  # --- cluster roles, from the Cluster claim's role holders
+  - {user: user:alice,                                      relation: admin,             object: cluster:main}
+  - {user: user:bea,                                        relation: break_glass,       object: cluster:main}
   # and a person, for a stated time (spec.platformAccess.roleHolders)
   - {user: user:gentian/bea-held,                           relation: break_glass,       object: cluster:main}
   # and the role holders it names (spec.platformAccess.roleHolders), each the account of its realm:
