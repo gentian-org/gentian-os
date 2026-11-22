@@ -59,6 +59,7 @@ type Repository interface {
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, defaultGrant *bool, meta gitops.Meta) (gitops.Result, []string, error)
 	UninstallWith(ctx context.Context, tenant, profile string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
+	LetGo(ctx context.Context, tenant, with string, gone []string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
 	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
 	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)

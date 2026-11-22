@@ -20,6 +20,7 @@ import (
 	"time"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
 // comingWith is a profile on the cluster that names the apps it comes with.
@@ -400,5 +401,78 @@ func TestAContractALaterBuildAddsAmongThemIsPreApproved(t *testing.T) {
 	}
 	if strings.Contains(grants, "write") {
 		t.Errorf("a contract the grant already names was widened:\n%s", grants)
+	}
+}
+
+// An app that came with another is uninstalled once the other runs a build
+// that does not name it: not while the app is still on its way to that
+// build. The tenant's own apps and the app itself are left as they are, and
+// a second pass changes nothing.
+func TestWhatABuildNoLongerComesWithIsUninstalled(t *testing.T) {
+	notes := profileNamed("notes", "one")
+	src := catalogues(t, served{"gentian": {"notes": notes}})
+	op := &rolloutsOperator{}
+	h := startSeeded(t, nil, func(remote string) {
+		tenant := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+		dt.Commit(t, remote, map[string]string{
+			dt.ClaimPath:                 claimWith(gitops.CatalogueSource{Name: "gentian", URL: src.URL + "/gentian"}),
+			dt.CataloguePath("pad.yaml"): dt.ProfileYAML("pad"),
+			dt.TenantPath("demo"):        strings.TrimRight(tenant, "\n") + "\n  - profile: pad\n    cameWith: notes\n",
+		})
+	}, withFetcher(src), withOperator(op))
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/notes", tom, fmt.Sprintf(`{"coordinate":"gentian/notes","digest":%q}`, sha(notes))); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	wiki := appEntryOf(t, h, "demo", "wiki")
+	app := appEntryOf(t, h, "demo", "notes")
+	running := func(runs, phase string) []map[string]any {
+		return []map[string]any{{"tenant": "demo", "profile": "notes", "pinned": sha(notes), "running": runs, "target": sha(notes), "phase": phase, "ready": true}}
+	}
+	srv := h.server()
+
+	// Pinned to the build and not running it yet.
+	op.set(running("", "Rolling"))
+	srv.RunComesWith(context.Background())
+	if entry := appEntryOf(t, h, "demo", "pad"); entry == "" {
+		t.Fatal("the pad went while the app was on its way to the build")
+	}
+
+	op.set(running(sha(notes), "Done"))
+	srv.RunComesWith(context.Background())
+	if entry := appEntryOf(t, h, "demo", "pad"); entry != "" {
+		t.Fatalf("the pad stayed:\n%q", entry)
+	}
+	if got := appEntryOf(t, h, "demo", "wiki"); got != wiki {
+		t.Errorf("the tenant's own wiki was changed:\n%q\nwas\n%q", got, wiki)
+	}
+	if got := appEntryOf(t, h, "demo", "notes"); got != app {
+		t.Errorf("the app itself was changed:\n%q\nwas\n%q", got, app)
+	}
+	if by := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%s|%b", "main"); !strings.Contains(by, "platform:comes-with") || !strings.Contains(by, "no longer comes with") {
+		t.Errorf("the commit does not say what it did:\n%s", by)
+	}
+	before := h.tip(t)
+	if srv.RunComesWith(context.Background()); h.tip(t) != before {
+		t.Fatal("a second pass moved the repository")
+	}
+}
+
+// What another installed app comes with too is not uninstalled: the entry
+// is marked with that app.
+func TestWhatABuildNoLongerComesWithStaysWithAnotherAppThatDoes(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("suite.yaml"):  comingWith("suite", "board"),
+			dt.CataloguePath("reader.yaml"): comingWith("reader", "pad"),
+			dt.CataloguePath("pad.yaml"):    dt.ProfileYAML("pad"),
+		})
+		tenant := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+		dt.Commit(t, remote, map[string]string{dt.TenantPath("demo"): strings.TrimRight(tenant, "\n") +
+			"\n  - profile: suite\n  - profile: reader\n  - profile: pad\n    cameWith: suite\n"})
+	})
+	h.server().RunComesWith(context.Background())
+	if entry := appEntryOf(t, h, "demo", "pad"); !strings.Contains(entry, "cameWith: reader") {
+		t.Fatalf("the pad is not the reader's:\n%q", entry)
 	}
 }
