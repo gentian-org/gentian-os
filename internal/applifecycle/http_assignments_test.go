@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,5 +187,29 @@ func TestGivingAndTakingThroughTheListener(t *testing.T) {
 	none := (&HTTPServer{Auth: auth}).routes()
 	if code, _ := askAssignments(none, "POST", person+"/actions/give", "registrar", `{"position":"user"}`); code != http.StatusServiceUnavailable {
 		t.Errorf("without a store: %d", code)
+	}
+}
+
+// What follows from a change is asked for when something changed, with
+// whether something was taken, and a failure of it does not undo the change.
+func TestAChangeOfRightsIsFollowedUp(t *testing.T) {
+	_, auth := cluster()
+	var told []string
+	srv := &HTTPServer{Auth: auth, Rights: demoRights()}
+	srv.RightsChanged = func(_ context.Context, tenant, subject string, taken bool) error {
+		told = append(told, fmt.Sprintf("%s/%s taken=%v", tenant, subject, taken))
+		return errors.New("the realm is away")
+	}
+	mux := srv.routes()
+	person := "/v1/tenants/demo/people/u1"
+	role := `{"app":"wiki","role":"user"}`
+	for _, step := range []string{"give", "give", "take", "take"} {
+		if code, body := askAssignments(mux, "POST", person+"/actions/"+step, "registrar", role); code != http.StatusOK {
+			t.Fatalf("%s: %d %v", step, code, body)
+		}
+	}
+	want := []string{"demo/u1 taken=false", "demo/u1 taken=true"}
+	if strings.Join(told, "; ") != strings.Join(want, "; ") {
+		t.Errorf("told = %v, want %v: once per change, not per request", told, want)
 	}
 }
